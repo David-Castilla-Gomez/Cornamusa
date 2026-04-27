@@ -1,0 +1,28 @@
+# Closures: funciones que capturan variables del entorno.
+
+funcion crear_contador(inicio=0):
+    valor = inicio
+
+    funcion incrementar(paso=1):
+        nolocal valor
+        valor += paso
+        retornar valor
+
+    retornar incrementar
+
+
+contador = crear_contador()
+imprimir(contador())     # 1
+imprimir(contador())     # 2
+imprimir(contador(10))   # 12
+
+# Closure usada como función de orden superior
+funcion crear_multiplicador(factor):
+    retornar lambda x: x * factor
+
+
+doblar = crear_multiplicador(2)
+triplicar = crear_multiplicador(3)
+
+imprimir(doblar(5))      # 10
+imprimir(triplicar(5))   # 15

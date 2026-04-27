@@ -1,0 +1,18 @@
+# Dos versiones de Fibonacci: recursiva (didáctica) e iterativa (eficiente).
+
+funcion fib_recursivo(n):
+    si n < 2:
+        retornar n
+    retornar fib_recursivo(n - 1) + fib_recursivo(n - 2)
+
+
+funcion fib_iterativo(n):
+    a = 0
+    b = 1
+    para _ en rango(n):
+        a, b = b, a + b
+    retornar a
+
+
+para i en rango(10):
+    imprimir(f"fib({i}) = {fib_iterativo(i)}")

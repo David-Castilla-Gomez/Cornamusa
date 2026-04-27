@@ -1,0 +1,20 @@
+# Iterador personalizado: rango decreciente.
+
+clase RangoInverso:
+    funcion __iniciar__(yo, inicio, fin):
+        yo.actual = inicio
+        yo.fin = fin
+
+    funcion __iterar__(yo):
+        retornar yo
+
+    funcion __siguiente__(yo):
+        si yo.actual <= yo.fin:
+            lanzar FinDeIteración()
+        valor = yo.actual
+        yo.actual -= 1
+        retornar valor
+
+
+para n en RangoInverso(10, 0):
+    imprimir(n)

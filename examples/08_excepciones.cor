@@ -1,0 +1,25 @@
+# Manejo de excepciones: división segura y lectura de archivo.
+
+funcion dividir_seguro(a, b):
+    intentar:
+        retornar a / b
+    atrapar ErrorDivisiónPorCero:
+        imprimir(f"No se puede dividir {a} entre cero")
+        retornar nulo
+
+
+imprimir(dividir_seguro(10, 2))
+imprimir(dividir_seguro(10, 0))
+
+
+# Lectura de archivo con cleanup en finalmente
+archivo = nulo
+intentar:
+    archivo = abrir("datos.txt")
+    contenido = archivo.leer()
+    imprimir(contenido)
+atrapar ErrorDeIO como e:
+    imprimir(f"No se pudo leer: {e}")
+finalmente:
+    si archivo no es nulo:
+        archivo.cerrar()

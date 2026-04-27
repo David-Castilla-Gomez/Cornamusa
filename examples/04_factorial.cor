@@ -1,0 +1,15 @@
+# Factorial con validación de entrada.
+
+funcion factorial(n):
+    si n < 0:
+        lanzar ErrorDeValor("factorial requiere un entero no negativo")
+    si n == 0:
+        retornar 1
+    resultado = 1
+    para i en rango(2, n + 1):
+        resultado *= i
+    retornar resultado
+
+
+imprimir(f"5! = {factorial(5)}")
+imprimir(f"10! = {factorial(10)}")

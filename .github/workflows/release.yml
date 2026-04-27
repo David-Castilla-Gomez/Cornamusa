@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+jobs:
+  build:
+    name: Compilar binario para ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+            archive: cornamusa-linux-x86_64.tar.gz
+          - os: windows-latest
+            target: windows-x86_64
+            archive: cornamusa-windows-x86_64.zip
+          - os: macos-latest
+            target: macos-x86_64
+            archive: cornamusa-macos-x86_64.tar.gz
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DCORNAMUSA_BUILD_TESTS=OFF
+
+      - name: Compilar
+        run: cmake --build build --config Release -j
+
+      - name: Empaquetar (Unix)
+        if: matrix.os != 'windows-latest'
+        run: |
+          mkdir -p dist/cornamusa-${{ github.ref_name }}
+          cp build/cornamusa dist/cornamusa-${{ github.ref_name }}/
+          cp README.md LICENSE CHANGELOG.md dist/cornamusa-${{ github.ref_name }}/
+          cp -r examples dist/cornamusa-${{ github.ref_name }}/
+          tar -czf ${{ matrix.archive }} -C dist cornamusa-${{ github.ref_name }}
+
+      - name: Empaquetar (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path dist/cornamusa-${{ github.ref_name }}
+          Copy-Item build/Release/cornamusa.exe dist/cornamusa-${{ github.ref_name }}/
+          Copy-Item README.md, LICENSE, CHANGELOG.md dist/cornamusa-${{ github.ref_name }}/
+          Copy-Item -Recurse examples dist/cornamusa-${{ github.ref_name }}/
+          Compress-Archive -Path dist/cornamusa-${{ github.ref_name }} -DestinationPath ${{ matrix.archive }}
+
+      - name: Subir artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  release:
+    name: Crear GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Descargar artefactos
+        uses: actions/download-artifact@v4
+        with:
+          path: artefactos
+
+      - name: Crear release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: artefactos/**/*
+          generate_release_notes: true
+          body_path: CHANGELOG.md

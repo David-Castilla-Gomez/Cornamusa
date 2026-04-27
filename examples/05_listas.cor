@@ -1,0 +1,20 @@
+# Operaciones básicas con listas: indexación, slicing, métodos.
+
+numeros = [1, 2, 3, 4, 5]
+
+imprimir(f"Original: {numeros}")
+imprimir(f"Primero: {numeros[0]}")
+imprimir(f"Último: {numeros[-1]}")
+imprimir(f"Subrango: {numeros[1:4]}")
+imprimir(f"Longitud: {longitud(numeros)}")
+
+numeros.añadir(6)
+numeros.insertar(0, 0)
+imprimir(f"Tras añadir e insertar: {numeros}")
+
+# Comprensión de lista (estilo Python)
+cuadrados = [x * x para x en numeros si x % 2 == 0]
+imprimir(f"Cuadrados de pares: {cuadrados}")
+
+# Suma con built-in
+imprimir(f"Suma total: {suma(numeros)}")

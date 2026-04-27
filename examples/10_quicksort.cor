@@ -1,0 +1,17 @@
+# Quicksort funcional con comprensiones de lista.
+
+funcion quicksort(lista):
+    si longitud(lista) <= 1:
+        retornar lista
+
+    pivote = lista[0]
+    menores = [x para x en lista[1:] si x < pivote]
+    iguales = [x para x en lista si x == pivote]
+    mayores = [x para x en lista[1:] si x > pivote]
+
+    retornar quicksort(menores) + iguales + quicksort(mayores)
+
+
+datos = [3, 6, 1, 8, 2, 9, 4, 7, 5, 0]
+imprimir(f"Sin ordenar: {datos}")
+imprimir(f"Ordenado:   {quicksort(datos)}")

@@ -1,0 +1,29 @@
+# Clases con herencia y polimorfismo.
+
+clase Animal:
+    funcion __iniciar__(yo, nombre, edad):
+        yo.nombre = nombre
+        yo.edad = edad
+
+    funcion hablar(yo):
+        lanzar ErrorRuntime("método abstracto: implementar en subclase")
+
+    funcion __cadena__(yo):
+        retornar f"{tipo(yo).__nombre__}({yo.nombre}, {yo.edad} años)"
+
+
+clase Perro extiende Animal:
+    funcion hablar(yo):
+        retornar f"{yo.nombre} dice ¡guau!"
+
+
+clase Gato extiende Animal:
+    funcion hablar(yo):
+        retornar f"{yo.nombre} dice ¡miau!"
+
+
+animales = [Perro("Rex", 5), Gato("Misi", 3), Perro("Toby", 2)]
+
+para animal en animales:
+    imprimir(animal)
+    imprimir("  ", animal.hablar())

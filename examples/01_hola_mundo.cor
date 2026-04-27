@@ -1,0 +1,3 @@
+# El programa más simple: imprimir un saludo.
+imprimir("¡Hola, mundo!")
+imprimir("Bienvenido a Cornamusa.")

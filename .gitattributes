@@ -1,0 +1,33 @@
+# Normalización de finales de línea.
+# Por defecto Git auto-detecta texto y lo almacena con LF.
+* text=auto eol=lf
+
+# Texto explícito (siempre LF en repo, conversión local en checkout).
+*.c           text eol=lf
+*.h           text eol=lf
+*.cor         text eol=lf
+*.md          text eol=lf
+*.yml         text eol=lf
+*.yaml        text eol=lf
+*.txt         text eol=lf
+*.cmake       text eol=lf
+CMakeLists.txt text eol=lf
+Makefile      text eol=lf
+
+# Scripts: SIEMPRE LF, incluso en Windows.
+*.sh          text eol=lf
+*.bash        text eol=lf
+
+# Scripts Windows: SIEMPRE CRLF.
+*.bat         text eol=crlf
+*.cmd         text eol=crlf
+*.ps1         text eol=crlf
+
+# Binarios: nunca convertir.
+*.png         binary
+*.jpg         binary
+*.gif         binary
+*.ico         binary
+*.pdf         binary
+*.zip         binary
+*.tar.gz      binary

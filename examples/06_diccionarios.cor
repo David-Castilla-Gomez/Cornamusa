@@ -1,0 +1,14 @@
+# Diccionarios: contar la frecuencia de palabras en un texto.
+
+texto = "el gato come pescado y el perro come carne y el gato duerme"
+palabras = texto.dividir(" ")
+
+frecuencias = {}
+para palabra en palabras:
+    si palabra en frecuencias:
+        frecuencias[palabra] += 1
+    sino:
+        frecuencias[palabra] = 1
+
+para palabra, conteo en frecuencias.elementos():
+    imprimir(f"{palabra}: {conteo}")

@@ -1,0 +1,10 @@
+# FizzBuzz: ejercicio clásico que ejercita condicionales y bucles.
+para i en rango(1, 21):
+    si i % 15 == 0:
+        imprimir("FizzBuzz")
+    sino si i % 3 == 0:
+        imprimir("Fizz")
+    sino si i % 5 == 0:
+        imprimir("Buzz")
+    sino:
+        imprimir(i)
