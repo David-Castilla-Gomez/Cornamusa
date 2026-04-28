@@ -6,7 +6,37 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
-## [0.5.0] — 2026-04-28 — estructuras de datos completas
+### En desarrollo (Fase 6 — Compilador + VM bytecode, objetivo v0.6.0)
+- ✅ Sesión 1: infraestructura `Chunk` + enum `OpCode` + disassembler.
+- ⏳ Sesión 2: compilador para expresiones literales/aritméticas + VM mínima con stack y dispatch loop.
+- ⏳ Sesión 3: globales, comparaciones, `imprimir`, string interning.
+- ⏳ Sesión 4: control de flujo (jumps, loops).
+- ⏳ Sesión 5: funciones top-level, locales, closures con upvalues.
+- ⏳ Sesión 6: colecciones + transición a tagged i63 + flag `--tree-walking` + tests diferenciales + tag v0.6.0.
+
+### Añadido (Fase 6 sesión 1)
+- **`src/chunk.{h,c}`**: estructura `Chunk` con bytecode, pool de constantes y array paralelo de números de línea fuente. Tres arrays paralelos siguiendo clox cap. 14 (renombrado al castellano):
+  - `codigo[]` (uint8_t): instrucciones y operandos inline.
+  - `constantes[]` (Valor): pool referenciado por `OP_CONST` y `OP_CONST_LARGO`. El chunk es DUEÑO de los Valores y los destruye al liberarse.
+  - `lineas[]` (int): un número de línea por byte de código. Sin compresión (suficiente para v0.6; se podrá optimizar a run-length encoding más adelante).
+- **`enum OpCode`** con 32 instrucciones reservadas para toda la fase: literales (`OP_CONST`, `OP_CONST_LARGO` para >256 constantes, `OP_NULO`, `OP_VERDADERO`, `OP_FALSO`), aritmética (`+`, `-`, `*`, `/`, `//`, `%`, `**`, negación), lógica/comparación (`no`, `==`, `!=`, `<`, `<=`, `>`, `>=`), stack (`DESCARTAR`), control de flujo (`SALTAR`, `SALTAR_SI_FALSO`, `BUCLE`), variables (locales y globales), llamadas y retorno. Reservadas ahora para que el orden quede estable; se implementan progresivamente en S2-S5.
+- **API**:
+  - `chunk_iniciar`/`chunk_destruir` (idempotente).
+  - `chunk_emitir_byte` y `chunk_emitir_byte2` con crecimiento ×2 amortizado.
+  - `chunk_agregar_constante` devuelve índice; `chunk_emitir_constante` elige entre `OP_CONST` (1 byte de índice) y `OP_CONST_LARGO` (3 bytes little-endian) automáticamente cuando el pool supera 255 entradas.
+  - `opcode_nombre` para inspección/debug.
+- **`src/debug.{h,c}`**: disassembler estilo clox. Formato:
+  ```
+  == nombre ==
+  0000  123 OP_CONST            7 '42'
+  0002    | OP_RETORNAR
+  ```
+  - Offset (4 dígitos), línea fuente (con `|` cuando coincide con la anterior), nombre del opcode alineado a 20 caracteres, operandos formateados según el tipo de instrucción (constante, byte, u16 con destino calculado para saltos).
+  - `desensamblar_chunk(chunk, nombre, salida)` y `desensamblar_instruccion(chunk, offset, salida)` (devuelve siguiente offset).
+  - Constantes se imprimen con `valor_a_repr` (cadenas con comillas).
+- **Limitación documentada**: este es solo el armazón. Sin compilador ni VM funcional aún — eso llega en S2. La idea de S1 es congelar el formato del chunk antes de añadir muchos consumidores.
+- **`tests/unit/test_chunk_disasm.c`** con 11 tests: chunk vacío + idempotencia destruir, crecimiento de capacidad (100 bytes), `emitir_byte2`, ownership de constantes (entero/decimal/cadena), `emitir_constante` con índice corto y largo (forzando el cambio a `OP_CONST_LARGO` con 256 constantes previas), disassembler simple/aritmético, marca `|` para línea repetida, `opcode_nombre`.
+- **52 tests verde** (19 unit + 33 integración).
 
 Cierre de Fase 5: tree-walking interpreter con todas las colecciones
 básicas. **Último release con tree-walking activo** según decisión
