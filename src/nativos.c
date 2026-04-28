@@ -87,6 +87,9 @@ static Valor nativa_longitud(Evaluador *ev, int n_args, Valor *args,
     if (v->tipo == VAL_LISTA) {
         return valor_entero_de_long((long)v->como.lista->cuenta);
     }
+    if (v->tipo == VAL_DICCIONARIO) {
+        return valor_entero_de_long((long)v->como.dicc->cuenta);
+    }
     if (v->tipo == VAL_RANGO) {
         /* count = max(0, ceil((fin - inicio) / paso)) */
         mp_int diff;
@@ -466,6 +469,60 @@ static Valor nativa_ordenar(Evaluador *ev, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Métodos sobre diccionarios
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * claves(dicc) → lista de claves. El orden depende del layout interno
+ * del hash table — Python 3.7+ garantiza orden de inserción; nosotros
+ * iteramos por slot, lo que NO conserva el orden. Documentado.
+ */
+static Valor nativa_claves(Evaluador *ev, int n_args, Valor *args,
+                            int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: claves() requiere 1 argumento, recibio %d", n_args);
+    }
+    if (args[0].tipo != VAL_DICCIONARIO) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: claves() requiere un diccionario, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Diccionario *d = args[0].como.dicc;
+    Lista *l = lista_nueva(d->cuenta);
+    if (!l) return error_nativa(ev, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < d->capacidad; i++) {
+        if (d->entradas[i].ocupada) {
+            lista_agregar(l, valor_clonar(&d->entradas[i].clave));
+        }
+    }
+    return valor_lista(l);
+}
+
+/* valores(dicc) → lista de valores. Mismo orden indeterminado que claves(). */
+static Valor nativa_valores(Evaluador *ev, int n_args, Valor *args,
+                             int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: valores() requiere 1 argumento, recibio %d", n_args);
+    }
+    if (args[0].tipo != VAL_DICCIONARIO) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: valores() requiere un diccionario, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Diccionario *d = args[0].como.dicc;
+    Lista *l = lista_nueva(d->cuenta);
+    if (!l) return error_nativa(ev, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < d->capacidad; i++) {
+        if (d->entradas[i].ocupada) {
+            lista_agregar(l, valor_clonar(&d->entradas[i].valor));
+        }
+    }
+    return valor_lista(l);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
@@ -482,6 +539,8 @@ void nativos_registrar(Entorno *globales) {
     static const char NOMBRE_INSERTAR[] = "insertar";
     static const char NOMBRE_INVERTIR[] = "invertir";
     static const char NOMBRE_ORDENAR[]  = "ordenar";
+    static const char NOMBRE_CLAVES[]   = "claves";
+    static const char NOMBRE_VALORES[]  = "valores";
 
     entorno_definir(globales, NOMBRE_IMPRIMIR, 8,
         valor_nativa(NOMBRE_IMPRIMIR, nativa_imprimir));
@@ -502,4 +561,8 @@ void nativos_registrar(Entorno *globales) {
         valor_nativa(NOMBRE_INVERTIR, nativa_invertir));
     entorno_definir(globales, NOMBRE_ORDENAR, 7,
         valor_nativa(NOMBRE_ORDENAR, nativa_ordenar));
+    entorno_definir(globales, NOMBRE_CLAVES, 6,
+        valor_nativa(NOMBRE_CLAVES, nativa_claves));
+    entorno_definir(globales, NOMBRE_VALORES, 7,
+        valor_nativa(NOMBRE_VALORES, nativa_valores));
 }

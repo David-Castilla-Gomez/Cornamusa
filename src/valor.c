@@ -283,6 +283,253 @@ Valor valor_lista(Lista *l) {
     return v;
 }
 
+Valor valor_diccionario(Diccionario *d) {
+    Valor v;
+    v.tipo = VAL_DICCIONARIO;
+    v.dueno_cadena = false;
+    v.como.dicc = d;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Diccionario — tabla hash con probing lineal y refcount
+ * ────────────────────────────────────────────────────────────────── */
+
+#include <math.h>
+/* Nota: math.h ya incluido más arriba — duplicado idempotente. */
+
+#define DICC_CAPACIDAD_INICIAL 8
+#define DICC_FACTOR_CARGA_NUM 3
+#define DICC_FACTOR_CARGA_DEN 4   /* 0.75 */
+
+static uint64_t fnv1a_64(const uint8_t *data, size_t len) {
+    uint64_t h = 14695981039346656037ULL;
+    for (size_t i = 0; i < len; i++) {
+        h ^= data[i];
+        h *= 1099511628211ULL;
+    }
+    return h;
+}
+
+/* Convierte un valor numérico (booleano/entero/decimal) a int64 si
+ * cabe sin pérdida. Devuelve true si la conversión es exacta. */
+static bool valor_a_int64_si_cabe(const Valor *v, int64_t *out) {
+    if (v->tipo == VAL_BOOLEANO) { *out = v->como.booleano ? 1 : 0; return true; }
+    if (v->tipo == VAL_ENTERO) {
+        if (mp_count_bits(v->como.entero) > 62) return false;
+        *out = (int64_t)mp_get_i64(v->como.entero);
+        return true;
+    }
+    if (v->tipo == VAL_DECIMAL) {
+        double d = v->como.decimal;
+        /* NaN/Inf: !(d > -inf && d < inf) los excluye sin usar isfinite()
+           (que en algunas glibc tiene un macro float-promoting). */
+        if (!(d > -1e308 && d < 1e308)) return false;
+        if (floor(d) != d) return false;
+        if (d < -9.2e18 || d > 9.2e18) return false;
+        *out = (int64_t)d;
+        return true;
+    }
+    return false;
+}
+
+/*
+ * Hash de un Valor. Garantiza que valores numéricamente iguales
+ * (entero/booleano/decimal con mismo valor matemático) hashean igual,
+ * conservando la invariante `a == b ⇒ hash(a) == hash(b)`.
+ */
+static uint64_t hash_valor(const Valor *v) {
+    /* Camino rápido para numéricos que caben en int64. */
+    int64_t n;
+    if (valor_a_int64_si_cabe(v, &n)) {
+        return fnv1a_64((const uint8_t *)&n, sizeof(n));
+    }
+    switch (v->tipo) {
+        case VAL_NULO:
+            return 0xdeadbeefULL;
+        case VAL_ENTERO: {
+            /* Bignum: hashear los dígitos + el signo. */
+            uint64_t h = 14695981039346656037ULL;
+            int used = v->como.entero->used;
+            for (int i = 0; i < used; i++) {
+                mp_digit d = v->como.entero->dp[i];
+                for (size_t j = 0; j < sizeof(d); j++) {
+                    h ^= (uint8_t)(d >> (j * 8));
+                    h *= 1099511628211ULL;
+                }
+            }
+            if (mp_isneg(v->como.entero) == MP_YES) h ^= 0x8000000000000000ULL;
+            return h;
+        }
+        case VAL_DECIMAL: {
+            double d = v->como.decimal;
+            uint64_t bits;
+            memcpy(&bits, &d, sizeof(bits));
+            return bits;
+        }
+        case VAL_CADENA:
+            return fnv1a_64((const uint8_t *)v->como.cadena.texto,
+                            (size_t)v->como.cadena.longitud);
+        case VAL_FUNCION:
+            return fnv1a_64((const uint8_t *)&v->como.funcion.def,
+                            sizeof(v->como.funcion.def));
+        case VAL_NATIVA:
+            return fnv1a_64((const uint8_t *)&v->como.nativa.fn,
+                            sizeof(v->como.nativa.fn));
+        default:
+            return 0;  /* unhashable; el llamador debe rechazar antes */
+    }
+}
+
+bool valor_es_hashable(const Valor *v) {
+    if (v == NULL) return false;
+    switch (v->tipo) {
+        case VAL_LISTA:
+        case VAL_DICCIONARIO:
+        case VAL_RANGO:
+            return false;
+        default:
+            return true;
+    }
+}
+
+/*
+ * Busca el slot adecuado para `clave` en `entradas`. Devuelve el slot
+ * que la contiene o el primer slot vacío en la cadena de probing.
+ * Asume tabla NO completamente llena.
+ */
+static EntradaDicc *dicc_buscar_slot(EntradaDicc *entradas, int capacidad,
+                                      const Valor *clave) {
+    uint64_t hash = hash_valor(clave);
+    int indice = (int)(hash & (uint64_t)(capacidad - 1));
+    for (;;) {
+        EntradaDicc *e = &entradas[indice];
+        if (!e->ocupada) return e;
+        if (valor_iguales(&e->clave, clave)) return e;
+        indice = (indice + 1) & (capacidad - 1);
+    }
+}
+
+static bool dicc_redimensionar(Diccionario *d, int nueva_cap) {
+    EntradaDicc *nuevas = (EntradaDicc *)calloc((size_t)nueva_cap,
+        sizeof(EntradaDicc));
+    if (!nuevas) return false;
+    for (int i = 0; i < d->capacidad; i++) {
+        EntradaDicc *src = &d->entradas[i];
+        if (!src->ocupada) continue;
+        EntradaDicc *dst = dicc_buscar_slot(nuevas, nueva_cap, &src->clave);
+        *dst = *src;
+    }
+    free(d->entradas);
+    d->entradas = nuevas;
+    d->capacidad = nueva_cap;
+    return true;
+}
+
+Diccionario *dicc_nuevo(void) {
+    Diccionario *d = (Diccionario *)malloc(sizeof(Diccionario));
+    if (!d) return NULL;
+    d->entradas = (EntradaDicc *)calloc(DICC_CAPACIDAD_INICIAL,
+        sizeof(EntradaDicc));
+    if (!d->entradas) { free(d); return NULL; }
+    d->cuenta = 0;
+    d->capacidad = DICC_CAPACIDAD_INICIAL;
+    d->refcount = 1;
+    return d;
+}
+
+void dicc_retener(Diccionario *d) {
+    if (d) d->refcount++;
+}
+
+void dicc_liberar(Diccionario *d) {
+    if (!d) return;
+    d->refcount--;
+    if (d->refcount > 0) return;
+    for (int i = 0; i < d->capacidad; i++) {
+        if (d->entradas[i].ocupada) {
+            valor_destruir(&d->entradas[i].clave);
+            valor_destruir(&d->entradas[i].valor);
+        }
+    }
+    free(d->entradas);
+    free(d);
+}
+
+bool dicc_asignar(Diccionario *d, Valor clave, Valor valor) {
+    if (!d || !valor_es_hashable(&clave)) {
+        valor_destruir(&clave); valor_destruir(&valor);
+        return false;
+    }
+    if ((d->cuenta + 1) * DICC_FACTOR_CARGA_DEN
+        > d->capacidad * DICC_FACTOR_CARGA_NUM) {
+        if (!dicc_redimensionar(d, d->capacidad * 2)) {
+            valor_destruir(&clave); valor_destruir(&valor);
+            return false;
+        }
+    }
+    EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, &clave);
+    if (slot->ocupada) {
+        valor_destruir(&slot->clave);
+        valor_destruir(&slot->valor);
+    } else {
+        slot->ocupada = true;
+        d->cuenta++;
+    }
+    slot->clave = clave;
+    slot->valor = valor;
+    return true;
+}
+
+bool dicc_obtener(const Diccionario *d, const Valor *clave, Valor *out) {
+    if (!d || !valor_es_hashable(clave)) return false;
+    EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, clave);
+    if (!slot->ocupada) return false;
+    *out = valor_clonar(&slot->valor);
+    return true;
+}
+
+bool dicc_contiene(const Diccionario *d, const Valor *clave) {
+    if (!d || !valor_es_hashable(clave)) return false;
+    EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, clave);
+    return slot->ocupada;
+}
+
+bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out) {
+    if (!d || !valor_es_hashable(clave)) return false;
+    EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, clave);
+    if (!slot->ocupada) return false;
+    /* Probing lineal: al borrar, hay que reinsertar la cadena de
+       claves siguientes para mantener la invariante. Implementación
+       sencilla: marcar tombstone con clave nulo + ocupada=false +
+       reinsertar. Hacemos directamente el rehashing del cluster. */
+    valor_destruir(&slot->clave);
+    *out = slot->valor;
+    slot->ocupada = false;
+    slot->clave = valor_nulo();
+    slot->valor = valor_nulo();
+    d->cuenta--;
+
+    /* Reinsertar todos los slots hasta el siguiente vacío. */
+    int i = (int)(slot - d->entradas);
+    int j = (i + 1) & (d->capacidad - 1);
+    while (d->entradas[j].ocupada) {
+        EntradaDicc copia = d->entradas[j];
+        d->entradas[j].ocupada = false;
+        d->entradas[j].clave = valor_nulo();
+        d->entradas[j].valor = valor_nulo();
+        d->cuenta--;
+        if (!dicc_asignar(d, copia.clave, copia.valor)) {
+            /* Fallo grave: la tabla queda en estado inconsistente.
+               En la práctica no ocurre porque el factor de carga
+               garantiza que hay slots libres. */
+            return true;
+        }
+        j = (j + 1) & (d->capacidad - 1);
+    }
+    return true;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
@@ -323,6 +570,10 @@ void valor_destruir(Valor *v) {
         case VAL_LISTA:
             lista_liberar(v->como.lista);
             v->como.lista = NULL;
+            break;
+        case VAL_DICCIONARIO:
+            dicc_liberar(v->como.dicc);
+            v->como.dicc = NULL;
             break;
         default:
             break;
@@ -395,6 +646,9 @@ Valor valor_clonar(const Valor *v) {
             lista_retener(v->como.lista);
             return valor_lista(v->como.lista);
         }
+        case VAL_DICCIONARIO:
+            dicc_retener(v->como.dicc);
+            return valor_diccionario(v->como.dicc);
     }
     return valor_nulo();
 }
@@ -519,6 +773,35 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             n = escritos < capacidad ? escritos : capacidad - 1;
             break;
         }
+        case VAL_DICCIONARIO: {
+            int escritos = snprintf(buffer, (size_t)capacidad, "{");
+            if (escritos < 0 || escritos >= capacidad) { n = capacidad - 1; break; }
+            const Diccionario *d = v->como.dicc;
+            int impreso = 0;
+            for (int i = 0; i < d->capacidad; i++) {
+                const EntradaDicc *e = &d->entradas[i];
+                if (!e->ocupada) continue;
+                if (escritos + 4 >= capacidad) break;
+                if (impreso > 0) {
+                    buffer[escritos++] = ',';
+                    buffer[escritos++] = ' ';
+                }
+                int restante = capacidad - escritos;
+                int wk = valor_a_repr(&e->clave, buffer + escritos, restante);
+                escritos += wk;
+                if (escritos + 3 >= capacidad) break;
+                buffer[escritos++] = ':';
+                buffer[escritos++] = ' ';
+                restante = capacidad - escritos;
+                int wv = valor_a_repr(&e->valor, buffer + escritos, restante);
+                escritos += wv;
+                impreso++;
+            }
+            if (escritos < capacidad - 1) buffer[escritos++] = '}';
+            buffer[escritos < capacidad ? escritos : capacidad - 1] = '\0';
+            n = escritos < capacidad ? escritos : capacidad - 1;
+            break;
+        }
     }
 
     if (n < 0) n = 0;
@@ -539,6 +822,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_NATIVA:    return "funcion";  /* mismas semánticas externas */
         case VAL_RANGO:     return "rango";
         case VAL_LISTA:     return "lista";
+        case VAL_DICCIONARIO: return "diccionario";
     }
     return "desconocido";
 }
@@ -581,6 +865,8 @@ bool valor_es_verdadero(const Valor *v) {
         }
         case VAL_LISTA:
             return v->como.lista && v->como.lista->cuenta > 0;
+        case VAL_DICCIONARIO:
+            return v->como.dicc && v->como.dicc->cuenta > 0;
     }
     return false;
 }
@@ -651,6 +937,22 @@ bool valor_iguales(const Valor *a, const Valor *b) {
                 if (!valor_iguales(&la->elementos[i], &lb->elementos[i])) {
                     return false;
                 }
+            }
+            return true;
+        }
+        case VAL_DICCIONARIO: {
+            const Diccionario *da = a->como.dicc;
+            const Diccionario *db = b->como.dicc;
+            if (da == db) return true;
+            if (da->cuenta != db->cuenta) return false;
+            for (int i = 0; i < da->capacidad; i++) {
+                const EntradaDicc *e = &da->entradas[i];
+                if (!e->ocupada) continue;
+                Valor otro;
+                if (!dicc_obtener(db, &e->clave, &otro)) return false;
+                bool igual = valor_iguales(&e->valor, &otro);
+                valor_destruir(&otro);
+                if (!igual) return false;
             }
             return true;
         }

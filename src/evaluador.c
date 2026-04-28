@@ -498,6 +498,11 @@ static Valor evaluar_en(Evaluador *ev, const Valor *a, const Valor *b,
         }
         return valor_booleano(false);
     }
+    /* `clave en diccionario`: búsqueda por hash O(1) amortizado. */
+    if (b->tipo == VAL_DICCIONARIO) {
+        if (!valor_es_hashable(a)) return valor_booleano(false);
+        return valor_booleano(dicc_contiene(b->como.dicc, a));
+    }
     return error_en(ev, e,
         "ErrorDeTipo: el operador 'en' no soporta '%s' a la derecha",
         valor_nombre_tipo(b));
@@ -514,6 +519,7 @@ static Valor eval_llamada(Evaluador *ev, const Expr *e);
 static Valor eval_lista(Evaluador *ev, const Expr *e);
 static Valor eval_indice(Evaluador *ev, const Expr *e);
 static Valor eval_rebanada(Evaluador *ev, const Expr *e);
+static Valor eval_diccionario(Evaluador *ev, const Expr *e);
 
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
     if (ev->error.tuvo_error) return valor_nulo();
@@ -598,14 +604,14 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
         case EXPR_UNARIO:   return eval_unario(ev, e);
         case EXPR_LOGICA:   return eval_logica(ev, e);
 
-        case EXPR_LLAMADA:  return eval_llamada(ev, e);
-        case EXPR_LISTA:    return eval_lista(ev, e);
-        case EXPR_INDICE:   return eval_indice(ev, e);
-        case EXPR_REBANADA: return eval_rebanada(ev, e);
+        case EXPR_LLAMADA:     return eval_llamada(ev, e);
+        case EXPR_LISTA:       return eval_lista(ev, e);
+        case EXPR_INDICE:      return eval_indice(ev, e);
+        case EXPR_REBANADA:    return eval_rebanada(ev, e);
+        case EXPR_DICCIONARIO: return eval_diccionario(ev, e);
 
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
-        case EXPR_DICCIONARIO:
         case EXPR_CONJUNTO:
         case EXPR_TUPLA:
             return error_en(ev, e,
@@ -1069,24 +1075,40 @@ static void asignar_indice(Evaluador *ev, const Sent *s, Expr *destino,
         return;
     }
 
-    if (obj.tipo != VAL_LISTA) {
-        sent_set_error(ev, s,
-            "ErrorDeTipo: '%s' no soporta asignacion por indice",
-            valor_nombre_tipo(&obj));
-        valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
+    if (obj.tipo == VAL_LISTA) {
+        Lista *l = obj.como.lista;
+        long i;
+        if (!indice_normalizar(&idx, l->cuenta, &i)) {
+            sent_set_error(ev, s,
+                "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
+            valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
+            return;
+        }
+        lista_asignar(l, (int)i, nuevo);
+        valor_destruir(&obj); valor_destruir(&idx);
         return;
     }
-    Lista *l = obj.como.lista;
-    long i;
-    if (!indice_normalizar(&idx, l->cuenta, &i)) {
-        sent_set_error(ev, s,
-            "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
-        valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
+
+    if (obj.tipo == VAL_DICCIONARIO) {
+        if (!valor_es_hashable(&idx)) {
+            sent_set_error(ev, s,
+                "ErrorDeTipo: '%s' no se puede usar como clave de diccionario",
+                valor_nombre_tipo(&idx));
+            valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
+            return;
+        }
+        if (!dicc_asignar(obj.como.dicc, idx, nuevo)) {
+            sent_set_error(ev, s, "memoria insuficiente al asignar al diccionario");
+        }
+        /* `idx` y `nuevo` transferidos a la entrada (o destruidos en error). */
+        valor_destruir(&obj);
         return;
     }
-    /* `lista_asignar` destruye el valor previo y toma posesión del nuevo. */
-    lista_asignar(l, (int)i, nuevo);
-    valor_destruir(&obj); valor_destruir(&idx);
+
+    sent_set_error(ev, s,
+        "ErrorDeTipo: '%s' no soporta asignacion por indice",
+        valor_nombre_tipo(&obj));
+    valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
 }
 
 /*
@@ -1164,34 +1186,64 @@ static void ejec_asignar_aug(Evaluador *ev, const Sent *s) {
             valor_destruir(&obj); valor_destruir(&idx); return;
         }
 
-        if (obj.tipo != VAL_LISTA) {
-            sent_set_error(ev, s,
-                "ErrorDeTipo: '%s' no soporta asignacion aumentada por indice",
-                valor_nombre_tipo(&obj));
-            valor_destruir(&obj); valor_destruir(&idx); return;
-        }
-        Lista *l = obj.como.lista;
-        long i;
-        if (!indice_normalizar(&idx, l->cuenta, &i)) {
-            sent_set_error(ev, s,
-                "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
-            valor_destruir(&obj); valor_destruir(&idx); return;
+        if (obj.tipo == VAL_LISTA) {
+            Lista *l = obj.como.lista;
+            long i;
+            if (!indice_normalizar(&idx, l->cuenta, &i)) {
+                sent_set_error(ev, s,
+                    "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
+                valor_destruir(&obj); valor_destruir(&idx); return;
+            }
+            Valor actual = valor_clonar(&l->elementos[i]);
+            Valor incremento = evaluador_evaluar_expr(ev, s->como.asignar_aug.valor);
+            if (ev->error.tuvo_error) {
+                valor_destruir(&actual); valor_destruir(&incremento);
+                valor_destruir(&obj); valor_destruir(&idx); return;
+            }
+            Valor resultado = aplicar_binario(ev, op, actual, incremento, destino);
+            if (ev->error.tuvo_error) {
+                valor_destruir(&resultado);
+                valor_destruir(&obj); valor_destruir(&idx); return;
+            }
+            lista_asignar(l, (int)i, resultado);
+            valor_destruir(&obj); valor_destruir(&idx);
+            return;
         }
 
-        Valor actual = valor_clonar(&l->elementos[i]);
-        Valor incremento = evaluador_evaluar_expr(ev, s->como.asignar_aug.valor);
-        if (ev->error.tuvo_error) {
-            valor_destruir(&actual); valor_destruir(&incremento);
+        if (obj.tipo == VAL_DICCIONARIO) {
+            if (!valor_es_hashable(&idx)) {
+                sent_set_error(ev, s,
+                    "ErrorDeTipo: '%s' no es hashable", valor_nombre_tipo(&idx));
+                valor_destruir(&obj); valor_destruir(&idx); return;
+            }
+            Valor actual;
+            if (!dicc_obtener(obj.como.dicc, &idx, &actual)) {
+                char buf[128];
+                valor_a_repr(&idx, buf, sizeof(buf));
+                sent_set_error(ev, s, "ErrorDeClave: %s", buf);
+                valor_destruir(&obj); valor_destruir(&idx); return;
+            }
+            Valor incremento = evaluador_evaluar_expr(ev, s->como.asignar_aug.valor);
+            if (ev->error.tuvo_error) {
+                valor_destruir(&actual); valor_destruir(&incremento);
+                valor_destruir(&obj); valor_destruir(&idx); return;
+            }
+            Valor resultado = aplicar_binario(ev, op, actual, incremento, destino);
+            if (ev->error.tuvo_error) {
+                valor_destruir(&resultado);
+                valor_destruir(&obj); valor_destruir(&idx); return;
+            }
+            /* Asignar reusa la clave clonada — necesitamos clonarla
+               porque idx aún la posee y la destruiremos al final. */
+            Valor clave_copia = valor_clonar(&idx);
+            dicc_asignar(obj.como.dicc, clave_copia, resultado);
             valor_destruir(&obj); valor_destruir(&idx);
             return;
         }
-        Valor resultado = aplicar_binario(ev, op, actual, incremento, destino);
-        if (ev->error.tuvo_error) {
-            valor_destruir(&resultado);
-            valor_destruir(&obj); valor_destruir(&idx);
-            return;
-        }
-        lista_asignar(l, (int)i, resultado);
+
+        sent_set_error(ev, s,
+            "ErrorDeTipo: '%s' no soporta asignacion aumentada por indice",
+            valor_nombre_tipo(&obj));
         valor_destruir(&obj); valor_destruir(&idx);
         return;
     }
@@ -1273,11 +1325,42 @@ static void ejec_para(Evaluador *ev, const Sent *s) {
     if (ev->error.tuvo_error) { valor_destruir(&iter); return; }
 
     if (iter.tipo != VAL_CADENA && iter.tipo != VAL_RANGO
-        && iter.tipo != VAL_LISTA) {
+        && iter.tipo != VAL_LISTA && iter.tipo != VAL_DICCIONARIO) {
         sent_set_error(ev, s,
-            "ErrorDeTipo: 'para' no soporta iterar sobre '%s' en v0.5 (solo cadenas, rangos y listas)",
+            "ErrorDeTipo: 'para' no soporta iterar sobre '%s' en v0.5",
             valor_nombre_tipo(&iter));
         valor_destruir(&iter);
+        return;
+    }
+
+    /* Rama: iteración sobre diccionario — produce las claves (Python). */
+    if (iter.tipo == VAL_DICCIONARIO) {
+        Diccionario *d = iter.como.dicc;
+        bool rompio_d = false;
+        for (int i = 0; i < d->capacidad; i++) {
+            if (!d->entradas[i].ocupada) continue;
+            Valor v = valor_clonar(&d->entradas[i].clave);
+            if (!entorno_definir(ev->entorno_actual,
+                                  objetivo->como.ident.nombre,
+                                  objetivo->como.ident.longitud, v)) {
+                sent_set_error(ev, s, "memoria insuficiente en 'para'");
+                break;
+            }
+            evaluador_ejecutar_sent(ev, s->como.para.cuerpo);
+            if (ev->error.tuvo_error) break;
+            if (ev->control == EJEC_ROMPER) {
+                ev->control = EJEC_NORMAL; rompio_d = true; break;
+            }
+            if (ev->control == EJEC_CONTINUAR) ev->control = EJEC_NORMAL;
+            if (ev->control == EJEC_RETORNAR) {
+                valor_destruir(&iter);
+                return;
+            }
+        }
+        valor_destruir(&iter);
+        if (!rompio_d && !ev->error.tuvo_error && s->como.para.sino != NULL) {
+            evaluador_ejecutar_sent(ev, s->como.para.sino);
+        }
         return;
     }
 
@@ -1723,6 +1806,27 @@ static Valor eval_indice(Evaluador *ev, const Expr *e) {
         return resultado;
     }
 
+    if (obj.tipo == VAL_DICCIONARIO) {
+        if (!valor_es_hashable(&idx)) {
+            Valor err = error_en(ev, e,
+                "ErrorDeTipo: '%s' no se puede usar como clave de diccionario",
+                valor_nombre_tipo(&idx));
+            valor_destruir(&obj); valor_destruir(&idx);
+            return err;
+        }
+        Valor resultado;
+        if (!dicc_obtener(obj.como.dicc, &idx, &resultado)) {
+            char buf[128];
+            valor_a_repr(&idx, buf, sizeof(buf));
+            Valor err = error_en(ev, e,
+                "ErrorDeClave: %s", buf);
+            valor_destruir(&obj); valor_destruir(&idx);
+            return err;
+        }
+        valor_destruir(&obj); valor_destruir(&idx);
+        return resultado;
+    }
+
     Valor err = error_en(ev, e,
         "ErrorDeTipo: '%s' no es indexable en v0.5",
         valor_nombre_tipo(&obj));
@@ -1857,4 +1961,38 @@ static Valor eval_rebanada(Evaluador *ev, const Expr *e) {
     }
     valor_destruir(&obj);
     return valor_lista(resultado);
+}
+
+static Valor eval_diccionario(Evaluador *ev, const Expr *e) {
+    Diccionario *d = dicc_nuevo();
+    if (!d) return error_en(ev, e, "memoria insuficiente");
+
+    int n = e->como.diccionario.n_pares;
+    for (int i = 0; i < n; i++) {
+        Valor k = evaluador_evaluar_expr(ev, e->como.diccionario.claves[i]);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&k);
+            dicc_liberar(d);
+            return valor_nulo();
+        }
+        if (!valor_es_hashable(&k)) {
+            Valor err = error_en(ev, e,
+                "ErrorDeTipo: '%s' no se puede usar como clave de diccionario",
+                valor_nombre_tipo(&k));
+            valor_destruir(&k);
+            dicc_liberar(d);
+            return err;
+        }
+        Valor v = evaluador_evaluar_expr(ev, e->como.diccionario.valores[i]);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&k); valor_destruir(&v);
+            dicc_liberar(d);
+            return valor_nulo();
+        }
+        if (!dicc_asignar(d, k, v)) {
+            dicc_liberar(d);
+            return error_en(ev, e, "memoria insuficiente al construir diccionario");
+        }
+    }
+    return valor_diccionario(d);
 }

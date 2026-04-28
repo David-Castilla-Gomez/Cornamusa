@@ -47,11 +47,13 @@ typedef enum {
     VAL_NATIVA,        /* función nativa (built-in en C) */
     VAL_RANGO,         /* iterable rango(inicio, fin, paso) */
     VAL_LISTA,         /* array dinámico de Valor con refcount */
+    VAL_DICCIONARIO,   /* tabla hash de Valor → Valor con refcount */
 } TipoValor;
 
-/* Forward decl de Lista para usarla como puntero dentro del Valor.
-   La struct completa se define después del typedef de Valor. */
+/* Forward decls de tipos coleccion. La definición completa va después
+   del typedef de Valor. */
 typedef struct Lista Lista;
+typedef struct Diccionario Diccionario;
 
 /*
  * Firma de una función nativa (puntero a función C). Definida con
@@ -116,6 +118,7 @@ typedef struct Valor {
             mp_int *paso;
         } rango;
         Lista *lista;       /* refcount; ver Lista más abajo */
+        Diccionario *dicc;  /* refcount; ver Diccionario más abajo */
     } como;
 } Valor;
 
@@ -154,6 +157,53 @@ Valor *lista_obtener_ref(Lista *l, int indice);
 /* Reemplaza el elemento en `indice`, destruyendo el anterior y tomando
    posesión del nuevo. Devuelve false si índice fuera de rango. */
 bool lista_asignar(Lista *l, int indice, Valor v);
+
+/*
+ * Diccionario: mapa Valor → Valor implementado como tabla hash con
+ * probing lineal (estilo clox cap. 20). Capacidad potencia de 2,
+ * factor de carga 0.75. Comparte la misma estrategia de refcount
+ * manual que Lista (ver doc arriba).
+ *
+ * Solo tipos hashables como clave: nulo, booleano, entero, decimal,
+ * cadena, función. NO admite lista/diccionario/conjunto como clave.
+ * Si `a == b` entonces `hash(a) == hash(b)` para que `dicc[1.0]` y
+ * `dicc[1]` accedan al mismo slot.
+ */
+typedef struct EntradaDicc {
+    Valor clave;
+    Valor valor;
+    bool ocupada;
+} EntradaDicc;
+
+struct Diccionario {
+    EntradaDicc *entradas;
+    int cuenta;
+    int capacidad;
+    int refcount;
+};
+
+Diccionario *dicc_nuevo(void);
+void dicc_retener(Diccionario *d);
+void dicc_liberar(Diccionario *d);
+
+/* Comprueba si un Valor puede usarse como clave. Listas/dicc/conjunto
+   no son hashables. */
+bool valor_es_hashable(const Valor *v);
+
+/* Inserta o actualiza. Toma posesión de `clave` y `valor`. Devuelve
+   true si OK; false si OOM o clave no hashable. */
+bool dicc_asignar(Diccionario *d, Valor clave, Valor valor);
+
+/* Busca por clave. Si existe, copia un clon del valor en `*out` y
+   devuelve true. Si no, deja `*out` sin tocar y devuelve false. */
+bool dicc_obtener(const Diccionario *d, const Valor *clave, Valor *out);
+
+/* Devuelve true si la clave está presente. */
+bool dicc_contiene(const Diccionario *d, const Valor *clave);
+
+/* Elimina la entrada y devuelve el valor en `*out` (con ownership).
+   Devuelve false si la clave no estaba. */
+bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out);
 
 /* ──────────────────────────────────────────────────────────────────
  * Constructores
@@ -224,6 +274,11 @@ Valor valor_rango_de_mp(mp_int *inicio, mp_int *fin, mp_int *paso);
  * primero.
  */
 Valor valor_lista(Lista *l);
+
+/*
+ * Construye un VAL_DICCIONARIO tomando posesión del refcount.
+ */
+Valor valor_diccionario(Diccionario *d);
 
 /*
  * Variante "repr" de la conversión a cadena: añade comillas a las

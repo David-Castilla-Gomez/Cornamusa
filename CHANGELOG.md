@@ -9,7 +9,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 ### En desarrollo (Fase 5 — Estructuras de datos, objetivo v0.5.0)
 - ✅ Sesión 1: tipo `Lista` con refcount + literal `[a, b, c]` + indexación + operadores `+`/`*`/`en`/`==` + iteración `para x en lista` + integración con `longitud()` y `tipo()`.
 - ✅ Sesión 2: mutación `lista[i] = v`, slicing `lista[a:b:c]`, métodos via built-ins (agregar, quitar, insertar, invertir, ordenar).
-- ⏳ Sesión 3: tipo `Diccionario` con tabla hash + literal `{k: v}` + acceso `dicc[k]` + iteración.
+- ✅ Sesión 3: tipo `Diccionario` con tabla hash + literal `{k: v}` + acceso/asignación `dicc[k]` + iteración + built-ins `claves`/`valores`.
 - ⏳ Sesión 4: tipo `Conjunto` (`{1, 2, 3}`) y `Tupla` `(a, b)` inmutable. Distinción tupla vs grupo.
 - ⏳ Sesión 5: ejemplos jugables + tag v0.5.0 (último release del tree-walking activo; desde v0.6 motor bytecode).
 
@@ -49,6 +49,29 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
   - **`ordenar(lista)`**: ordena in-place con `qsort` libc + comparador propio. Numéricos (entero/decimal/booleano) por valor; cadenas lexicográfico. Tipos mixtos no comparables → error explícito.
 - **`tests/unit/test_runtime_listas_mut.c`** con 11 grupos: mutación simple/aug, referencia compartida en mutación, slicing básico (omisiones, negativos, clamping), slicing con paso (positivo/negativo, paso 0 → error), `agregar`, `quitar` (con/sin índice, vacía), `insertar` (con clamping), `invertir`, `ordenar` (numérico/cadenas/mixto/incomparable), y un quicksort recursivo end-to-end como prueba de integración.
 - **43 tests verde** (16 unit + 27 integración).
+
+### Añadido (Fase 5 sesión 3)
+- **`VAL_DICCIONARIO`** y **`struct Diccionario`** en `valor.{h,c}`: tabla hash con probing lineal, capacidad potencia de 2, factor de carga 0.75, refcount manual (mismo patrón que `Lista`). Funciones: `dicc_nuevo`, `dicc_retener`, `dicc_liberar`, `dicc_asignar` (toma posesión de clave/valor), `dicc_obtener` (devuelve clon), `dicc_contiene`, `dicc_quitar`.
+- **Hash genérico de Valores** que cumple la invariante `a == b ⇒ hash(a) == hash(b)`:
+  - Booleanos, enteros (que quepan en `int64`) y decimales con valor entero exacto comparten el camino rápido `hash_int64`. Por eso `dicc[1]`, `dicc[1.0]` y `dicc[verdadero]` acceden al mismo slot.
+  - Bignums grandes hashean por dígitos + signo. Decimales no enteros por bit pattern del double. Cadenas con FNV-1a 64-bit. Funciones por puntero.
+  - `valor_es_hashable` rechaza `lista`, `diccionario`, `rango` como claves.
+- **`EXPR_DICCIONARIO` literal** `{clave: valor, ...}`. Diccionario vacío `{}` (resuelto por el parser distinguiéndolo del conjunto).
+- **`dicc[clave]` (lectura)**: extiende `EXPR_INDICE`. Clave inexistente produce `ErrorDeClave: <repr>` con la representación del valor que faltaba.
+- **`dicc[clave] = valor` (asignación e inserción)**: extiende `SENT_ASIGNAR` con destino `EXPR_INDICE` para diccionarios. Crea la entrada o sobrescribe el valor existente.
+- **`dicc[clave] op= valor` (asignación aumentada)**: extiende `SENT_ASIGNAR_AUG` análogamente. La clave debe existir o se reporta `ErrorDeClave`.
+- **`clave en dicc` y `clave no en dicc`**: extiende `evaluar_en` con búsqueda hash O(1) amortizado.
+- **`para clave en dicc`**: itera las claves del diccionario en orden de slot (no inserción — limitación documentada). Soporta `romper`/`continuar`/cláusula `sino` igual que las otras iteraciones.
+- **Igualdad estructural** dos diccionarios son iguales si tienen las mismas claves con valores iguales (orden irrelevante).
+- **Built-ins nuevos**:
+  - **`claves(dicc)`**: devuelve una lista con las claves.
+  - **`valores(dicc)`**: devuelve una lista con los valores.
+  - `longitud(dicc)` extendido para devolver `cuenta`.
+  - `tipo(dicc)` devuelve `"diccionario"`.
+- **Pretty-printer** produce `{"clave": valor, ...}` usando `valor_a_repr` en claves y valores.
+- **Limitación documentada**: el orden de iteración (y de `claves`/`valores`) sigue el layout interno del hash table — NO el orden de inserción como Python 3.7+. Aceptable hasta v1.0; se puede cambiar a hash-table ordenada en una versión futura.
+- **`tests/unit/test_runtime_diccionarios.c`** con 12 grupos: literal y acceso, asignación/aumentada, membership, iteración, `longitud`/`tipo`, `claves`/`valores`, igualdad estructural (orden distinto), hash unificado entero/decimal/booleano (`dicc[1]` y `dicc[1.0]` mismo slot), tipos no hashables como clave, referencia compartida (`b = a` y mutar `b` afecta `a`), programa de conteo de caracteres en `"abracadabra"` (resultado: `a` aparece 5 veces), diccionario anidado de personas.
+- **44 tests verde** (17 unit + 27 integración).
 
 ## [0.4.0] — 2026-04-28 — primer release jugable
 
