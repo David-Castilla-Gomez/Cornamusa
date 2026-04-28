@@ -668,14 +668,26 @@ fin intentar
 
 ---
 
-## 9. Cuestiones abiertas (decidir antes de Fase 4)
+## 9. Cuestiones abiertas
 
-1. **Bignum vs i64 en Fase 4.** Empezar con i64 y migrar a bignum en v1.0; documentar overflow como warning.
-2. **Memoization de `from-import`.** Caché de módulos por ruta canónica.
-3. **String interpolation `f""`.** ¿Permitir expresiones complejas o solo `{ident}`? Decisión: expresiones completas, igual que Python.
-4. **Tipos numéricos exactos.** ¿`fracción` en stdlib? Aplazado a v1.1.
-5. **Coincidir (pattern matching).** Reservada como keyword pero no implementada hasta v1.1+.
-6. **Async/await.** Reservadas pero no implementadas hasta v2.0.
+Las decisiones cerradas viven en `decisiones/` como ADRs. Estado de los bloqueadores grandes ([REPASO_CRITICO.md](REPASO_CRITICO.md)):
+
+| ID | Tema | Estado |
+|---|---|---|
+| B1 | Modelo de bloques | ✅ `decisiones/B1-modelo-de-bloques.md` |
+| B2 | Tree-walking vs bytecode | ✅ `decisiones/B2-tree-walking-vs-bytecode.md` |
+| B3 | Representación numérica (bignum/i64) | ⏳ Pendiente |
+| B4 | Tildes y Unicode | ✅ `decisiones/B4-tildes-y-unicode.md` |
+| B5+B6 | `yo` + dunders | ✅ `decisiones/B5-B6-yo-y-dunders.md` |
+| B7 | Formato numérico | ✅ `decisiones/B7-formato-numerico.md` |
+
+**Pendientes de menor calado** (a resolver durante implementación):
+
+1. **Memoization de `from-import`.** Caché de módulos por ruta canónica. Decisión en Fase 9.
+2. **String interpolation `f""`.** Permitir expresiones completas como Python (no solo `{ident}`). Confirmar en Fase 2.
+3. **Tipos numéricos exactos.** ¿`fracción` en stdlib? Aplazado a v1.1.
+4. **Coincidir (pattern matching).** Reservada como keyword pero no implementada hasta v1.1+.
+5. **Async/await.** Reservadas pero no implementadas hasta v2.0.
 
 ---
 

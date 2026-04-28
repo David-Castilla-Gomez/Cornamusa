@@ -39,19 +39,21 @@ fin para
 
 Hoja de ruta resumida (12 fases hasta v1.0):
 
-| Versión | Hito |
-|---|---|
-| v0.1 | ✅ Andamiaje + CI |
-| v0.2 | Lexer UTF-8 |
-| v0.3 | Parser + AST |
-| v0.4 | Intérprete tree-walking — **primer release jugable** |
-| v0.5 | Listas y diccionarios |
-| v0.6 | Compilador + VM bytecode |
-| v0.7 | GC mark-sweep |
-| v0.8 | Clases y herencia |
-| v0.9 | Excepciones, módulos, stdlib |
-| v0.10 | *Inline caching* especializado |
-| v1.0 | GC generacional + sitio web |
+| Versión | Hito | Features añadidas |
+|---|---|---|
+| v0.1 | ✅ Andamiaje + CI | build system, REPL trivial |
+| v0.2 | Lexer UTF-8 | tokenización con keywords castellanas, NFC |
+| v0.3 | Parser + AST | AST compartido para los dos backends |
+| v0.4 | Intérprete tree-walking — **primer release jugable** | aritmética, control de flujo, funciones top-level |
+| v0.5 | Estructuras de datos | listas, diccionarios — tree-walking se congela aquí |
+| v0.6 | Compilador + VM bytecode | motor de producción + closures |
+| v0.7 | GC mark-sweep | recolección automática |
+| v0.8 | Clases y herencia | OO completo |
+| v0.9 | Excepciones, módulos, stdlib | bibliotecas mínimas |
+| v0.10 | *Inline caching* especializado | optimización tipo PEP 659 |
+| v1.0 | GC generacional + sitio web | producción |
+
+**Arquitectura:** AST compartido entre dos motores. El intérprete tree-walking sirve como primer release jugable (v0.4-v0.5) y como referencia ejecutable congelada para regresión desde v0.6. La VM bytecode es el motor de producción y el destino de todas las optimizaciones. Detalle en [decisiones/B2-tree-walking-vs-bytecode.md](decisiones/B2-tree-walking-vs-bytecode.md).
 
 ## Compilación
 
