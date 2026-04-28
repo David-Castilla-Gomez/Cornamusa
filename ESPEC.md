@@ -134,11 +134,14 @@ decimal   ← entero "." entero (("e"|"E") ("+"|"-")? entero)?
 
 **Formato decimal en código fuente** (decisión [B7](decisiones/B7-formato-numerico.md)): el separador decimal es siempre `.` (universal en programación), independientemente del idioma. El separador de miles es `_` (opcional, posición libre). La convención castellana de coma decimal y punto miles (`3,14`, `1.000.000`) **no se usa en el código** porque la coma colisionaría con el separador de elementos en listas y argumentos.
 
+**Precisión de enteros** (decisión [B3](decisiones/B3-representacion-numerica.md)): los enteros son de **precisión arbitraria**. No hay overflow ni límite por hardware. `2 ** 1000` es un valor entero válido, igual que `factorial(100)`.
+
 ```cornamusa
 pi = 3.14159
 poblacion = 47_500_000
 porcentaje_iva = 0.21
-distancia = 1.496e11        # notación científica
+distancia = 1.496e11                  # notación científica
+gugol = 10 ** 100                     # entero de 101 dígitos, sin overflow
 ```
 
 **Formato castellano en E/S**: el módulo `formato` de la biblioteca estándar (Fase 9) ofrece:
@@ -262,7 +265,7 @@ fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
 
 | Tipo | Descripción | Inmutable |
 |---|---|---|
-| `entero` | Entero de precisión arbitraria (en Fase 4: i64; en v1.0: bignum) | sí |
+| `entero` | Precisión arbitraria desde v0.4 (decisión [B3](decisiones/B3-representacion-numerica.md)). Sin overflow: `factorial(100)` funciona. Implementación: bignum boxed en v0.4-v0.5; tagged i63 + bignum desde v0.6 (fast path 1-3 ciclos, slow path con promoción transparente). | sí |
 | `decimal` | Coma flotante IEEE 754 64-bit | sí |
 | `booleano` | `verdadero` / `falso` | sí |
 | `nulo` | Único valor: `nulo` | sí |
