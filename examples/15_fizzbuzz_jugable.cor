@@ -1,0 +1,18 @@
+# FizzBuzz clasico — tercer programa "jugable" v0.4.
+#
+# Demuestra:
+#   - `para i en rango(a, b)` con built-in rango().
+#   - `si`/`sino si`/`sino` en cascada con condiciones aritmeticas.
+#   - Operadores aritmeticos sobre bignum (modulo).
+
+para i en rango(1, 21):
+    si i % 15 == 0:
+        imprimir("FizzBuzz")
+    sino si i % 3 == 0:
+        imprimir("Fizz")
+    sino si i % 5 == 0:
+        imprimir("Buzz")
+    sino:
+        imprimir(i)
+    fin si
+fin para

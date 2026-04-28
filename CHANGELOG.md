@@ -6,12 +6,28 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
-### En desarrollo (Fase 4 — Evaluador tree-walking, objetivo v0.4.0)
-- ✅ Sesión 1: vendoreo libtommath + tipo `Valor` con bignum boxed + `Entorno` con tabla hash y scope chain.
-- ✅ Sesión 2: evaluador de expresiones (literales, identificadores, aritmética bignum, comparaciones, lógica con cortocircuito, unarios, cadenas, identidad/membership).
-- ✅ Sesión 3: evaluador de sentencias (asignación, `si`/`mientras`/`para`, `romper`/`continuar`, cláusulas `sino` de bucle, iteración UTF-8).
-- ✅ Sesión 4: funciones top-level con recursión + built-ins (`imprimir`, `longitud`, `tipo`, `rango`) + tipo `rango` iterable.
-- ⏳ Sesión 5: REPL ejecutable + integración + tag v0.4.0 (primer release jugable).
+## [0.4.0] — 2026-04-28 — primer release jugable
+
+Cierre de Fase 4 según el plan: tree-walking interpreter completo y
+jugable end-to-end. Decisión [B2](decisiones/B2-tree-walking-vs-bytecode.md):
+este release sirve como referencia ejecutable y se congelará en v0.5
+tras añadir colecciones; desde v0.6 el motor de producción será la VM
+bytecode.
+
+### Añadido (Fase 4 sesión 5)
+- **`cornamusa <archivo.cor>`** ahora ejecuta el programa con el evaluador tree-walking en lugar de solo lexarlo. Errores de runtime se reportan con caret indicators reusando `error_imprimir` (formato MENSAJES.md §2). Exit codes: 0 OK, 64 uso, 65 error de parseo, 70 error de runtime, 74 error de E/S.
+- **`cornamusa --tokens <archivo>`** (anteriormente el modo por defecto) sigue disponible para inspección del lexer.
+- **`cornamusa --ast <archivo>`** sin cambios — vuelca el AST en S-expression.
+- **REPL interactivo funcional**: `cornamusa` sin argumentos abre un prompt `>>> ` y `... ` para continuación. Variables y funciones definidas persisten entre líneas. Heurística de continuación: línea acabada en `:` abre bloque, `fin` lo cierra; al volver a profundidad 0 se ejecuta el buffer acumulado. Una línea vacía con buffer ejecuta y reinicia. `salir` o EOF terminan.
+- **Persistencia REPL**: arena compartida durante toda la sesión + `strdup` de cada bloque ejecutado para que las claves del entorno y los nodos AST de funciones definidas previamente sigan vivos al ejecutar líneas posteriores. Las cadenas duplicadas se filtran deliberadamente — viven hasta el fin del proceso.
+- **Tres ejemplos jugables nuevos**:
+  - [`13_factorial_jugable.cor`](examples/13_factorial_jugable.cor): factorial recursivo con bignum (`100!` = 158 dígitos exactos).
+  - [`14_contar_vocales.cor`](examples/14_contar_vocales.cor): `para letra en cadena` UTF-8 + acumulador + `o` encadenado + `longitud()`.
+  - [`15_fizzbuzz_jugable.cor`](examples/15_fizzbuzz_jugable.cor): FizzBuzz clásico con `rango()`, `si`/`sino si`/`sino`, `%`.
+- **Tests de ejecución end-to-end**: nuevos `run_X` con `PASS_REGULAR_EXPRESSION` para verificar que cada ejemplo jugable produce la salida esperada. Cubren los 4 casos representativos (hola_mundo, factorial, contar_vocales, fizzbuzz).
+- **Tests `lex_X` ahora usan `--tokens`**: la verificación lexicográfica de los 12 ejemplos sigue intacta como paso de regresión, pero independiente del runtime — un ejemplo puede usar features futuras (closures, listas) y aún así pasar `lex_X`.
+- **Versionado**: `CORNAMUSA_VERSION` actualizado a `"0.4.0"` en `common.h` y `CMakeLists.txt`. Smoke test ajustado.
+- **41 tests verde** (14 unit + 27 integración: 12 lex + 8 parse + 4 run + 3 examples nuevos).
 
 ### Añadido (Fase 4 sesión 4)
 - **Tipo `VAL_RANGO`**: nuevo variante en `Valor` con tres `mp_int *` (inicio, fin, paso). Iterable con bignum, ascendente o descendente. `valor_clonar` hace deep copy; `valor_destruir` libera los tres mp_int. `valor_es_verdadero` devuelve `true` si la iteración produciría al menos un elemento. `rango(a, b, paso)` se imprime como `"rango(a, b, paso)"`.

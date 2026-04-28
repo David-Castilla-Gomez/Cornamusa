@@ -1,0 +1,19 @@
+# Factorial recursivo — primer programa "jugable" v0.4.
+#
+# Demuestra:
+#   - Definicion de funcion top-level con recursion.
+#   - Bignum por defecto: factorial(100) cabe sin overflow.
+#   - imprimir() con varios argumentos separados por espacio.
+#   - Built-ins tipo() y longitud() trabajando juntas.
+
+funcion factorial(n):
+    si n == 0:
+        retornar 1
+    fin si
+    retornar n * factorial(n - 1)
+fin funcion
+
+imprimir("5! =", factorial(5))
+imprimir("10! =", factorial(10))
+imprimir("20! =", factorial(20))
+imprimir("100! =", factorial(100))

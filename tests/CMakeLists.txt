@@ -21,15 +21,15 @@ foreach(test_src ${TEST_SOURCES})
 endforeach()
 
 # ───── Tests de integración: lexar los ejemplos en examples/ ─────
-# Cada ejemplo se invoca con `cornamusa <archivo>` y debe terminar con
-# exit code 0 (lo que indica que el lexer no encontró errores). En v0.4
-# se añadirá comparación con golden output cuando el intérprete ejecute.
+# Cada ejemplo se tokeniza con `cornamusa --tokens <archivo>`. Exit
+# code 0 indica que el lexer no encontró errores. Solo verifica el
+# lexer — no requiere que el ejemplo sea ejecutable.
 file(GLOB EJEMPLOS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/examples/*.cor")
 foreach(ejemplo ${EJEMPLOS})
     get_filename_component(nombre_ejemplo ${ejemplo} NAME_WE)
     add_test(
         NAME lex_${nombre_ejemplo}
-        COMMAND $<TARGET_FILE:cornamusa> ${ejemplo}
+        COMMAND $<TARGET_FILE:cornamusa> --tokens ${ejemplo}
     )
     set_tests_properties(lex_${nombre_ejemplo} PROPERTIES
         LABELS "integracion"
@@ -61,3 +61,48 @@ foreach(nombre ${EJEMPLOS_PARSEAN})
         LABELS "integracion"
     )
 endforeach()
+
+# ───── Tests de ejecución end-to-end (Fase 4 v0.4.0) ─────
+# Estos ejemplos ejecutan completamente con el intérprete tree-walking
+# y producen salida verificada con PASS_REGULAR_EXPRESSION. Cubren los
+# casos representativos del runtime jugable: imprimir, recursión, para,
+# si/sino si/sino, rango(), longitud(), aritmética bignum.
+add_test(
+    NAME run_01_hola_mundo
+    COMMAND $<TARGET_FILE:cornamusa>
+            ${CMAKE_SOURCE_DIR}/examples/01_hola_mundo.cor
+)
+set_tests_properties(run_01_hola_mundo PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Bienvenido a Cornamusa"
+)
+
+add_test(
+    NAME run_13_factorial_jugable
+    COMMAND $<TARGET_FILE:cornamusa>
+            ${CMAKE_SOURCE_DIR}/examples/13_factorial_jugable.cor
+)
+set_tests_properties(run_13_factorial_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "100! = 9332621544394415268169923885626670049071596826438162146859296389521759999322991560894146397615651828625369792082722375825118521091686400000000000000000000000"
+)
+
+add_test(
+    NAME run_14_contar_vocales
+    COMMAND $<TARGET_FILE:cornamusa>
+            ${CMAKE_SOURCE_DIR}/examples/14_contar_vocales.cor
+)
+set_tests_properties(run_14_contar_vocales PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "murcielago tiene 5 vocales"
+)
+
+add_test(
+    NAME run_15_fizzbuzz_jugable
+    COMMAND $<TARGET_FILE:cornamusa>
+            ${CMAKE_SOURCE_DIR}/examples/15_fizzbuzz_jugable.cor
+)
+set_tests_properties(run_15_fizzbuzz_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "FizzBuzz"
+)
