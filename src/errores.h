@@ -47,9 +47,40 @@ void error_set_sugerencia(Error *e, const char *texto);
 
 /*
  * Imprime el error en `salida` siguiendo el formato de MENSAJES.md §2.
- * En sesión 1 produce el formato mínimo (sin caret); en sesión 5 se
- * añadirán los indicadores ^^^ con la línea de fuente.
+ *
+ * Si `fuente` es no-NULL, el formato extiende con la línea de código
+ * y caret indicators (`^^^^`) bajo el span del error:
+ *
+ *   ErrorDeSintaxis en programa.cor:5:14
+ *       imprimir(saludaar(nombre))
+ *                ^^^^^^^^
+ *   'saludaar' no está definido.
+ *   sugerencia: ¿quisiste decir 'saludar'?
+ *
+ * Si `fuente` es NULL produce el formato mínimo sin línea de código.
+ *
+ * `longitud_span` es el número de bytes a subrayar a partir de
+ * `columna_inicio`; usar 1 si no hay span explícito.
  */
-void error_imprimir(const Error *e, FILE *salida);
+void error_imprimir(const Error *e, const char *fuente,
+                    int longitud_span, FILE *salida);
+
+/*
+ * Forward declaration del Token del lexer para evitar dependencia
+ * circular. La definición real está en lexer.h.
+ */
+struct Token;
+
+/*
+ * Atajo: imprime un Token TT_ERROR como ErrorDeSintaxis siguiendo el
+ * formato de MENSAJES.md, usando `fuente` para extraer la línea de
+ * código y el span del propio token para los carets.
+ *
+ * Marca el caller como propietario de `archivo` (no se libera).
+ */
+void error_imprimir_token(const struct Token *token,
+                          const char *fuente,
+                          const char *archivo,
+                          FILE *salida);
 
 #endif /* CORNAMUSA_ERRORES_H */

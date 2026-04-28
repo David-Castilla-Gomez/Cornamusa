@@ -19,3 +19,19 @@ foreach(test_src ${TEST_SOURCES})
     target_link_libraries(${test_name} PRIVATE utf8proc)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
+
+# ───── Tests de integración: lexar los ejemplos en examples/ ─────
+# Cada ejemplo se invoca con `cornamusa <archivo>` y debe terminar con
+# exit code 0 (lo que indica que el lexer no encontró errores). En v0.4
+# se añadirá comparación con golden output cuando el intérprete ejecute.
+file(GLOB EJEMPLOS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/examples/*.cor")
+foreach(ejemplo ${EJEMPLOS})
+    get_filename_component(nombre_ejemplo ${ejemplo} NAME_WE)
+    add_test(
+        NAME lex_${nombre_ejemplo}
+        COMMAND $<TARGET_FILE:cornamusa> ${ejemplo}
+    )
+    set_tests_properties(lex_${nombre_ejemplo} PROPERTIES
+        LABELS "integracion"
+    )
+endforeach()

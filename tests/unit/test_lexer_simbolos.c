@@ -217,7 +217,7 @@ static void test_bang_solo_es_error(void) {
     Token t = lexer_siguiente(&l);
     AFIRMAR_TIPO(t, TT_ERROR);
     /* El mensaje debería sugerir != */
-    AFIRMAR(strstr(t.inicio, "!=") != NULL);
+    AFIRMAR(strstr(t.mensaje, "!=") != NULL);
 }
 
 /* ───── 7. EOF idempotente ───── */

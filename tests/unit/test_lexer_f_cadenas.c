@@ -207,27 +207,27 @@ static void test_f_cadena_sin_cerrar(void) {
 static void test_f_cadena_interp_sin_cerrar_eof(void) {
     Token t = primer_token("f\"hola {sin cerrar");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "interpolación") != NULL);
+    AFIRMAR(strstr(t.mensaje, "interpolación") != NULL);
 }
 
 static void test_f_cadena_interp_sin_cerrar_linea(void) {
     /* Interpolación que cruza newline en f-string simple = error. */
     Token t = primer_token("f\"hola {x\ny}\"");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "interpolación") != NULL);
+    AFIRMAR(strstr(t.mensaje, "interpolación") != NULL);
 }
 
 static void test_f_cadena_llave_cierre_desnuda(void) {
     /* '}' fuera de interpolación y sin '}}' = error. */
     Token t = primer_token("f\"hola }\"");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "}") != NULL);
+    AFIRMAR(strstr(t.mensaje, "}") != NULL);
 }
 
 static void test_triple_sin_cerrar(void) {
     Token t = primer_token("\"\"\"abierta sin cerrar");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "triple") != NULL);
+    AFIRMAR(strstr(t.mensaje, "triple") != NULL);
 }
 
 static void test_triple_dos_comillas_finales_no_cierran(void) {

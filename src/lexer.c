@@ -45,21 +45,30 @@ static Token crear_token(const Lexer *l, TipoToken tipo) {
     t.longitud = (int)(l->actual - l->inicio_token);
     t.linea = l->linea;
     t.columna = columna_actual(l);
+    t.mensaje = NULL;
     return t;
 }
 
 /*
  * Token de error léxico. `mensaje` debe ser una cadena estática
- * (literal o gestionada externamente), porque la guardamos por puntero
- * en `inicio` sin copiarla.
+ * (literal o gestionada externamente), guardada por puntero en
+ * t.mensaje sin copiarla.
+ *
+ * `inicio`/`longitud` describen el span del fragmento problemático en
+ * la fuente: desde l->inicio_token (donde empezó el intento de
+ * tokenización) hasta l->actual (donde se detectó el error). Esto
+ * permite que el formateador de errores dibuje caret indicators bajo
+ * el fragmento exacto.
  */
 static Token token_error(const Lexer *l, const char *mensaje) {
     Token t;
     t.tipo = TT_ERROR;
-    t.inicio = mensaje;
-    t.longitud = (int)strlen(mensaje);
+    t.inicio = l->inicio_token;
+    t.longitud = (int)(l->actual - l->inicio_token);
+    if (t.longitud < 1) t.longitud = 1; /* siempre al menos un caret */
     t.linea = l->linea;
     t.columna = columna_actual(l);
+    t.mensaje = mensaje;
     return t;
 }
 

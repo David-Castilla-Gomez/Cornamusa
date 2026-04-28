@@ -85,13 +85,13 @@ static void test_entero_con_underscore_irregular(void) {
 static void test_entero_underscore_consecutivo(void) {
     Token t = primer_token("1__2");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "consecutiv") != NULL);
+    AFIRMAR(strstr(t.mensaje, "consecutiv") != NULL);
 }
 
 static void test_entero_underscore_final(void) {
     Token t = primer_token("12_");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "terminar") != NULL);
+    AFIRMAR(strstr(t.mensaje, "terminar") != NULL);
 }
 
 /* ───── Bases especiales: hexadecimal ───── */
@@ -124,7 +124,7 @@ static void test_hex_underscore_inicial_permitido(void) {
 static void test_hex_vacio_es_error(void) {
     Token t = primer_token("0x");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "hexadecimal") != NULL);
+    AFIRMAR(strstr(t.mensaje, "hexadecimal") != NULL);
 }
 
 /* ───── Octal ───── */
@@ -138,7 +138,7 @@ static void test_octal(void) {
 static void test_octal_vacio_es_error(void) {
     Token t = primer_token("0o");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "octal") != NULL);
+    AFIRMAR(strstr(t.mensaje, "octal") != NULL);
 }
 
 /* ───── Binario ───── */
@@ -157,7 +157,7 @@ static void test_binario_con_underscore(void) {
 static void test_binario_vacio_es_error(void) {
     Token t = primer_token("0b");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "binario") != NULL);
+    AFIRMAR(strstr(t.mensaje, "binario") != NULL);
 }
 
 /* ───── Decimales ───── */
@@ -221,7 +221,7 @@ static void test_cientifica_mayuscula(void) {
 static void test_cientifica_exponente_vacio_es_error(void) {
     Token t = primer_token("1e");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "exponente") != NULL);
+    AFIRMAR(strstr(t.mensaje, "exponente") != NULL);
 }
 
 static void test_cientifica_exponente_solo_signo_es_error(void) {
@@ -281,7 +281,7 @@ static void test_cadena_con_backslash_escapado(void) {
 static void test_escape_invalido_es_error(void) {
     Token t = primer_token("\"\\z\"");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "escape") != NULL);
+    AFIRMAR(strstr(t.mensaje, "escape") != NULL);
 }
 
 /* ───── Cadenas con UTF-8 (bytes opacos) ───── */
@@ -298,13 +298,13 @@ static void test_cadena_con_utf8(void) {
 static void test_cadena_sin_cerrar_eof(void) {
     Token t = primer_token("\"sin cerrar");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "fin de archivo") != NULL);
+    AFIRMAR(strstr(t.mensaje, "fin de archivo") != NULL);
 }
 
 static void test_cadena_con_salto_de_linea_es_error(void) {
     Token t = primer_token("\"sin\ncerrar\"");
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "fin de línea") != NULL);
+    AFIRMAR(strstr(t.mensaje, "fin de línea") != NULL);
 }
 
 /* ───── Secuencias mixtas realistas ───── */

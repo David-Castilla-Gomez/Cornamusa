@@ -117,19 +117,27 @@ typedef enum {
  * Token producido por el lexer.
  *
  * `inicio` apunta al primer byte del lexema dentro del buffer fuente
- * (no se copia). `longitud` es en bytes. Para tokens TT_ERROR, `inicio`
- * apunta al mensaje de error (cadena estática gestionada por el lexer).
+ * (no se copia). `longitud` es en bytes. Para tokens normales, este
+ * par describe el lexema. Para tokens TT_ERROR, describe el span
+ * exacto del fragmento problemático en la fuente, lo que permite
+ * dibujar caret indicators (`^^^`) bajo el código en mensajes de
+ * error pulidos.
  *
- * `linea` es 1-indexed. `columna` es 1-indexed por bytes desde el
- * inicio de la línea (la conversión a columnas por código de carácter
- * para mensajes de error se hará en sesión 5).
+ * `mensaje` es NULL para tokens normales. Para TT_ERROR contiene el
+ * mensaje de error (cadena estática gestionada por el lexer; no se
+ * libera).
+ *
+ * `linea` y `columna` son 1-indexed; `columna` cuenta bytes desde el
+ * inicio de la línea (la conversión a columnas por code-point se hará
+ * cuando sea necesario para presentación).
  */
-typedef struct {
+typedef struct Token {
     TipoToken tipo;
     const char *inicio;
     int longitud;
     int linea;
     int columna;
+    const char *mensaje;     /* NULL salvo en TT_ERROR */
 } Token;
 
 /*

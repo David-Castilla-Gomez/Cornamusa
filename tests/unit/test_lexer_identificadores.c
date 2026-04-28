@@ -256,7 +256,7 @@ static void test_byte_utf8_invalido(void) {
     lexer_iniciar(&l, fuente, "<test>");
     Token t = lexer_siguiente(&l);
     AFIRMAR_TIPO(t, TT_ERROR);
-    AFIRMAR(strstr(t.inicio, "UTF-8") != NULL);
+    AFIRMAR(strstr(t.mensaje, "UTF-8") != NULL);
 }
 
 /* ───── Secuencias realistas ───── */

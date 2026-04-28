@@ -11,7 +11,26 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 2: literales numéricos y cadenas básicas.
 - ✅ Sesión 3: identificadores Unicode + NFC + tabla de keywords.
 - ✅ Sesión 4: f-strings y triple-quoted strings.
-- ⏳ Sesión 5: mensajes de error pulidos siguiendo MENSAJES.md + tests exhaustivos.
+- ✅ Sesión 5: mensajes de error pulidos siguiendo MENSAJES.md + tests exhaustivos.
+
+### Añadido (Fase 2 sesión 5)
+- **Refactor `Token`**: nuevo campo `mensaje` (NULL para tokens normales, contiene el mensaje de error para `TT_ERROR`). El campo `inicio`/`longitud` ahora describe siempre el span en la fuente — para errores, el fragmento problemático que producirá el caret indicator. Esto permite mensajes de error con calidad de Rust/Python 3.10.
+- **`struct Token` con nombre** (en lugar de typedef anónimo) para permitir forward declarations entre módulos.
+- **`error_imprimir_token`** en `errores.{h,c}`: formatea un token de error siguiendo MENSAJES.md §2 con anatomía completa:
+  ```
+  ErrorDeSintaxis en archivo.cor:3:18
+          retornar 1__2
+                   ^^
+  no se permiten guiones bajos consecutivos en literales numéricos
+  ```
+  Carets dibujados a partir de `columna` y `longitud` del token. La línea de fuente se localiza en el buffer original sin copiar.
+- **`error_imprimir`** extendida para aceptar `fuente` y `longitud_span` opcionales. Si se proporcionan, dibuja el contexto de línea + carets.
+- **`main.c` reescrita**: pipeline completo `archivo → fuente_cargar_archivo (NFC) → Lexer → tokens`. Reporta errores léxicos con `error_imprimir_token`. Nuevo flag `--tokens` que vuelca todos los tokens en formato debug `LINEA:COL TIPO "lexema"`.
+- **Tests de integración**: 12 tests CTest (uno por ejemplo en `examples/`) que invocan `cornamusa <archivo.cor>` y verifican exit code 0 (sin errores léxicos). Etiquetados con label `integracion` en CTest.
+- Tests unitarios actualizados: `t.inicio` → `t.mensaje` en las verificaciones de mensajes de error (4 archivos, ~15 ocurrencias).
+- Verificado manualmente: los 12 ejemplos en `examples/` lexán sin error. El error de muestra (`1__2` en código) produce el caret indicator correcto bajo el span ofensivo.
+
+**Total tests al cerrar Fase 2:** 17 (5 unit + 12 integración), 100% verde con build Release y -O3.
 
 ### Añadido (Fase 2 sesión 4)
 - Lexer reconoce **f-strings** (`TT_F_CADENA`):
