@@ -161,6 +161,56 @@ Valor valor_cadena_duplicar(const char *texto, int longitud) {
     return v;
 }
 
+Valor valor_funcion(const struct Sent *def, struct Entorno *entorno_def) {
+    Valor v;
+    v.tipo = VAL_FUNCION;
+    v.dueno_cadena = false;
+    v.como.funcion.def = def;
+    v.como.funcion.entorno_definicion = entorno_def;
+    return v;
+}
+
+Valor valor_nativa(const char *nombre, FnNativa fn) {
+    Valor v;
+    v.tipo = VAL_NATIVA;
+    v.dueno_cadena = false;
+    v.como.nativa.nombre = nombre;
+    v.como.nativa.fn = fn;
+    return v;
+}
+
+Valor valor_rango_de_longs(long inicio, long fin, long paso) {
+    mp_int *mi = nuevo_mp_int();
+    mp_int *mf = nuevo_mp_int();
+    mp_int *mp = nuevo_mp_int();
+    if (!mi || !mf || !mp) {
+        if (mi) { mp_clear(mi); free(mi); }
+        if (mf) { mp_clear(mf); free(mf); }
+        if (mp) { mp_clear(mp); free(mp); }
+        return valor_nulo();
+    }
+    mp_set_l(mi, inicio);
+    mp_set_l(mf, fin);
+    mp_set_l(mp, paso);
+    Valor v;
+    v.tipo = VAL_RANGO;
+    v.dueno_cadena = false;
+    v.como.rango.inicio = mi;
+    v.como.rango.fin = mf;
+    v.como.rango.paso = mp;
+    return v;
+}
+
+Valor valor_rango_de_mp(mp_int *inicio, mp_int *fin, mp_int *paso) {
+    Valor v;
+    v.tipo = VAL_RANGO;
+    v.dueno_cadena = false;
+    v.como.rango.inicio = inicio;
+    v.como.rango.fin = fin;
+    v.como.rango.paso = paso;
+    return v;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
@@ -183,6 +233,20 @@ void valor_destruir(Valor *v) {
                 v->como.cadena.texto = NULL;
                 v->dueno_cadena = false;
             }
+            break;
+        case VAL_RANGO:
+            if (v->como.rango.inicio) {
+                mp_clear(v->como.rango.inicio); free(v->como.rango.inicio);
+            }
+            if (v->como.rango.fin) {
+                mp_clear(v->como.rango.fin); free(v->como.rango.fin);
+            }
+            if (v->como.rango.paso) {
+                mp_clear(v->como.rango.paso); free(v->como.rango.paso);
+            }
+            v->como.rango.inicio = NULL;
+            v->como.rango.fin = NULL;
+            v->como.rango.paso = NULL;
             break;
         default:
             break;
@@ -221,10 +285,31 @@ Valor valor_clonar(const Valor *v) {
                                             v->como.cadena.longitud);
         case VAL_FUNCION:
         case VAL_NATIVA: {
-            /* Funciones se comparten por puntero; copiar el struct
-               sin duplicar el callable. */
+            /* Funciones se comparten por valor inmutable: la struct
+               apunta a recursos externos (AST, función C estática) que
+               no se duplican. Por eso clonar es copiar la struct. */
             Valor c = *v;
             return c;
+        }
+        case VAL_RANGO: {
+            mp_int *mi = nuevo_mp_int();
+            mp_int *mf = nuevo_mp_int();
+            mp_int *mp = nuevo_mp_int();
+            if (!mi || !mf || !mp) {
+                if (mi) { mp_clear(mi); free(mi); }
+                if (mf) { mp_clear(mf); free(mf); }
+                if (mp) { mp_clear(mp); free(mp); }
+                return valor_nulo();
+            }
+            if (mp_copy(v->como.rango.inicio, mi) != MP_OKAY
+             || mp_copy(v->como.rango.fin, mf) != MP_OKAY
+             || mp_copy(v->como.rango.paso, mp) != MP_OKAY) {
+                mp_clear(mi); free(mi);
+                mp_clear(mf); free(mf);
+                mp_clear(mp); free(mp);
+                return valor_nulo();
+            }
+            return valor_rango_de_mp(mi, mf, mp);
         }
     }
     return valor_nulo();
@@ -311,8 +396,21 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             n = snprintf(buffer, (size_t)capacidad, "<funcion>");
             break;
         case VAL_NATIVA:
-            n = snprintf(buffer, (size_t)capacidad, "<funcion nativa>");
+            n = snprintf(buffer, (size_t)capacidad, "<funcion %s>",
+                v->como.nativa.nombre ? v->como.nativa.nombre : "nativa");
             break;
+        case VAL_RANGO: {
+            char ai[64], fi[64], pa[64];
+            size_t esc;
+            ai[0] = fi[0] = pa[0] = '?'; ai[1] = fi[1] = pa[1] = '\0';
+            mp_err r1 = mp_to_radix(v->como.rango.inicio, ai, sizeof(ai), &esc, 10);
+            mp_err r2 = mp_to_radix(v->como.rango.fin,    fi, sizeof(fi), &esc, 10);
+            mp_err r3 = mp_to_radix(v->como.rango.paso,   pa, sizeof(pa), &esc, 10);
+            (void)r1; (void)r2; (void)r3;
+            n = snprintf(buffer, (size_t)capacidad,
+                "rango(%s, %s, %s)", ai, fi, pa);
+            break;
+        }
     }
 
     if (n < 0) n = 0;
@@ -331,6 +429,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_CADENA:    return "cadena";
         case VAL_FUNCION:   return "funcion";
         case VAL_NATIVA:    return "funcion";  /* mismas semánticas externas */
+        case VAL_RANGO:     return "rango";
     }
     return "desconocido";
 }
@@ -345,6 +444,13 @@ bool valor_es_verdadero(const Valor *v) {
         case VAL_CADENA:    return v->como.cadena.longitud > 0;
         case VAL_FUNCION:
         case VAL_NATIVA:    return true;
+        case VAL_RANGO: {
+            /* Truthy si la iteración produciría al menos un elemento. */
+            int cmp_ini_fin = mp_cmp(v->como.rango.inicio, v->como.rango.fin);
+            bool paso_neg = (mp_isneg(v->como.rango.paso) == MP_YES);
+            if (paso_neg) return cmp_ini_fin == MP_GT;
+            return cmp_ini_fin == MP_LT;
+        }
     }
     return false;
 }
@@ -398,8 +504,14 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             if (a->como.cadena.longitud != b->como.cadena.longitud) return false;
             return memcmp(a->como.cadena.texto, b->como.cadena.texto,
                           (size_t)a->como.cadena.longitud) == 0;
-        case VAL_FUNCION:   return a->como.funcion == b->como.funcion;
-        case VAL_NATIVA:    return a->como.nativa == b->como.nativa;
+        case VAL_FUNCION:
+            return a->como.funcion.def == b->como.funcion.def;
+        case VAL_NATIVA:
+            return a->como.nativa.fn == b->como.nativa.fn;
+        case VAL_RANGO:
+            return mp_cmp(a->como.rango.inicio, b->como.rango.inicio) == MP_EQ
+                && mp_cmp(a->como.rango.fin,    b->como.rango.fin)    == MP_EQ
+                && mp_cmp(a->como.rango.paso,   b->como.rango.paso)   == MP_EQ;
     }
     return false;
 }

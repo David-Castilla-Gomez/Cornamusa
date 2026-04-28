@@ -55,7 +55,7 @@ typedef enum {
     EJEC_RETORNAR,    /* habilitado en sesion 4 con funciones */
 } ControlFlujo;
 
-typedef struct {
+typedef struct Evaluador {
     Entorno *globales;          /* entorno raíz (no es dueño) */
     Entorno *entorno_actual;    /* entorno activo (puede coincidir con globales) */
     EvalError error;

@@ -456,12 +456,15 @@ static Valor evaluar_comparacion(Evaluador *ev, TipoToken op,
  * ────────────────────────────────────────────────────────────────── */
 
 static Valor evaluar_es(const Valor *a, const Valor *b) {
-    /* Para funciones (y futura clase/instancia) basta comparar puntero. */
+    /* Para funciones (y futura clase/instancia) basta comparar la
+       referencia subyacente: dos VAL_FUNCION son la misma si apuntan
+       al mismo nodo SENT_FUNCION; dos VAL_NATIVA si comparten el
+       mismo puntero a función C. */
     if (a->tipo == VAL_FUNCION && b->tipo == VAL_FUNCION) {
-        return valor_booleano(a->como.funcion == b->como.funcion);
+        return valor_booleano(a->como.funcion.def == b->como.funcion.def);
     }
     if (a->tipo == VAL_NATIVA && b->tipo == VAL_NATIVA) {
-        return valor_booleano(a->como.nativa == b->como.nativa);
+        return valor_booleano(a->como.nativa.fn == b->como.nativa.fn);
     }
     /* nulo es nulo, verdadero es verdadero, etc. — coincide con igualdad. */
     return valor_booleano(valor_iguales(a, b));
@@ -498,6 +501,7 @@ static Valor evaluar_en(Evaluador *ev, const Valor *a, const Valor *b,
 static Valor eval_binario(Evaluador *ev, const Expr *e);
 static Valor eval_unario(Evaluador *ev, const Expr *e);
 static Valor eval_logica(Evaluador *ev, const Expr *e);
+static Valor eval_llamada(Evaluador *ev, const Expr *e);
 
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
     if (ev->error.tuvo_error) return valor_nulo();
@@ -582,7 +586,8 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
         case EXPR_UNARIO:   return eval_unario(ev, e);
         case EXPR_LOGICA:   return eval_logica(ev, e);
 
-        case EXPR_LLAMADA:
+        case EXPR_LLAMADA:  return eval_llamada(ev, e);
+
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
         case EXPR_LISTA:
@@ -1091,11 +1096,87 @@ static void ejec_para(Evaluador *ev, const Sent *s) {
     Valor iter = evaluador_evaluar_expr(ev, s->como.para.iterable);
     if (ev->error.tuvo_error) { valor_destruir(&iter); return; }
 
-    if (iter.tipo != VAL_CADENA) {
+    if (iter.tipo != VAL_CADENA && iter.tipo != VAL_RANGO) {
         sent_set_error(ev, s,
-            "ErrorDeTipo: 'para' aun no soporta iterar sobre '%s' en v0.4 (solo cadenas)",
+            "ErrorDeTipo: 'para' aun no soporta iterar sobre '%s' en v0.4 (solo cadenas y rangos)",
             valor_nombre_tipo(&iter));
         valor_destruir(&iter);
+        return;
+    }
+
+    /* Rama: iteración sobre rango (entero por iteración). */
+    if (iter.tipo == VAL_RANGO) {
+        mp_int actual;
+        if (mp_init(&actual) != MP_OKAY) {
+            sent_set_error(ev, s, "memoria insuficiente");
+            valor_destruir(&iter);
+            return;
+        }
+        if (mp_copy(iter.como.rango.inicio, &actual) != MP_OKAY) {
+            mp_clear(&actual);
+            sent_set_error(ev, s, "memoria insuficiente");
+            valor_destruir(&iter);
+            return;
+        }
+        bool paso_neg = (mp_isneg(iter.como.rango.paso) == MP_YES);
+        bool rompio_r = false;
+
+        while (true) {
+            int cmp = mp_cmp(&actual, iter.como.rango.fin);
+            bool sigue = paso_neg ? (cmp == MP_GT) : (cmp == MP_LT);
+            if (!sigue) break;
+
+            mp_int *clon = (mp_int *)malloc(sizeof(mp_int));
+            if (!clon || mp_init(clon) != MP_OKAY) {
+                free(clon);
+                sent_set_error(ev, s, "memoria insuficiente en 'para'");
+                break;
+            }
+            if (mp_copy(&actual, clon) != MP_OKAY) {
+                mp_clear(clon); free(clon);
+                sent_set_error(ev, s, "memoria insuficiente en 'para'");
+                break;
+            }
+            Valor vi;
+            vi.tipo = VAL_ENTERO;
+            vi.dueno_cadena = false;
+            vi.como.entero = clon;
+            if (!entorno_definir(ev->entorno_actual,
+                                  objetivo->como.ident.nombre,
+                                  objetivo->como.ident.longitud, vi)) {
+                sent_set_error(ev, s, "memoria insuficiente en 'para'");
+                break;
+            }
+
+            evaluador_ejecutar_sent(ev, s->como.para.cuerpo);
+            if (ev->error.tuvo_error) break;
+
+            if (ev->control == EJEC_ROMPER) {
+                ev->control = EJEC_NORMAL;
+                rompio_r = true;
+                break;
+            }
+            if (ev->control == EJEC_CONTINUAR) {
+                ev->control = EJEC_NORMAL;
+            }
+            if (ev->control == EJEC_RETORNAR) {
+                mp_clear(&actual);
+                valor_destruir(&iter);
+                return;
+            }
+
+            if (mp_add(&actual, iter.como.rango.paso, &actual) != MP_OKAY) {
+                sent_set_error(ev, s, "fallo aritmetico en 'para'");
+                break;
+            }
+        }
+
+        mp_clear(&actual);
+        valor_destruir(&iter);
+
+        if (!rompio_r && !ev->error.tuvo_error && s->como.para.sino != NULL) {
+            evaluador_ejecutar_sent(ev, s->como.para.sino);
+        }
         return;
     }
 
@@ -1178,11 +1259,31 @@ void evaluador_ejecutar_sent(Evaluador *ev, const Sent *s) {
         case SENT_PARA:      ejec_para(ev, s);      return;
         case SENT_BLOQUE:    ejec_bloque(ev, s);    return;
 
-        case SENT_RETORNAR:
-        case SENT_FUNCION:
-            sent_set_error(ev, s,
-                "funciones aun no implementadas en v0.4 (sesion 4)");
+        case SENT_FUNCION: {
+            /* Crear un VAL_FUNCION que referencia el nodo SENT_FUNCION
+             * del AST + el entorno actual de definición. Sin closures
+             * (decisión B2): el entorno_definicion se usará en el
+             * scope chain pero no captura variables locales. */
+            Valor fn = valor_funcion(s, ev->entorno_actual);
+            if (!entorno_definir(ev->entorno_actual,
+                                  s->como.funcion.nombre,
+                                  s->como.funcion.longitud_nombre, fn)) {
+                sent_set_error(ev, s, "memoria insuficiente al definir funcion");
+            }
             return;
+        }
+
+        case SENT_RETORNAR: {
+            Valor v = valor_nulo();
+            if (s->como.retornar.valor != NULL) {
+                v = evaluador_evaluar_expr(ev, s->como.retornar.valor);
+                if (ev->error.tuvo_error) { valor_destruir(&v); return; }
+            }
+            valor_destruir(&ev->valor_retorno);
+            ev->valor_retorno = v;
+            ev->control = EJEC_RETORNAR;
+            return;
+        }
 
         case SENT_CLASE:
         case SENT_INTENTAR:
@@ -1208,4 +1309,130 @@ void evaluador_ejecutar_programa(Evaluador *ev, Sent **sentencias, int n) {
             return;
         }
     }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Llamadas a función
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Llama a una función definida por el usuario. Crea un nuevo entorno
+ * hijo de `entorno_def` (sin closures: típicamente el global), liga
+ * los parámetros, ejecuta el cuerpo y recoge el valor de retorno si
+ * apareció `SENT_RETORNAR`. Restaura el entorno previo al volver.
+ */
+static Valor llamar_usuario(Evaluador *ev, const Sent *def,
+                            Entorno *entorno_def,
+                            Valor *args, int n_args, const Expr *call_site) {
+    int n_params = def->como.funcion.n_parametros;
+    Parametro *params = def->como.funcion.parametros;
+
+    int min_req = 0;
+    for (int i = 0; i < n_params; i++) {
+        if (params[i].valor_defecto == NULL) min_req++;
+    }
+    if (n_args < min_req || n_args > n_params) {
+        if (min_req == n_params) {
+            return error_en(ev, call_site,
+                "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                def->como.funcion.longitud_nombre,
+                def->como.funcion.nombre,
+                n_params, n_args);
+        }
+        return error_en(ev, call_site,
+            "ErrorDeTipo: %.*s() esperaba entre %d y %d argumentos, recibio %d",
+            def->como.funcion.longitud_nombre,
+            def->como.funcion.nombre,
+            min_req, n_params, n_args);
+    }
+
+    Entorno local;
+    entorno_iniciar(&local, entorno_def);
+
+    for (int i = 0; i < n_params; i++) {
+        Valor v;
+        if (i < n_args) {
+            v = valor_clonar(&args[i]);
+        } else {
+            v = evaluador_evaluar_expr(ev, params[i].valor_defecto);
+            if (ev->error.tuvo_error) {
+                valor_destruir(&v);
+                entorno_destruir(&local);
+                return valor_nulo();
+            }
+        }
+        if (!entorno_definir(&local, params[i].nombre,
+                              params[i].longitud_nombre, v)) {
+            entorno_destruir(&local);
+            return error_en(ev, call_site, "memoria insuficiente");
+        }
+    }
+
+    Entorno *guardar_env = ev->entorno_actual;
+    ev->entorno_actual = &local;
+
+    evaluador_ejecutar_sent(ev, def->como.funcion.cuerpo);
+
+    ev->entorno_actual = guardar_env;
+
+    Valor resultado = valor_nulo();
+    if (!ev->error.tuvo_error) {
+        if (ev->control == EJEC_RETORNAR) {
+            resultado = ev->valor_retorno;
+            ev->valor_retorno = valor_nulo();   /* transferimos ownership */
+            ev->control = EJEC_NORMAL;
+        }
+        /* Función sin `retornar` explícito → resultado nulo. */
+    }
+
+    entorno_destruir(&local);
+    return resultado;
+}
+
+static Valor eval_llamada(Evaluador *ev, const Expr *e) {
+    Valor callee = evaluador_evaluar_expr(ev, e->como.llamada.callee);
+    if (ev->error.tuvo_error) {
+        valor_destruir(&callee);
+        return valor_nulo();
+    }
+
+    int n = e->como.llamada.n_args;
+    Valor *args = NULL;
+    if (n > 0) {
+        args = (Valor *)malloc(sizeof(Valor) * (size_t)n);
+        if (!args) {
+            valor_destruir(&callee);
+            return error_en(ev, e, "memoria insuficiente");
+        }
+    }
+
+    int evaluados = 0;
+    for (int i = 0; i < n; i++) {
+        args[i] = evaluador_evaluar_expr(ev, e->como.llamada.args[i]);
+        evaluados = i + 1;
+        if (ev->error.tuvo_error) {
+            for (int j = 0; j < evaluados; j++) valor_destruir(&args[j]);
+            free(args);
+            valor_destruir(&callee);
+            return valor_nulo();
+        }
+    }
+
+    Valor resultado;
+    if (callee.tipo == VAL_NATIVA) {
+        resultado = callee.como.nativa.fn(ev, n, args, e->linea, e->columna);
+    } else if (callee.tipo == VAL_FUNCION) {
+        resultado = llamar_usuario(ev, callee.como.funcion.def,
+                                    callee.como.funcion.entorno_definicion,
+                                    args, n, e);
+    } else {
+        resultado = error_en(ev, e,
+            "ErrorDeTipo: '%s' no es invocable",
+            valor_nombre_tipo(&callee));
+    }
+
+    for (int i = 0; i < n; i++) valor_destruir(&args[i]);
+    free(args);
+    valor_destruir(&callee);
+    return resultado;
 }

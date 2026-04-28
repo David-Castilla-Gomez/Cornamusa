@@ -10,8 +10,30 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 1: vendoreo libtommath + tipo `Valor` con bignum boxed + `Entorno` con tabla hash y scope chain.
 - ✅ Sesión 2: evaluador de expresiones (literales, identificadores, aritmética bignum, comparaciones, lógica con cortocircuito, unarios, cadenas, identidad/membership).
 - ✅ Sesión 3: evaluador de sentencias (asignación, `si`/`mientras`/`para`, `romper`/`continuar`, cláusulas `sino` de bucle, iteración UTF-8).
-- ⏳ Sesión 4: funciones top-level + built-ins (imprimir, longitud, tipo, rango).
+- ✅ Sesión 4: funciones top-level con recursión + built-ins (`imprimir`, `longitud`, `tipo`, `rango`) + tipo `rango` iterable.
 - ⏳ Sesión 5: REPL ejecutable + integración + tag v0.4.0 (primer release jugable).
+
+### Añadido (Fase 4 sesión 4)
+- **Tipo `VAL_RANGO`**: nuevo variante en `Valor` con tres `mp_int *` (inicio, fin, paso). Iterable con bignum, ascendente o descendente. `valor_clonar` hace deep copy; `valor_destruir` libera los tres mp_int. `valor_es_verdadero` devuelve `true` si la iteración produciría al menos un elemento. `rango(a, b, paso)` se imprime como `"rango(a, b, paso)"`.
+- **Refactor de `VAL_FUNCION` y `VAL_NATIVA`** a estructuras inline (sin allocations heap):
+  - `VAL_FUNCION` referencia un `const Sent *def` del AST + un `Entorno *entorno_definicion`. Sin closures (decisión B2): el entorno_definicion siempre es global en S4 — campo reservado para closures futuros en Fase 6+.
+  - `VAL_NATIVA` contiene nombre + puntero `FnNativa` (typedef en `valor.h`).
+  - Ambos son trivialmente clonables (struct copy), no requieren ownership tracking, y `valor_iguales` compara por referencia subyacente.
+- **`src/nativos.{h,c}`** con la API `nativos_registrar(globales)` que añade los built-ins al entorno:
+  - **`imprimir(*args)`**: variádica. Imprime cada argumento separado por espacio + `\n`. Sin kwargs (`separador`, `final`) — se añadirán cuando lleguen kwargs al lenguaje. Devuelve nulo.
+  - **`longitud(x)`**: cadena → número de **code points UTF-8** (no bytes); rango → número de elementos producidos. Otros tipos producen `ErrorDeTipo`.
+  - **`tipo(x)`**: devuelve cadena con el nombre del tipo en castellano (`"entero"`, `"decimal"`, `"cadena"`, `"booleano"`, `"nulo"`, `"funcion"`, `"rango"`).
+  - **`rango([inicio,] fin [, paso])`**: tres formas. Acepta solo enteros (booleano se promueve a 1/0). `paso == 0` produce `ErrorDeValor`. Bignum-friendly: `rango(0, 10**100, 1)` es válido (aunque su iteración tarde una eternidad).
+- **`SENT_FUNCION` en evaluador**: crea un `VAL_FUNCION` y lo asigna en el entorno actual. La función puede llamarse a sí misma porque el nombre está definido antes de cualquier llamada.
+- **`SENT_RETORNAR`**: evalúa la expresión opcional (`retornar` desnudo → nulo), guarda el valor en `ev->valor_retorno` y marca `ev->control = EJEC_RETORNAR`. El bucle envolvente o `llamar_usuario` la consume.
+- **`EXPR_LLAMADA` en evaluador**: evalúa el callee, evalúa cada argumento, despacha:
+  - `VAL_NATIVA`: invoca el puntero a función C con los args ya evaluados (ownership del cliente).
+  - `VAL_FUNCION`: crea un nuevo `Entorno` hijo del entorno_definicion, liga parámetros (con valores por defecto si faltan), ejecuta el cuerpo, recoge `ev->valor_retorno` si apareció `EJEC_RETORNAR`, restaura entorno y control. Aridad validada con mensaje específico ("`f()` esperaba N argumentos, recibió M").
+- **Recursión funcional**: factorial(50)=64 dígitos y factorial(100)=158 dígitos pasan tests recursivos sin stack-smashing (depth ≈ 100 frames).
+- **`para` ahora itera también `VAL_RANGO`**: usa `mp_add` para avanzar y `mp_cmp` para terminar. Soporta paso ascendente y descendente. Combinable con `romper`/`continuar`/cláusula `sino` igual que con cadenas.
+- **`Evaluador` ahora es `typedef struct Evaluador { ... }`** (con nombre explícito) para permitir forward declaration desde `valor.h` en la firma de `FnNativa`.
+- **`tests/unit/test_runtime_funciones.c`** con 11 grupos de tests: definición y llamada simple, recursión (factorial 10/50, fib 15), parámetros con defaults, aridad mal con mensaje específico, no invocable, `retornar` con/sin valor y dentro de bucle, `tipo()` para cada tipo, `longitud()` UTF-8 + rangos, `rango()` 1/2/3 args con paso negativo y cero iteraciones, `imprimir()` no rompe, programa de pares con función auxiliar, factorial(100) recursivo (158 dígitos).
+- **34 tests verde** (14 unit + 20 integración).
 
 ### Añadido (Fase 4 sesión 3)
 - **Evaluador de sentencias** en `evaluador.{h,c}`: nueva API `evaluador_ejecutar_sent` y `evaluador_ejecutar_programa`. Modelo de control de flujo sin `setjmp`: nuevo enum `ControlFlujo` (`EJEC_NORMAL`, `EJEC_ROMPER`, `EJEC_CONTINUAR`, `EJEC_RETORNAR`). Las construcciones envolventes (bucles, llamadas) inspeccionan y resetean `ev->control`.
