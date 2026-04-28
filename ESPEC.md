@@ -10,8 +10,8 @@ Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un len
 ## 1. Filosofía
 
 1. **Castellano natural, no traducción literal.** Las palabras clave deben sonar idiomáticas a un hispanohablante, no como traducciones automáticas del inglés.
-2. **Tildes opcionales.** Toda keyword acentuada admite también su forma sin tilde (`función` ≡ `funcion`). La forma canónica para el ecosistema es **sin tilde** por portabilidad en sistemas con configuraciones de teclado limitadas.
-3. **UTF-8 universal.** Identificadores admiten `ñ`, vocales acentuadas y otros caracteres Unicode de la categoría `Letter`. El compilador es UTF-8 nativo.
+2. **Keywords ASCII, identificadores Unicode** (decisión [B4](decisiones/B4-tildes-y-unicode.md)). Las palabras clave del lenguaje son ASCII puro sin tildes ni `ñ` (`funcion`, no `función`); los identificadores definidos por el usuario admiten cualquier letra Unicode (`niño`, `año_actual`, `función_principal` son válidos).
+3. **UTF-8 universal con normalización NFC.** El compilador es UTF-8 nativo y normaliza el código fuente a NFC antes de tokenizar (evita que el mismo identificador en NFC y NFD se considere distinto).
 4. **Tipado dinámico fuerte.** Los valores tienen tipo en tiempo de ejecución; las variables no.
 5. **Bloques delimitados explícitamente** con `:` al abrir y `fin <etiqueta>` al cerrar (decisión [B1](decisiones/B1-modelo-de-bloques.md)). La indentación es estilística, no semántica.
 6. **Una sola forma evidente** de hacer cada cosa cuando sea posible.
@@ -36,6 +36,10 @@ continua_id    ← Letra | Dígito | "_" | "$"
 
 Donde `Letra` incluye toda letra Unicode (categoría `L`), incluyendo `ñ`, `Ñ`, `á`, `é`, `í`, `ó`, `ú`, `ü`, etc.
 
+**Normalización Unicode (decisión [B4](decisiones/B4-tildes-y-unicode.md)):** el lexer normaliza el archivo fuente a **NFC** (Normalization Form Canonical Composed) antes de tokenizar. Sin esta normalización, `función` escrito en macOS (NFD: `o` + acento combinante) sería un identificador distinto de `función` escrito en Windows (NFC: `ó` precompuesto), produciendo bugs invisibles entre sistemas.
+
+**Sensibilidad a mayúsculas:** los identificadores son **case-sensitive**. `nombre`, `Nombre` y `NOMBRE` son tres identificadores distintos. Las keywords están todas en minúscula; escribir `Si` o `Funcion` es identificador, no keyword.
+
 **Convenciones recomendadas:**
 - Variables y funciones: `serpiente_minuscula` (`mi_variable`, `calcular_total`).
 - Clases: `MayusculaCamello` (`Persona`, `ListaEnlazada`).
@@ -43,52 +47,54 @@ Donde `Letra` incluye toda letra Unicode (categoría `L`), incluyendo `ñ`, `Ñ`
 
 ### 2.3 Palabras clave
 
+Todas las palabras clave son **ASCII puro, sin tildes ni `ñ`, en minúscula** (decisión [B4](decisiones/B4-tildes-y-unicode.md)). Esta es la **única forma aceptada** del lenguaje; `función` es un identificador, no una keyword.
+
 #### Control de flujo
-| Keyword | Forma sin tilde | Significado |
-|---|---|---|
-| `si` | — | condicional |
-| `sino` | — | rama alternativa |
-| `sino si` | — | rama alternativa con condición (compuesta de dos tokens) |
-| `mientras` | — | bucle por condición |
-| `para` | — | bucle por iteración |
-| `en` | — | operador de pertenencia / iteración |
-| `romper` | — | salir del bucle |
-| `continuar` | — | siguiente iteración |
-| `retornar` | — | devolver valor |
-| `pasar` | — | sentencia vacía |
+| Keyword | Significado |
+|---|---|
+| `si` | condicional |
+| `sino` | rama alternativa |
+| `sino si` | rama alternativa con condición (compuesta de dos tokens) |
+| `mientras` | bucle por condición |
+| `para` | bucle por iteración |
+| `en` | operador de pertenencia / iteración |
+| `romper` | salir del bucle |
+| `continuar` | siguiente iteración |
+| `retornar` | devolver valor |
+| `pasar` | sentencia vacía |
 
 #### Funciones, clases y módulos
-| Keyword | Forma sin tilde | Significado |
-|---|---|---|
-| `función` | `funcion` | declaración de función |
-| `lambda` | — | función anónima (convención matemática internacional) |
-| `clase` | — | declaración de clase |
-| `extiende` | — | herencia (`clase Hija extiende Madre:`) |
-| `super` | — | acceso a la superclase |
-| `yo` | — | referencia a la instancia (equivalente a `self`/`this`) |
-| `importar` | — | importación de módulo |
-| `desde` | — | importación selectiva (`desde X importar Y`) |
-| `como` | — | renombrado en import o except |
-| `global` | — | declarar variable global |
-| `nolocal` | — | declarar variable no-local en closure |
+| Keyword | Significado |
+|---|---|
+| `funcion` | declaración de función |
+| `lambda` | función anónima (convención matemática internacional) |
+| `clase` | declaración de clase |
+| `extiende` | herencia (`clase Hija extiende Madre:`) |
+| `super` | acceso a la superclase |
+| `yo` | referencia a la instancia (equivalente a `self`/`this`) — pendiente decisión B5 |
+| `importar` | importación de módulo |
+| `desde` | importación selectiva (`desde X importar Y`) |
+| `como` | renombrado en import o except |
+| `global` | declarar variable global |
+| `nolocal` | declarar variable no-local en closure |
 
 #### Manejo de excepciones
-| Keyword | Forma sin tilde | Significado |
-|---|---|---|
-| `intentar` | — | bloque protegido |
-| `atrapar` | — | manejo de excepción |
-| `finalmente` | — | bloque siempre ejecutado |
-| `lanzar` | — | lanzar excepción |
-| `fin` | — | cierre de bloque (siempre seguido de etiqueta: `fin si`, `fin funcion`, etc.) |
+| Keyword | Significado |
+|---|---|
+| `intentar` | bloque protegido |
+| `atrapar` | manejo de excepción |
+| `finalmente` | bloque siempre ejecutado |
+| `lanzar` | lanzar excepción |
+| `fin` | cierre de bloque (siempre seguido de etiqueta: `fin si`, `fin funcion`, etc.) |
 
 #### Operadores lógicos y comparativos (palabras)
-| Keyword | Forma sin tilde | Significado |
-|---|---|---|
-| `y` | — | conjunción lógica |
-| `o` | — | disyunción lógica |
-| `no` | — | negación lógica |
-| `es` | — | identidad de objetos |
-| `es no` | — | identidad negada |
+| Keyword | Significado |
+|---|---|
+| `y` | conjunción lógica |
+| `o` | disyunción lógica |
+| `no` | negación lógica |
+| `es` | identidad de objetos |
+| `es no` | identidad negada |
 
 #### Literales
 | Keyword | Significado |
@@ -98,7 +104,7 @@ Donde `Letra` incluye toda letra Unicode (categoría `L`), incluyendo `ñ`, `Ñ`
 | `nulo` | ausencia de valor |
 
 #### Reservadas para futuro
-`producir`, `asíncrono`/`asincrono`, `esperar`, `con`, `borrar`, `coincidir` (match-case).
+`producir`, `asincrono`, `esperar`, `con`, `borrar`, `coincidir` (match-case).
 
 ### 2.4 Operadores y puntuación
 
