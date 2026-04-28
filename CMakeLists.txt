@@ -58,13 +58,27 @@ elseif(MSVC)
     target_compile_options(utf8proc PRIVATE /w)
 endif()
 
+# ───── Dependencia vendoreada: libtommath ─────
+# Bignum para enteros de precisión arbitraria (decisión B3).
+# Se compila como librería estática. La lista de fuentes está en
+# vendor/libtommath/sources.cmake (autogenerado por upstream).
+include(vendor/libtommath/sources.cmake)
+list(TRANSFORM SOURCES PREPEND "vendor/libtommath/")
+add_library(tommath STATIC ${SOURCES})
+target_include_directories(tommath PUBLIC vendor/libtommath)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(tommath PRIVATE -w)
+elseif(MSVC)
+    target_compile_options(tommath PRIVATE /w)
+endif()
+
 # ───── Ejecutable principal ─────
 file(GLOB CORNAMUSA_SOURCES CONFIGURE_DEPENDS "src/*.c")
 
 add_executable(cornamusa ${CORNAMUSA_SOURCES})
 target_include_directories(cornamusa PRIVATE src)
 target_compile_definitions(cornamusa PRIVATE UTF8PROC_STATIC)
-target_link_libraries(cornamusa PRIVATE utf8proc)
+target_link_libraries(cornamusa PRIVATE utf8proc tommath)
 
 # ───── Tests ─────
 if(CORNAMUSA_BUILD_TESTS)

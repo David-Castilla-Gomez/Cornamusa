@@ -6,6 +6,31 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+### En desarrollo (Fase 4 — Evaluador tree-walking, objetivo v0.4.0)
+- ✅ Sesión 1: vendoreo libtommath + tipo `Valor` con bignum boxed + `Entorno` con tabla hash y scope chain.
+- ⏳ Sesión 2: evaluador de expresiones.
+- ⏳ Sesión 3: evaluador de sentencias y control de flujo.
+- ⏳ Sesión 4: funciones top-level + built-ins (imprimir, longitud, tipo, rango).
+- ⏳ Sesión 5: REPL ejecutable + integración + tag v0.4.0 (primer release jugable).
+
+### Añadido (Fase 4 sesión 1)
+- **Vendoreado [libtommath 1.3.0](https://github.com/libtom/libtommath)** en `vendor/libtommath/` (~150 archivos `.c`, Public Domain). Bignum desde día 1 según decisión [B3](decisiones/B3-representacion-numerica.md). Compilado como librería estática separada en CMake.
+- **`src/valor.{h,c}`** — tipo `Valor` con tagged union de 7 variantes:
+  - `VAL_NULO`, `VAL_BOOLEANO`, `VAL_DECIMAL` (IEEE 754 double).
+  - `VAL_ENTERO` con `mp_int *` boxed (precisión arbitraria; `factorial(100)` produce número de 158 dígitos sin overflow).
+  - `VAL_CADENA` con bandera `dueno_cadena` (referencia al buffer fuente vs heap).
+  - `VAL_FUNCION`, `VAL_NATIVA` (preparados para sesión 4).
+- **Constructores**: `valor_nulo()`, `valor_booleano()`, `valor_decimal()`, `valor_decimal_de_lexema()`, `valor_entero_de_long()`, `valor_entero_de_lexema()` (acepta decimal, hex `0xff`, octal `0o755`, binario `0b1010`, con `_` separadores), `valor_cadena_referencia()`, `valor_cadena_duplicar()`.
+- **Operaciones**: `valor_destruir`, `valor_clonar` (deep), `valor_imprimir`, `valor_a_cadena`, `valor_nombre_tipo`, `valor_es_verdadero` (truthiness ESPEC §6.2), `valor_iguales` (igualdad ESPEC §6.3 incluyendo `1 == 1.0`).
+- **`src/entorno.{h,c}`** — `Entorno` (scope chain) con tabla hash de probing lineal:
+  - Hash FNV-1a 32-bit, factor de carga 0.75, redimensionamiento dinámico.
+  - API: `entorno_iniciar`, `entorno_destruir`, `entorno_definir`, `entorno_obtener` (devuelve clon), `entorno_asignar` (mutación), `entorno_existe`.
+  - Scope chain por puntero a `padre`: una variable se busca aquí y, si no, en los entornos enclosing.
+  - El entorno es **dueño** de los Valores; al destruirse libera todos sus mp_int y cadenas con dueño.
+- **Sin GC** en Fase 4 (decisión B2 + B3): liberación eager. Cuando un entorno se destruye, todos los valores locales se liberan. En Fase 7 se añade GC mark-sweep.
+- **`tests/unit/test_runtime_valor.c`** con ~25 tests: construcción de cada tipo, bignum (factorial 100 = 158 dígitos), verdadez, igualdad (incluyendo `1 == 1.0`), clonación, operaciones de entorno (definir, obtener, asignar, scope chain con padre, shadowing, redimensionamiento al añadir 100 variables).
+- **31 tests verde** (11 unit + 20 integración).
+
 ### En desarrollo (Fase 3 — Parser y AST, objetivo v0.3.0)
 - ✅ Sesión 1: AST + arena allocator + Pratt parser para expresiones.
 - ✅ Sesión 2: sentencias simples + control de flujo + validación `fin <etiqueta>`.

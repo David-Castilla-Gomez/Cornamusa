@@ -16,7 +16,7 @@ foreach(test_src ${TEST_SOURCES})
         ${CMAKE_CURRENT_SOURCE_DIR}/unit
     )
     target_compile_definitions(${test_name} PRIVATE UTF8PROC_STATIC)
-    target_link_libraries(${test_name} PRIVATE utf8proc)
+    target_link_libraries(${test_name} PRIVATE utf8proc tommath)
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
