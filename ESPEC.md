@@ -14,7 +14,8 @@ Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un len
 3. **UTF-8 universal con normalización NFC.** El compilador es UTF-8 nativo y normaliza el código fuente a NFC antes de tokenizar (evita que el mismo identificador en NFC y NFD se considere distinto).
 4. **Tipado dinámico fuerte.** Los valores tienen tipo en tiempo de ejecución; las variables no.
 5. **Bloques delimitados explícitamente** con `:` al abrir y `fin <etiqueta>` al cerrar (decisión [B1](decisiones/B1-modelo-de-bloques.md)). La indentación es estilística, no semántica.
-6. **Una sola forma evidente** de hacer cada cosa cuando sea posible.
+6. **Números con `.` decimal y `_` separador de miles** (decisión [B7](decisiones/B7-formato-numerico.md)). El formato castellano (`3,14`, `1.000.000`) es función de la biblioteca estándar, no de la sintaxis.
+7. **Una sola forma evidente** de hacer cada cosa cuando sea posible.
 
 ---
 
@@ -129,6 +130,25 @@ binario   ← "0b" [01]+ ("_" [01]+)*
 octal     ← "0o" [0-7]+ ("_" [0-7]+)*
 hexa      ← "0x" [0-9a-fA-F]+ ("_" [0-9a-fA-F]+)*
 decimal   ← entero "." entero (("e"|"E") ("+"|"-")? entero)?
+```
+
+**Formato decimal en código fuente** (decisión [B7](decisiones/B7-formato-numerico.md)): el separador decimal es siempre `.` (universal en programación), independientemente del idioma. El separador de miles es `_` (opcional, posición libre). La convención castellana de coma decimal y punto miles (`3,14`, `1.000.000`) **no se usa en el código** porque la coma colisionaría con el separador de elementos en listas y argumentos.
+
+```cornamusa
+pi = 3.14159
+poblacion = 47_500_000
+porcentaje_iva = 0.21
+distancia = 1.496e11        # notación científica
+```
+
+**Formato castellano en E/S**: el módulo `formato` de la biblioteca estándar (Fase 9) ofrece:
+
+```cornamusa
+desde formato importar formatear, leer_numero
+
+imprimir(formatear(3.14, locale="es"))      # → "3,14"
+imprimir(formatear(1000000, locale="es"))   # → "1.000.000"
+n = leer_numero("3,14", locale="es")        # → 3.14
 ```
 
 #### Cadenas
