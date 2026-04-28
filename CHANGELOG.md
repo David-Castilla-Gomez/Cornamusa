@@ -6,6 +6,31 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+### En desarrollo (Fase 3 — Parser y AST, objetivo v0.3.0)
+- ✅ Sesión 1: AST + arena allocator + Pratt parser para expresiones.
+- ⏳ Sesión 2: sentencias simples (asignación, `si`/`mientras`/`para`, etc.).
+- ⏳ Sesión 3: funciones, clases, lambda.
+- ⏳ Sesión 4: excepciones y módulos.
+- ⏳ Sesión 5: f-strings parseadas, listas/dicts, `--ast` flag, integración con ejemplos, tag v0.3.0.
+
+### Añadido (Fase 3 sesión 1)
+- **`src/arena.{h,c}`** — arena allocator con bloques crecientes (~80 líneas). Aloca alineado a 8 bytes, libera todo en una sola llamada con `arena_destruir`. Patrón estándar para ASTs (lo usan V8, GCC, LLVM).
+- **`src/ast.{h,c}`** — AST tipado con tagged union. Esta sesión define **expresiones** con 13 variantes:
+  - Literales: `EXPR_LITERAL_ENTERO`, `EXPR_LITERAL_DECIMAL`, `EXPR_LITERAL_CADENA`, `EXPR_LITERAL_F_CADENA`, `EXPR_LITERAL_BOOLEANO`, `EXPR_LITERAL_NULO`.
+  - `EXPR_IDENT`, `EXPR_BINARIO`, `EXPR_UNARIO`, `EXPR_LOGICA` (`y`/`o`).
+  - `EXPR_LLAMADA`, `EXPR_ATRIBUTO`, `EXPR_GRUPO`.
+  - Pretty-printer en formato S-expression (`(op "+" (lit-int 1) (lit-int 2))`) para tests y depuración.
+- **`src/parser.{h,c}`** — Parser estilo **Pratt** con tabla de reglas (prefijo, infijo, precedencia). Maneja:
+  - **14 niveles de precedencia** desde `o` (más bajo) hasta llamada/atributo (más alto).
+  - **Asociatividad correcta**: izquierda para `+ - * / // % == != < > <= >= y o & | ^ << >>`, derecha para `**`.
+  - **Llamadas con argumentos** (0 o más, separados por coma).
+  - **Acceso a atributo encadenado** (`a.b.c`).
+  - **Operadores unarios**: `-x`, `+x`, `no x`, `~x`.
+  - **Recuperación de errores** con panic mode + flag `tuvo_error`.
+  - **Mensajes de error con caret** reusando `error_imprimir_token` de Fase 2.
+- **`tests/unit/test_parser_expresiones.c`** — 35+ tests cubriendo: literales (cada tipo), identificadores, operadores con precedencia y asociatividad correctas (`1 + 2 * 3` → `1 + (2*3)`; `2 ** 3 ** 4` → `2 ** (3**4)`), unarios anidados, lógicas (`y`/`o` con precedencia entre ellos y vs `no`), agrupación, llamadas con varios args y anidadas, atributos encadenados, métodos (`obj.metodo(arg)`), combinaciones realistas extraídas de ejemplos (`tipo(yo).__nombre__`, `n * factorial(n - 1)`, `x > 0 y x < 100`), y errores (paréntesis sin cerrar, atributo sin nombre, operador sin operando).
+- Build verde con flags estrictos. **18 tests verde** (6 unit + 12 integración del lexer).
+
 ### En desarrollo (Fase 2 — Lexer, objetivo v0.2.0)
 - ✅ Sesión 1: esqueleto del lexer + tokens simples (símbolos, operadores, comentarios).
 - ✅ Sesión 2: literales numéricos y cadenas básicas.
