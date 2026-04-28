@@ -13,19 +13,20 @@ Cornamusa es un lenguaje de programación tipo Python con **palabras clave, buil
 
 ```cornamusa
 funcion saludar(nombre):
-    si nombre == "":
-        retornar "¡Hola, desconocido!"
+    si nombre == "": retornar "¡Hola, desconocido!"
     retornar f"¡Hola, {nombre}!"
+fin funcion
 
 para persona en ["Ana", "Luis", "María"]:
     imprimir(saludar(persona))
+fin para
 ```
 
 ## Características (objetivo v1.0)
 
 - **Sintaxis castellana natural**: `si`/`sino`, `mientras`, `para X en Y`, `función`, `clase`, `intentar`/`atrapar`, `verdadero`/`falso`/`nulo`, etc.
 - **Tipado dinámico** con tipos enriquecidos: enteros, decimales, cadenas Unicode, listas, diccionarios, conjuntos, tuplas.
-- **Indentación significativa**, estilo Python.
+- **Bloques explícitos** con `:` al abrir y `fin <etiqueta>` al cerrar (estilo PSeInt/Latino). Indentación recomendada pero no obligatoria.
 - **Soporte UTF-8 completo** en código fuente e identificadores: `función contar_niños(años)` es un identificador válido.
 - **Clases y herencia simple** con `yo` como referencia a la instancia (equivalente a `self`).
 - **Manejo de excepciones** estructurado.

@@ -4,22 +4,30 @@ clase Animal:
     funcion __iniciar__(yo, nombre, edad):
         yo.nombre = nombre
         yo.edad = edad
+    fin funcion
 
     funcion hablar(yo):
         lanzar ErrorRuntime("método abstracto: implementar en subclase")
+    fin funcion
 
     funcion __cadena__(yo):
         retornar f"{tipo(yo).__nombre__}({yo.nombre}, {yo.edad} años)"
+    fin funcion
+fin clase
 
 
 clase Perro extiende Animal:
     funcion hablar(yo):
         retornar f"{yo.nombre} dice ¡guau!"
+    fin funcion
+fin clase
 
 
 clase Gato extiende Animal:
     funcion hablar(yo):
         retornar f"{yo.nombre} dice ¡miau!"
+    fin funcion
+fin clase
 
 
 animales = [Perro("Rex", 5), Gato("Misi", 3), Perro("Toby", 2)]
@@ -27,3 +35,4 @@ animales = [Perro("Rex", 5), Gato("Misi", 3), Perro("Toby", 2)]
 para animal en animales:
     imprimir(animal)
     imprimir("  ", animal.hablar())
+fin para

@@ -8,3 +8,5 @@ para i en rango(1, 21):
         imprimir("Buzz")
     sino:
         imprimir(i)
+    fin si
+fin para

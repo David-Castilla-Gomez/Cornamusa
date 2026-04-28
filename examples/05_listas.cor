@@ -12,7 +12,8 @@ numeros.añadir(6)
 numeros.insertar(0, 0)
 imprimir(f"Tras añadir e insertar: {numeros}")
 
-# Comprensión de lista (estilo Python)
+# Comprensión de lista (estilo Python).
+# Las comprensiones son expresiones, no bloques: no llevan `fin`.
 cuadrados = [x * x para x en numeros si x % 2 == 0]
 imprimir(f"Cuadrados de pares: {cuadrados}")
 

@@ -1,9 +1,9 @@
 # Dos versiones de Fibonacci: recursiva (didáctica) e iterativa (eficiente).
 
 funcion fib_recursivo(n):
-    si n < 2:
-        retornar n
+    si n < 2: retornar n
     retornar fib_recursivo(n - 1) + fib_recursivo(n - 2)
+fin funcion
 
 
 funcion fib_iterativo(n):
@@ -11,8 +11,11 @@ funcion fib_iterativo(n):
     b = 1
     para _ en rango(n):
         a, b = b, a + b
+    fin para
     retornar a
+fin funcion
 
 
 para i en rango(10):
     imprimir(f"fib({i}) = {fib_iterativo(i)}")
+fin para

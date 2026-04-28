@@ -16,3 +16,4 @@ si longitud(argv) > 1:
     imprimir(f"Argumentos recibidos: {argv[1:]}")
 sino:
     imprimir("Sin argumentos.")
+fin si

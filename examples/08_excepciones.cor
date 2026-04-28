@@ -6,13 +6,15 @@ funcion dividir_seguro(a, b):
     atrapar ErrorDivisiónPorCero:
         imprimir(f"No se puede dividir {a} entre cero")
         retornar nulo
+    fin intentar
+fin funcion
 
 
 imprimir(dividir_seguro(10, 2))
 imprimir(dividir_seguro(10, 0))
 
 
-# Lectura de archivo con cleanup en finalmente
+# Lectura de archivo con cleanup en finalmente.
 archivo = nulo
 intentar:
     archivo = abrir("datos.txt")
@@ -21,5 +23,5 @@ intentar:
 atrapar ErrorDeIO como e:
     imprimir(f"No se pudo leer: {e}")
 finalmente:
-    si archivo no es nulo:
-        archivo.cerrar()
+    si archivo no es nulo: archivo.cerrar()
+fin intentar

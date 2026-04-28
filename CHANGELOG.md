@@ -9,6 +9,14 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 ### En desarrollo
 - Lexer UTF-8 con keywords castellanas (objetivo: v0.2.0).
 
+### Decisiones de diseño
+- **[B1](decisiones/B1-modelo-de-bloques.md):** Modelo de delimitación de bloques resuelto. Cornamusa usa apertura con `:` y cierre explícito con `fin <etiqueta>` (`fin si`, `fin funcion`, `fin clase`, etc.), inspirado en la tradición castellana de PSeInt y Latino. La indentación es estilística, no semántica. Se descartó la indentación significativa por coste de implementación y peor calidad de errores.
+
+### Cambios derivados de B1
+- `ESPEC.md`: actualizada la sección 1 (filosofía), 2.7 (renombrada de "Indentación" a "Bloques"), tabla de keywords (añadido `fin`), gramática PEG sección 5, y programa de ejemplo sección 7.
+- `examples/`: los 12 ejemplos `.cor` reescritos con `fin <etiqueta>`.
+- `examples/11_iterador.cor`: campo `fin` renombrado a `limite` (colisión con keyword reservada).
+
 ## [0.1.0] — 2026-04-27
 
 ### Añadido

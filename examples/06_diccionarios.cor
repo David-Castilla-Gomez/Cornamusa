@@ -9,6 +9,9 @@ para palabra en palabras:
         frecuencias[palabra] += 1
     sino:
         frecuencias[palabra] = 1
+    fin si
+fin para
 
 para palabra, conteo en frecuencias.elementos():
     imprimir(f"{palabra}: {conteo}")
+fin para

@@ -1,20 +1,26 @@
 # Iterador personalizado: rango decreciente.
+# Nota: usamos `limite` en lugar de `fin` como nombre de campo, porque
+# `fin` es palabra reservada del lenguaje (cierre de bloque).
 
 clase RangoInverso:
-    funcion __iniciar__(yo, inicio, fin):
+    funcion __iniciar__(yo, inicio, limite):
         yo.actual = inicio
-        yo.fin = fin
+        yo.limite = limite
+    fin funcion
 
     funcion __iterar__(yo):
         retornar yo
+    fin funcion
 
     funcion __siguiente__(yo):
-        si yo.actual <= yo.fin:
-            lanzar FinDeIteración()
+        si yo.actual <= yo.limite: lanzar FinDeIteración()
         valor = yo.actual
         yo.actual -= 1
         retornar valor
+    fin funcion
+fin clase
 
 
 para n en RangoInverso(10, 0):
     imprimir(n)
+fin para

@@ -13,7 +13,7 @@ Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un len
 2. **Tildes opcionales.** Toda keyword acentuada admite también su forma sin tilde (`función` ≡ `funcion`). La forma canónica para el ecosistema es **sin tilde** por portabilidad en sistemas con configuraciones de teclado limitadas.
 3. **UTF-8 universal.** Identificadores admiten `ñ`, vocales acentuadas y otros caracteres Unicode de la categoría `Letter`. El compilador es UTF-8 nativo.
 4. **Tipado dinámico fuerte.** Los valores tienen tipo en tiempo de ejecución; las variables no.
-5. **Indentación significativa**, estilo Python. Bloques delimitados por `:` y nivel de indentación (espacios; tabuladores no permitidos).
+5. **Bloques delimitados explícitamente** con `:` al abrir y `fin <etiqueta>` al cerrar (decisión [B1](decisiones/B1-modelo-de-bloques.md)). La indentación es estilística, no semántica.
 6. **Una sola forma evidente** de hacer cada cosa cuando sea posible.
 
 ---
@@ -79,6 +79,7 @@ Donde `Letra` incluye toda letra Unicode (categoría `L`), incluyendo `ñ`, `Ñ`
 | `atrapar` | — | manejo de excepción |
 | `finalmente` | — | bloque siempre ejecutado |
 | `lanzar` | — | lanzar excepción |
+| `fin` | — | cierre de bloque (siempre seguido de etiqueta: `fin si`, `fin funcion`, etc.) |
 
 #### Operadores lógicos y comparativos (palabras)
 | Keyword | Forma sin tilde | Significado |
@@ -156,12 +157,78 @@ se asocia como docstring accesible vía .__documentación__).
 """
 ```
 
-### 2.7 Indentación
+### 2.7 Bloques
 
-- Bloques delimitados por `:` al final de la línea de cabecera y un incremento del nivel de indentación.
-- Solo **espacios**. Tabuladores producen error de sintaxis.
-- Nivel recomendado: **4 espacios**.
-- El lexer emite tokens virtuales `INDENT` y `DEDENT`, comparable al algoritmo del lexer de Python.
+Cornamusa delimita los bloques con palabras clave explícitas, no con indentación significativa. La decisión y su justificación están en [`decisiones/B1-modelo-de-bloques.md`](decisiones/B1-modelo-de-bloques.md).
+
+**Forma general:**
+
+```
+<cabecera>:
+    <sentencias>
+fin <etiqueta>
+```
+
+Donde `<etiqueta>` es la palabra clave que abrió el bloque.
+
+#### Etiquetas de cierre
+
+| Apertura | Cierre |
+|---|---|
+| `si` / `sino si` / `sino` | `fin si` |
+| `mientras` | `fin mientras` |
+| `para` | `fin para` |
+| `funcion` / `función` | `fin funcion` |
+| `clase` | `fin clase` |
+| `intentar` / `atrapar` / `finalmente` | `fin intentar` |
+
+**Cláusulas continuadoras** (`sino si`, `sino`, `atrapar`, `finalmente`) no son bloques independientes. Comparten el `fin` del bloque que las contiene:
+
+```cornamusa
+si x > 0:
+    imprimir("positivo")
+sino si x < 0:
+    imprimir("negativo")
+sino:
+    imprimir("cero")
+fin si
+```
+
+#### One-liners
+
+Si tras `:` viene una sentencia simple en la misma línea, no se requiere `fin`:
+
+```cornamusa
+si x > 0: imprimir(x)
+```
+
+Si tras `:` viene un salto de línea, es un bloque multilínea y **exige** `fin <etiqueta>`.
+
+#### Bloque vacío
+
+Se rellena con `pasar`:
+
+```cornamusa
+funcion no_hace_nada():
+    pasar
+fin funcion
+```
+
+#### Indentación
+
+- **No es semántica**: el lexer la ignora.
+- **Recomendación de estilo**: 4 espacios, sin tabuladores.
+- Editores y formateadores pueden imponerla por convención, pero el lenguaje no.
+
+#### Anti-pattern
+
+`fin` desnudo (sin etiqueta) es **error de sintaxis**:
+
+```cornamusa
+si x:
+    hacer()
+fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
+```
 
 ---
 
@@ -278,19 +345,23 @@ sent_simple    ← sent_asignacion
                 / "pasar"
 
 # ───── Si / Sino si / Sino ─────
-sent_si        ← "si" expr ":" bloque
-                ("sino" "si" expr ":" bloque)*
-                ("sino" ":" bloque)?
+sent_si        ← "si" expr ":" cuerpo
+                ("sino" "si" expr ":" cuerpo)*
+                ("sino" ":" cuerpo)?
+                "fin" "si"
 
-sent_mientras  ← "mientras" expr ":" bloque
-                ("sino" ":" bloque)?
+sent_mientras  ← "mientras" expr ":" cuerpo
+                ("sino" ":" cuerpo)?
+                "fin" "mientras"
 
-sent_para      ← "para" lista_objetivos "en" expr ":" bloque
-                ("sino" ":" bloque)?
+sent_para      ← "para" lista_objetivos "en" expr ":" cuerpo
+                ("sino" ":" cuerpo)?
+                "fin" "para"
 
 # ───── Funciones ─────
 sent_funcion   ← decoradores? ("función" / "funcion")
-                IDENT "(" parametros? ")" anot_retorno? ":" bloque
+                IDENT "(" parametros? ")" anot_retorno? ":" cuerpo
+                "fin" ("función" / "funcion")
 
 parametros     ← parametro ("," parametro)*
 parametro      ← IDENT (":" expr)? ("=" expr)?
@@ -299,13 +370,15 @@ anot_retorno   ← "->" expr
 
 # ───── Clases ─────
 sent_clase     ← decoradores? "clase" IDENT
-                ("extiende" expr ("," expr)*)? ":" bloque
+                ("extiende" expr ("," expr)*)? ":" cuerpo
+                "fin" "clase"
 
 # ───── Excepciones ─────
-sent_intentar  ← "intentar" ":" bloque
-                ("atrapar" expr ("como" IDENT)? ":" bloque)+
-                ("sino" ":" bloque)?
-                ("finalmente" ":" bloque)?
+sent_intentar  ← "intentar" ":" cuerpo
+                ("atrapar" expr ("como" IDENT)? ":" cuerpo)+
+                ("sino" ":" cuerpo)?
+                ("finalmente" ":" cuerpo)?
+                "fin" "intentar"
 
 sent_lanzar    ← "lanzar" expr? ("desde" expr)?
 
@@ -323,9 +396,11 @@ sent_asignacion ← lista_objetivos "=" expr
 aug_op         ← "+=" / "-=" / "*=" / "/=" / "//=" / "%=" / "**="
                 / "&=" / "|=" / "^=" / "<<=" / ">>="
 
-# ───── Bloque ─────
-bloque         ← LF INDENT sentencia+ DEDENT
-                / sent_simple LF        # bloque en una línea: "si x: hacer()"
+# ───── Cuerpo de bloque ─────
+# El cierre con "fin <etiqueta>" lo hace cada sentencia compuesta arriba.
+# Aquí solo definimos el contenido entre apertura y cierre.
+cuerpo         ← LF sentencia+         # cuerpo multilínea
+                / sent_simple LF       # one-liner: "si x: hacer()"
 
 # ───── Expresiones (Pratt parser, precedencia ascendente) ─────
 expr           ← expr_o
@@ -427,6 +502,8 @@ funcion saludar(nombre, idioma="es"):
         retornar f"Hello, {nombre}"
     sino:
         lanzar ErrorDeValor(f"Idioma no soportado: {idioma}")
+    fin si
+fin funcion
 
 # Bucle e iteración
 para i en rango(1, 11):
@@ -438,18 +515,25 @@ para i en rango(1, 11):
         imprimir("Buzz")
     sino:
         imprimir(i)
+    fin si
+fin para
 
 # Clases y herencia
 clase Animal:
     funcion __iniciar__(yo, nombre):
         yo.nombre = nombre
+    fin funcion
 
     funcion hablar(yo):
         lanzar ErrorRuntime("método abstracto")
+    fin funcion
+fin clase
 
 clase Perro extiende Animal:
     funcion hablar(yo):
         retornar f"{yo.nombre} dice guau"
+    fin funcion
+fin clase
 
 # Manejo de excepciones
 intentar:
@@ -460,6 +544,8 @@ atrapar ErrorDeIO como e:
 finalmente:
     si archivo no es nulo:
         archivo.cerrar()
+    fin si
+fin intentar
 ```
 
 ---

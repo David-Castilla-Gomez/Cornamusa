@@ -7,8 +7,10 @@ funcion crear_contador(inicio=0):
         nolocal valor
         valor += paso
         retornar valor
+    fin funcion
 
     retornar incrementar
+fin funcion
 
 
 contador = crear_contador()
@@ -16,9 +18,11 @@ imprimir(contador())     # 1
 imprimir(contador())     # 2
 imprimir(contador(10))   # 12
 
-# Closure usada como función de orden superior
+# Closure usada como función de orden superior.
+# `lambda` es una expresión, no abre bloque: no lleva `fin`.
 funcion crear_multiplicador(factor):
     retornar lambda x: x * factor
+fin funcion
 
 
 doblar = crear_multiplicador(2)
