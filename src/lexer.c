@@ -2,6 +2,8 @@
 
 #include <string.h>
 
+#include "utf8proc.h"
+
 /* ──────────────────────────────────────────────────────────────────
  * Utilidades internas
  * ────────────────────────────────────────────────────────────────── */
@@ -81,6 +83,61 @@ static bool es_digito_octal(char c) {
 
 static bool es_digito_binario(char c) {
     return c == '0' || c == '1';
+}
+
+/*
+ * ASCII rápido: ¿puede iniciar un identificador?
+ * Letras a-z, A-Z, '_' o '$'.
+ */
+static bool es_inicio_ident_ascii(char c) {
+    return (c >= 'a' && c <= 'z')
+        || (c >= 'A' && c <= 'Z')
+        || c == '_' || c == '$';
+}
+
+/*
+ * ASCII rápido: ¿puede aparecer dentro de un identificador?
+ * Letras, dígitos, '_' o '$'.
+ */
+static bool es_continua_ident_ascii(char c) {
+    return es_inicio_ident_ascii(c) || (c >= '0' && c <= '9');
+}
+
+/*
+ * Unicode: ¿es un code point válido para iniciar un identificador?
+ * Aceptamos categorías de Letter (Lu, Ll, Lt, Lm, Lo) y Letter Number (Nl).
+ */
+static bool es_inicio_ident_unicode(int32_t cp) {
+    utf8proc_category_t cat = utf8proc_category((utf8proc_int32_t)cp);
+    return cat == UTF8PROC_CATEGORY_LU
+        || cat == UTF8PROC_CATEGORY_LL
+        || cat == UTF8PROC_CATEGORY_LT
+        || cat == UTF8PROC_CATEGORY_LM
+        || cat == UTF8PROC_CATEGORY_LO
+        || cat == UTF8PROC_CATEGORY_NL;
+}
+
+/*
+ * Unicode: ¿es un code point válido para continuar un identificador?
+ * Letters, dígitos decimales, marks (combining), connector punctuation.
+ */
+static bool es_continua_ident_unicode(int32_t cp) {
+    utf8proc_category_t cat = utf8proc_category((utf8proc_int32_t)cp);
+    switch (cat) {
+        case UTF8PROC_CATEGORY_LU:
+        case UTF8PROC_CATEGORY_LL:
+        case UTF8PROC_CATEGORY_LT:
+        case UTF8PROC_CATEGORY_LM:
+        case UTF8PROC_CATEGORY_LO:
+        case UTF8PROC_CATEGORY_NL:
+        case UTF8PROC_CATEGORY_ND:   /* dígitos decimales */
+        case UTF8PROC_CATEGORY_MN:   /* marks no espaciantes (combining) */
+        case UTF8PROC_CATEGORY_MC:   /* marks espaciantes */
+        case UTF8PROC_CATEGORY_PC:   /* connector punctuation (incluye '_' en Pc) */
+            return true;
+        default:
+            return false;
+    }
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -351,6 +408,184 @@ static Token escanear_cadena(Lexer *l, char delimitador) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Identificadores y palabras clave
+ *
+ * Estructura:
+ *   - Si el primer carácter del lexema es ASCII letter/_/$, fast path.
+ *   - Si es no-ASCII (byte alto), decodificamos UTF-8 con utf8proc y
+ *     verificamos que sea letra Unicode.
+ *   - Tras consumir el primer carácter, se invoca el bucle común que
+ *     extiende el identificador por cualquier carácter de continuación.
+ *
+ * El lexer asume que la fuente está en NFC (decisión B4); la
+ * normalización es responsabilidad del que carga el archivo (ver
+ * fuente.c). Para tests con ASCII puro NFC es no-op.
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Bucle compartido por identificadores ASCII y Unicode. Asume que ya
+ * se ha consumido al menos un carácter válido de inicio. Avanza
+ * mientras el siguiente carácter (ASCII o Unicode) es válido como
+ * continuación de identificador.
+ */
+static void escanear_ident_continuar(Lexer *l) {
+    while (true) {
+        char c = mirar(l);
+        if (c == '\0') break;
+        if ((unsigned char)c < 0x80) {
+            if (es_continua_ident_ascii(c)) {
+                avanzar(l);
+            } else {
+                break;
+            }
+        } else {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t consumed = utf8proc_iterate(
+                (const utf8proc_uint8_t *)l->actual, -1, &cp);
+            if (consumed <= 0) break;
+            if (!es_continua_ident_unicode((int32_t)cp)) break;
+            l->actual += consumed;
+        }
+    }
+}
+
+/*
+ * Tabla de keywords. Devuelve TT_IDENT si el lexema no coincide con
+ * ninguna keyword. La estructura switch-on-first-char es similar a la
+ * de clox, optimizada para que la mayoría de identificadores rechacen
+ * en O(1) sin comparar más caracteres.
+ */
+#define COINCIDE(esperado)                                                     \
+    (len == (int)(sizeof(esperado) - 1)                                        \
+     && memcmp(texto, esperado, sizeof(esperado) - 1) == 0)
+
+static TipoToken buscar_keyword(const char *texto, int len) {
+    if (len == 0) return TT_IDENT;
+    switch (texto[0]) {
+        case 'a':
+            if (COINCIDE("asincrono")) return TT_ASINCRONO;
+            if (COINCIDE("atrapar"))   return TT_ATRAPAR;
+            break;
+        case 'b':
+            if (COINCIDE("borrar"))    return TT_BORRAR;
+            break;
+        case 'c':
+            if (COINCIDE("clase"))     return TT_CLASE;
+            if (COINCIDE("coincidir")) return TT_COINCIDIR;
+            if (COINCIDE("como"))      return TT_COMO;
+            if (COINCIDE("con"))       return TT_CON;
+            if (COINCIDE("continuar")) return TT_CONTINUAR;
+            break;
+        case 'd':
+            if (COINCIDE("desde"))     return TT_DESDE;
+            break;
+        case 'e':
+            if (COINCIDE("en"))        return TT_EN;
+            if (COINCIDE("es"))        return TT_ES;
+            if (COINCIDE("esperar"))   return TT_ESPERAR;
+            if (COINCIDE("extiende"))  return TT_EXTIENDE;
+            break;
+        case 'f':
+            if (COINCIDE("falso"))     return TT_FALSO;
+            if (COINCIDE("fin"))       return TT_FIN;
+            if (COINCIDE("finalmente"))return TT_FINALMENTE;
+            if (COINCIDE("funcion"))   return TT_FUNCION;
+            break;
+        case 'g':
+            if (COINCIDE("global"))    return TT_GLOBAL;
+            break;
+        case 'i':
+            if (COINCIDE("importar"))  return TT_IMPORTAR;
+            if (COINCIDE("intentar"))  return TT_INTENTAR;
+            break;
+        case 'l':
+            if (COINCIDE("lambda"))    return TT_LAMBDA;
+            if (COINCIDE("lanzar"))    return TT_LANZAR;
+            break;
+        case 'm':
+            if (COINCIDE("mientras"))  return TT_MIENTRAS;
+            break;
+        case 'n':
+            if (COINCIDE("no"))        return TT_NO;
+            if (COINCIDE("nolocal"))   return TT_NOLOCAL;
+            if (COINCIDE("nulo"))      return TT_NULO;
+            break;
+        case 'o':
+            if (COINCIDE("o"))         return TT_O;
+            break;
+        case 'p':
+            if (COINCIDE("para"))      return TT_PARA;
+            if (COINCIDE("pasar"))     return TT_PASAR;
+            if (COINCIDE("producir"))  return TT_PRODUCIR;
+            break;
+        case 'r':
+            if (COINCIDE("retornar"))  return TT_RETORNAR;
+            if (COINCIDE("romper"))    return TT_ROMPER;
+            break;
+        case 's':
+            if (COINCIDE("si"))        return TT_SI;
+            if (COINCIDE("sino"))      return TT_SINO;
+            if (COINCIDE("super"))     return TT_SUPER;
+            break;
+        case 'v':
+            if (COINCIDE("verdadero")) return TT_VERDADERO;
+            break;
+        case 'y':
+            if (COINCIDE("y"))         return TT_Y;
+            break;
+    }
+    return TT_IDENT;
+}
+
+#undef COINCIDE
+
+/*
+ * Camino rápido: el primer carácter es ASCII letter/_/$. Lo hemos
+ * consumido ya en lexer_siguiente. Solo hay que extender el
+ * identificador y consultar la tabla de keywords.
+ */
+static Token escanear_ident_ascii(Lexer *l) {
+    escanear_ident_continuar(l);
+    int len = (int)(l->actual - l->inicio_token);
+    TipoToken tipo = buscar_keyword(l->inicio_token, len);
+    return crear_token(l, tipo);
+}
+
+/*
+ * Camino lento: el primer byte tenía bit alto. l->actual ya ha
+ * avanzado UN BYTE (consumido en lexer_siguiente). Para usar
+ * utf8proc desde el inicio del code point retrocedemos.
+ *
+ * El identificador resultante puede o no coincidir con una keyword.
+ * En la práctica las keywords son ASCII, así que un identificador con
+ * bytes Unicode nunca es keyword: optimizamos retornando TT_IDENT
+ * directamente sin consultar la tabla.
+ */
+static Token escanear_ident_unicode(Lexer *l) {
+    /* Retroceder al inicio del code point que disparó este caso. */
+    l->actual = l->inicio_token;
+
+    utf8proc_int32_t cp;
+    utf8proc_ssize_t consumed = utf8proc_iterate(
+        (const utf8proc_uint8_t *)l->actual, -1, &cp);
+    if (consumed <= 0) {
+        avanzar(l); /* consume el byte inválido para no bucle infinito */
+        return token_error(l, "byte UTF-8 inválido");
+    }
+    if (!es_inicio_ident_unicode((int32_t)cp)) {
+        l->actual += consumed;
+        return token_error(l, "carácter no reconocido");
+    }
+    l->actual += consumed;
+
+    escanear_ident_continuar(l);
+
+    /* Identificadores con bytes Unicode no pueden ser keywords (todas
+       las keywords de Cornamusa son ASCII por decisión B4). */
+    return crear_token(l, TT_IDENT);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * API pública
  * ────────────────────────────────────────────────────────────────── */
 
@@ -382,6 +617,16 @@ Token lexer_siguiente(Lexer *l) {
     /* Cadenas literales: comilla simple o doble. */
     if (c == '"' || c == '\'') {
         return escanear_cadena(l, c);
+    }
+
+    /* Identificadores ASCII (camino rápido). */
+    if (es_inicio_ident_ascii(c)) {
+        return escanear_ident_ascii(l);
+    }
+
+    /* Bytes con bit alto: posible inicio de identificador Unicode. */
+    if ((unsigned char)c >= 0x80) {
+        return escanear_ident_unicode(l);
     }
 
     switch (c) {
