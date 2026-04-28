@@ -42,11 +42,29 @@ if(CORNAMUSA_DEBUG_TRACE)
     add_compile_definitions(CORNAMUSA_DEBUG_TRACE=1)
 endif()
 
+# ───── Dependencia vendoreada: utf8proc ─────
+# Se compila como librería estática que se enlaza al binario y a los tests.
+# Solo se lista utf8proc.c; utf8proc_data.c se incluye desde utf8proc.c
+# con #include directiva (no es una unidad de traducción separada).
+# Se desactivan los warnings estrictos para esta dependencia externa.
+add_library(utf8proc STATIC
+    vendor/utf8proc/utf8proc.c
+)
+target_include_directories(utf8proc PUBLIC vendor/utf8proc)
+target_compile_definitions(utf8proc PRIVATE UTF8PROC_STATIC)
+if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(utf8proc PRIVATE -w)
+elseif(MSVC)
+    target_compile_options(utf8proc PRIVATE /w)
+endif()
+
 # ───── Ejecutable principal ─────
 file(GLOB CORNAMUSA_SOURCES CONFIGURE_DEPENDS "src/*.c")
 
 add_executable(cornamusa ${CORNAMUSA_SOURCES})
 target_include_directories(cornamusa PRIVATE src)
+target_compile_definitions(cornamusa PRIVATE UTF8PROC_STATIC)
+target_link_libraries(cornamusa PRIVATE utf8proc)
 
 # ───── Tests ─────
 if(CORNAMUSA_BUILD_TESTS)
