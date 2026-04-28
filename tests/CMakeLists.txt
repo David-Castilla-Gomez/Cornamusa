@@ -35,3 +35,29 @@ foreach(ejemplo ${EJEMPLOS})
         LABELS "integracion"
     )
 endforeach()
+
+# ───── Tests de integración del parser: --ast sobre ejemplos ─────
+# En v0.3.0 los siguientes ejemplos parsean correctamente. Los demás
+# (03, 05, 06, 10) usan features aplazadas a v0.3.1: multi-target
+# assignment (`a, b = b, a`) y list comprehensions
+# (`[x para x en y si cond]`).
+set(EJEMPLOS_PARSEAN
+    01_hola_mundo
+    02_fizzbuzz
+    04_factorial
+    07_clases_herencia
+    08_excepciones
+    09_closures
+    11_iterador
+    12_modulos
+)
+foreach(nombre ${EJEMPLOS_PARSEAN})
+    add_test(
+        NAME parse_${nombre}
+        COMMAND $<TARGET_FILE:cornamusa> --ast
+                ${CMAKE_SOURCE_DIR}/examples/${nombre}.cor
+    )
+    set_tests_properties(parse_${nombre} PROPERTIES
+        LABELS "integracion"
+    )
+endforeach()

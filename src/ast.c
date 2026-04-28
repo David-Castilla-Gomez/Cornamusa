@@ -120,6 +120,60 @@ Expr *expr_lambda(Arena *a, Parametro *params, int n_params, Expr *cuerpo,
     return e;
 }
 
+static Expr *expr_secuencia_interno(Arena *a, TipoExpr tipo, Expr **elementos,
+                                     int n, int linea, int col) {
+    Expr *e = nuevo_expr(a, tipo, linea, col);
+    if (e) {
+        e->como.secuencia.elementos = elementos;
+        e->como.secuencia.n_elementos = n;
+    }
+    return e;
+}
+
+Expr *expr_lista(Arena *a, Expr **elementos, int n, int linea, int col) {
+    return expr_secuencia_interno(a, EXPR_LISTA, elementos, n, linea, col);
+}
+
+Expr *expr_conjunto(Arena *a, Expr **elementos, int n, int linea, int col) {
+    return expr_secuencia_interno(a, EXPR_CONJUNTO, elementos, n, linea, col);
+}
+
+Expr *expr_tupla(Arena *a, Expr **elementos, int n, int linea, int col) {
+    return expr_secuencia_interno(a, EXPR_TUPLA, elementos, n, linea, col);
+}
+
+Expr *expr_diccionario(Arena *a, Expr **claves, Expr **valores, int n,
+                       int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_DICCIONARIO, linea, col);
+    if (e) {
+        e->como.diccionario.claves = claves;
+        e->como.diccionario.valores = valores;
+        e->como.diccionario.n_pares = n;
+    }
+    return e;
+}
+
+Expr *expr_indice(Arena *a, Expr *objeto, Expr *indice, int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_INDICE, linea, col);
+    if (e) {
+        e->como.indice.objeto = objeto;
+        e->como.indice.indice = indice;
+    }
+    return e;
+}
+
+Expr *expr_rebanada(Arena *a, Expr *objeto, Expr *inicio, Expr *fin, Expr *paso,
+                    int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_REBANADA, linea, col);
+    if (e) {
+        e->como.rebanada.objeto = objeto;
+        e->como.rebanada.inicio = inicio;
+        e->como.rebanada.fin = fin;
+        e->como.rebanada.paso = paso;
+    }
+    return e;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Pretty-printer (S-expression style)
  *
@@ -168,92 +222,16 @@ static const char *nombre_op(TipoToken t) {
     }
 }
 
-/* Imprime una cadena entrecomillando su contenido si tiene espacios
-   o caracteres especiales. Para lexemas que ya incluyen comillas
-   (cadenas), las dejamos tal cual. */
-static void escribir_lexema(FILE *out, const char *texto, int len) {
-    fprintf(out, "%.*s", len, texto);
-}
-
+/*
+ * Versión hacia FILE*. Delega al pretty-printer basado en buffer
+ * (expr_a_buffer) para no duplicar la enumeración de variantes.
+ * Para expresiones grandes el buffer se trunca; en uso normal
+ * (debug, REPL) cabe siempre.
+ */
 void expr_imprimir(const Expr *e, FILE *out) {
-    if (e == NULL) {
-        fputs("(null)", out);
-        return;
-    }
-    switch (e->tipo) {
-        case EXPR_LITERAL_ENTERO:
-            fputs("(lit-int ", out);
-            escribir_lexema(out, e->como.literal.lexema, e->como.literal.longitud);
-            fputc(')', out);
-            break;
-        case EXPR_LITERAL_DECIMAL:
-            fputs("(lit-dec ", out);
-            escribir_lexema(out, e->como.literal.lexema, e->como.literal.longitud);
-            fputc(')', out);
-            break;
-        case EXPR_LITERAL_CADENA:
-            fputs("(lit-str ", out);
-            escribir_lexema(out, e->como.literal.lexema, e->como.literal.longitud);
-            fputc(')', out);
-            break;
-        case EXPR_LITERAL_F_CADENA:
-            fputs("(lit-fstr ", out);
-            escribir_lexema(out, e->como.literal.lexema, e->como.literal.longitud);
-            fputc(')', out);
-            break;
-        case EXPR_LITERAL_BOOLEANO:
-            fputs(e->como.booleano.valor ? "(lit-bool verdadero)" : "(lit-bool falso)", out);
-            break;
-        case EXPR_LITERAL_NULO:
-            fputs("(lit-nulo)", out);
-            break;
-        case EXPR_IDENT:
-            fputs("(ident ", out);
-            escribir_lexema(out, e->como.ident.nombre, e->como.ident.longitud);
-            fputc(')', out);
-            break;
-        case EXPR_BINARIO:
-            fprintf(out, "(op \"%s\" ", nombre_op(e->como.binario.op));
-            expr_imprimir(e->como.binario.izq, out);
-            fputc(' ', out);
-            expr_imprimir(e->como.binario.der, out);
-            fputc(')', out);
-            break;
-        case EXPR_UNARIO:
-            fprintf(out, "(uop \"%s\" ", nombre_op(e->como.unario.op));
-            expr_imprimir(e->como.unario.operando, out);
-            fputc(')', out);
-            break;
-        case EXPR_LOGICA:
-            fprintf(out, "(%s ", e->como.logica.es_y ? "y" : "o");
-            expr_imprimir(e->como.logica.izq, out);
-            fputc(' ', out);
-            expr_imprimir(e->como.logica.der, out);
-            fputc(')', out);
-            break;
-        case EXPR_LLAMADA: {
-            fputs("(llamada ", out);
-            expr_imprimir(e->como.llamada.callee, out);
-            for (int i = 0; i < e->como.llamada.n_args; i++) {
-                fputc(' ', out);
-                expr_imprimir(e->como.llamada.args[i], out);
-            }
-            fputc(')', out);
-            break;
-        }
-        case EXPR_ATRIBUTO:
-            fputs("(atr ", out);
-            expr_imprimir(e->como.atributo.objeto, out);
-            fputs(" \"", out);
-            escribir_lexema(out, e->como.atributo.nombre, e->como.atributo.longitud);
-            fputs("\")", out);
-            break;
-        case EXPR_GRUPO:
-            fputs("(grupo ", out);
-            expr_imprimir(e->como.grupo.interna, out);
-            fputc(')', out);
-            break;
-    }
+    char buffer[16384];
+    expr_a_cadena(e, buffer, sizeof(buffer));
+    fputs(buffer, out);
 }
 
 /*
@@ -386,6 +364,59 @@ static void expr_a_buffer(const Expr *e, EscrituraBuffer *eb) {
             wb_escribir(eb, ")");
             break;
         }
+        case EXPR_LISTA:
+        case EXPR_CONJUNTO:
+        case EXPR_TUPLA: {
+            const char *etiqueta =
+                e->tipo == EXPR_LISTA ? "lista" :
+                e->tipo == EXPR_CONJUNTO ? "conjunto" : "tupla";
+            wb_escribir(eb, "(%s", etiqueta);
+            for (int i = 0; i < e->como.secuencia.n_elementos; i++) {
+                wb_escribir(eb, " ");
+                expr_a_buffer(e->como.secuencia.elementos[i], eb);
+            }
+            wb_escribir(eb, ")");
+            break;
+        }
+        case EXPR_DICCIONARIO:
+            wb_escribir(eb, "(dicc");
+            for (int i = 0; i < e->como.diccionario.n_pares; i++) {
+                wb_escribir(eb, " (par ");
+                expr_a_buffer(e->como.diccionario.claves[i], eb);
+                wb_escribir(eb, " ");
+                expr_a_buffer(e->como.diccionario.valores[i], eb);
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, ")");
+            break;
+        case EXPR_INDICE:
+            wb_escribir(eb, "(indice ");
+            expr_a_buffer(e->como.indice.objeto, eb);
+            wb_escribir(eb, " ");
+            expr_a_buffer(e->como.indice.indice, eb);
+            wb_escribir(eb, ")");
+            break;
+        case EXPR_REBANADA:
+            wb_escribir(eb, "(rebanada ");
+            expr_a_buffer(e->como.rebanada.objeto, eb);
+            wb_escribir(eb, " ");
+            if (e->como.rebanada.inicio) {
+                expr_a_buffer(e->como.rebanada.inicio, eb);
+            } else {
+                wb_escribir(eb, "nulo");
+            }
+            wb_escribir(eb, " ");
+            if (e->como.rebanada.fin) {
+                expr_a_buffer(e->como.rebanada.fin, eb);
+            } else {
+                wb_escribir(eb, "nulo");
+            }
+            if (e->como.rebanada.paso) {
+                wb_escribir(eb, " ");
+                expr_a_buffer(e->como.rebanada.paso, eb);
+            }
+            wb_escribir(eb, ")");
+            break;
     }
 }
 

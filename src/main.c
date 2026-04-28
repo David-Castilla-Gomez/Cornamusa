@@ -25,6 +25,9 @@
 #include "errores.h"
 #include "fuente.h"
 #include "lexer.h"
+#include "arena.h"
+#include "ast.h"
+#include "parser.h"
 
 #define LINEA_MAX 1024
 
@@ -47,6 +50,7 @@ static void imprimir_uso(const char *programa) {
         "  -h, --ayuda      Muestra esta ayuda\n"
         "  -v, --version    Muestra la versión\n"
         "      --tokens     Tokeniza el archivo y vuelca los tokens\n"
+        "      --ast        Parsea el archivo y vuelca el AST\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (eco hasta v0.4).\n",
         programa);
@@ -86,6 +90,52 @@ static int correr_repl(void) {
         /* v0.2.0: eco. El intérprete llega en v0.4. */
         printf("%s\n", linea);
     }
+}
+
+/*
+ * Parsea el archivo y vuelca el AST en formato S-expression.
+ * Devuelve 0 si OK, 65 si hubo errores.
+ */
+static int parsear_y_volcar_ast(const char *ruta) {
+    FuenteCargada fc = fuente_cargar_archivo(ruta);
+    if (fc.codigo != FUENTE_OK) {
+        fprintf(stderr, "Error al cargar '%s': %s\n", ruta, fc.mensaje_error);
+        return 74;
+    }
+
+    Lexer l;
+    lexer_iniciar(&l, fc.fuente, ruta);
+
+    Arena a;
+    arena_iniciar(&a, 16384);
+
+    Parser p;
+    parser_iniciar(&p, &l, &a, fc.fuente, ruta);
+
+    int n;
+    Sent **sents = parser_parsear_programa(&p, &n);
+
+    if (p.tuvo_error) {
+        arena_destruir(&a);
+        fuente_destruir(&fc);
+        fprintf(stderr,
+            "\nFallo de parseo. Corrige los errores arriba y reintenta.\n");
+        return 65;
+    }
+
+    /* Volcar cada sentencia en su propia línea para legibilidad. */
+    printf("(programa\n");
+    for (int i = 0; i < n; i++) {
+        printf("  ");
+        sent_imprimir(sents[i], stdout);
+        printf("\n");
+    }
+    printf(")\n");
+    printf("\n%d sentencia(s) en el programa.\n", n);
+
+    arena_destruir(&a);
+    fuente_destruir(&fc);
+    return 0;
 }
 
 /*
@@ -168,6 +218,7 @@ int main(int argc, char **argv) {
     /* Parseo simple de argumentos. */
     const char *archivo = NULL;
     bool volcar_tokens = false;
+    bool volcar_ast = false;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -185,6 +236,10 @@ int main(int argc, char **argv) {
             volcar_tokens = true;
             continue;
         }
+        if (strcmp(arg, "--ast") == 0) {
+            volcar_ast = true;
+            continue;
+        }
         if (arg[0] == '-') {
             fprintf(stderr, "Opción no reconocida: %s\n", arg);
             imprimir_uso(argv[0]);
@@ -194,11 +249,13 @@ int main(int argc, char **argv) {
     }
 
     if (archivo != NULL) {
+        if (volcar_ast) return parsear_y_volcar_ast(archivo);
         return tokenizar_archivo(archivo, volcar_tokens);
     }
 
-    if (volcar_tokens) {
-        fprintf(stderr, "--tokens requiere un archivo .cor\n");
+    if (volcar_tokens || volcar_ast) {
+        fprintf(stderr, "%s requiere un archivo .cor\n",
+            volcar_ast ? "--ast" : "--tokens");
         return 64;
     }
 

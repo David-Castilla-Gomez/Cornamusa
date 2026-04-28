@@ -69,6 +69,16 @@ typedef enum {
 
     /* Lambda: cuerpo es una sola expresión (no bloque). */
     EXPR_LAMBDA,                /* lambda x, y: x + y */
+
+    /* Colecciones literales */
+    EXPR_LISTA,                 /* [a, b, c] */
+    EXPR_DICCIONARIO,           /* {k: v, ...} */
+    EXPR_CONJUNTO,              /* {a, b, c} */
+    EXPR_TUPLA,                 /* (a, b) — distinto de grupo (a) */
+
+    /* Indexación / slicing */
+    EXPR_INDICE,                /* obj[k] */
+    EXPR_REBANADA,              /* obj[a:b:c] (a, b, c todos opcionales) */
 } TipoExpr;
 
 struct Expr {
@@ -134,6 +144,33 @@ struct Expr {
             int n_parametros;
             Expr *cuerpo;       /* una sola expresión tras `:` */
         } lambda;
+
+        /* Lista, conjunto, tupla: secuencia de elementos. */
+        struct {
+            Expr **elementos;
+            int n_elementos;
+        } secuencia;
+
+        /* Diccionario: pares clave-valor en arrays paralelos. */
+        struct {
+            Expr **claves;
+            Expr **valores;
+            int n_pares;
+        } diccionario;
+
+        /* Indexación obj[k]. */
+        struct {
+            Expr *objeto;
+            Expr *indice;
+        } indice;
+
+        /* Slicing obj[inicio:fin:paso]. Cualquier campo puede ser NULL. */
+        struct {
+            Expr *objeto;
+            Expr *inicio;
+            Expr *fin;
+            Expr *paso;
+        } rebanada;
     } como;
 };
 
@@ -163,6 +200,14 @@ Expr *expr_atributo(Arena *a, Expr *objeto, const char *nombre, int len, int lin
 Expr *expr_grupo(Arena *a, Expr *interna, int linea, int col);
 Expr *expr_lambda(Arena *a, Parametro *params, int n_params, Expr *cuerpo,
                   int linea, int col);
+Expr *expr_lista(Arena *a, Expr **elementos, int n, int linea, int col);
+Expr *expr_diccionario(Arena *a, Expr **claves, Expr **valores, int n,
+                       int linea, int col);
+Expr *expr_conjunto(Arena *a, Expr **elementos, int n, int linea, int col);
+Expr *expr_tupla(Arena *a, Expr **elementos, int n, int linea, int col);
+Expr *expr_indice(Arena *a, Expr *objeto, Expr *indice, int linea, int col);
+Expr *expr_rebanada(Arena *a, Expr *objeto, Expr *inicio, Expr *fin, Expr *paso,
+                    int linea, int col);
 
 /* ──────────────────────────────────────────────────────────────────
  * Pretty-printer

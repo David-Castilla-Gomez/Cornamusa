@@ -66,11 +66,16 @@ static Expr *parsear_grupo(Parser *p);
 static Expr *parsear_unario(Parser *p);
 static Expr *parsear_no(Parser *p);
 static Expr *parsear_lambda(Parser *p);
+static Expr *parsear_lista_literal(Parser *p);
+static Expr *parsear_llaves(Parser *p);
 static Expr *parsear_binario(Parser *p, Expr *izq);
 static Expr *parsear_logica(Parser *p, Expr *izq);
 static Expr *parsear_potencia(Parser *p, Expr *izq);
 static Expr *parsear_llamada(Parser *p, Expr *callee);
 static Expr *parsear_atributo(Parser *p, Expr *objeto);
+static Expr *parsear_indice_o_rebanada(Parser *p, Expr *objeto);
+static Expr *parsear_es(Parser *p, Expr *izq);
+static Expr *parsear_no_compuesto(Parser *p, Expr *izq);
 
 static const ReglaParseo *obtener_regla(TipoToken tipo);
 static void avanzar(Parser *p);
@@ -234,14 +239,295 @@ static Expr *parsear_ident(Parser *p) {
     return expr_ident(p->arena, t.inicio, t.longitud, t.linea, t.columna);
 }
 
+/*
+ * Parsea `(...)`. Distingue entre:
+ *   - `()`         → tupla vacía
+ *   - `(expr)`     → grupo (paréntesis de precedencia)
+ *   - `(expr,)`    → tupla de 1 elemento (con coma final)
+ *   - `(a, b, ...)` → tupla de N elementos
+ */
 static Expr *parsear_grupo(Parser *p) {
     Token apertura = p->actual;
     avanzar(p); /* consume '(' */
-    Expr *interna = parsear_expresion(p);
-    if (!consumir(p, TT_PARENT_DER, "se esperaba ')' para cerrar el grupo")) {
+
+    /* () = tupla vacía. */
+    if (consumir_si(p, TT_PARENT_DER)) {
+        return expr_tupla(p->arena, NULL, 0,
+                          apertura.linea, apertura.columna);
+    }
+
+    Expr *primero = parsear_expresion(p);
+    if (primero == NULL) return NULL;
+
+    /* Sin coma: es grupo. */
+    if (!check(p, TT_COMA)) {
+        if (!consumir(p, TT_PARENT_DER,
+            "se esperaba ')' para cerrar el grupo")) return NULL;
+        return expr_grupo(p->arena, primero,
+                          apertura.linea, apertura.columna);
+    }
+
+    /* Con coma: es tupla. */
+    avanzar(p); /* consume ',' */
+
+    Expr **elementos = NULL;
+    int n = 0;
+    int cap = 0;
+    cap = 4;
+    elementos = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+    if (elementos == NULL) return NULL;
+    elementos[n++] = primero;
+
+    /* Tupla de 1: `(x,)`. Tras la coma puede venir directamente `)`. */
+    if (!check(p, TT_PARENT_DER)) {
+        do {
+            if (check(p, TT_PARENT_DER)) break; /* trailing comma */
+            Expr *e = parsear_expresion(p);
+            if (e == NULL) return NULL;
+            if (n >= cap) {
+                cap *= 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                if (nuevo == NULL) return NULL;
+                memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+                elementos = nuevo;
+            }
+            elementos[n++] = e;
+        } while (consumir_si(p, TT_COMA));
+    }
+
+    if (!consumir(p, TT_PARENT_DER,
+        "se esperaba ')' al final de la tupla")) return NULL;
+    return expr_tupla(p->arena, elementos, n,
+                      apertura.linea, apertura.columna);
+}
+
+/*
+ * Parsea una lista literal `[a, b, c]`, `[]` o `[1]`.
+ * Las comprensiones de lista (`[x para x en y si cond]`) se aplazan
+ * a v0.3.1 / Fase 3 sesión polish.
+ */
+static Expr *parsear_lista_literal(Parser *p) {
+    Token apertura = p->actual;
+    avanzar(p); /* consume '[' */
+
+    Expr **elementos = NULL;
+    int n = 0;
+    int cap = 0;
+
+    if (!check(p, TT_CORCH_DER)) {
+        do {
+            if (check(p, TT_CORCH_DER)) break; /* trailing comma */
+            Expr *e = parsear_expresion(p);
+            if (e == NULL) return NULL;
+            if (n >= cap) {
+                cap = cap == 0 ? 8 : cap * 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                if (nuevo == NULL) return NULL;
+                if (n > 0) memcpy(nuevo, elementos,
+                                  sizeof(Expr *) * (size_t)n);
+                elementos = nuevo;
+            }
+            elementos[n++] = e;
+        } while (consumir_si(p, TT_COMA));
+    }
+
+    if (!consumir(p, TT_CORCH_DER,
+        "se esperaba ']' al final de la lista")) return NULL;
+    return expr_lista(p->arena, elementos, n,
+                      apertura.linea, apertura.columna);
+}
+
+/*
+ * Parsea `{...}`. Detección de diccionario vs conjunto:
+ *   - `{}`           → diccionario vacío (convención de Python)
+ *   - `{x}`          → conjunto de 1 (no hay diccionario de 0 con sintaxis x)
+ *   - `{x, y, ...}`  → conjunto
+ *   - `{k: v, ...}`  → diccionario
+ *
+ * Decidimos por el primer carácter tras la primera expresión: `:` es
+ * diccionario, `,` o `}` es conjunto.
+ */
+static Expr *parsear_llaves(Parser *p) {
+    Token apertura = p->actual;
+    avanzar(p); /* consume '{' */
+
+    /* `{}` = diccionario vacío. */
+    if (consumir_si(p, TT_LLAVE_DER)) {
+        return expr_diccionario(p->arena, NULL, NULL, 0,
+                                apertura.linea, apertura.columna);
+    }
+
+    Expr *primero = parsear_expresion(p);
+    if (primero == NULL) return NULL;
+
+    /* `{ k : v }` → diccionario. */
+    if (consumir_si(p, TT_DOS_PUNTOS)) {
+        Expr *valor = parsear_expresion(p);
+        if (valor == NULL) return NULL;
+
+        Expr **claves = NULL;
+        Expr **valores = NULL;
+        int n = 0;
+        int cap = 8;
+        claves = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+        valores = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+        if (claves == NULL || valores == NULL) return NULL;
+        claves[0] = primero;
+        valores[0] = valor;
+        n = 1;
+
+        while (consumir_si(p, TT_COMA)) {
+            if (check(p, TT_LLAVE_DER)) break; /* trailing comma */
+            Expr *k = parsear_expresion(p);
+            if (k == NULL) return NULL;
+            if (!consumir(p, TT_DOS_PUNTOS,
+                "se esperaba ':' tras la clave del diccionario")) return NULL;
+            Expr *v = parsear_expresion(p);
+            if (v == NULL) return NULL;
+            if (n >= cap) {
+                cap *= 2;
+                Expr **nk = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                Expr **nv = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                if (nk == NULL || nv == NULL) return NULL;
+                memcpy(nk, claves, sizeof(Expr *) * (size_t)n);
+                memcpy(nv, valores, sizeof(Expr *) * (size_t)n);
+                claves = nk;
+                valores = nv;
+            }
+            claves[n] = k;
+            valores[n] = v;
+            n++;
+        }
+        if (!consumir(p, TT_LLAVE_DER,
+            "se esperaba '}' al final del diccionario")) return NULL;
+        return expr_diccionario(p->arena, claves, valores, n,
+                                apertura.linea, apertura.columna);
+    }
+
+    /* Sino, es conjunto. */
+    Expr **elementos = NULL;
+    int n = 0;
+    int cap = 8;
+    elementos = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+    if (elementos == NULL) return NULL;
+    elementos[0] = primero;
+    n = 1;
+
+    while (consumir_si(p, TT_COMA)) {
+        if (check(p, TT_LLAVE_DER)) break;
+        Expr *e = parsear_expresion(p);
+        if (e == NULL) return NULL;
+        if (n >= cap) {
+            cap *= 2;
+            Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                sizeof(Expr *) * (size_t)cap);
+            if (nuevo == NULL) return NULL;
+            memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+            elementos = nuevo;
+        }
+        elementos[n++] = e;
+    }
+
+    if (!consumir(p, TT_LLAVE_DER,
+        "se esperaba '}' al final del conjunto")) return NULL;
+    return expr_conjunto(p->arena, elementos, n,
+                         apertura.linea, apertura.columna);
+}
+
+/*
+ * Parsea `obj[k]` (indexación) o `obj[a:b:c]` (slicing). Llamado como
+ * infijo después de una expresión que produce el `objeto`.
+ *
+ * Slicing soporta omisiones: `obj[:b]`, `obj[a:]`, `obj[:]`, `obj[::c]`.
+ */
+/*
+ * Operador `es` opcionalmente seguido de `no` para identidad negada
+ * (forma `a es no b`, ESPEC §5). Si hay `no`, envolvemos el binario
+ * en un EXPR_UNARIO("no", ...).
+ *
+ * Ej. `a es b`     → (op "es" a b)
+ *     `a es no b`  → (uop "no" (op "es" a b))
+ */
+static Expr *parsear_es(Parser *p, Expr *izq) {
+    Token t = p->actual;
+    avanzar(p); /* 'es' */
+    bool negado = consumir_si(p, TT_NO);
+    Expr *der = parsear_precedencia(p, PREC_COMPARAR + 1);
+    if (der == NULL) return NULL;
+    Expr *bin = expr_binario(p->arena, izq, TT_ES, der, t.linea, t.columna);
+    if (bin == NULL) return NULL;
+    if (negado) {
+        return expr_unario(p->arena, TT_NO, bin, t.linea, t.columna);
+    }
+    return bin;
+}
+
+/*
+ * `no` aparece como infijo solo en compound operators `no es` y `no en`
+ * (forma natural en castellano: `archivo no es nulo`, `palabra no en
+ * lista`). Tras `no` debe venir `es` o `en` obligatoriamente.
+ *
+ * Ej. `a no es b`  → (uop "no" (op "es" a b))
+ *     `a no en b`  → (uop "no" (op "en" a b))
+ */
+static Expr *parsear_no_compuesto(Parser *p, Expr *izq) {
+    Token t_no = p->actual;
+    avanzar(p); /* 'no' */
+    if (!check(p, TT_ES) && !check(p, TT_EN)) {
+        error_en(p, &p->actual,
+            "tras 'no' en operador comparativo se esperaba 'es' o 'en'");
         return NULL;
     }
-    return expr_grupo(p->arena, interna, apertura.linea, apertura.columna);
+    TipoToken op = p->actual.tipo;
+    Token t_op = p->actual;
+    avanzar(p); /* 'es' o 'en' */
+    Expr *der = parsear_precedencia(p, PREC_COMPARAR + 1);
+    if (der == NULL) return NULL;
+    Expr *bin = expr_binario(p->arena, izq, op, der, t_op.linea, t_op.columna);
+    if (bin == NULL) return NULL;
+    return expr_unario(p->arena, TT_NO, bin, t_no.linea, t_no.columna);
+}
+
+static Expr *parsear_indice_o_rebanada(Parser *p, Expr *objeto) {
+    Token apertura = p->actual;
+    avanzar(p); /* consume '[' */
+
+    Expr *inicio = NULL;
+    if (!check(p, TT_DOS_PUNTOS)) {
+        inicio = parsear_expresion(p);
+        if (inicio == NULL) return NULL;
+    }
+
+    /* Si tras la primera expr (o si era omitida) hay `:`, es slice. */
+    if (consumir_si(p, TT_DOS_PUNTOS)) {
+        Expr *fin = NULL;
+        Expr *paso = NULL;
+
+        if (!check(p, TT_DOS_PUNTOS) && !check(p, TT_CORCH_DER)) {
+            fin = parsear_expresion(p);
+            if (fin == NULL) return NULL;
+        }
+        if (consumir_si(p, TT_DOS_PUNTOS)) {
+            if (!check(p, TT_CORCH_DER)) {
+                paso = parsear_expresion(p);
+                if (paso == NULL) return NULL;
+            }
+        }
+        if (!consumir(p, TT_CORCH_DER,
+            "se esperaba ']' al final de la rebanada")) return NULL;
+        return expr_rebanada(p->arena, objeto, inicio, fin, paso,
+                             apertura.linea, apertura.columna);
+    }
+
+    /* Indexación simple. */
+    if (!consumir(p, TT_CORCH_DER,
+        "se esperaba ']' al final de la indexación")) return NULL;
+    return expr_indice(p->arena, objeto, inicio,
+                       apertura.linea, apertura.columna);
 }
 
 static Expr *parsear_unario(Parser *p) {
@@ -379,9 +665,11 @@ static void inicializar_reglas(void) {
     reglas[TT_NULO]        = (ReglaParseo){ parsear_nulo, NULL, PREC_NULA };
     reglas[TT_IDENT]       = (ReglaParseo){ parsear_ident, NULL, PREC_NULA };
 
-    /* Agrupación / llamada / atributo */
-    reglas[TT_PARENT_IZQ]  = (ReglaParseo){ parsear_grupo, parsear_llamada, PREC_LLAMADA };
-    reglas[TT_PUNTO]       = (ReglaParseo){ NULL,         parsear_atributo, PREC_LLAMADA };
+    /* Agrupación / llamada / atributo / indexación */
+    reglas[TT_PARENT_IZQ]  = (ReglaParseo){ parsear_grupo,         parsear_llamada,             PREC_LLAMADA };
+    reglas[TT_PUNTO]       = (ReglaParseo){ NULL,                  parsear_atributo,            PREC_LLAMADA };
+    reglas[TT_CORCH_IZQ]   = (ReglaParseo){ parsear_lista_literal, parsear_indice_o_rebanada,   PREC_LLAMADA };
+    reglas[TT_LLAVE_IZQ]   = (ReglaParseo){ parsear_llaves,        NULL,                        PREC_NULA };
 
     /* Unarios prefijo / binarios infijo (mismos tokens) */
     reglas[TT_MENOS]       = (ReglaParseo){ parsear_unario, parsear_binario, PREC_TERMINO };
@@ -413,7 +701,11 @@ static void inicializar_reglas(void) {
     /* Lógicas */
     reglas[TT_Y]           = (ReglaParseo){ NULL, parsear_logica, PREC_Y };
     reglas[TT_O]           = (ReglaParseo){ NULL, parsear_logica, PREC_O };
-    reglas[TT_NO]          = (ReglaParseo){ parsear_no, NULL, PREC_NULA };
+    reglas[TT_NO]          = (ReglaParseo){ parsear_no, parsear_no_compuesto, PREC_COMPARAR };
+
+    /* Identidad y pertenencia (operadores en palabra). */
+    reglas[TT_ES]          = (ReglaParseo){ NULL, parsear_es, PREC_COMPARAR };
+    reglas[TT_EN]          = (ReglaParseo){ NULL, parsear_binario, PREC_COMPARAR };
 
     /* Lambda como expresión. */
     reglas[TT_LAMBDA]      = (ReglaParseo){ parsear_lambda, NULL, PREC_NULA };

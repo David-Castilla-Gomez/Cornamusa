@@ -11,7 +11,35 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 2: sentencias simples + control de flujo + validación `fin <etiqueta>`.
 - ✅ Sesión 3: funciones, clases, lambda.
 - ✅ Sesión 4: excepciones, módulos, global/nolocal.
-- ⏳ Sesión 5: f-strings parseadas, listas/dicts, `--ast` flag, integración con ejemplos, tag v0.3.0.
+- ✅ Sesión 5: literales de colección, indexación, slicing, operadores de identidad/membership, `--ast` flag, tests de integración del parser, tag v0.3.0.
+
+### Añadido (Fase 3 sesión 5)
+- **Literales de colección** (`EXPR_LISTA`, `EXPR_DICCIONARIO`, `EXPR_CONJUNTO`, `EXPR_TUPLA`) con todas las variantes:
+  - `[1, 2, 3]` lista; `[]` lista vacía; trailing comma permitida.
+  - `{"k": "v"}` diccionario; `{}` diccionario vacío.
+  - `{1, 2, 3}` conjunto.
+  - `()` tupla vacía; `(x,)` tupla de 1; `(a, b)` tupla de 2+.
+  - **Distinción tupla vs grupo**: `(x)` es grupo, `(x,)` es tupla.
+- **Indexación** (`EXPR_INDICE`): `lista[0]`, `dicc[clave]`, `obj.attr[i]`, encadenamientos `matriz[i][j]`.
+- **Slicing** (`EXPR_REBANADA`): `lista[a:b]`, `lista[a:b:c]`, con omisiones (`[:b]`, `[a:]`, `[:]`, `[::c]`).
+- **Operadores de identidad y membership** (ESPEC §5 `op_comp`):
+  - `a es b` → identidad.
+  - `a es no b` → identidad negada (forma ESPEC).
+  - `a no es b` → identidad negada (forma natural castellana).
+  - `a en b` → pertenencia.
+  - `a no en b` → pertenencia negada.
+  - Las formas con `no` se desazucaran a `(uop "no" (op "es" / "en" izq der))`.
+- **Flag `--ast`** en `cornamusa` que vuelca el AST del programa en formato S-expression. Ejemplo: `cornamusa --ast programa.cor`.
+- **`tests/unit/test_parser_colecciones.c`** con ~30 tests cubriendo cada forma de literal, indexación, slicing, distinción tupla/grupo, anidamiento.
+- **Tests de integración del parser**: 8 ejemplos parsean correctamente con `--ast`:
+  - ✅ 01_hola_mundo, 02_fizzbuzz, 04_factorial, 07_clases_herencia, 08_excepciones, 09_closures, 11_iterador, 12_modulos.
+- **30 tests verde** (10 unit + 12 integración del lexer + 8 integración del parser).
+
+### Aplazado a v0.3.1 (parsean en sesiones futuras de Fase 3)
+- **Multi-target assignment** (`a, b = b, a + b`) — usado en 03_fibonacci.
+- **Iteración con tuple destructuring** (`para palabra, conteo en pares.elementos():`) — usado en 06_diccionarios.
+- **List comprehensions** (`[x*x para x en y si cond]`) — usadas en 05_listas y 10_quicksort.
+- **f-strings con interpolación parseada** (actualmente `EXPR_LITERAL_F_CADENA` almacena el lexema completo; las expresiones `{...}` no se parsean como sub-AST todavía).
 
 ### Añadido (Fase 3 sesión 4)
 - **AST de excepciones, módulos y declaraciones**:
