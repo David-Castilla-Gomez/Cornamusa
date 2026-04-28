@@ -246,21 +246,24 @@ static void test_lexema_apunta_a_fuente(void) {
     AFIRMAR(menos.longitud == 1);
 }
 
-/* ───── Secuencia compleja realista ───── */
+/* ───── Secuencia compleja realista ─────
+ *
+ * Esta secuencia evoluciona conforme implementamos más tokens. Hoy
+ * (sesión 2) los símbolos, operadores y enteros funcionan; los
+ * identificadores siguen siendo TT_ERROR hasta sesión 3. */
 
 static void test_secuencia_realista(void) {
     /* `(a + b) <= 10` */
     TipoToken esperados[] = {
         TT_PARENT_IZQ,
-        TT_ERROR,        /* 'a' es identificador, todavía no implementado */
+        TT_ERROR,        /* 'a' es identificador, sesión 3 */
         TT_MAS,
         TT_ERROR,        /* 'b' */
         TT_PARENT_DER,
         TT_MENOR_IGUAL,
-        TT_ERROR,        /* '1' es número, todavía no implementado */
-        TT_ERROR,        /* '0' */
+        TT_ENTERO,       /* '10' implementado en sesión 2 */
     };
-    verificar_secuencia("(a + b) <= 10", esperados, 8);
+    verificar_secuencia("(a + b) <= 10", esperados, 7);
 }
 
 int main(void) {

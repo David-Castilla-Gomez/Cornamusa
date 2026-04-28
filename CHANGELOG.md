@@ -8,10 +8,35 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ### En desarrollo (Fase 2 — Lexer, objetivo v0.2.0)
 - ✅ Sesión 1: esqueleto del lexer + tokens simples (símbolos, operadores, comentarios).
-- ⏳ Sesión 2: literales numéricos y cadenas básicas.
+- ✅ Sesión 2: literales numéricos y cadenas básicas.
 - ⏳ Sesión 3: identificadores Unicode + NFC + tabla de keywords.
 - ⏳ Sesión 4: f-strings y triple-quoted strings.
 - ⏳ Sesión 5: mensajes de error pulidos siguiendo MENSAJES.md + tests exhaustivos.
+
+### Añadido (Fase 2 sesión 2)
+- Lexer reconoce literales numéricos `TT_ENTERO`:
+  - Decimales con guiones bajos opcionales (`42`, `1_000_000`, `1_00_00`).
+  - Hexadecimal (`0xff`, `0xCAFE`, `0xCa_fE`, `0x_ff`).
+  - Octal (`0o755`).
+  - Binario (`0b1010`, `0b1010_1010`).
+- Lexer reconoce literales decimales `TT_DECIMAL`:
+  - Punto decimal (`3.14`, `0.5`).
+  - Notación científica (`1e10`, `1.5E-3`, `2.5e+10`, `3E5`).
+- Reglas de guiones bajos en numéricos: prohibidos al inicio del literal, al final, y consecutivos. `0x_ff` permitido (tras prefijo de base) por ergonomía visual.
+- `1.` (sin dígito tras el punto) tokeniza como `TT_ENTERO 1` + `TT_PUNTO .`. Evita ambigüedad con acceso a atributo `obj.metodo`.
+- Lexer reconoce literales de cadena `TT_CADENA` con comilla doble `"..."` o simple `'...'`. El lexema incluye las comillas (parser hará el unescape al construir el AST).
+- Escape sequences aceptadas: `\n \t \r \\ \' \" \0 \x \u`. Validación profunda de los argumentos de `\xHH` y `\uHHHH` se aplaza a sesión 5.
+- Errores específicos:
+  - `1__2` → "no se permiten guiones bajos consecutivos".
+  - `12_` → "literal numérico no puede terminar en '_'".
+  - `0x` / `0o` / `0b` sin dígitos → mensaje específico por base.
+  - `1e` / `1e+` → "exponente vacío en literal decimal".
+  - `\z` → "secuencia de escape no reconocida".
+  - Cadena con `\n` interno → "cadena sin cerrar antes del fin de línea".
+  - Cadena que llega a EOF → "cadena sin cerrar antes del fin de archivo".
+- `tests/unit/test_lexer_literales.c` añadido con 38 tests cubriendo enteros decimales, las tres bases especiales, decimales con punto y científica, cadenas con ambos delimitadores, escape sequences, errores y secuencias mixtas realistas.
+- `tests/unit/test_lexer_simbolos.c` actualizado: `test_secuencia_realista` reconoce ahora `10` como `TT_ENTERO`.
+- Build verde con 3/3 tests pasando (test_smoke, test_lexer_simbolos, test_lexer_literales).
 
 ### Añadido (Fase 2 sesión 1)
 - `src/lexer.{h,c}` — esqueleto del lexer con enum `TipoToken` (~70 tipos), struct `Token`, struct `Lexer` y funciones `lexer_iniciar()` / `lexer_siguiente()` / `tipo_token_nombre()`.

@@ -20,6 +20,11 @@ static char mirar(const Lexer *l) {
     return *l->actual;
 }
 
+static char mirar_siguiente(const Lexer *l) {
+    if (*l->actual == '\0') return '\0';
+    return l->actual[1];
+}
+
 static bool coincidir(Lexer *l, char esperado) {
     if (en_fin(l)) return false;
     if (*l->actual != (unsigned char)esperado) return false;
@@ -54,6 +59,28 @@ static Token token_error(const Lexer *l, const char *mensaje) {
     t.linea = l->linea;
     t.columna = columna_actual(l);
     return t;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Predicados de carácter
+ * ────────────────────────────────────────────────────────────────── */
+
+static bool es_digito(char c) {
+    return c >= '0' && c <= '9';
+}
+
+static bool es_digito_hex(char c) {
+    return (c >= '0' && c <= '9')
+        || (c >= 'a' && c <= 'f')
+        || (c >= 'A' && c <= 'F');
+}
+
+static bool es_digito_octal(char c) {
+    return c >= '0' && c <= '7';
+}
+
+static bool es_digito_binario(char c) {
+    return c == '0' || c == '1';
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -96,6 +123,234 @@ static void saltar_irrelevante(Lexer *l) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Escaneo de literales numéricos
+ *
+ * Soporta:
+ *   - Decimales en base 10 con guiones bajos opcionales (1_000_000).
+ *   - Hexadecimal (0xff, 0xCa_fE), octal (0o755), binario (0b1010).
+ *   - Punto decimal y notación científica (3.14, 1.5e-3, 1e10).
+ *
+ * Reglas de underscore (decisión de sesión 2):
+ *   - No al inicio (1_2 ✓, _12 es identificador).
+ *   - No al final (1_2 ✓, 12_ ✗).
+ *   - No consecutivos (1__2 ✗).
+ *   - Permitido inmediatamente tras prefijo de base (0x_ff ✓).
+ *
+ * El lexer solo verifica que el LEXEMA es válido; la conversión a
+ * int64/bignum/double la hace el parser cuando construye el AST.
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Consume una secuencia de dígitos (de la base indicada por es_digito_xx)
+ * intercalados con guiones bajos. Garantiza que no hay '__' consecutivos
+ * ni '_' final. Devuelve true si tras la secuencia hay al menos un
+ * dígito (es decir, el literal no está vacío).
+ *
+ * Si encuentra error, escribe el mensaje en *msg y devuelve false.
+ */
+static bool consumir_digitos(Lexer *l,
+                             bool (*es_digito_de_base)(char),
+                             const char **msg) {
+    bool hubo_digito = false;
+    char anterior = '_';  /* sentinel inicial: rechaza '_' como primer char */
+    while (true) {
+        char c = mirar(l);
+        if (es_digito_de_base(c)) {
+            hubo_digito = true;
+            anterior = c;
+            avanzar(l);
+        } else if (c == '_') {
+            if (anterior == '_') {
+                *msg = "no se permiten guiones bajos consecutivos en literales numéricos";
+                return false;
+            }
+            anterior = '_';
+            avanzar(l);
+        } else {
+            break;
+        }
+    }
+    if (anterior == '_' && hubo_digito) {
+        *msg = "literal numérico no puede terminar en '_'";
+        return false;
+    }
+    return hubo_digito;
+}
+
+/*
+ * Tras `0x` o `0X`, consume los dígitos hex. Tras prefijo se permite
+ * `_` inicial inmediato (0x_ff ✓), por eso reseteamos el sentinel.
+ */
+static Token escanear_base(Lexer *l,
+                           bool (*es_digito_de_base)(char),
+                           const char *nombre_base) {
+    /* Permitimos '_' tras el prefijo de base: usar 'X' como sentinel. */
+    char anterior = 'X';
+    bool hubo_digito = false;
+    while (true) {
+        char c = mirar(l);
+        if (es_digito_de_base(c)) {
+            hubo_digito = true;
+            anterior = c;
+            avanzar(l);
+        } else if (c == '_') {
+            if (anterior == '_') {
+                return token_error(l, "no se permiten guiones bajos consecutivos en literales numéricos");
+            }
+            anterior = '_';
+            avanzar(l);
+        } else {
+            break;
+        }
+    }
+    if (!hubo_digito) {
+        /* Mensajes específicos por base; cadenas literales estáticas. */
+        if (nombre_base[0] == 'h') {
+            return token_error(l, "literal hexadecimal vacío tras '0x'");
+        }
+        if (nombre_base[0] == 'o') {
+            return token_error(l, "literal octal vacío tras '0o'");
+        }
+        return token_error(l, "literal binario vacío tras '0b'");
+    }
+    if (anterior == '_') {
+        return token_error(l, "literal numérico no puede terminar en '_'");
+    }
+    return crear_token(l, TT_ENTERO);
+}
+
+/*
+ * Llamado tras consumir el primer dígito decimal. Determina si el
+ * literal es entero o decimal según vea '.' (seguido de dígito) o
+ * 'e'/'E'.
+ */
+static Token escanear_numero_decimal(Lexer *l) {
+    const char *msg = NULL;
+    /* La parte entera ya empezó (un dígito consumido); seguir leyendo. */
+    /* Re-consumimos por simplicidad: el primer dígito ya cuenta como
+       'hubo_digito' implícitamente. */
+    while (true) {
+        char c = mirar(l);
+        if (es_digito(c)) {
+            avanzar(l);
+        } else if (c == '_') {
+            if (l->actual > l->inicio_token && *(l->actual - 1) == '_') {
+                return token_error(l, "no se permiten guiones bajos consecutivos en literales numéricos");
+            }
+            avanzar(l);
+        } else {
+            break;
+        }
+    }
+    if (l->actual > l->inicio_token && *(l->actual - 1) == '_') {
+        return token_error(l, "literal numérico no puede terminar en '_'");
+    }
+
+    bool es_decimal = false;
+
+    /* Parte fraccionaria: '.' SOLO si tras el punto hay dígito.
+       Si el punto va a otra cosa (atributo, separador), no consumir. */
+    if (mirar(l) == '.' && es_digito(mirar_siguiente(l))) {
+        es_decimal = true;
+        avanzar(l); /* punto */
+        if (!consumir_digitos(l, es_digito, &msg)) {
+            return token_error(l, msg);
+        }
+    }
+
+    /* Notación científica: 'e' o 'E' opcionalmente seguida de signo
+       y obligatoriamente seguida de al menos un dígito. */
+    if (mirar(l) == 'e' || mirar(l) == 'E') {
+        es_decimal = true;
+        avanzar(l);
+        if (mirar(l) == '+' || mirar(l) == '-') avanzar(l);
+        if (!es_digito(mirar(l))) {
+            return token_error(l, "exponente vacío en literal decimal");
+        }
+        if (!consumir_digitos(l, es_digito, &msg)) {
+            return token_error(l, msg);
+        }
+    }
+
+    return crear_token(l, es_decimal ? TT_DECIMAL : TT_ENTERO);
+}
+
+/*
+ * Punto de entrada al escaneo numérico. `primero` es el primer dígito
+ * ya consumido (es_digito(primero) == true).
+ */
+static Token escanear_numero(Lexer *l, char primero) {
+    /* Detectar bases especiales: solo si el primer dígito es '0'. */
+    if (primero == '0') {
+        char c = mirar(l);
+        if (c == 'x' || c == 'X') {
+            avanzar(l);
+            return escanear_base(l, es_digito_hex, "hexadecimal");
+        }
+        if (c == 'o' || c == 'O') {
+            avanzar(l);
+            return escanear_base(l, es_digito_octal, "octal");
+        }
+        if (c == 'b' || c == 'B') {
+            avanzar(l);
+            return escanear_base(l, es_digito_binario, "binario");
+        }
+    }
+    return escanear_numero_decimal(l);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Escaneo de cadenas
+ *
+ * En sesión 2 soportamos cadenas de una línea con comilla simple `'`
+ * o doble `"`. El lexema incluye las comillas; el parser hace unescape
+ * cuando construye el nodo del AST.
+ *
+ * Escapes válidos: \n \t \r \\ \' \" \0 \x... \u...
+ * La validación profunda de \x (2 hex dígitos) y \u (4 hex o
+ * \u{HHHHHH}) llega en sesión 5. Aquí solo aceptamos el prefijo y
+ * dejamos pasar lo que siga.
+ *
+ * Saltos de línea dentro de cadena simple son error: para multilínea
+ * usar `"""..."""` (sesión 4).
+ * ────────────────────────────────────────────────────────────────── */
+static Token escanear_cadena(Lexer *l, char delimitador) {
+    while (!en_fin(l) && mirar(l) != delimitador) {
+        char c = mirar(l);
+        if (c == '\n') {
+            return token_error(l, "cadena sin cerrar antes del fin de línea");
+        }
+        if (c == '\\') {
+            avanzar(l);
+            if (en_fin(l)) {
+                return token_error(l, "secuencia de escape sin completar al fin de archivo");
+            }
+            char esc = mirar(l);
+            /* Aceptamos: n t r \\ ' " 0 x u — la validación de los
+               argumentos de \x y \u se hace en sesión 5. Cualquier otra
+               letra es escape no reconocido. */
+            if (esc != 'n' && esc != 't' && esc != 'r' && esc != '\\' &&
+                esc != '\'' && esc != '"' && esc != '0' && esc != 'x' &&
+                esc != 'u') {
+                return token_error(l, "secuencia de escape no reconocida");
+            }
+            avanzar(l);
+            /* Si el escape consume más bytes (\xHH, \uHHHH, \u{H...}),
+               los validaremos en sesión 5. Por ahora seguimos. */
+            continue;
+        }
+        avanzar(l);
+    }
+
+    if (en_fin(l)) {
+        return token_error(l, "cadena sin cerrar antes del fin de archivo");
+    }
+
+    avanzar(l); /* consumir delimitador de cierre */
+    return crear_token(l, TT_CADENA);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * API pública
  * ────────────────────────────────────────────────────────────────── */
 
@@ -118,6 +373,16 @@ Token lexer_siguiente(Lexer *l) {
     }
 
     char c = avanzar(l);
+
+    /* Literales numéricos: el primer carácter es un dígito ASCII. */
+    if (es_digito(c)) {
+        return escanear_numero(l, c);
+    }
+
+    /* Cadenas literales: comilla simple o doble. */
+    if (c == '"' || c == '\'') {
+        return escanear_cadena(l, c);
+    }
 
     switch (c) {
         /* Símbolos individuales */
