@@ -106,3 +106,36 @@ set_tests_properties(run_15_fizzbuzz_jugable PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "FizzBuzz"
 )
+
+# ───── Tests de ejecución end-to-end (Fase 5 v0.5.0) ─────
+# Ejemplos que ejercitan listas, diccionarios, conjuntos y tuplas
+# completas (literal + indexación + iteración + métodos vía built-ins).
+add_test(
+    NAME run_16_lista_busqueda
+    COMMAND $<TARGET_FILE:cornamusa>
+            ${CMAKE_SOURCE_DIR}/examples/16_lista_busqueda.cor
+)
+set_tests_properties(run_16_lista_busqueda PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Indice del 99: -1"
+)
+
+add_test(
+    NAME run_17_dicc_frecuencia
+    COMMAND $<TARGET_FILE:cornamusa>
+            ${CMAKE_SOURCE_DIR}/examples/17_dicc_frecuencia.cor
+)
+set_tests_properties(run_17_dicc_frecuencia PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Total de letras: 11"
+)
+
+add_test(
+    NAME run_18_conj_y_tupla
+    COMMAND $<TARGET_FILE:cornamusa>
+            ${CMAKE_SOURCE_DIR}/examples/18_conj_y_tupla.cor
+)
+set_tests_properties(run_18_conj_y_tupla PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Suma de unicos: 30"
+)

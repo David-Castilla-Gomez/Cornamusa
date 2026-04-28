@@ -1,0 +1,31 @@
+# Frecuencia de letras en una palabra.
+#
+# Demuestra:
+#   - Construccion incremental de un diccionario.
+#   - `letra en dicc` (membership de claves).
+#   - `dicc[letra] += 1` (asignacion aumentada por indice).
+#   - Iteracion `para letra en dicc` (yields claves).
+#   - claves(), valores() y longitud() sobre diccionarios.
+
+funcion contar_letras(palabra):
+    conteo = {}
+    para c en palabra:
+        si c en conteo:
+            conteo[c] += 1
+        sino:
+            conteo[c] = 1
+        fin si
+    fin para
+    retornar conteo
+fin funcion
+
+frecuencias = contar_letras("abracadabra")
+imprimir("Frecuencias:", frecuencias)
+imprimir("Letras unicas:", longitud(frecuencias))
+imprimir("La 'a' aparece", frecuencias["a"], "veces")
+
+total = 0
+para letra en frecuencias:
+    total += frecuencias[letra]
+fin para
+imprimir("Total de letras:", total)

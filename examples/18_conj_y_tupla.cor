@@ -1,0 +1,34 @@
+# Conjuntos y tuplas: deduplicacion y coordenadas.
+#
+# Demuestra:
+#   - Conjunto literal `{1, 2, 3}` con deduplicacion automatica.
+#   - `conjunto()` y `agregar(conj, x)` para construir progresivamente.
+#   - Tupla literal `(a, b)` y `(x,)` (un elemento).
+#   - Tupla como clave de diccionario.
+#   - Comparacion estructural de tuplas y conjuntos.
+
+# Eliminar duplicados de una lista.
+numeros = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]
+unicos = conjunto(numeros)
+imprimir("Originales:", longitud(numeros), "unicos:", longitud(unicos))
+
+# Construir un mapa de coordenadas a etiqueta.
+mapa = {
+    (0, 0): "origen",
+    (1, 0): "este",
+    (0, 1): "norte",
+    (-1, 0): "oeste",
+    (0, -1): "sur",
+}
+
+imprimir(mapa[(0, 0)])
+imprimir(mapa[(0, 1)])
+imprimir((1, 0) en mapa)
+imprimir((2, 2) en mapa)
+
+# Iterar sobre el conjunto sumando.
+total = 0
+para n en unicos:
+    total += n
+fin para
+imprimir("Suma de unicos:", total)

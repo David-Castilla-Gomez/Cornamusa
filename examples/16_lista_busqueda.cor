@@ -1,0 +1,35 @@
+# Operaciones con listas: agregar, ordenar, slicing, busqueda.
+#
+# Demuestra:
+#   - Construccion progresiva de una lista con `agregar()`.
+#   - Built-in `ordenar()` para mutacion in-place.
+#   - Slicing `lista[a:b]` y `lista[::-1]` (inversa).
+#   - Funcion auxiliar que devuelve indice de un valor (-1 si no esta).
+
+funcion encontrar(lista, valor):
+    para i en rango(longitud(lista)):
+        si lista[i] == valor:
+            retornar i
+        fin si
+    fin para
+    retornar -1
+fin funcion
+
+numeros = []
+para n en rango(1, 11):
+    si n % 2 == 0:
+        agregar(numeros, n)
+    fin si
+fin para
+
+imprimir("Pares 1..10:", numeros)
+imprimir("Primer par:", numeros[0])
+imprimir("Ultimo par:", numeros[-1])
+imprimir("Tres del medio:", numeros[1:4])
+imprimir("Inversa:", numeros[::-1])
+
+ordenar(numeros)
+imprimir("Ordenada:", numeros)
+
+imprimir("Indice del 6:", encontrar(numeros, 6))
+imprimir("Indice del 99:", encontrar(numeros, 99))

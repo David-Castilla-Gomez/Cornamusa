@@ -6,12 +6,22 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
-### En desarrollo (Fase 5 — Estructuras de datos, objetivo v0.5.0)
-- ✅ Sesión 1: tipo `Lista` con refcount + literal `[a, b, c]` + indexación + operadores `+`/`*`/`en`/`==` + iteración `para x en lista` + integración con `longitud()` y `tipo()`.
-- ✅ Sesión 2: mutación `lista[i] = v`, slicing `lista[a:b:c]`, métodos via built-ins (agregar, quitar, insertar, invertir, ordenar).
-- ✅ Sesión 3: tipo `Diccionario` con tabla hash + literal `{k: v}` + acceso/asignación `dicc[k]` + iteración + built-ins `claves`/`valores`.
-- ✅ Sesión 4: tipo `Conjunto` (`{1, 2, 3}`) y `Tupla` `(a, b)` inmutable. Distinción tupla vs grupo.
-- ⏳ Sesión 5: ejemplos jugables + tag v0.5.0 (último release del tree-walking activo; desde v0.6 motor bytecode).
+## [0.5.0] — 2026-04-28 — estructuras de datos completas
+
+Cierre de Fase 5: tree-walking interpreter con todas las colecciones
+básicas. **Último release con tree-walking activo** según decisión
+[B2](decisiones/B2-tree-walking-vs-bytecode.md): desde v0.6 el motor
+de producción será la VM bytecode y el tree-walking se congela como
+referencia ejecutable de regresión.
+
+### Añadido (Fase 5 sesión 5)
+- **Versión `0.5.0`** en `common.h` y `CMakeLists.txt`. Smoke test ajustado.
+- **Tres ejemplos jugables nuevos** que ejercitan las nuevas colecciones end-to-end:
+  - [`16_lista_busqueda.cor`](examples/16_lista_busqueda.cor): construcción incremental, slicing, inversa con `[::-1]`, `ordenar()`, función auxiliar de búsqueda lineal.
+  - [`17_dicc_frecuencia.cor`](examples/17_dicc_frecuencia.cor): conteo de letras en `"abracadabra"` con `dicc[c] += 1`, iteración `para letra en dicc`, `claves()`/`valores()`.
+  - [`18_conj_y_tupla.cor`](examples/18_conj_y_tupla.cor): deduplicación con `conjunto(lista)`, mapa de coordenadas con tuplas como claves de diccionario.
+- **Tres tests `run_X`** con `PASS_REGULAR_EXPRESSION` para verificar que cada ejemplo produce la salida esperada.
+- **51 tests verde** (18 unit + 33 integración).
 
 ### Añadido (Fase 5 sesión 1)
 - **`VAL_LISTA`** y **`struct Lista`** en `valor.{h,c}`: array dinámico de `Valor` con refcount manual (sin GC todavía — Fase 7). Operaciones: `lista_nueva`, `lista_retener` (++ref), `lista_liberar` (--ref + free si llega a 0), `lista_agregar` (toma posesión, crece ×2 amortizado), `lista_obtener_ref`, `lista_asignar`. Capacidad inicial 4.
