@@ -265,10 +265,39 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 break;
             }
 
+            /* ─── Control de flujo ─── */
+            case OP_SALTAR: {
+                /* Operando de 2 bytes big-endian: salto hacia adelante. */
+                uint8_t hi = LEER_BYTE();
+                uint8_t lo = LEER_BYTE();
+                uint16_t offset = ((uint16_t)hi << 8) | lo;
+                vm->ip += offset;
+                break;
+            }
+            case OP_SALTAR_SI_FALSO: {
+                /*
+                 * PEEK del tope (no pop): si el valor es falso, salta;
+                 * si es verdadero, sigue ejecutando con el valor todavía
+                 * en stack. El compilador emite OP_DESCARTAR donde haga
+                 * falta (estilo clox cap. 23).
+                 */
+                uint8_t hi = LEER_BYTE();
+                uint8_t lo = LEER_BYTE();
+                uint16_t offset = ((uint16_t)hi << 8) | lo;
+                const Valor *tope = vm->tope - 1;
+                if (!valor_es_verdadero(tope)) vm->ip += offset;
+                break;
+            }
+            case OP_BUCLE: {
+                /* Salto hacia atrás: ip -= offset. Usado por mientras/para. */
+                uint8_t hi = LEER_BYTE();
+                uint8_t lo = LEER_BYTE();
+                uint16_t offset = ((uint16_t)hi << 8) | lo;
+                vm->ip -= offset;
+                break;
+            }
+
             /* Opcodes reservados para sesiones siguientes. */
-            case OP_SALTAR:
-            case OP_SALTAR_SI_FALSO:
-            case OP_BUCLE:
             case OP_OBTENER_LOCAL:
             case OP_ASIGNAR_LOCAL:
             case OP_LLAMAR:

@@ -28,9 +28,32 @@
  * que aquí solo se elige el opcode adecuado.
  */
 
+/*
+ * Estado de un bucle abierto en compilación. Mantiene la información
+ * necesaria para que `romper` y `continuar` emitan saltos correctos.
+ *
+ * `inicio_continuar`: offset al que `continuar` debe saltar
+ * (típicamente la condición del bucle, para reevaluarla).
+ *
+ * `parches_romper`: array de offsets de instrucciones `OP_SALTAR` que
+ * `romper` ha emitido y que hay que parchear cuando conozcamos la
+ * dirección final tras el bucle.
+ */
+typedef struct {
+    int inicio_continuar;
+    int *parches_romper;
+    int n_parches;
+    int cap_parches;
+} BucleAbierto;
+
+#define COMPILADOR_BUCLES_MAX 16
+
 typedef struct {
     Chunk *chunk;
     EvalError error;
+
+    BucleAbierto bucles[COMPILADOR_BUCLES_MAX];
+    int n_bucles;
 } Compilador;
 
 void compilador_iniciar(Compilador *c, Chunk *chunk);

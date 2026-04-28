@@ -10,7 +10,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 1: infraestructura `Chunk` + enum `OpCode` + disassembler.
 - ✅ Sesión 2: refactor del evaluador (helpers reutilizables) + compilador para expresiones + VM stack-based con dispatch loop.
 - ✅ Sesión 3: variables globales (DEFINIR/OBTENER/ASIGNAR), `imprimir(...)` como built-in en bytecode, sentencias básicas (asignación, expresión, pasar, bloque).
-- ⏳ Sesión 4: control de flujo (jumps, loops).
+- ✅ Sesión 4: control de flujo en bytecode (`si`/`mientras` con `romper`/`continuar`/`sino`, lógica con cortocircuito, asignación aumentada).
 - ⏳ Sesión 5: funciones top-level, locales, closures con upvalues.
 - ⏳ Sesión 6: colecciones + transición a tagged i63 + flag `--tree-walking` + tests diferenciales + tag v0.6.0.
 
@@ -75,6 +75,34 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - **Limitación documentada**: nombres de globales con índice >255 en el pool del chunk dan error explícito ("demasiadas constantes para v0.6 (operando byte)"). Se resolverá con variantes `*_LARGO` cuando sea necesario.
 - **`tests/unit/test_bytecode_programa.c`** con 5 grupos: asignación a global (incluye reasignación, varias variables, cambio de tipo libre), error de nombre no definido en runtime, captura de stdout para `imprimir(...)` (con redirección dup/dup2 portable Windows/POSIX), `pasar` y un programa combinado (Pitágoras 3-4-5 imprimiendo "hipotenusa: 5.0").
 - **54 tests verde** (21 unit + 33 integración).
+
+### Añadido (Fase 6 sesión 4)
+- **`OP_SALTAR`, `OP_SALTAR_SI_FALSO`, `OP_BUCLE`** implementados en la VM con operandos `u16` big-endian. `OP_SALTAR_SI_FALSO` hace **PEEK** (no pop) — el compilador inserta `OP_DESCARTAR` donde toca. Estilo clox cap. 23.
+- **Helpers de salto en el compilador**:
+  - `emitir_salto(op, linea)`: emite el opcode con placeholder `0xffff`, devuelve el offset para parchear después.
+  - `parchear_salto(offset)`: rellena el placeholder con la distancia hasta la posición actual del chunk. Reporta error si excede `UINT16_MAX`.
+  - `emitir_bucle(inicio)`: emite `OP_BUCLE` con offset hacia atrás.
+- **Stack de bucles abiertos** en el `Compilador` (`BucleAbierto bucles[16]`):
+  - `inicio_continuar`: offset al que `continuar` debe saltar (la condición del `mientras`).
+  - `parches_romper[]`: array dinámico de offsets de `OP_SALTAR` emitidos por `romper`, parcheados al cerrar el bucle.
+  - `empujar_bucle` / `cerrar_bucle` mantienen la pila al entrar/salir.
+- **`EXPR_LOGICA` con cortocircuito real**:
+  - `a y b`: si `a` es falso, salta sobre `b` dejando `a` en stack; si verdad, descarta `a` y evalúa `b`.
+  - `a o b`: si `a` es verdadero, salta sobre `b` dejando `a` en stack; si falso, descarta `a` y evalúa `b`.
+  - Verificable porque `verdadero o (1 // 0)` no produce error de división por cero — la rama no se compila a saltar, sino a un OP_SALTAR_SI_FALSO + OP_SALTAR que evita ejecutar el lado derecho.
+- **`SENT_SI`** con cadena arbitraria de `si` / `sino si` / `sino`:
+  - Cada rama compila `cond → OP_SALTAR_SI_FALSO else → OP_DESCARTAR → cuerpo → OP_SALTAR fin`.
+  - La rama final `sino` no tiene condición ni descart.
+  - Hasta 64 ramas en una cadena (límite arbitrario, suficiente).
+- **`SENT_MIENTRAS`** con cláusula `sino` y `romper`/`continuar`:
+  - Loop estándar: `inicio: cond → OP_SALTAR_SI_FALSO salir → OP_DESCARTAR → cuerpo → OP_BUCLE inicio`.
+  - `romper` emite `OP_SALTAR` patcheable al fin del bucle (DESPUÉS de la cláusula `sino` para que `romper` salte sobre ella, semántica Python).
+  - `continuar` emite `OP_BUCLE` al inicio de la condición.
+  - Cláusula `sino` ejecutada solo si terminamos por condición falsa (no por break) — gracias a que el OP_SALTAR_SI_FALSO `salir` apunta antes de `sino` y los `romper` saltan después.
+- **`SENT_ASIGNAR_AUG`** (`x op= expr`) compila como `x = x op expr`: emite `OP_OBTENER_GLOBAL` + compilar expr + opcode binario + `OP_DEFINIR_GLOBAL`. Soporta `+= -= *= /= //= %= **=`.
+- **Limitación documentada**: `SENT_PARA` queda para S6 (necesita iteración sobre cadena/rango/lista que se conectará con las colecciones en bytecode).
+- **`tests/unit/test_bytecode_control.c`** con 8 grupos: lógica con cortocircuito demostrado, `si`/`sino si`/`sino`, `mientras` con romper/continuar/sino, asignación aumentada (todas las variantes), y programas realistas: factorial(25)=26 dígitos, Fibonacci(30)=832040, 2^64 (20 dígitos), anidamiento `mientras` en `mientras`.
+- **55 tests verde** (22 unit + 33 integración).
 
 Cierre de Fase 5: tree-walking interpreter con todas las colecciones
 básicas. **Último release con tree-walking activo** según decisión

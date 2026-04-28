@@ -231,10 +231,9 @@ static void test_errores_compilacion(void) {
        de runtime cuando la variable no está definida. */
     verificar_error("x", "no esta definido");
     verificar_error("x + 1", "no esta definido");
-    /* Llamadas a funciones no nativas y cortocircuito siguen
-       sin compilar en S3. */
+    /* Lambdas y llamadas a funciones de usuario siguen sin compilar. */
     verificar_error("lambda x: x", "no esta implementada");
-    verificar_error("verdadero y verdadero", "no esta implementada");
+    verificar_error("[1, 2]", "no esta implementada");
 }
 
 int main(void) {
