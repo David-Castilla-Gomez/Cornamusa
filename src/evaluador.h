@@ -42,10 +42,25 @@ typedef struct {
     int columna;
 } EvalError;
 
+/*
+ * Estado de control de flujo. El evaluador no usa setjmp ni excep-
+ * ciones nativas: las sentencias `romper`, `continuar` y `retornar`
+ * dejan una marca en `Evaluador.control` que las construcciones
+ * envolventes (bucles, llamadas) interpretan y luego resetean.
+ */
+typedef enum {
+    EJEC_NORMAL = 0,
+    EJEC_ROMPER,
+    EJEC_CONTINUAR,
+    EJEC_RETORNAR,    /* habilitado en sesion 4 con funciones */
+} ControlFlujo;
+
 typedef struct {
     Entorno *globales;          /* entorno raíz (no es dueño) */
     Entorno *entorno_actual;    /* entorno activo (puede coincidir con globales) */
     EvalError error;
+    ControlFlujo control;
+    Valor valor_retorno;        /* relleno al ejecutar SENT_RETORNAR (S4) */
 } Evaluador;
 
 /*
@@ -71,5 +86,23 @@ bool evaluador_tiene_error(const Evaluador *ev);
  * resultado.
  */
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e);
+
+/*
+ * Ejecuta una sentencia. No devuelve valor. Si la sentencia es un
+ * `romper`/`continuar`/`retornar`, deja `ev->control` con el estado
+ * correspondiente y el llamador (bucle, función) lo gestiona.
+ *
+ * En caso de error pone `ev->error.tuvo_error` y aborta la ejecución
+ * de cualquier bloque externo.
+ */
+void evaluador_ejecutar_sent(Evaluador *ev, const Sent *s);
+
+/*
+ * Conveniencia: ejecuta secuencialmente un programa (array de
+ * sentencias del parser). Para en el primer error o si una sentencia
+ * deja control de flujo no normal (lo que normalmente sería un bug
+ * en programas top-level — `romper` fuera de bucle, etc.).
+ */
+void evaluador_ejecutar_programa(Evaluador *ev, Sent **sentencias, int n);
 
 #endif /* CORNAMUSA_EVALUADOR_H */

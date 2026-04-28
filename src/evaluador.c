@@ -41,11 +41,15 @@ void evaluador_iniciar(Evaluador *ev, Entorno *globales) {
     ev->error.mensaje[0] = '\0';
     ev->error.linea = 0;
     ev->error.columna = 0;
+    ev->control = EJEC_NORMAL;
+    ev->valor_retorno = valor_nulo();
 }
 
 void evaluador_limpiar_error(Evaluador *ev) {
     ev->error.tuvo_error = false;
     ev->error.mensaje[0] = '\0';
+    ev->control = EJEC_NORMAL;
+    valor_destruir(&ev->valor_retorno);
 }
 
 bool evaluador_tiene_error(const Evaluador *ev) {
@@ -631,15 +635,13 @@ static bool es_comparacion(TipoToken op) {
     }
 }
 
-static Valor eval_binario(Evaluador *ev, const Expr *e) {
-    Valor a = evaluador_evaluar_expr(ev, e->como.binario.izq);
-    if (ev->error.tuvo_error) { valor_destruir(&a); return valor_nulo(); }
-    Valor b = evaluador_evaluar_expr(ev, e->como.binario.der);
-    if (ev->error.tuvo_error) {
-        valor_destruir(&a); valor_destruir(&b); return valor_nulo();
-    }
-
-    TipoToken op = e->como.binario.op;
+/*
+ * Aplica un operador binario sobre dos valores ya evaluados, tomando
+ * posesión de ambos (los destruye antes de devolver). Útil tanto para
+ * EXPR_BINARIO como para SENT_ASIGNAR_AUG (`x += expr` → x = x op expr).
+ */
+static Valor aplicar_binario(Evaluador *ev, TipoToken op,
+                             Valor a, Valor b, const Expr *e) {
     Valor resultado = valor_nulo();
 
     /* Identidad y pertenencia. */
@@ -765,6 +767,16 @@ static Valor eval_binario(Evaluador *ev, const Expr *e) {
     return error_en(ev, e, "operador binario desconocido");
 }
 
+static Valor eval_binario(Evaluador *ev, const Expr *e) {
+    Valor a = evaluador_evaluar_expr(ev, e->como.binario.izq);
+    if (ev->error.tuvo_error) { valor_destruir(&a); return valor_nulo(); }
+    Valor b = evaluador_evaluar_expr(ev, e->como.binario.der);
+    if (ev->error.tuvo_error) {
+        valor_destruir(&a); valor_destruir(&b); return valor_nulo();
+    }
+    return aplicar_binario(ev, e->como.binario.op, a, b, e);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Unario
  * ────────────────────────────────────────────────────────────────── */
@@ -883,4 +895,317 @@ static Valor eval_logica(Evaluador *ev, const Expr *e) {
 
     valor_destruir(&izq);
     return evaluador_evaluar_expr(ev, e->como.logica.der);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Sentencias
+ *
+ * Sesión 3: ejecuta sentencias simples y de control de flujo.
+ *   - SENT_EXPR / SENT_PASAR
+ *   - SENT_ASIGNAR (solo destino IDENT en esta versión)
+ *   - SENT_ASIGNAR_AUG (`x += expr` y similares)
+ *   - SENT_ROMPER / SENT_CONTINUAR
+ *   - SENT_SI con cadenas `sino si`/`sino`
+ *   - SENT_MIENTRAS con cláusula `sino` opcional (Python-style)
+ *   - SENT_PARA iterando sobre cadenas (un Valor cadena por code-point UTF-8)
+ *   - SENT_BLOQUE
+ *
+ * Aplazadas (devuelven error explícito o ya errado por el parser):
+ *   - SENT_FUNCION / SENT_RETORNAR / SENT_CLASE → S4
+ *   - SENT_INTENTAR / SENT_LANZAR / SENT_IMPORTAR / SENT_DESDE_IMPORTAR
+ *     / SENT_GLOBAL / SENT_NOLOCAL → F5+
+ * ────────────────────────────────────────────────────────────────── */
+
+#include "utf8proc.h"
+
+static void sent_set_error(Evaluador *ev, const Sent *s, const char *fmt, ...) {
+    if (ev->error.tuvo_error) return;
+    ev->error.tuvo_error = true;
+    ev->error.linea = s->linea;
+    ev->error.columna = s->columna;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(ev->error.mensaje, sizeof(ev->error.mensaje), fmt, ap);
+    va_end(ap);
+}
+
+/* Mapea token de asignación aumentada al operador binario equivalente. */
+static TipoToken aug_a_binario(TipoToken aug) {
+    switch (aug) {
+        case TT_ASIGNAR_MAS:        return TT_MAS;
+        case TT_ASIGNAR_MENOS:      return TT_MENOS;
+        case TT_ASIGNAR_ASTERISCO:  return TT_ASTERISCO;
+        case TT_ASIGNAR_BARRA:      return TT_BARRA;
+        case TT_ASIGNAR_DOBLE_BARRA: return TT_DOBLE_BARRA;
+        case TT_ASIGNAR_PORCENTAJE: return TT_PORCENTAJE;
+        case TT_ASIGNAR_DOBLE_ASTER: return TT_DOBLE_ASTERISCO;
+        default: return aug;
+    }
+}
+
+/* Ejecuta una sentencia de bloque. */
+static void ejec_bloque(Evaluador *ev, const Sent *s) {
+    int n = s->como.bloque.n_sentencias;
+    Sent **sentencias = s->como.bloque.sentencias;
+    for (int i = 0; i < n; i++) {
+        evaluador_ejecutar_sent(ev, sentencias[i]);
+        if (ev->error.tuvo_error) return;
+        if (ev->control != EJEC_NORMAL) return;
+    }
+}
+
+/*
+ * SENT_ASIGNAR: solo se acepta destino IDENT en v0.4 sesión 3. Asigna
+ * en el entorno actual (define o sobrescribe). Tuple destructuring
+ * (`a, b = ...`), atributos (`obj.x = ...`) e índices (`l[i] = ...`)
+ * llegan en versiones posteriores (v0.3.1 / F5).
+ */
+static void ejec_asignar(Evaluador *ev, const Sent *s) {
+    Expr *destino = s->como.asignar.destino;
+    if (destino->tipo != EXPR_IDENT) {
+        sent_set_error(ev, s,
+            "ErrorDeSintaxis: destino de asignacion no soportado en v0.4 (solo identificadores)");
+        return;
+    }
+
+    Valor v = evaluador_evaluar_expr(ev, s->como.asignar.valor);
+    if (ev->error.tuvo_error) { valor_destruir(&v); return; }
+
+    if (!entorno_definir(ev->entorno_actual,
+                          destino->como.ident.nombre,
+                          destino->como.ident.longitud, v)) {
+        sent_set_error(ev, s, "memoria insuficiente al asignar");
+    }
+}
+
+/*
+ * SENT_ASIGNAR_AUG: `x op= expr`. El destino debe estar previamente
+ * definido (semántica Python: NameError si x no existe).
+ */
+static void ejec_asignar_aug(Evaluador *ev, const Sent *s) {
+    Expr *destino = s->como.asignar_aug.destino;
+    if (destino->tipo != EXPR_IDENT) {
+        sent_set_error(ev, s,
+            "ErrorDeSintaxis: destino de asignacion aumentada no soportado en v0.4");
+        return;
+    }
+
+    /* Obtener el valor actual (clon). */
+    Valor actual;
+    if (!entorno_obtener(ev->entorno_actual,
+                          destino->como.ident.nombre,
+                          destino->como.ident.longitud, &actual)) {
+        sent_set_error(ev, s,
+            "ErrorDeNombre: nombre '%.*s' no esta definido",
+            destino->como.ident.longitud, destino->como.ident.nombre);
+        return;
+    }
+
+    Valor incremento = evaluador_evaluar_expr(ev, s->como.asignar_aug.valor);
+    if (ev->error.tuvo_error) {
+        valor_destruir(&actual);
+        valor_destruir(&incremento);
+        return;
+    }
+
+    TipoToken op = aug_a_binario(s->como.asignar_aug.op);
+    Valor resultado = aplicar_binario(ev, op, actual, incremento, destino);
+    if (ev->error.tuvo_error) { valor_destruir(&resultado); return; }
+
+    if (!entorno_definir(ev->entorno_actual,
+                          destino->como.ident.nombre,
+                          destino->como.ident.longitud, resultado)) {
+        sent_set_error(ev, s, "memoria insuficiente al asignar");
+    }
+}
+
+static void ejec_si(Evaluador *ev, const Sent *s) {
+    int n = s->como.si.n_ramas;
+    RamaSi *ramas = s->como.si.ramas;
+    for (int i = 0; i < n; i++) {
+        Expr *cond = ramas[i].condicion;
+        bool tomar;
+        if (cond == NULL) {
+            /* rama 'sino' final: siempre se toma si llegamos aquí. */
+            tomar = true;
+        } else {
+            Valor cv = evaluador_evaluar_expr(ev, cond);
+            if (ev->error.tuvo_error) { valor_destruir(&cv); return; }
+            tomar = valor_es_verdadero(&cv);
+            valor_destruir(&cv);
+        }
+        if (tomar) {
+            evaluador_ejecutar_sent(ev, ramas[i].cuerpo);
+            return;
+        }
+    }
+}
+
+static void ejec_mientras(Evaluador *ev, const Sent *s) {
+    bool rompio = false;
+    while (true) {
+        Valor cv = evaluador_evaluar_expr(ev, s->como.mientras.condicion);
+        if (ev->error.tuvo_error) { valor_destruir(&cv); return; }
+        bool seguir = valor_es_verdadero(&cv);
+        valor_destruir(&cv);
+        if (!seguir) break;
+
+        evaluador_ejecutar_sent(ev, s->como.mientras.cuerpo);
+        if (ev->error.tuvo_error) return;
+
+        if (ev->control == EJEC_ROMPER) {
+            ev->control = EJEC_NORMAL;
+            rompio = true;
+            break;
+        }
+        if (ev->control == EJEC_CONTINUAR) {
+            ev->control = EJEC_NORMAL;
+            continue;
+        }
+        if (ev->control == EJEC_RETORNAR) {
+            return;  /* propagar al frame de la función (S4) */
+        }
+    }
+    /* Cláusula `sino`: solo si el bucle terminó por condición falsa. */
+    if (!rompio && s->como.mientras.sino != NULL) {
+        evaluador_ejecutar_sent(ev, s->como.mientras.sino);
+    }
+}
+
+/*
+ * SENT_PARA en v0.4 S3: iterable es una cadena. Cada iteración liga
+ * el objetivo a un Valor cadena de un code-point UTF-8 (lo que permite
+ * recorrer correctamente "niño" como ['n','i','ñ','o']).
+ *
+ * Otros iterables (rango, lista, diccionario) llegarán cuando lleguen
+ * los built-ins (S4) y las colecciones (F5).
+ */
+static void ejec_para(Evaluador *ev, const Sent *s) {
+    Expr *objetivo = s->como.para.objetivo;
+    if (objetivo->tipo != EXPR_IDENT) {
+        sent_set_error(ev, s,
+            "ErrorDeSintaxis: objetivo de 'para' debe ser un identificador en v0.4");
+        return;
+    }
+
+    Valor iter = evaluador_evaluar_expr(ev, s->como.para.iterable);
+    if (ev->error.tuvo_error) { valor_destruir(&iter); return; }
+
+    if (iter.tipo != VAL_CADENA) {
+        sent_set_error(ev, s,
+            "ErrorDeTipo: 'para' aun no soporta iterar sobre '%s' en v0.4 (solo cadenas)",
+            valor_nombre_tipo(&iter));
+        valor_destruir(&iter);
+        return;
+    }
+
+    const char *texto = iter.como.cadena.texto;
+    size_t total = (size_t)iter.como.cadena.longitud;
+    size_t pos = 0;
+    bool rompio = false;
+
+    while (pos < total) {
+        utf8proc_int32_t cp;
+        utf8proc_ssize_t consumido = utf8proc_iterate(
+            (const utf8proc_uint8_t *)(texto + pos),
+            (utf8proc_ssize_t)(total - pos), &cp);
+        if (consumido <= 0) {
+            sent_set_error(ev, s,
+                "ErrorDeValor: byte UTF-8 invalido durante iteracion");
+            break;
+        }
+
+        Valor letra = valor_cadena_duplicar(texto + pos, (int)consumido);
+        if (!entorno_definir(ev->entorno_actual,
+                              objetivo->como.ident.nombre,
+                              objetivo->como.ident.longitud, letra)) {
+            sent_set_error(ev, s, "memoria insuficiente en 'para'");
+            break;
+        }
+        pos += (size_t)consumido;
+
+        evaluador_ejecutar_sent(ev, s->como.para.cuerpo);
+        if (ev->error.tuvo_error) break;
+
+        if (ev->control == EJEC_ROMPER) {
+            ev->control = EJEC_NORMAL;
+            rompio = true;
+            break;
+        }
+        if (ev->control == EJEC_CONTINUAR) {
+            ev->control = EJEC_NORMAL;
+            continue;
+        }
+        if (ev->control == EJEC_RETORNAR) {
+            valor_destruir(&iter);
+            return;
+        }
+    }
+
+    valor_destruir(&iter);
+
+    if (!rompio && !ev->error.tuvo_error && s->como.para.sino != NULL) {
+        evaluador_ejecutar_sent(ev, s->como.para.sino);
+    }
+}
+
+void evaluador_ejecutar_sent(Evaluador *ev, const Sent *s) {
+    if (ev->error.tuvo_error) return;
+    if (ev->control != EJEC_NORMAL) return;
+
+    switch (s->tipo) {
+        case SENT_PASAR:
+            return;
+
+        case SENT_EXPR: {
+            Valor v = evaluador_evaluar_expr(ev, s->como.expr.expr);
+            valor_destruir(&v);
+            return;
+        }
+
+        case SENT_ASIGNAR:      ejec_asignar(ev, s);      return;
+        case SENT_ASIGNAR_AUG:  ejec_asignar_aug(ev, s);  return;
+
+        case SENT_ROMPER:
+            ev->control = EJEC_ROMPER;
+            return;
+        case SENT_CONTINUAR:
+            ev->control = EJEC_CONTINUAR;
+            return;
+
+        case SENT_SI:        ejec_si(ev, s);        return;
+        case SENT_MIENTRAS:  ejec_mientras(ev, s);  return;
+        case SENT_PARA:      ejec_para(ev, s);      return;
+        case SENT_BLOQUE:    ejec_bloque(ev, s);    return;
+
+        case SENT_RETORNAR:
+        case SENT_FUNCION:
+            sent_set_error(ev, s,
+                "funciones aun no implementadas en v0.4 (sesion 4)");
+            return;
+
+        case SENT_CLASE:
+        case SENT_INTENTAR:
+        case SENT_LANZAR:
+        case SENT_IMPORTAR:
+        case SENT_DESDE_IMPORTAR:
+        case SENT_GLOBAL:
+        case SENT_NOLOCAL:
+            sent_set_error(ev, s,
+                "esta forma de sentencia no esta implementada en v0.4");
+            return;
+    }
+    sent_set_error(ev, s, "tipo de sentencia desconocido");
+}
+
+void evaluador_ejecutar_programa(Evaluador *ev, Sent **sentencias, int n) {
+    for (int i = 0; i < n; i++) {
+        evaluador_ejecutar_sent(ev, sentencias[i]);
+        if (ev->error.tuvo_error) return;
+        if (ev->control != EJEC_NORMAL) {
+            sent_set_error(ev, sentencias[i],
+                "control de flujo (romper/continuar/retornar) fuera de su contexto");
+            return;
+        }
+    }
 }
