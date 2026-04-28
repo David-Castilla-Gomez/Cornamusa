@@ -212,6 +212,78 @@ Valor valor_rango_de_mp(mp_int *inicio, mp_int *fin, mp_int *paso) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Lista — gestión de refcount y operaciones básicas
+ * ────────────────────────────────────────────────────────────────── */
+
+#define LISTA_CAPACIDAD_MIN 4
+
+Lista *lista_nueva(int capacidad_inicial) {
+    Lista *l = (Lista *)malloc(sizeof(Lista));
+    if (!l) return NULL;
+    int cap = capacidad_inicial < LISTA_CAPACIDAD_MIN
+            ? LISTA_CAPACIDAD_MIN : capacidad_inicial;
+    l->elementos = (Valor *)malloc(sizeof(Valor) * (size_t)cap);
+    if (!l->elementos) { free(l); return NULL; }
+    l->cuenta = 0;
+    l->capacidad = cap;
+    l->refcount = 1;
+    return l;
+}
+
+void lista_retener(Lista *l) {
+    if (l) l->refcount++;
+}
+
+void lista_liberar(Lista *l) {
+    if (!l) return;
+    l->refcount--;
+    if (l->refcount > 0) return;
+    /* Refcount llegó a 0: destruir todos los elementos y la propia lista. */
+    for (int i = 0; i < l->cuenta; i++) {
+        valor_destruir(&l->elementos[i]);
+    }
+    free(l->elementos);
+    free(l);
+}
+
+bool lista_agregar(Lista *l, Valor v) {
+    if (!l) { valor_destruir(&v); return false; }
+    if (l->cuenta == l->capacidad) {
+        int nueva_cap = l->capacidad * 2;
+        Valor *nuevo = (Valor *)realloc(l->elementos,
+            sizeof(Valor) * (size_t)nueva_cap);
+        if (!nuevo) { valor_destruir(&v); return false; }
+        l->elementos = nuevo;
+        l->capacidad = nueva_cap;
+    }
+    l->elementos[l->cuenta++] = v;
+    return true;
+}
+
+Valor *lista_obtener_ref(Lista *l, int indice) {
+    if (!l || indice < 0 || indice >= l->cuenta) return NULL;
+    return &l->elementos[indice];
+}
+
+bool lista_asignar(Lista *l, int indice, Valor v) {
+    if (!l || indice < 0 || indice >= l->cuenta) {
+        valor_destruir(&v);
+        return false;
+    }
+    valor_destruir(&l->elementos[indice]);
+    l->elementos[indice] = v;
+    return true;
+}
+
+Valor valor_lista(Lista *l) {
+    Valor v;
+    v.tipo = VAL_LISTA;
+    v.dueno_cadena = false;
+    v.como.lista = l;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
 
@@ -247,6 +319,10 @@ void valor_destruir(Valor *v) {
             v->como.rango.inicio = NULL;
             v->como.rango.fin = NULL;
             v->como.rango.paso = NULL;
+            break;
+        case VAL_LISTA:
+            lista_liberar(v->como.lista);
+            v->como.lista = NULL;
             break;
         default:
             break;
@@ -310,6 +386,14 @@ Valor valor_clonar(const Valor *v) {
                 return valor_nulo();
             }
             return valor_rango_de_mp(mi, mf, mp);
+        }
+        case VAL_LISTA: {
+            /* Refcount semantics: clonar = compartir referencia. La
+               mutación en una "copia" se ve en el original (semántica
+               Python). Para copia profunda hay que iterar y construir
+               una lista nueva — no es lo que hace `valor_clonar`. */
+            lista_retener(v->como.lista);
+            return valor_lista(v->como.lista);
         }
     }
     return valor_nulo();
@@ -411,6 +495,30 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                 "rango(%s, %s, %s)", ai, fi, pa);
             break;
         }
+        case VAL_LISTA: {
+            /* Formato Python-like: [a, b, c] usando repr para los
+               elementos (cadenas con comillas, listas anidadas
+               idem). Buffer grande para soportar listas largas;
+               truncamos limpiamente si llegamos al límite. */
+            int escritos = snprintf(buffer, (size_t)capacidad, "[");
+            if (escritos < 0 || escritos >= capacidad) { n = capacidad - 1; break; }
+            int n_elem = v->como.lista->cuenta;
+            for (int i = 0; i < n_elem; i++) {
+                if (escritos + 2 >= capacidad) break;
+                if (i > 0) {
+                    buffer[escritos++] = ',';
+                    buffer[escritos++] = ' ';
+                }
+                int restante = capacidad - escritos;
+                int e = valor_a_repr(&v->como.lista->elementos[i],
+                                      buffer + escritos, restante);
+                escritos += e;
+            }
+            if (escritos < capacidad - 1) buffer[escritos++] = ']';
+            buffer[escritos < capacidad ? escritos : capacidad - 1] = '\0';
+            n = escritos < capacidad ? escritos : capacidad - 1;
+            break;
+        }
     }
 
     if (n < 0) n = 0;
@@ -430,8 +538,28 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_FUNCION:   return "funcion";
         case VAL_NATIVA:    return "funcion";  /* mismas semánticas externas */
         case VAL_RANGO:     return "rango";
+        case VAL_LISTA:     return "lista";
     }
     return "desconocido";
+}
+
+/*
+ * Variante "repr" de la conversión a cadena: añade comillas a las
+ * cadenas. El resto de tipos comparte el formato de `valor_a_cadena`.
+ * Usado al imprimir colecciones, donde queremos ver `[1, "hola"]` y
+ * no `[1, hola]`.
+ */
+int valor_a_repr(const Valor *v, char *buffer, int capacidad) {
+    if (v == NULL || capacidad <= 0) return 0;
+    if (v->tipo == VAL_CADENA) {
+        int n = snprintf(buffer, (size_t)capacidad, "\"%.*s\"",
+            v->como.cadena.longitud, v->como.cadena.texto);
+        if (n < 0) n = 0;
+        if (n >= capacidad) n = capacidad - 1;
+        buffer[n] = '\0';
+        return n;
+    }
+    return valor_a_cadena(v, buffer, capacidad);
 }
 
 bool valor_es_verdadero(const Valor *v) {
@@ -451,6 +579,8 @@ bool valor_es_verdadero(const Valor *v) {
             if (paso_neg) return cmp_ini_fin == MP_GT;
             return cmp_ini_fin == MP_LT;
         }
+        case VAL_LISTA:
+            return v->como.lista && v->como.lista->cuenta > 0;
     }
     return false;
 }
@@ -512,6 +642,18 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return mp_cmp(a->como.rango.inicio, b->como.rango.inicio) == MP_EQ
                 && mp_cmp(a->como.rango.fin,    b->como.rango.fin)    == MP_EQ
                 && mp_cmp(a->como.rango.paso,   b->como.rango.paso)   == MP_EQ;
+        case VAL_LISTA: {
+            const Lista *la = a->como.lista;
+            const Lista *lb = b->como.lista;
+            if (la == lb) return true;        /* mismo objeto */
+            if (la->cuenta != lb->cuenta) return false;
+            for (int i = 0; i < la->cuenta; i++) {
+                if (!valor_iguales(&la->elementos[i], &lb->elementos[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
     }
     return false;
 }

@@ -472,26 +472,35 @@ static Valor evaluar_es(const Valor *a, const Valor *b) {
 
 static Valor evaluar_en(Evaluador *ev, const Valor *a, const Valor *b,
                         const Expr *e) {
-    if (b->tipo != VAL_CADENA) {
-        return error_en(ev, e,
-            "ErrorDeTipo: el operador 'en' aun no soporta '%s' en esta version",
-            valor_nombre_tipo(b));
+    /* `subcadena en cadena` */
+    if (b->tipo == VAL_CADENA) {
+        if (a->tipo != VAL_CADENA) {
+            return error_en(ev, e,
+                "ErrorDeTipo: subcadena debe ser cadena, no '%s'",
+                valor_nombre_tipo(a));
+        }
+        int la = a->como.cadena.longitud;
+        int lb = b->como.cadena.longitud;
+        if (la == 0) return valor_booleano(true);
+        if (la > lb) return valor_booleano(false);
+        const char *ta = a->como.cadena.texto;
+        const char *tb = b->como.cadena.texto;
+        for (int i = 0; i + la <= lb; i++) {
+            if (memcmp(tb + i, ta, (size_t)la) == 0) return valor_booleano(true);
+        }
+        return valor_booleano(false);
     }
-    if (a->tipo != VAL_CADENA) {
-        return error_en(ev, e,
-            "ErrorDeTipo: subcadena debe ser cadena, no '%s'",
-            valor_nombre_tipo(a));
+    /* `valor en lista` con búsqueda lineal usando igualdad estructural. */
+    if (b->tipo == VAL_LISTA) {
+        Lista *l = b->como.lista;
+        for (int i = 0; i < l->cuenta; i++) {
+            if (valor_iguales(a, &l->elementos[i])) return valor_booleano(true);
+        }
+        return valor_booleano(false);
     }
-    int la = a->como.cadena.longitud;
-    int lb = b->como.cadena.longitud;
-    if (la == 0) return valor_booleano(true);  /* "" en cualquiera */
-    if (la > lb) return valor_booleano(false);
-    const char *ta = a->como.cadena.texto;
-    const char *tb = b->como.cadena.texto;
-    for (int i = 0; i + la <= lb; i++) {
-        if (memcmp(tb + i, ta, (size_t)la) == 0) return valor_booleano(true);
-    }
-    return valor_booleano(false);
+    return error_en(ev, e,
+        "ErrorDeTipo: el operador 'en' no soporta '%s' a la derecha",
+        valor_nombre_tipo(b));
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -502,6 +511,8 @@ static Valor eval_binario(Evaluador *ev, const Expr *e);
 static Valor eval_unario(Evaluador *ev, const Expr *e);
 static Valor eval_logica(Evaluador *ev, const Expr *e);
 static Valor eval_llamada(Evaluador *ev, const Expr *e);
+static Valor eval_lista(Evaluador *ev, const Expr *e);
+static Valor eval_indice(Evaluador *ev, const Expr *e);
 
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
     if (ev->error.tuvo_error) return valor_nulo();
@@ -587,17 +598,17 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
         case EXPR_LOGICA:   return eval_logica(ev, e);
 
         case EXPR_LLAMADA:  return eval_llamada(ev, e);
+        case EXPR_LISTA:    return eval_lista(ev, e);
+        case EXPR_INDICE:   return eval_indice(ev, e);
 
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
-        case EXPR_LISTA:
         case EXPR_DICCIONARIO:
         case EXPR_CONJUNTO:
         case EXPR_TUPLA:
-        case EXPR_INDICE:
         case EXPR_REBANADA:
             return error_en(ev, e,
-                "esta forma de expresion aun no esta implementada en v0.4");
+                "esta forma de expresion aun no esta implementada en v0.5");
     }
     return error_en(ev, e, "tipo de expresion desconocido");
 }
@@ -689,6 +700,67 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         if (propio) liberar_mp(m);
         valor_destruir(&a); valor_destruir(&b);
         return resultado;
+    }
+
+    /* Concatenación de listas: produce una lista NUEVA (refcount 1)
+       que NO modifica los operandos. Simétrico a cadena+cadena. */
+    if (op == TT_MAS && a.tipo == VAL_LISTA && b.tipo == VAL_LISTA) {
+        Lista *la = a.como.lista;
+        Lista *lb = b.como.lista;
+        Lista *nueva = lista_nueva(la->cuenta + lb->cuenta);
+        if (!nueva) {
+            valor_destruir(&a); valor_destruir(&b);
+            return error_en(ev, e, "memoria insuficiente");
+        }
+        for (int i = 0; i < la->cuenta; i++) {
+            lista_agregar(nueva, valor_clonar(&la->elementos[i]));
+        }
+        for (int i = 0; i < lb->cuenta; i++) {
+            lista_agregar(nueva, valor_clonar(&lb->elementos[i]));
+        }
+        valor_destruir(&a); valor_destruir(&b);
+        return valor_lista(nueva);
+    }
+
+    /* Repetición de lista: `lista * n` o `n * lista`. */
+    if (op == TT_ASTERISCO
+        && ((a.tipo == VAL_LISTA && (b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO))
+         || (b.tipo == VAL_LISTA && (a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)))) {
+        const Valor *vlst = (a.tipo == VAL_LISTA) ? &a : &b;
+        const Valor *vnum = (a.tipo == VAL_LISTA) ? &b : &a;
+        bool propio;
+        mp_int *m = como_mp_int(vnum, &propio);
+        if (!m) {
+            valor_destruir(&a); valor_destruir(&b);
+            return error_en(ev, e, "memoria insuficiente");
+        }
+        if (mp_isneg(m) == MP_YES) {
+            if (propio) liberar_mp(m);
+            valor_destruir(&a); valor_destruir(&b);
+            return valor_lista(lista_nueva(0));
+        }
+        if (mp_count_bits(m) > 31) {
+            if (propio) liberar_mp(m);
+            valor_destruir(&a); valor_destruir(&b);
+            return error_en(ev, e,
+                "ErrorDeValor: repeticion de lista demasiado grande");
+        }
+        long n_rep = (long)mp_get_u64(m);
+        if (propio) liberar_mp(m);
+
+        Lista *src = vlst->como.lista;
+        Lista *nueva = lista_nueva((int)(n_rep * src->cuenta));
+        if (!nueva) {
+            valor_destruir(&a); valor_destruir(&b);
+            return error_en(ev, e, "memoria insuficiente");
+        }
+        for (long k = 0; k < n_rep; k++) {
+            for (int i = 0; i < src->cuenta; i++) {
+                lista_agregar(nueva, valor_clonar(&src->elementos[i]));
+            }
+        }
+        valor_destruir(&a); valor_destruir(&b);
+        return valor_lista(nueva);
     }
 
     /* Bitwise: requiere ambos enteros (booleano permitido). */
@@ -1096,11 +1168,46 @@ static void ejec_para(Evaluador *ev, const Sent *s) {
     Valor iter = evaluador_evaluar_expr(ev, s->como.para.iterable);
     if (ev->error.tuvo_error) { valor_destruir(&iter); return; }
 
-    if (iter.tipo != VAL_CADENA && iter.tipo != VAL_RANGO) {
+    if (iter.tipo != VAL_CADENA && iter.tipo != VAL_RANGO
+        && iter.tipo != VAL_LISTA) {
         sent_set_error(ev, s,
-            "ErrorDeTipo: 'para' aun no soporta iterar sobre '%s' en v0.4 (solo cadenas y rangos)",
+            "ErrorDeTipo: 'para' no soporta iterar sobre '%s' en v0.5 (solo cadenas, rangos y listas)",
             valor_nombre_tipo(&iter));
         valor_destruir(&iter);
+        return;
+    }
+
+    /* Rama: iteración sobre lista. */
+    if (iter.tipo == VAL_LISTA) {
+        Lista *l = iter.como.lista;
+        bool rompio_l = false;
+        for (int i = 0; i < l->cuenta; i++) {
+            Valor v = valor_clonar(&l->elementos[i]);
+            if (!entorno_definir(ev->entorno_actual,
+                                  objetivo->como.ident.nombre,
+                                  objetivo->como.ident.longitud, v)) {
+                sent_set_error(ev, s, "memoria insuficiente en 'para'");
+                break;
+            }
+            evaluador_ejecutar_sent(ev, s->como.para.cuerpo);
+            if (ev->error.tuvo_error) break;
+            if (ev->control == EJEC_ROMPER) {
+                ev->control = EJEC_NORMAL;
+                rompio_l = true;
+                break;
+            }
+            if (ev->control == EJEC_CONTINUAR) {
+                ev->control = EJEC_NORMAL;
+            }
+            if (ev->control == EJEC_RETORNAR) {
+                valor_destruir(&iter);
+                return;
+            }
+        }
+        valor_destruir(&iter);
+        if (!rompio_l && !ev->error.tuvo_error && s->como.para.sino != NULL) {
+            evaluador_ejecutar_sent(ev, s->como.para.sino);
+        }
         return;
     }
 
@@ -1435,4 +1542,86 @@ static Valor eval_llamada(Evaluador *ev, const Expr *e) {
     free(args);
     valor_destruir(&callee);
     return resultado;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Listas: construcción e indexación
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor eval_lista(Evaluador *ev, const Expr *e) {
+    int n = e->como.secuencia.n_elementos;
+    Lista *l = lista_nueva(n);
+    if (!l) return error_en(ev, e, "memoria insuficiente");
+
+    for (int i = 0; i < n; i++) {
+        Valor v = evaluador_evaluar_expr(ev, e->como.secuencia.elementos[i]);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&v);
+            lista_liberar(l);
+            return valor_nulo();
+        }
+        if (!lista_agregar(l, v)) {
+            lista_liberar(l);
+            return error_en(ev, e, "memoria insuficiente");
+        }
+    }
+    return valor_lista(l);
+}
+
+/*
+ * Convierte un Valor entero/booleano en `long` con bounds-check
+ * adecuado para usarlo como índice. Devuelve true si OK; en caso de
+ * overflow del rango entero, devuelve false (el llamador reporta).
+ */
+static bool indice_a_long(const Valor *v, long *out) {
+    if (v->tipo == VAL_BOOLEANO) { *out = v->como.booleano ? 1 : 0; return true; }
+    if (v->tipo != VAL_ENTERO) return false;
+    if (mp_count_bits(v->como.entero) > 62) return false;
+    /* mp_get_i64 devuelve unsigned cast — usamos el formato correcto. */
+    int64_t signed_v = mp_get_i64(v->como.entero);
+    *out = (long)signed_v;
+    return true;
+}
+
+static Valor eval_indice(Evaluador *ev, const Expr *e) {
+    Valor obj = evaluador_evaluar_expr(ev, e->como.indice.objeto);
+    if (ev->error.tuvo_error) { valor_destruir(&obj); return valor_nulo(); }
+    Valor idx = evaluador_evaluar_expr(ev, e->como.indice.indice);
+    if (ev->error.tuvo_error) {
+        valor_destruir(&obj); valor_destruir(&idx);
+        return valor_nulo();
+    }
+
+    if (obj.tipo == VAL_LISTA) {
+        if (idx.tipo != VAL_ENTERO && idx.tipo != VAL_BOOLEANO) {
+            Valor err = error_en(ev, e,
+                "ErrorDeTipo: indice de lista debe ser entero, no '%s'",
+                valor_nombre_tipo(&idx));
+            valor_destruir(&obj); valor_destruir(&idx);
+            return err;
+        }
+        long i;
+        if (!indice_a_long(&idx, &i)) {
+            valor_destruir(&obj); valor_destruir(&idx);
+            return error_en(ev, e,
+                "ErrorDeIndice: indice fuera de rango para una lista");
+        }
+        Lista *l = obj.como.lista;
+        if (i < 0) i += l->cuenta;     /* negativo cuenta desde el final */
+        if (i < 0 || i >= l->cuenta) {
+            valor_destruir(&obj); valor_destruir(&idx);
+            return error_en(ev, e,
+                "ErrorDeIndice: indice %ld fuera de rango (lista de %d)",
+                i, l->cuenta);
+        }
+        Valor resultado = valor_clonar(&l->elementos[i]);
+        valor_destruir(&obj); valor_destruir(&idx);
+        return resultado;
+    }
+
+    Valor err = error_en(ev, e,
+        "ErrorDeTipo: '%s' no es indexable en v0.5",
+        valor_nombre_tipo(&obj));
+    valor_destruir(&obj); valor_destruir(&idx);
+    return err;
 }

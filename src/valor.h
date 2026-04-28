@@ -46,7 +46,12 @@ typedef enum {
     VAL_FUNCION,       /* función definida por el usuario */
     VAL_NATIVA,        /* función nativa (built-in en C) */
     VAL_RANGO,         /* iterable rango(inicio, fin, paso) */
+    VAL_LISTA,         /* array dinámico de Valor con refcount */
 } TipoValor;
+
+/* Forward decl de Lista para usarla como puntero dentro del Valor.
+   La struct completa se define después del typedef de Valor. */
+typedef struct Lista Lista;
 
 /*
  * Firma de una función nativa (puntero a función C). Definida con
@@ -110,8 +115,45 @@ typedef struct Valor {
             mp_int *fin;
             mp_int *paso;
         } rango;
+        Lista *lista;       /* refcount; ver Lista más abajo */
     } como;
 } Valor;
+
+/*
+ * Lista mutable con referencia compartida (decisión Fase 5):
+ *   x = [1, 2, 3]
+ *   y = x         # mismo objeto, no copia
+ *   y[0] = 99     # x[0] también es 99
+ *
+ * Sin GC todavía (Fase 7) implementamos refcount manual:
+ *   - `valor_clonar(v)` con v VAL_LISTA hace `lista_retener` (++ref).
+ *   - `valor_destruir(v)` con v VAL_LISTA hace `lista_liberar` (--ref;
+ *     libera la lista entera si refcount llega a 0).
+ *
+ * Esto NO cubre ciclos (lista que se contiene a sí misma): se filtran
+ * memoria. Es aceptable hasta Fase 7, que añadirá mark-sweep real.
+ */
+struct Lista {
+    Valor *elementos;       /* array contiguo de Valores; cada slot dueño */
+    int cuenta;
+    int capacidad;
+    int refcount;
+};
+
+Lista *lista_nueva(int capacidad_inicial);
+void lista_retener(Lista *l);
+void lista_liberar(Lista *l);
+
+/* Añade un elemento al final, transfiriendo posesión. Devuelve true si OK. */
+bool lista_agregar(Lista *l, Valor v);
+
+/* Devuelve un puntero al slot interno (para lectura/escritura). NULL si
+   el índice está fuera de rango. NO clona el valor. */
+Valor *lista_obtener_ref(Lista *l, int indice);
+
+/* Reemplaza el elemento en `indice`, destruyendo el anterior y tomando
+   posesión del nuevo. Devuelve false si índice fuera de rango. */
+bool lista_asignar(Lista *l, int indice, Valor v);
 
 /* ──────────────────────────────────────────────────────────────────
  * Constructores
@@ -175,6 +217,20 @@ Valor valor_rango_de_longs(long inicio, long fin, long paso);
  * inicializados. Útil cuando los argumentos son bignum.
  */
 Valor valor_rango_de_mp(mp_int *inicio, mp_int *fin, mp_int *paso);
+
+/*
+ * Construye un VAL_LISTA tomando posesión del refcount del cliente.
+ * Si el cliente sigue usando la lista debe llamar `lista_retener`
+ * primero.
+ */
+Valor valor_lista(Lista *l);
+
+/*
+ * Variante "repr" de la conversión a cadena: añade comillas a las
+ * cadenas y formatea las listas anidadas usando repr para sus
+ * elementos. Útil al imprimir el contenido de una lista.
+ */
+int valor_a_repr(const Valor *v, char *buffer, int capacidad);
 
 /* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia

@@ -84,6 +84,9 @@ static Valor nativa_longitud(Evaluador *ev, int n_args, Valor *args,
         }
         return valor_entero_de_long(n);
     }
+    if (v->tipo == VAL_LISTA) {
+        return valor_entero_de_long((long)v->como.lista->cuenta);
+    }
     if (v->tipo == VAL_RANGO) {
         /* count = max(0, ceil((fin - inicio) / paso)) */
         mp_int diff;

@@ -6,6 +6,30 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+### En desarrollo (Fase 5 — Estructuras de datos, objetivo v0.5.0)
+- ✅ Sesión 1: tipo `Lista` con refcount + literal `[a, b, c]` + indexación + operadores `+`/`*`/`en`/`==` + iteración `para x en lista` + integración con `longitud()` y `tipo()`.
+- ⏳ Sesión 2: slicing `lista[a:b:c]`, mutación `lista[i] = v`, métodos básicos (agregar, quitar, ordenar) vía built-ins.
+- ⏳ Sesión 3: tipo `Diccionario` con tabla hash + literal `{k: v}` + acceso `dicc[k]` + iteración.
+- ⏳ Sesión 4: tipo `Conjunto` (`{1, 2, 3}`) y `Tupla` `(a, b)` inmutable. Distinción tupla vs grupo.
+- ⏳ Sesión 5: ejemplos jugables + tag v0.5.0 (último release del tree-walking activo; desde v0.6 motor bytecode).
+
+### Añadido (Fase 5 sesión 1)
+- **`VAL_LISTA`** y **`struct Lista`** en `valor.{h,c}`: array dinámico de `Valor` con refcount manual (sin GC todavía — Fase 7). Operaciones: `lista_nueva`, `lista_retener` (++ref), `lista_liberar` (--ref + free si llega a 0), `lista_agregar` (toma posesión, crece ×2 amortizado), `lista_obtener_ref`, `lista_asignar`. Capacidad inicial 4.
+- **Semántica de referencia compartida**: `valor_clonar` para `VAL_LISTA` hace `lista_retener` (no deep copy) → asignar `b = a` comparte el mismo objeto Python-style. Las cadenas dentro de la lista siguen su propia ownership (cadena con `dueno_cadena=true` se duplica al clonar, las referencias al fuente no).
+- **Limitación documentada**: el refcount no detecta ciclos. Una lista que se contiene a sí misma filtrará memoria; aceptable hasta Fase 7 (mark-sweep real).
+- **`valor_a_cadena` para lista**: produce `[a, b, c]` usando una nueva función `valor_a_repr` que envuelve cadenas en comillas (`[1, "hola"]` en lugar de `[1, hola]`). Recursivo para listas anidadas.
+- **`valor_iguales` para lista**: comparación element-wise; mismo objeto (puntero) → `true` por short-circuit; longitudes distintas → `false`.
+- **`valor_es_verdadero` para lista**: `cuenta > 0`. Lista vacía es falsa, no vacía es verdadera (Python).
+- **`EXPR_LISTA` en evaluador**: evalúa cada elemento de izquierda a derecha; si alguno falla, libera lista parcial y propaga error. Trailing comma del parser ya soportada en sintaxis.
+- **`EXPR_INDICE` en evaluador**: `lista[i]` con `i` entero o booleano. Soporta índice negativo (cuenta desde el final). Bounds check con `ErrorDeIndice` específico que reporta el índice y el tamaño. Cadenas, diccionarios y otros tipos quedan para sesiones siguientes.
+- **`+` de listas**: `[1, 2] + [3, 4]` → `[1, 2, 3, 4]`. Lista NUEVA con refcount 1, deep-clona elementos (cadenas con dueño se duplican; bignum se copia; listas internas comparten refcount).
+- **`*` de listas**: `[1, 2] * 3` y `3 * [1, 2]` → `[1, 2, 1, 2, 1, 2]`. Repetición negativa o por cero produce `[]`. Detecta overflow de tamaño.
+- **`en` extendido** para listas: `valor en lista` con búsqueda lineal usando `valor_iguales`. Mantiene también `subcadena en cadena`.
+- **`para x en lista`**: itera elementos en orden; cada iteración asigna un clon del elemento al objetivo. Soporta `romper`/`continuar` y cláusula `sino` con la misma semántica que sobre cadenas y rangos.
+- **`longitud(lista)`** built-in: devuelve `cuenta` como entero. `tipo(lista)` devuelve `"lista"`.
+- **`tests/unit/test_runtime_listas.c`** con 8 grupos: literal (vacío, mixto, anidado, trailing comma), indexación (positivo/negativo/fuera-de-rango, no-entero, anidado), operadores (`+`/`*`/`en`/`no en`/`==` con cross-tipo entero=decimal), iteración (suma, concat, romper, sino), built-ins, referencia compartida (asignar `b = a` no rompe), programa promedio decimal, construcción de cuadrados con `rango()` y concat.
+- **42 tests verde** (15 unit + 27 integración).
+
 ## [0.4.0] — 2026-04-28 — primer release jugable
 
 Cierre de Fase 4 según el plan: tree-walking interpreter completo y
