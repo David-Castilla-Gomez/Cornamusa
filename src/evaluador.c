@@ -17,6 +17,25 @@
  * para no continuar tras un fallo.
  * ────────────────────────────────────────────────────────────────── */
 
+/*
+ * Pone el error en `err` con linea/columna. Preserva el primer error
+ * si ya hay uno activo. Devuelve nulo para uso encadenado.
+ */
+static Valor error_pos(EvalError *err, int linea, int columna,
+                        const char *fmt, ...) {
+    if (!err->tuvo_error) {
+        err->tuvo_error = true;
+        err->linea = linea;
+        err->columna = columna;
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(err->mensaje, sizeof(err->mensaje), fmt, ap);
+        va_end(ap);
+    }
+    return valor_nulo();
+}
+
+/* Wrapper compatible con los call-sites antiguos (Evaluador + Expr). */
 static Valor error_en(Evaluador *ev, const Expr *e, const char *fmt, ...) {
     if (!ev->error.tuvo_error) {
         ev->error.tuvo_error = true;
@@ -126,10 +145,11 @@ static void liberar_mp(mp_int *m) {
  * pone el error en el evaluador y devuelve nulo.
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor entero_op_entero(Evaluador *ev, TipoToken op,
-                              mp_int *a, mp_int *b, const Expr *e) {
+static Valor entero_op_entero(EvalError *err, TipoToken op,
+                              mp_int *a, mp_int *b,
+                              int linea, int columna) {
     mp_int *r = nuevo_mp();
-    if (!r) return error_en(ev, e, "memoria insuficiente");
+    if (!r) return error_pos(err, linea, columna, "memoria insuficiente");
 
     int rc = MP_OKAY;
     switch (op) {
@@ -138,18 +158,15 @@ static Valor entero_op_entero(Evaluador *ev, TipoToken op,
         case TT_ASTERISCO:  rc = mp_mul(a, b, r); break;
 
         case TT_DOBLE_BARRA: {
-            /* Floor division con semántica Python: floor(a/b).
-             * mp_div es truncante. Ajustamos si hay resto y los signos
-             * difieren. */
             if (mp_iszero(b) == MP_YES) {
                 liberar_mp(r);
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorAritmetico: division por cero");
             }
             mp_int rem;
             if (mp_init(&rem) != MP_OKAY) {
                 liberar_mp(r);
-                return error_en(ev, e, "memoria insuficiente");
+                return error_pos(err, linea, columna, "memoria insuficiente");
             }
             rc = mp_div(a, b, r, &rem);
             if (rc == MP_OKAY && mp_iszero(&rem) == MP_NO) {
@@ -164,11 +181,9 @@ static Valor entero_op_entero(Evaluador *ev, TipoToken op,
         }
 
         case TT_PORCENTAJE: {
-            /* Mod matemático (Python style): 0 <= result < |b|.
-             * mp_mod ya hace exactamente eso. */
             if (mp_iszero(b) == MP_YES) {
                 liberar_mp(r);
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorAritmetico: modulo por cero");
             }
             rc = mp_mod(a, b, r);
@@ -176,23 +191,16 @@ static Valor entero_op_entero(Evaluador *ev, TipoToken op,
         }
 
         case TT_DOBLE_ASTERISCO: {
-            /* Potencia: solo manejamos exponente no negativo que cabe
-             * en uint32_t. Para exponente negativo Python devuelve
-             * decimal — ese caso lo cubre el llamador convirtiendo a
-             * doble antes. */
             if (mp_isneg(b) == MP_YES) {
                 liberar_mp(r);
-                /* Convertir a aritmética flotante: 1 / a^|b|. */
                 double ad = mp_get_double(a);
                 double bd = mp_get_double(b);
                 return valor_decimal(pow(ad, bd));
             }
             uint64_t exp = 0;
-            /* mp_get_u64 no falla por sí mismo; truncará si no cabe.
-             * Comprobamos primero el tamaño. */
             if (mp_count_bits(b) > 32) {
                 liberar_mp(r);
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorDeValor: exponente demasiado grande para potencia entera");
             }
             exp = mp_get_u64(b);
@@ -205,16 +213,14 @@ static Valor entero_op_entero(Evaluador *ev, TipoToken op,
         case TT_CIRCUNFLEJO: rc = mp_xor(a, b, r); break;
 
         case TT_DESPL_IZQ: {
-            /* a << b : multiplica por 2^b. b debe ser no negativo y
-             * caber en int. */
             if (mp_isneg(b) == MP_YES) {
                 liberar_mp(r);
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorDeValor: desplazamiento negativo");
             }
             if (mp_count_bits(b) > 31) {
                 liberar_mp(r);
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorDeValor: desplazamiento demasiado grande");
             }
             int n = (int)mp_get_u64(b);
@@ -222,26 +228,21 @@ static Valor entero_op_entero(Evaluador *ev, TipoToken op,
             break;
         }
         case TT_DESPL_DER: {
-            /* a >> b : divide por 2^b (con rounding hacia -inf como Python). */
             if (mp_isneg(b) == MP_YES) {
                 liberar_mp(r);
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorDeValor: desplazamiento negativo");
             }
             if (mp_count_bits(b) > 31) {
                 liberar_mp(r);
-                /* Para a no negativo el resultado es 0; para negativo es -1.
-                 * Ese caso límite no compensa el coste — error explícito. */
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorDeValor: desplazamiento demasiado grande");
             }
             int n = (int)mp_get_u64(b);
-            /* mp_div_2d trunca hacia cero; para Python necesitamos
-             * floor. Si a < 0 y se pierde algún bit, restar 1. */
             mp_int rem;
             if (mp_init(&rem) != MP_OKAY) {
                 liberar_mp(r);
-                return error_en(ev, e, "memoria insuficiente");
+                return error_pos(err, linea, columna, "memoria insuficiente");
             }
             rc = mp_div_2d(a, n, r, &rem);
             if (rc == MP_OKAY && mp_isneg(a) == MP_YES
@@ -254,13 +255,13 @@ static Valor entero_op_entero(Evaluador *ev, TipoToken op,
 
         default:
             liberar_mp(r);
-            return error_en(ev, e,
+            return error_pos(err, linea, columna,
                 "operador no soportado entre enteros");
     }
 
     if (rc != MP_OKAY) {
         liberar_mp(r);
-        return error_en(ev, e, "fallo en operacion entera");
+        return error_pos(err, linea, columna, "fallo en operacion entera");
     }
     return valor_entero_de_mp(r);
 }
@@ -269,37 +270,37 @@ static Valor entero_op_entero(Evaluador *ev, TipoToken op,
  * Aritmética decimal ⊕ decimal (con promociones desde entero/booleano)
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor decimal_op_decimal(Evaluador *ev, TipoToken op,
-                                double a, double b, const Expr *e) {
+static Valor decimal_op_decimal(EvalError *err, TipoToken op,
+                                double a, double b,
+                                int linea, int columna) {
     switch (op) {
         case TT_MAS:       return valor_decimal(a + b);
         case TT_MENOS:     return valor_decimal(a - b);
         case TT_ASTERISCO: return valor_decimal(a * b);
         case TT_BARRA:
             if (b == 0.0) {
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorAritmetico: division por cero");
             }
             return valor_decimal(a / b);
         case TT_DOBLE_BARRA:
             if (b == 0.0) {
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorAritmetico: division por cero");
             }
             return valor_decimal(floor(a / b));
         case TT_PORCENTAJE: {
             if (b == 0.0) {
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorAritmetico: modulo por cero");
             }
-            /* Python: a - floor(a/b)*b */
             double r = a - floor(a / b) * b;
             return valor_decimal(r);
         }
         case TT_DOBLE_ASTERISCO:
             return valor_decimal(pow(a, b));
         default:
-            return error_en(ev, e,
+            return error_pos(err, linea, columna,
                 "operador no soportado entre decimales");
     }
 }
@@ -308,12 +309,12 @@ static Valor decimal_op_decimal(Evaluador *ev, TipoToken op,
  * Aritmética y operadores con cadenas
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor cadena_concatenar(Evaluador *ev, const Valor *a, const Valor *b,
-                                const Expr *e) {
+static Valor cadena_concatenar(EvalError *err, const Valor *a, const Valor *b,
+                                int linea, int columna) {
     int la = a->como.cadena.longitud;
     int lb = b->como.cadena.longitud;
     char *buf = (char *)malloc((size_t)la + (size_t)lb + 1);
-    if (!buf) return error_en(ev, e, "memoria insuficiente");
+    if (!buf) return error_pos(err, linea, columna, "memoria insuficiente");
     if (la > 0) memcpy(buf, a->como.cadena.texto, (size_t)la);
     if (lb > 0) memcpy(buf + la, b->como.cadena.texto, (size_t)lb);
     buf[la + lb] = '\0';
@@ -327,25 +328,24 @@ static Valor cadena_concatenar(Evaluador *ev, const Valor *a, const Valor *b,
 
 /* Repetición de cadena por entero: "ab" * 3 → "ababab".
    Solo se admite multiplicación con entero no negativo. */
-static Valor cadena_repetir(Evaluador *ev, const Valor *cad, mp_int *veces,
-                             const Expr *e) {
+static Valor cadena_repetir(EvalError *err, const Valor *cad, mp_int *veces,
+                             int linea, int columna) {
     if (mp_isneg(veces) == MP_YES) {
         return valor_cadena_duplicar("", 0);  /* Python: "x" * -1 == "" */
     }
     if (mp_count_bits(veces) > 31) {
-        return error_en(ev, e,
+        return error_pos(err, linea, columna,
             "ErrorDeValor: repeticion de cadena demasiado grande");
     }
     uint64_t n = mp_get_u64(veces);
     size_t la = (size_t)cad->como.cadena.longitud;
-    /* Comprobar overflow del tamaño total. */
     if (la > 0 && n > 0 && n > ((size_t)-1) / la) {
-        return error_en(ev, e,
+        return error_pos(err, linea, columna,
             "ErrorDeValor: repeticion de cadena produce tamaño excesivo");
     }
     size_t total = la * (size_t)n;
     char *buf = (char *)malloc(total + 1);
-    if (!buf) return error_en(ev, e, "memoria insuficiente");
+    if (!buf) return error_pos(err, linea, columna, "memoria insuficiente");
     for (uint64_t i = 0; i < n; i++) {
         if (la > 0) memcpy(buf + (size_t)i * la,
                             cad->como.cadena.texto, la);
@@ -418,15 +418,15 @@ static Orden comparar_valores(const Valor *a, const Valor *b) {
     return ORD_EQ;
 }
 
-static Valor evaluar_comparacion(Evaluador *ev, TipoToken op,
+static Valor evaluar_comparacion(EvalError *err, TipoToken op,
                                   const Valor *a, const Valor *b,
-                                  const Expr *e) {
+                                  int linea, int columna) {
     if (op == TT_IGUAL)    return valor_booleano(valor_iguales(a, b));
     if (op == TT_DISTINTO) return valor_booleano(!valor_iguales(a, b));
 
     Orden o = comparar_valores(a, b);
     if (o == ORD_INCOMP) {
-        return error_en(ev, e,
+        return error_pos(err, linea, columna,
             "ErrorDeTipo: no se puede comparar '%s' con '%s'",
             valor_nombre_tipo(a), valor_nombre_tipo(b));
     }
@@ -436,7 +436,7 @@ static Valor evaluar_comparacion(Evaluador *ev, TipoToken op,
         case TT_MAYOR:        return valor_booleano(o == ORD_GT);
         case TT_MAYOR_IGUAL:  return valor_booleano(o != ORD_LT);
         default:
-            return error_en(ev, e, "comparador interno desconocido");
+            return error_pos(err, linea, columna, "comparador interno desconocido");
     }
 }
 
@@ -470,12 +470,12 @@ static Valor evaluar_es(const Valor *a, const Valor *b) {
     return valor_booleano(valor_iguales(a, b));
 }
 
-static Valor evaluar_en(Evaluador *ev, const Valor *a, const Valor *b,
-                        const Expr *e) {
+static Valor evaluar_en(EvalError *err, const Valor *a, const Valor *b,
+                        int linea, int columna) {
     /* `subcadena en cadena` */
     if (b->tipo == VAL_CADENA) {
         if (a->tipo != VAL_CADENA) {
-            return error_en(ev, e,
+            return error_pos(err, linea, columna,
                 "ErrorDeTipo: subcadena debe ser cadena, no '%s'",
                 valor_nombre_tipo(a));
         }
@@ -516,7 +516,7 @@ static Valor evaluar_en(Evaluador *ev, const Valor *a, const Valor *b,
         }
         return valor_booleano(false);
     }
-    return error_en(ev, e,
+    return error_pos(err, linea, columna,
         "ErrorDeTipo: el operador 'en' no soporta '%s' a la derecha",
         valor_nombre_tipo(b));
 }
@@ -678,8 +678,9 @@ static bool es_comparacion(TipoToken op) {
  * posesión de ambos (los destruye antes de devolver). Útil tanto para
  * EXPR_BINARIO como para SENT_ASIGNAR_AUG (`x += expr` → x = x op expr).
  */
-static Valor aplicar_binario(Evaluador *ev, TipoToken op,
-                             Valor a, Valor b, const Expr *e) {
+static Valor aplicar_binario_pos(EvalError *err, TipoToken op,
+                                  Valor a, Valor b,
+                                  int linea, int columna) {
     Valor resultado = valor_nulo();
 
     /* Identidad y pertenencia. */
@@ -689,21 +690,21 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         return resultado;
     }
     if (op == TT_EN) {
-        resultado = evaluar_en(ev, &a, &b, e);
+        resultado = evaluar_en(err, &a, &b, linea, columna);
         valor_destruir(&a); valor_destruir(&b);
         return resultado;
     }
 
     /* Comparaciones (devuelven booleano). */
     if (es_comparacion(op)) {
-        resultado = evaluar_comparacion(ev, op, &a, &b, e);
+        resultado = evaluar_comparacion(err, op, &a, &b, linea, columna);
         valor_destruir(&a); valor_destruir(&b);
         return resultado;
     }
 
-    /* Concatenación y repetición de cadena (operador '+' y '*'). */
+    /* Concatenación y repetición de cadena. */
     if (op == TT_MAS && a.tipo == VAL_CADENA && b.tipo == VAL_CADENA) {
-        resultado = cadena_concatenar(ev, &a, &b, e);
+        resultado = cadena_concatenar(err, &a, &b, linea, columna);
         valor_destruir(&a); valor_destruir(&b);
         return resultado;
     }
@@ -716,23 +717,22 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         mp_int *m = como_mp_int(otr, &propio);
         if (!m) {
             valor_destruir(&a); valor_destruir(&b);
-            return error_en(ev, e, "memoria insuficiente");
+            return error_pos(err, linea, columna, "memoria insuficiente");
         }
-        resultado = cadena_repetir(ev, cad, m, e);
+        resultado = cadena_repetir(err, cad, m, linea, columna);
         if (propio) liberar_mp(m);
         valor_destruir(&a); valor_destruir(&b);
         return resultado;
     }
 
-    /* Concatenación de listas: produce una lista NUEVA (refcount 1)
-       que NO modifica los operandos. Simétrico a cadena+cadena. */
+    /* Concatenación de listas. */
     if (op == TT_MAS && a.tipo == VAL_LISTA && b.tipo == VAL_LISTA) {
         Lista *la = a.como.lista;
         Lista *lb = b.como.lista;
         Lista *nueva = lista_nueva(la->cuenta + lb->cuenta);
         if (!nueva) {
             valor_destruir(&a); valor_destruir(&b);
-            return error_en(ev, e, "memoria insuficiente");
+            return error_pos(err, linea, columna, "memoria insuficiente");
         }
         for (int i = 0; i < la->cuenta; i++) {
             lista_agregar(nueva, valor_clonar(&la->elementos[i]));
@@ -744,7 +744,7 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         return valor_lista(nueva);
     }
 
-    /* Repetición de lista: `lista * n` o `n * lista`. */
+    /* Repetición de lista. */
     if (op == TT_ASTERISCO
         && ((a.tipo == VAL_LISTA && (b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO))
          || (b.tipo == VAL_LISTA && (a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)))) {
@@ -754,7 +754,7 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         mp_int *m = como_mp_int(vnum, &propio);
         if (!m) {
             valor_destruir(&a); valor_destruir(&b);
-            return error_en(ev, e, "memoria insuficiente");
+            return error_pos(err, linea, columna, "memoria insuficiente");
         }
         if (mp_isneg(m) == MP_YES) {
             if (propio) liberar_mp(m);
@@ -764,7 +764,7 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         if (mp_count_bits(m) > 31) {
             if (propio) liberar_mp(m);
             valor_destruir(&a); valor_destruir(&b);
-            return error_en(ev, e,
+            return error_pos(err, linea, columna,
                 "ErrorDeValor: repeticion de lista demasiado grande");
         }
         long n_rep = (long)mp_get_u64(m);
@@ -774,7 +774,7 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         Lista *nueva = lista_nueva((int)(n_rep * src->cuenta));
         if (!nueva) {
             valor_destruir(&a); valor_destruir(&b);
-            return error_en(ev, e, "memoria insuficiente");
+            return error_pos(err, linea, columna, "memoria insuficiente");
         }
         for (long k = 0; k < n_rep; k++) {
             for (int i = 0; i < src->cuenta; i++) {
@@ -785,11 +785,11 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         return valor_lista(nueva);
     }
 
-    /* Bitwise: requiere ambos enteros (booleano permitido). */
+    /* Bitwise. */
     if (es_bitwise(op)) {
         if (!(a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)
          || !(b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO)) {
-            resultado = error_en(ev, e,
+            resultado = error_pos(err, linea, columna,
                 "ErrorDeTipo: operador bitwise requiere enteros, no '%s' y '%s'",
                 valor_nombre_tipo(&a), valor_nombre_tipo(&b));
             valor_destruir(&a); valor_destruir(&b);
@@ -798,7 +798,7 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
         bool pa, pb;
         mp_int *ma = como_mp_int(&a, &pa);
         mp_int *mb = como_mp_int(&b, &pb);
-        resultado = entero_op_entero(ev, op, ma, mb, e);
+        resultado = entero_op_entero(err, op, ma, mb, linea, columna);
         if (pa) liberar_mp(ma);
         if (pb) liberar_mp(mb);
         valor_destruir(&a); valor_destruir(&b);
@@ -808,7 +808,7 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
     /* Aritmética. */
     if (es_aritmetico(op)) {
         if (!es_numerico(&a) || !es_numerico(&b)) {
-            resultado = error_en(ev, e,
+            resultado = error_pos(err, linea, columna,
                 "ErrorDeTipo: operador '%s' no aplica entre '%s' y '%s'",
                 op == TT_MAS ? "+" :
                 op == TT_MENOS ? "-" :
@@ -822,30 +822,27 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
             return resultado;
         }
 
-        /* Caso especial: '/' siempre produce decimal. */
         if (op == TT_BARRA) {
             double ad = valor_a_doble(&a);
             double bd = valor_a_doble(&b);
             valor_destruir(&a); valor_destruir(&b);
             if (bd == 0.0) {
-                return error_en(ev, e,
+                return error_pos(err, linea, columna,
                     "ErrorAritmetico: division por cero");
             }
             return valor_decimal(ad / bd);
         }
 
-        /* Si alguno es decimal, todo va por aritmética doble. */
         bool a_dec = (a.tipo == VAL_DECIMAL);
         bool b_dec = (b.tipo == VAL_DECIMAL);
         if (a_dec || b_dec) {
             double ad = valor_a_doble(&a);
             double bd = valor_a_doble(&b);
-            resultado = decimal_op_decimal(ev, op, ad, bd, e);
+            resultado = decimal_op_decimal(err, op, ad, bd, linea, columna);
             valor_destruir(&a); valor_destruir(&b);
             return resultado;
         }
 
-        /* Ambos son enteros (o booleanos): usar libtommath. */
         bool pa, pb;
         mp_int *ma = como_mp_int(&a, &pa);
         mp_int *mb = como_mp_int(&b, &pb);
@@ -853,9 +850,9 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
             if (pa) liberar_mp(ma);
             if (pb) liberar_mp(mb);
             valor_destruir(&a); valor_destruir(&b);
-            return error_en(ev, e, "memoria insuficiente");
+            return error_pos(err, linea, columna, "memoria insuficiente");
         }
-        resultado = entero_op_entero(ev, op, ma, mb, e);
+        resultado = entero_op_entero(err, op, ma, mb, linea, columna);
         if (pa) liberar_mp(ma);
         if (pb) liberar_mp(mb);
         valor_destruir(&a); valor_destruir(&b);
@@ -863,7 +860,20 @@ static Valor aplicar_binario(Evaluador *ev, TipoToken op,
     }
 
     valor_destruir(&a); valor_destruir(&b);
-    return error_en(ev, e, "operador binario desconocido");
+    return error_pos(err, linea, columna, "operador binario desconocido");
+}
+
+/* Wrapper compatible con call-sites antiguos (pasar Evaluador + Expr). */
+static Valor aplicar_binario(Evaluador *ev, TipoToken op,
+                             Valor a, Valor b, const Expr *e) {
+    return aplicar_binario_pos(&ev->error, op, a, b, e->linea, e->columna);
+}
+
+/* API pública: idéntica a aplicar_binario_pos pero con prefijo. */
+Valor evaluador_aplicar_binario(EvalError *err, int op_token,
+                                 Valor a, Valor b,
+                                 int linea, int columna) {
+    return aplicar_binario_pos(err, (TipoToken)op_token, a, b, linea, columna);
 }
 
 static Valor eval_binario(Evaluador *ev, const Expr *e) {
@@ -880,11 +890,13 @@ static Valor eval_binario(Evaluador *ev, const Expr *e) {
  * Unario
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor eval_unario(Evaluador *ev, const Expr *e) {
-    Valor v = evaluador_evaluar_expr(ev, e->como.unario.operando);
-    if (ev->error.tuvo_error) { valor_destruir(&v); return valor_nulo(); }
-
-    TipoToken op = e->como.unario.op;
+/*
+ * Aplica un operador unario sobre un valor ya evaluado, tomando
+ * posesión. Reutilizable desde la VM bytecode.
+ */
+static Valor aplicar_unario_pos(EvalError *err, TipoToken op,
+                                 Valor v,
+                                 int linea, int columna) {
     switch (op) {
         case TT_NO:
             return (Valor){
@@ -894,7 +906,6 @@ static Valor eval_unario(Evaluador *ev, const Expr *e) {
             };
 
         case TT_MAS:
-            /* +x: identidad numérica. */
             if (v.tipo == VAL_ENTERO || v.tipo == VAL_DECIMAL) return v;
             if (v.tipo == VAL_BOOLEANO) {
                 bool b = v.como.booleano;
@@ -902,7 +913,7 @@ static Valor eval_unario(Evaluador *ev, const Expr *e) {
                 return valor_entero_de_long(b ? 1 : 0);
             }
             valor_destruir(&v);
-            return error_en(ev, e,
+            return error_pos(err, linea, columna,
                 "ErrorDeTipo: el operador '+' unario requiere numerico");
 
         case TT_MENOS: {
@@ -915,11 +926,11 @@ static Valor eval_unario(Evaluador *ev, const Expr *e) {
                 mp_int *r = nuevo_mp();
                 if (!r) {
                     valor_destruir(&v);
-                    return error_en(ev, e, "memoria insuficiente");
+                    return error_pos(err, linea, columna, "memoria insuficiente");
                 }
                 if (mp_neg(v.como.entero, r) != MP_OKAY) {
                     liberar_mp(r); valor_destruir(&v);
-                    return error_en(ev, e, "fallo en negacion entera");
+                    return error_pos(err, linea, columna, "fallo en negacion entera");
                 }
                 valor_destruir(&v);
                 return valor_entero_de_mp(r);
@@ -930,45 +941,57 @@ static Valor eval_unario(Evaluador *ev, const Expr *e) {
                 return valor_entero_de_long(n);
             }
             valor_destruir(&v);
-            return error_en(ev, e,
+            return error_pos(err, linea, columna,
                 "ErrorDeTipo: el operador '-' unario requiere numerico");
         }
 
         case TT_TILDE_BIT: {
-            /* ~x: complemento a uno. Para entero usa mp_complement (sí
-             * existe en libtommath). Booleano se promueve a entero. */
             if (v.tipo == VAL_ENTERO || v.tipo == VAL_BOOLEANO) {
                 bool propio;
                 mp_int *m = como_mp_int(&v, &propio);
                 if (!m) {
                     valor_destruir(&v);
-                    return error_en(ev, e, "memoria insuficiente");
+                    return error_pos(err, linea, columna, "memoria insuficiente");
                 }
                 mp_int *r = nuevo_mp();
                 if (!r) {
                     if (propio) liberar_mp(m);
                     valor_destruir(&v);
-                    return error_en(ev, e, "memoria insuficiente");
+                    return error_pos(err, linea, columna, "memoria insuficiente");
                 }
                 if (mp_complement(m, r) != MP_OKAY) {
                     liberar_mp(r);
                     if (propio) liberar_mp(m);
                     valor_destruir(&v);
-                    return error_en(ev, e, "fallo en complemento bit a bit");
+                    return error_pos(err, linea, columna, "fallo en complemento bit a bit");
                 }
                 if (propio) liberar_mp(m);
                 valor_destruir(&v);
                 return valor_entero_de_mp(r);
             }
             valor_destruir(&v);
-            return error_en(ev, e,
+            return error_pos(err, linea, columna,
                 "ErrorDeTipo: el operador '~' requiere entero");
         }
 
         default:
             valor_destruir(&v);
-            return error_en(ev, e, "operador unario desconocido");
+            return error_pos(err, linea, columna, "operador unario desconocido");
     }
+}
+
+/* API pública para reutilización desde la VM bytecode. */
+Valor evaluador_aplicar_unario(EvalError *err, int op_token,
+                                Valor v,
+                                int linea, int columna) {
+    return aplicar_unario_pos(err, (TipoToken)op_token, v, linea, columna);
+}
+
+static Valor eval_unario(Evaluador *ev, const Expr *e) {
+    Valor v = evaluador_evaluar_expr(ev, e->como.unario.operando);
+    if (ev->error.tuvo_error) { valor_destruir(&v); return valor_nulo(); }
+    return aplicar_unario_pos(&ev->error, e->como.unario.op, v,
+                               e->linea, e->columna);
 }
 
 /* ──────────────────────────────────────────────────────────────────

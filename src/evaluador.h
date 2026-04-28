@@ -98,6 +98,28 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e);
 void evaluador_ejecutar_sent(Evaluador *ev, const Sent *s);
 
 /*
+ * Aplica un operador binario sobre dos valores ya evaluados, tomando
+ * posesión de ambos y devolviendo un Valor nuevo. Reutilizable desde
+ * la VM bytecode (Fase 6+) — desacoplado del Evaluador para no obligar
+ * a la VM a usar el árbol de sentencias del tree-walking.
+ *
+ * En caso de error rellena `*err` con línea/columna/mensaje y devuelve
+ * nulo. Si `err->tuvo_error` ya estaba activo al entrar, no toca el
+ * primer error (preserva el más antiguo).
+ */
+Valor evaluador_aplicar_binario(EvalError *err, int op_token,
+                                 Valor a, Valor b,
+                                 int linea, int columna);
+
+/*
+ * Aplica un operador unario sobre un valor ya evaluado. Mismo modelo
+ * de errores que `evaluador_aplicar_binario`.
+ */
+Valor evaluador_aplicar_unario(EvalError *err, int op_token,
+                                Valor v,
+                                int linea, int columna);
+
+/*
  * Conveniencia: ejecuta secuencialmente un programa (array de
  * sentencias del parser). Para en el primer error o si una sentencia
  * deja control de flujo no normal (lo que normalmente sería un bug

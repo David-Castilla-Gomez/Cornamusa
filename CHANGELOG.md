@@ -8,7 +8,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ### En desarrollo (Fase 6 — Compilador + VM bytecode, objetivo v0.6.0)
 - ✅ Sesión 1: infraestructura `Chunk` + enum `OpCode` + disassembler.
-- ⏳ Sesión 2: compilador para expresiones literales/aritméticas + VM mínima con stack y dispatch loop.
+- ✅ Sesión 2: refactor del evaluador (helpers reutilizables) + compilador para expresiones + VM stack-based con dispatch loop.
 - ⏳ Sesión 3: globales, comparaciones, `imprimir`, string interning.
 - ⏳ Sesión 4: control de flujo (jumps, loops).
 - ⏳ Sesión 5: funciones top-level, locales, closures con upvalues.
@@ -37,6 +37,25 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - **Limitación documentada**: este es solo el armazón. Sin compilador ni VM funcional aún — eso llega en S2. La idea de S1 es congelar el formato del chunk antes de añadir muchos consumidores.
 - **`tests/unit/test_chunk_disasm.c`** con 11 tests: chunk vacío + idempotencia destruir, crecimiento de capacidad (100 bytes), `emitir_byte2`, ownership de constantes (entero/decimal/cadena), `emitir_constante` con índice corto y largo (forzando el cambio a `OP_CONST_LARGO` con 256 constantes previas), disassembler simple/aritmético, marca `|` para línea repetida, `opcode_nombre`.
 - **52 tests verde** (19 unit + 33 integración).
+
+### Añadido (Fase 6 sesión 2)
+- **Refactor del evaluador** para que la lógica de operadores sea reutilizable desde la VM bytecode sin duplicación:
+  - Nueva función pública `evaluador_aplicar_binario(EvalError *err, int op_token, Valor a, Valor b, int linea, int columna)` que toma posesión de `a`/`b` y devuelve un Valor nuevo. Mismo modelo de error que la versión interna pero desacoplado del struct `Evaluador` (toma `EvalError *` directamente).
+  - Análoga `evaluador_aplicar_unario(EvalError *err, ...)`.
+  - Helpers internos (`entero_op_entero`, `decimal_op_decimal`, `cadena_concatenar`, `cadena_repetir`, `evaluar_comparacion`, `evaluar_en`) cambiados a tomar `EvalError *err` y `int linea, int columna` en lugar de `Evaluador *ev` y `const Expr *e`. El evaluador tree-walking sigue funcionando idénticamente — solo se ha movido el acoplamiento.
+  - Wrapper interno `aplicar_binario(Evaluador *ev, ...)` y `aplicar_unario_pos` para que los call-sites del tree-walking (que tienen `Expr *e` a mano) no se vean obligados a desempaquetarlo.
+- **`src/vm.{h,c}`**: máquina virtual stack-based estilo clox cap. 15.
+  - Pila de 256 slots (capacidad fija por ahora; será dinámica con frames cuando lleguen llamadas en S5).
+  - Dispatch loop con `for(;;) switch(*ip++)`. Tracking de línea fuente vía `chunk->lineas[ip - codigo - 1]` para mensajes de error.
+  - Implementa: `OP_CONST`/`OP_CONST_LARGO` (con `valor_clonar` del pool), `OP_NULO`/`OP_VERDADERO`/`OP_FALSO`, los 7 operadores aritméticos, las 6 comparaciones, `OP_NEGAR`/`OP_NO`, `OP_DESCARTAR`, `OP_RETORNAR` (extrae el tope y lo devuelve al cliente). Opcodes reservados (saltos, locales, llamadas) emiten error explícito "no implementado en v0.6 sesión 2".
+  - Reusa `evaluador_aplicar_binario`/`unario` con un mapeo `OpCode → TipoToken`. Cero duplicación de la aritmética bignum / comparaciones / cadenas.
+- **`src/compilador.{h,c}`**: visita el AST y emite bytecode al chunk.
+  - Compila `EXPR_LITERAL_*` (entero/decimal/cadena/booleano/nulo), `EXPR_BINARIO`, `EXPR_UNARIO`, `EXPR_GRUPO`.
+  - Las constantes se almacenan en el pool del chunk; el chunk es DUEÑO y las destruye al liberarse (incluyendo `mp_int*` y cadenas con dueño).
+  - Compilación de cadena literal procesa los escapes mínimos (`\n \t \r \\ \' \"`) igual que el evaluador tree-walking — ambos motores producen el mismo Valor cadena para la misma fuente.
+  - Aplazadas con error explícito: `EXPR_IDENT`, `EXPR_LOGICA`, `EXPR_LLAMADA`, `EXPR_LAMBDA`, colecciones, indexación, slicing, f-strings, atributos.
+- **`tests/unit/test_bytecode_expr.c`** con 8 grupos de tests end-to-end (`lex → parse → compilar → vm_ejecutar`): literales (cada tipo + escapes), aritmética bignum (precedencia, asociatividad, floor div Python, 2^100 = 31 dígitos), aritmética decimal y mixta (true div siempre decimal, promoción), comparaciones (todas + cross-tipo entero=decimal + lexicográfico de cadenas + tipos incomparables → error), unarios (`-`, `+`, `no`, doble negación), realistas (Pitágoras, promedio decimal, semántica izquierda-a-derecha de Cornamusa sin chained comparisons), errores de runtime (división por cero, tipo incompatible) y errores de compilación (identificadores/lambda/lógica explícitamente no implementados todavía).
+- **53 tests verde** (20 unit + 33 integración).
 
 Cierre de Fase 5: tree-walking interpreter con todas las colecciones
 básicas. **Último release con tree-walking activo** según decisión
