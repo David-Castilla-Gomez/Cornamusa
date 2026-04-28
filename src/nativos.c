@@ -90,6 +90,12 @@ static Valor nativa_longitud(Evaluador *ev, int n_args, Valor *args,
     if (v->tipo == VAL_DICCIONARIO) {
         return valor_entero_de_long((long)v->como.dicc->cuenta);
     }
+    if (v->tipo == VAL_CONJUNTO) {
+        return valor_entero_de_long((long)v->como.conjunto->cuenta);
+    }
+    if (v->tipo == VAL_TUPLA) {
+        return valor_entero_de_long((long)v->como.tupla->cuenta);
+    }
     if (v->tipo == VAL_RANGO) {
         /* count = max(0, ceil((fin - inicio) / paso)) */
         mp_int diff;
@@ -262,27 +268,37 @@ static bool indice_a_long_natural(const Valor *v, long *out, int total) {
 }
 
 /*
- * agregar(lista, x) — añade `x` al final. Devuelve nulo (Python
- * `list.append`).
+ * agregar(lista|conjunto, x) — añade x al final (lista) o como nuevo
+ * elemento (conjunto, deduplicado). Devuelve nulo.
  */
 static Valor nativa_agregar(Evaluador *ev, int n_args, Valor *args,
                              int linea, int columna) {
     if (n_args != 2) {
         return error_nativa(ev, linea, columna,
-            "ErrorDeTipo: agregar() requiere 2 argumentos (lista, valor), recibio %d",
-            n_args);
+            "ErrorDeTipo: agregar() requiere 2 argumentos, recibio %d", n_args);
     }
-    if (args[0].tipo != VAL_LISTA) {
-        return error_nativa(ev, linea, columna,
-            "ErrorDeTipo: agregar() requiere una lista como primer argumento, no '%s'",
-            valor_nombre_tipo(&args[0]));
+    if (args[0].tipo == VAL_LISTA) {
+        Valor copia = valor_clonar(&args[1]);
+        if (!lista_agregar(args[0].como.lista, copia)) {
+            return error_nativa(ev, linea, columna, "memoria insuficiente");
+        }
+        return valor_nulo();
     }
-    /* Tomamos un clon del valor: el llamador conserva ownership de args. */
-    Valor copia = valor_clonar(&args[1]);
-    if (!lista_agregar(args[0].como.lista, copia)) {
-        return error_nativa(ev, linea, columna, "memoria insuficiente");
+    if (args[0].tipo == VAL_CONJUNTO) {
+        if (!valor_es_hashable(&args[1])) {
+            return error_nativa(ev, linea, columna,
+                "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
+                valor_nombre_tipo(&args[1]));
+        }
+        Valor copia = valor_clonar(&args[1]);
+        if (!conj_agregar(args[0].como.conjunto, copia)) {
+            return error_nativa(ev, linea, columna, "memoria insuficiente");
+        }
+        return valor_nulo();
     }
-    return valor_nulo();
+    return error_nativa(ev, linea, columna,
+        "ErrorDeTipo: agregar() no soporta '%s' como primer argumento",
+        valor_nombre_tipo(&args[0]));
 }
 
 /*
@@ -468,6 +484,53 @@ static Valor nativa_ordenar(Evaluador *ev, int n_args, Valor *args,
     return valor_nulo();
 }
 
+/*
+ * conjunto() / conjunto(iterable) — construye un conjunto vacío o lo
+ * inicializa con los elementos de `iterable` (lista, tupla, cadena, rango).
+ * Necesario porque `{}` es diccionario vacío en la sintaxis literal.
+ */
+static Valor nativa_conjunto(Evaluador *ev, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args > 1) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: conjunto() acepta 0 o 1 argumento, recibio %d", n_args);
+    }
+    Conjunto *c = conj_nuevo();
+    if (!c) return error_nativa(ev, linea, columna, "memoria insuficiente");
+    if (n_args == 0) return valor_conjunto(c);
+
+    const Valor *it = &args[0];
+    if (it->tipo == VAL_LISTA) {
+        Lista *l = it->como.lista;
+        for (int i = 0; i < l->cuenta; i++) {
+            if (!valor_es_hashable(&l->elementos[i])) {
+                conj_liberar(c);
+                return error_nativa(ev, linea, columna,
+                    "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
+                    valor_nombre_tipo(&l->elementos[i]));
+            }
+            conj_agregar(c, valor_clonar(&l->elementos[i]));
+        }
+    } else if (it->tipo == VAL_TUPLA) {
+        Tupla *t = it->como.tupla;
+        for (int i = 0; i < t->cuenta; i++) {
+            if (!valor_es_hashable(&t->elementos[i])) {
+                conj_liberar(c);
+                return error_nativa(ev, linea, columna,
+                    "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
+                    valor_nombre_tipo(&t->elementos[i]));
+            }
+            conj_agregar(c, valor_clonar(&t->elementos[i]));
+        }
+    } else {
+        conj_liberar(c);
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: conjunto() no acepta '%s' como iterable",
+            valor_nombre_tipo(it));
+    }
+    return valor_conjunto(c);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Métodos sobre diccionarios
  * ────────────────────────────────────────────────────────────────── */
@@ -541,6 +604,7 @@ void nativos_registrar(Entorno *globales) {
     static const char NOMBRE_ORDENAR[]  = "ordenar";
     static const char NOMBRE_CLAVES[]   = "claves";
     static const char NOMBRE_VALORES[]  = "valores";
+    static const char NOMBRE_CONJUNTO[] = "conjunto";
 
     entorno_definir(globales, NOMBRE_IMPRIMIR, 8,
         valor_nativa(NOMBRE_IMPRIMIR, nativa_imprimir));
@@ -565,4 +629,6 @@ void nativos_registrar(Entorno *globales) {
         valor_nativa(NOMBRE_CLAVES, nativa_claves));
     entorno_definir(globales, NOMBRE_VALORES, 7,
         valor_nativa(NOMBRE_VALORES, nativa_valores));
+    entorno_definir(globales, NOMBRE_CONJUNTO, 8,
+        valor_nativa(NOMBRE_CONJUNTO, nativa_conjunto));
 }

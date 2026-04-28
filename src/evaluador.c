@@ -503,6 +503,19 @@ static Valor evaluar_en(Evaluador *ev, const Valor *a, const Valor *b,
         if (!valor_es_hashable(a)) return valor_booleano(false);
         return valor_booleano(dicc_contiene(b->como.dicc, a));
     }
+    /* `elemento en conjunto`: hash O(1). */
+    if (b->tipo == VAL_CONJUNTO) {
+        if (!valor_es_hashable(a)) return valor_booleano(false);
+        return valor_booleano(conj_contiene(b->como.conjunto, a));
+    }
+    /* `valor en tupla`: búsqueda lineal igual que lista. */
+    if (b->tipo == VAL_TUPLA) {
+        Tupla *t = b->como.tupla;
+        for (int i = 0; i < t->cuenta; i++) {
+            if (valor_iguales(a, &t->elementos[i])) return valor_booleano(true);
+        }
+        return valor_booleano(false);
+    }
     return error_en(ev, e,
         "ErrorDeTipo: el operador 'en' no soporta '%s' a la derecha",
         valor_nombre_tipo(b));
@@ -520,6 +533,8 @@ static Valor eval_lista(Evaluador *ev, const Expr *e);
 static Valor eval_indice(Evaluador *ev, const Expr *e);
 static Valor eval_rebanada(Evaluador *ev, const Expr *e);
 static Valor eval_diccionario(Evaluador *ev, const Expr *e);
+static Valor eval_conjunto(Evaluador *ev, const Expr *e);
+static Valor eval_tupla(Evaluador *ev, const Expr *e);
 
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
     if (ev->error.tuvo_error) return valor_nulo();
@@ -609,11 +624,11 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
         case EXPR_INDICE:      return eval_indice(ev, e);
         case EXPR_REBANADA:    return eval_rebanada(ev, e);
         case EXPR_DICCIONARIO: return eval_diccionario(ev, e);
+        case EXPR_CONJUNTO:    return eval_conjunto(ev, e);
+        case EXPR_TUPLA:       return eval_tupla(ev, e);
 
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
-        case EXPR_CONJUNTO:
-        case EXPR_TUPLA:
             return error_en(ev, e,
                 "esta forma de expresion aun no esta implementada en v0.5");
     }
@@ -1325,11 +1340,71 @@ static void ejec_para(Evaluador *ev, const Sent *s) {
     if (ev->error.tuvo_error) { valor_destruir(&iter); return; }
 
     if (iter.tipo != VAL_CADENA && iter.tipo != VAL_RANGO
-        && iter.tipo != VAL_LISTA && iter.tipo != VAL_DICCIONARIO) {
+        && iter.tipo != VAL_LISTA && iter.tipo != VAL_DICCIONARIO
+        && iter.tipo != VAL_CONJUNTO && iter.tipo != VAL_TUPLA) {
         sent_set_error(ev, s,
             "ErrorDeTipo: 'para' no soporta iterar sobre '%s' en v0.5",
             valor_nombre_tipo(&iter));
         valor_destruir(&iter);
+        return;
+    }
+
+    /* Iteración sobre tupla — análoga a lista. */
+    if (iter.tipo == VAL_TUPLA) {
+        Tupla *t = iter.como.tupla;
+        bool rompio_t = false;
+        for (int i = 0; i < t->cuenta; i++) {
+            Valor v = valor_clonar(&t->elementos[i]);
+            if (!entorno_definir(ev->entorno_actual,
+                                  objetivo->como.ident.nombre,
+                                  objetivo->como.ident.longitud, v)) {
+                sent_set_error(ev, s, "memoria insuficiente en 'para'");
+                break;
+            }
+            evaluador_ejecutar_sent(ev, s->como.para.cuerpo);
+            if (ev->error.tuvo_error) break;
+            if (ev->control == EJEC_ROMPER) {
+                ev->control = EJEC_NORMAL; rompio_t = true; break;
+            }
+            if (ev->control == EJEC_CONTINUAR) ev->control = EJEC_NORMAL;
+            if (ev->control == EJEC_RETORNAR) {
+                valor_destruir(&iter); return;
+            }
+        }
+        valor_destruir(&iter);
+        if (!rompio_t && !ev->error.tuvo_error && s->como.para.sino != NULL) {
+            evaluador_ejecutar_sent(ev, s->como.para.sino);
+        }
+        return;
+    }
+
+    /* Iteración sobre conjunto — produce los elementos en orden de slot. */
+    if (iter.tipo == VAL_CONJUNTO) {
+        Conjunto *c = iter.como.conjunto;
+        bool rompio_c = false;
+        for (int i = 0; i < c->capacidad; i++) {
+            if (!c->entradas[i].ocupada) continue;
+            Valor v = valor_clonar(&c->entradas[i].elemento);
+            if (!entorno_definir(ev->entorno_actual,
+                                  objetivo->como.ident.nombre,
+                                  objetivo->como.ident.longitud, v)) {
+                sent_set_error(ev, s, "memoria insuficiente en 'para'");
+                break;
+            }
+            evaluador_ejecutar_sent(ev, s->como.para.cuerpo);
+            if (ev->error.tuvo_error) break;
+            if (ev->control == EJEC_ROMPER) {
+                ev->control = EJEC_NORMAL; rompio_c = true; break;
+            }
+            if (ev->control == EJEC_CONTINUAR) ev->control = EJEC_NORMAL;
+            if (ev->control == EJEC_RETORNAR) {
+                valor_destruir(&iter); return;
+            }
+        }
+        valor_destruir(&iter);
+        if (!rompio_c && !ev->error.tuvo_error && s->como.para.sino != NULL) {
+            evaluador_ejecutar_sent(ev, s->como.para.sino);
+        }
         return;
     }
 
@@ -1827,6 +1902,33 @@ static Valor eval_indice(Evaluador *ev, const Expr *e) {
         return resultado;
     }
 
+    if (obj.tipo == VAL_TUPLA) {
+        if (idx.tipo != VAL_ENTERO && idx.tipo != VAL_BOOLEANO) {
+            Valor err = error_en(ev, e,
+                "ErrorDeTipo: indice de tupla debe ser entero, no '%s'",
+                valor_nombre_tipo(&idx));
+            valor_destruir(&obj); valor_destruir(&idx);
+            return err;
+        }
+        long i;
+        if (!indice_a_long(&idx, &i)) {
+            valor_destruir(&obj); valor_destruir(&idx);
+            return error_en(ev, e,
+                "ErrorDeIndice: indice fuera de rango para una tupla");
+        }
+        Tupla *t = obj.como.tupla;
+        if (i < 0) i += t->cuenta;
+        if (i < 0 || i >= t->cuenta) {
+            valor_destruir(&obj); valor_destruir(&idx);
+            return error_en(ev, e,
+                "ErrorDeIndice: indice %ld fuera de rango (tupla de %d)",
+                i, t->cuenta);
+        }
+        Valor resultado = valor_clonar(&t->elementos[i]);
+        valor_destruir(&obj); valor_destruir(&idx);
+        return resultado;
+    }
+
     Valor err = error_en(ev, e,
         "ErrorDeTipo: '%s' no es indexable en v0.5",
         valor_nombre_tipo(&obj));
@@ -1995,4 +2097,52 @@ static Valor eval_diccionario(Evaluador *ev, const Expr *e) {
         }
     }
     return valor_diccionario(d);
+}
+
+static Valor eval_conjunto(Evaluador *ev, const Expr *e) {
+    Conjunto *c = conj_nuevo();
+    if (!c) return error_en(ev, e, "memoria insuficiente");
+
+    int n = e->como.secuencia.n_elementos;
+    for (int i = 0; i < n; i++) {
+        Valor v = evaluador_evaluar_expr(ev, e->como.secuencia.elementos[i]);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&v);
+            conj_liberar(c);
+            return valor_nulo();
+        }
+        if (!valor_es_hashable(&v)) {
+            Valor err = error_en(ev, e,
+                "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
+                valor_nombre_tipo(&v));
+            valor_destruir(&v);
+            conj_liberar(c);
+            return err;
+        }
+        if (!conj_agregar(c, v)) {
+            conj_liberar(c);
+            return error_en(ev, e, "memoria insuficiente al construir conjunto");
+        }
+    }
+    return valor_conjunto(c);
+}
+
+static Valor eval_tupla(Evaluador *ev, const Expr *e) {
+    int n = e->como.secuencia.n_elementos;
+    Tupla *t = tupla_nueva(n);
+    if (!t) return error_en(ev, e, "memoria insuficiente");
+
+    for (int i = 0; i < n; i++) {
+        Valor v = evaluador_evaluar_expr(ev, e->como.secuencia.elementos[i]);
+        if (ev->error.tuvo_error) {
+            /* Limpiar elementos parcialmente inicializados. */
+            for (int k = 0; k < i; k++) valor_destruir(&t->elementos[k]);
+            free(t->elementos);
+            free(t);
+            valor_destruir(&v);
+            return valor_nulo();
+        }
+        t->elementos[i] = v;
+    }
+    return valor_tupla(t);
 }

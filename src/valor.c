@@ -376,6 +376,18 @@ static uint64_t hash_valor(const Valor *v) {
         case VAL_NATIVA:
             return fnv1a_64((const uint8_t *)&v->como.nativa.fn,
                             sizeof(v->como.nativa.fn));
+        case VAL_TUPLA: {
+            /* Hash combinando los hashes de cada elemento (estilo
+               Python `tuplehash`). */
+            uint64_t h = 14695981039346656037ULL;
+            const Tupla *t = v->como.tupla;
+            for (int i = 0; i < t->cuenta; i++) {
+                uint64_t eh = hash_valor(&t->elementos[i]);
+                h ^= eh;
+                h *= 1099511628211ULL;
+            }
+            return h;
+        }
         default:
             return 0;  /* unhashable; el llamador debe rechazar antes */
     }
@@ -386,8 +398,17 @@ bool valor_es_hashable(const Valor *v) {
     switch (v->tipo) {
         case VAL_LISTA:
         case VAL_DICCIONARIO:
+        case VAL_CONJUNTO:
         case VAL_RANGO:
             return false;
+        case VAL_TUPLA:
+            /* Tupla es hashable solo si todos sus elementos lo son. */
+            for (int i = 0; i < v->como.tupla->cuenta; i++) {
+                if (!valor_es_hashable(&v->como.tupla->elementos[i])) {
+                    return false;
+                }
+            }
+            return true;
         default:
             return true;
     }
@@ -531,6 +552,163 @@ bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Conjunto — hash set sobre Valor
+ * ────────────────────────────────────────────────────────────────── */
+
+static EntradaConjunto *conj_buscar_slot(EntradaConjunto *entradas,
+                                          int capacidad, const Valor *v) {
+    uint64_t hash = hash_valor(v);
+    int indice = (int)(hash & (uint64_t)(capacidad - 1));
+    for (;;) {
+        EntradaConjunto *e = &entradas[indice];
+        if (!e->ocupada) return e;
+        if (valor_iguales(&e->elemento, v)) return e;
+        indice = (indice + 1) & (capacidad - 1);
+    }
+}
+
+static bool conj_redimensionar(Conjunto *c, int nueva_cap) {
+    EntradaConjunto *nuevas = (EntradaConjunto *)calloc((size_t)nueva_cap,
+        sizeof(EntradaConjunto));
+    if (!nuevas) return false;
+    for (int i = 0; i < c->capacidad; i++) {
+        EntradaConjunto *src = &c->entradas[i];
+        if (!src->ocupada) continue;
+        EntradaConjunto *dst = conj_buscar_slot(nuevas, nueva_cap, &src->elemento);
+        *dst = *src;
+    }
+    free(c->entradas);
+    c->entradas = nuevas;
+    c->capacidad = nueva_cap;
+    return true;
+}
+
+Conjunto *conj_nuevo(void) {
+    Conjunto *c = (Conjunto *)malloc(sizeof(Conjunto));
+    if (!c) return NULL;
+    c->entradas = (EntradaConjunto *)calloc(DICC_CAPACIDAD_INICIAL,
+        sizeof(EntradaConjunto));
+    if (!c->entradas) { free(c); return NULL; }
+    c->cuenta = 0;
+    c->capacidad = DICC_CAPACIDAD_INICIAL;
+    c->refcount = 1;
+    return c;
+}
+
+void conj_retener(Conjunto *c) { if (c) c->refcount++; }
+
+void conj_liberar(Conjunto *c) {
+    if (!c) return;
+    c->refcount--;
+    if (c->refcount > 0) return;
+    for (int i = 0; i < c->capacidad; i++) {
+        if (c->entradas[i].ocupada) {
+            valor_destruir(&c->entradas[i].elemento);
+        }
+    }
+    free(c->entradas);
+    free(c);
+}
+
+bool conj_agregar(Conjunto *c, Valor v) {
+    if (!c || !valor_es_hashable(&v)) {
+        valor_destruir(&v);
+        return false;
+    }
+    if ((c->cuenta + 1) * DICC_FACTOR_CARGA_DEN
+        > c->capacidad * DICC_FACTOR_CARGA_NUM) {
+        if (!conj_redimensionar(c, c->capacidad * 2)) {
+            valor_destruir(&v);
+            return false;
+        }
+    }
+    EntradaConjunto *slot = conj_buscar_slot(c->entradas, c->capacidad, &v);
+    if (slot->ocupada) {
+        /* Ya estaba: descartamos el nuevo elemento (el original queda). */
+        valor_destruir(&v);
+        return true;
+    }
+    slot->elemento = v;
+    slot->ocupada = true;
+    c->cuenta++;
+    return true;
+}
+
+bool conj_contiene(const Conjunto *c, const Valor *v) {
+    if (!c || !valor_es_hashable(v)) return false;
+    EntradaConjunto *slot = conj_buscar_slot(c->entradas, c->capacidad, v);
+    return slot->ocupada;
+}
+
+bool conj_quitar(Conjunto *c, const Valor *v) {
+    if (!c || !valor_es_hashable(v)) return false;
+    EntradaConjunto *slot = conj_buscar_slot(c->entradas, c->capacidad, v);
+    if (!slot->ocupada) return false;
+    valor_destruir(&slot->elemento);
+    slot->elemento = valor_nulo();
+    slot->ocupada = false;
+    c->cuenta--;
+
+    int j = (int)((slot - c->entradas) + 1) & (c->capacidad - 1);
+    while (c->entradas[j].ocupada) {
+        Valor copia = c->entradas[j].elemento;
+        c->entradas[j].elemento = valor_nulo();
+        c->entradas[j].ocupada = false;
+        c->cuenta--;
+        conj_agregar(c, copia);
+        j = (j + 1) & (c->capacidad - 1);
+    }
+    return true;
+}
+
+Valor valor_conjunto(Conjunto *c) {
+    Valor v;
+    v.tipo = VAL_CONJUNTO;
+    v.dueno_cadena = false;
+    v.como.conjunto = c;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Tupla — secuencia inmutable
+ * ────────────────────────────────────────────────────────────────── */
+
+Tupla *tupla_nueva(int cuenta) {
+    Tupla *t = (Tupla *)malloc(sizeof(Tupla));
+    if (!t) return NULL;
+    if (cuenta > 0) {
+        t->elementos = (Valor *)malloc(sizeof(Valor) * (size_t)cuenta);
+        if (!t->elementos) { free(t); return NULL; }
+    } else {
+        t->elementos = NULL;
+    }
+    t->cuenta = cuenta;
+    t->refcount = 1;
+    return t;
+}
+
+void tupla_retener(Tupla *t) { if (t) t->refcount++; }
+
+void tupla_liberar(Tupla *t) {
+    if (!t) return;
+    t->refcount--;
+    if (t->refcount > 0) return;
+    for (int i = 0; i < t->cuenta; i++) {
+        valor_destruir(&t->elementos[i]);
+    }
+    free(t->elementos);
+    free(t);
+}
+
+Valor valor_tupla(Tupla *t) {
+    Valor v;
+    v.tipo = VAL_TUPLA;
+    v.dueno_cadena = false;
+    v.como.tupla = t;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
 
@@ -574,6 +752,14 @@ void valor_destruir(Valor *v) {
         case VAL_DICCIONARIO:
             dicc_liberar(v->como.dicc);
             v->como.dicc = NULL;
+            break;
+        case VAL_CONJUNTO:
+            conj_liberar(v->como.conjunto);
+            v->como.conjunto = NULL;
+            break;
+        case VAL_TUPLA:
+            tupla_liberar(v->como.tupla);
+            v->como.tupla = NULL;
             break;
         default:
             break;
@@ -649,6 +835,12 @@ Valor valor_clonar(const Valor *v) {
         case VAL_DICCIONARIO:
             dicc_retener(v->como.dicc);
             return valor_diccionario(v->como.dicc);
+        case VAL_CONJUNTO:
+            conj_retener(v->como.conjunto);
+            return valor_conjunto(v->como.conjunto);
+        case VAL_TUPLA:
+            tupla_retener(v->como.tupla);
+            return valor_tupla(v->como.tupla);
     }
     return valor_nulo();
 }
@@ -802,6 +994,60 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             n = escritos < capacidad ? escritos : capacidad - 1;
             break;
         }
+        case VAL_CONJUNTO: {
+            const Conjunto *c = v->como.conjunto;
+            /* Conjunto vacío: imprimir como `conjunto()` para distinguir
+               de `{}` (diccionario vacío). Conjuntos no vacíos se
+               representan como `{a, b, c}`. */
+            if (c->cuenta == 0) {
+                n = snprintf(buffer, (size_t)capacidad, "conjunto()");
+                break;
+            }
+            int escritos = snprintf(buffer, (size_t)capacidad, "{");
+            if (escritos < 0 || escritos >= capacidad) { n = capacidad - 1; break; }
+            int impreso = 0;
+            for (int i = 0; i < c->capacidad; i++) {
+                if (!c->entradas[i].ocupada) continue;
+                if (escritos + 2 >= capacidad) break;
+                if (impreso > 0) {
+                    buffer[escritos++] = ',';
+                    buffer[escritos++] = ' ';
+                }
+                int restante = capacidad - escritos;
+                int we = valor_a_repr(&c->entradas[i].elemento,
+                                       buffer + escritos, restante);
+                escritos += we;
+                impreso++;
+            }
+            if (escritos < capacidad - 1) buffer[escritos++] = '}';
+            buffer[escritos < capacidad ? escritos : capacidad - 1] = '\0';
+            n = escritos < capacidad ? escritos : capacidad - 1;
+            break;
+        }
+        case VAL_TUPLA: {
+            const Tupla *t = v->como.tupla;
+            int escritos = snprintf(buffer, (size_t)capacidad, "(");
+            if (escritos < 0 || escritos >= capacidad) { n = capacidad - 1; break; }
+            for (int i = 0; i < t->cuenta; i++) {
+                if (escritos + 2 >= capacidad) break;
+                if (i > 0) {
+                    buffer[escritos++] = ',';
+                    buffer[escritos++] = ' ';
+                }
+                int restante = capacidad - escritos;
+                int we = valor_a_repr(&t->elementos[i],
+                                       buffer + escritos, restante);
+                escritos += we;
+            }
+            /* Tupla de un elemento se imprime con coma final: (x,) */
+            if (t->cuenta == 1 && escritos + 1 < capacidad) {
+                buffer[escritos++] = ',';
+            }
+            if (escritos < capacidad - 1) buffer[escritos++] = ')';
+            buffer[escritos < capacidad ? escritos : capacidad - 1] = '\0';
+            n = escritos < capacidad ? escritos : capacidad - 1;
+            break;
+        }
     }
 
     if (n < 0) n = 0;
@@ -823,6 +1069,8 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_RANGO:     return "rango";
         case VAL_LISTA:     return "lista";
         case VAL_DICCIONARIO: return "diccionario";
+        case VAL_CONJUNTO:    return "conjunto";
+        case VAL_TUPLA:       return "tupla";
     }
     return "desconocido";
 }
@@ -867,6 +1115,10 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.lista && v->como.lista->cuenta > 0;
         case VAL_DICCIONARIO:
             return v->como.dicc && v->como.dicc->cuenta > 0;
+        case VAL_CONJUNTO:
+            return v->como.conjunto && v->como.conjunto->cuenta > 0;
+        case VAL_TUPLA:
+            return v->como.tupla && v->como.tupla->cuenta > 0;
     }
     return false;
 }
@@ -953,6 +1205,29 @@ bool valor_iguales(const Valor *a, const Valor *b) {
                 bool igual = valor_iguales(&e->valor, &otro);
                 valor_destruir(&otro);
                 if (!igual) return false;
+            }
+            return true;
+        }
+        case VAL_CONJUNTO: {
+            const Conjunto *ca = a->como.conjunto;
+            const Conjunto *cb = b->como.conjunto;
+            if (ca == cb) return true;
+            if (ca->cuenta != cb->cuenta) return false;
+            for (int i = 0; i < ca->capacidad; i++) {
+                if (!ca->entradas[i].ocupada) continue;
+                if (!conj_contiene(cb, &ca->entradas[i].elemento)) return false;
+            }
+            return true;
+        }
+        case VAL_TUPLA: {
+            const Tupla *ta = a->como.tupla;
+            const Tupla *tb = b->como.tupla;
+            if (ta == tb) return true;
+            if (ta->cuenta != tb->cuenta) return false;
+            for (int i = 0; i < ta->cuenta; i++) {
+                if (!valor_iguales(&ta->elementos[i], &tb->elementos[i])) {
+                    return false;
+                }
             }
             return true;
         }

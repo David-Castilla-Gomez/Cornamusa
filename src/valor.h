@@ -48,12 +48,16 @@ typedef enum {
     VAL_RANGO,         /* iterable rango(inicio, fin, paso) */
     VAL_LISTA,         /* array dinámico de Valor con refcount */
     VAL_DICCIONARIO,   /* tabla hash de Valor → Valor con refcount */
+    VAL_CONJUNTO,      /* tabla hash de Valor sin valor con refcount */
+    VAL_TUPLA,         /* secuencia inmutable de Valor con refcount */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
    del typedef de Valor. */
 typedef struct Lista Lista;
 typedef struct Diccionario Diccionario;
+typedef struct Conjunto Conjunto;
+typedef struct Tupla Tupla;
 
 /*
  * Firma de una función nativa (puntero a función C). Definida con
@@ -119,6 +123,8 @@ typedef struct Valor {
         } rango;
         Lista *lista;       /* refcount; ver Lista más abajo */
         Diccionario *dicc;  /* refcount; ver Diccionario más abajo */
+        Conjunto *conjunto; /* refcount */
+        Tupla *tupla;       /* refcount, inmutable */
     } como;
 } Valor;
 
@@ -204,6 +210,55 @@ bool dicc_contiene(const Diccionario *d, const Valor *clave);
 /* Elimina la entrada y devuelve el valor en `*out` (con ownership).
    Devuelve false si la clave no estaba. */
 bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out);
+
+/*
+ * Conjunto: hash set sobre Valor. Solo elementos hashables. Comparte
+ * la estrategia de probing lineal y refcount con Diccionario.
+ */
+typedef struct EntradaConjunto {
+    Valor elemento;
+    bool ocupada;
+} EntradaConjunto;
+
+struct Conjunto {
+    EntradaConjunto *entradas;
+    int cuenta;
+    int capacidad;
+    int refcount;
+};
+
+Conjunto *conj_nuevo(void);
+void conj_retener(Conjunto *c);
+void conj_liberar(Conjunto *c);
+
+/* Añade `v` al conjunto. Toma posesión. Si ya estaba, libera el
+   nuevo elemento (mantiene el original). Devuelve true salvo OOM. */
+bool conj_agregar(Conjunto *c, Valor v);
+
+bool conj_contiene(const Conjunto *c, const Valor *v);
+
+/* Elimina un elemento. Devuelve true si estaba. */
+bool conj_quitar(Conjunto *c, const Valor *v);
+
+Valor valor_conjunto(Conjunto *c);
+
+/*
+ * Tupla: secuencia inmutable de Valor. Como toda la lista de
+ * elementos se fija al construirla (parser), reservamos exactamente
+ * `cuenta` slots. Cualquier "modificación" requiere construir una
+ * tupla nueva. Hashable si todos los elementos son hashables.
+ */
+struct Tupla {
+    Valor *elementos;
+    int cuenta;
+    int refcount;
+};
+
+Tupla *tupla_nueva(int cuenta);   /* aloca elementos sin inicializar */
+void tupla_retener(Tupla *t);
+void tupla_liberar(Tupla *t);
+
+Valor valor_tupla(Tupla *t);
 
 /* ──────────────────────────────────────────────────────────────────
  * Constructores

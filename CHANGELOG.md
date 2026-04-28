@@ -10,7 +10,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 1: tipo `Lista` con refcount + literal `[a, b, c]` + indexación + operadores `+`/`*`/`en`/`==` + iteración `para x en lista` + integración con `longitud()` y `tipo()`.
 - ✅ Sesión 2: mutación `lista[i] = v`, slicing `lista[a:b:c]`, métodos via built-ins (agregar, quitar, insertar, invertir, ordenar).
 - ✅ Sesión 3: tipo `Diccionario` con tabla hash + literal `{k: v}` + acceso/asignación `dicc[k]` + iteración + built-ins `claves`/`valores`.
-- ⏳ Sesión 4: tipo `Conjunto` (`{1, 2, 3}`) y `Tupla` `(a, b)` inmutable. Distinción tupla vs grupo.
+- ✅ Sesión 4: tipo `Conjunto` (`{1, 2, 3}`) y `Tupla` `(a, b)` inmutable. Distinción tupla vs grupo.
 - ⏳ Sesión 5: ejemplos jugables + tag v0.5.0 (último release del tree-walking activo; desde v0.6 motor bytecode).
 
 ### Añadido (Fase 5 sesión 1)
@@ -72,6 +72,33 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - **Limitación documentada**: el orden de iteración (y de `claves`/`valores`) sigue el layout interno del hash table — NO el orden de inserción como Python 3.7+. Aceptable hasta v1.0; se puede cambiar a hash-table ordenada en una versión futura.
 - **`tests/unit/test_runtime_diccionarios.c`** con 12 grupos: literal y acceso, asignación/aumentada, membership, iteración, `longitud`/`tipo`, `claves`/`valores`, igualdad estructural (orden distinto), hash unificado entero/decimal/booleano (`dicc[1]` y `dicc[1.0]` mismo slot), tipos no hashables como clave, referencia compartida (`b = a` y mutar `b` afecta `a`), programa de conteo de caracteres en `"abracadabra"` (resultado: `a` aparece 5 veces), diccionario anidado de personas.
 - **44 tests verde** (17 unit + 27 integración).
+
+### Añadido (Fase 5 sesión 4)
+- **`VAL_CONJUNTO`** y **`struct Conjunto`** en `valor.{h,c}`: hash set construido con la misma estrategia de probing lineal y refcount que `Diccionario`. API: `conj_nuevo`, `conj_retener`, `conj_liberar`, `conj_agregar` (toma posesión, deduplica si ya existe), `conj_contiene`, `conj_quitar`. Sólo elementos hashables (no listas/diccionarios/conjuntos).
+- **`VAL_TUPLA`** y **`struct Tupla`** en `valor.{h,c}`: secuencia inmutable con refcount. Sin operaciones de mutación (no hay agregar/asignar). API: `tupla_nueva` (aloca slots no inicializados), `tupla_retener`, `tupla_liberar`. Hashable si todos sus elementos lo son — combinable con `Diccionario` y `Conjunto` como clave.
+- **`EXPR_CONJUNTO` literal `{a, b, c}`**: evalúa de izquierda a derecha y deduplica con la igualdad estructural. Vacío explícito requiere `conjunto()` porque `{}` es diccionario vacío.
+- **`EXPR_TUPLA` literal**:
+  - `()` tupla vacía.
+  - `(x,)` tupla de un elemento (coma obligatoria).
+  - `(a, b, ...)` tupla múltiple.
+  - **Distinción** `(x)` (grupo) vs `(x,)` (tupla 1) ya manejada por el parser desde la sesión 3 sesión 5.
+- **Pretty-printer** específico:
+  - Conjunto vacío imprime `conjunto()` (no `{}`, que es diccionario).
+  - Conjunto no vacío `{a, b, c}`.
+  - Tupla `(a, b, c)`, vacía `()`, de uno `(x,)`.
+- **`hash_valor` extendido** para tuplas: combina los hashes de cada elemento estilo Python `tuplehash`.
+- **`valor_es_hashable` actualizado**: tupla es hashable si todos sus elementos lo son (recursivo); conjuntos NO son hashables.
+- **`EXPR_INDICE` para tupla**: `t[i]` con índice positivo/negativo y `ErrorDeIndice` específico.
+- **Operador `en`** extendido para conjunto (búsqueda hash O(1)) y tupla (búsqueda lineal).
+- **Iteración `para x en conjunto`** y **`para x en tupla`** con la misma semántica que el resto: clon por iteración, soporte de `romper`/`continuar`/cláusula `sino`. El conjunto itera en orden de slot interno (no de inserción — limitación documentada).
+- **`longitud(conjunto)`** y **`longitud(tupla)`** funcionan; `tipo()` devuelve `"conjunto"` o `"tupla"`.
+- **`conjunto()` built-in** con dos formas:
+  - `conjunto()` → conjunto vacío.
+  - `conjunto(iterable)` con iterable lista o tupla → conjunto con sus elementos deduplicados.
+- **`agregar(conjunto, x)` extendido**: ahora acepta listas Y conjuntos como primer argumento; sobre conjunto deduplica al añadir.
+- **Igualdad estructural**: dos conjuntos iguales si tienen los mismos elementos (orden irrelevante); dos tuplas iguales si tienen los mismos elementos en el mismo orden.
+- **`tests/unit/test_runtime_conj_tup.c`** con 12 grupos: literal y deduplicación, membership, iteración, igualdad (con hash unificado entero/decimal/booleano), tipos no hashables; tupla literal (vacía/uno/varios) con distinción grupo, indexación, iteración, igualdad cross-tipo (tupla != lista), membership, tupla como clave de dict (con error si contiene lista), `conjunto()` constructor, programa de palabras únicas.
+- **45 tests verde** (18 unit + 27 integración).
 
 ## [0.4.0] — 2026-04-28 — primer release jugable
 
