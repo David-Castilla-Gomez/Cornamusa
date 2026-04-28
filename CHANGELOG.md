@@ -10,8 +10,29 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 1: AST + arena allocator + Pratt parser para expresiones.
 - ✅ Sesión 2: sentencias simples + control de flujo + validación `fin <etiqueta>`.
 - ✅ Sesión 3: funciones, clases, lambda.
-- ⏳ Sesión 4: excepciones y módulos.
+- ✅ Sesión 4: excepciones, módulos, global/nolocal.
 - ⏳ Sesión 5: f-strings parseadas, listas/dicts, `--ast` flag, integración con ejemplos, tag v0.3.0.
+
+### Añadido (Fase 3 sesión 4)
+- **AST de excepciones, módulos y declaraciones**:
+  - `SENT_INTENTAR`: cuerpo + lista de cláusulas `atrapar` + `sino` opcional + `finalmente` opcional.
+  - `SENT_LANZAR`: expresión opcional (NULL = re-raise).
+  - `SENT_IMPORTAR`: ruta dotted + alias opcional.
+  - `SENT_DESDE_IMPORTAR`: ruta + items con aliases opcionales (o `*`).
+  - `SENT_GLOBAL` / `SENT_NOLOCAL`: lista de nombres.
+- **Tipos auxiliares**: `Nombre` (puntero+longitud al lexema), `ItemImportado` (nombre + alias opcional), `ClausulaAtrapar` (tipo + alias + cuerpo).
+- **Parser de excepciones**:
+  - `intentar:` con cero o más `atrapar [TipoExc [como alias]]:`, opcional `sino:` (rama sin excepción), opcional `finalmente:`, cerrado con `fin intentar`.
+  - Validación: `intentar` requiere al menos un `atrapar` O `finalmente`. Error específico si ambos faltan.
+  - `atrapar`/`finalmente` ahora son terminadores válidos de bloque (extendido `en_inicio_de_termino`).
+- **Parser de `lanzar`**: `lanzar expr` con expresión, o `lanzar` desnudo en la misma línea de un atrapar como re-raise. Heurística para detectar bare lanzar: nuevo line o token de cierre tras el keyword.
+- **Parser de imports**:
+  - Helper `parsear_ruta_modulo` consume `IDENT ('.' IDENT)*`.
+  - `importar X.Y.Z [como W]`.
+  - `desde X.Y importar A [como A2], B, C` o `desde X importar *`.
+- **Parser de `global`/`nolocal`**: lista de identificadores separados por coma.
+- **`tests/unit/test_parser_excepciones_modulos.c`** con ~22 tests cubriendo: cada forma de `intentar`/`atrapar`/`finalmente`/`sino`, `lanzar` con valor y bare, imports simples/dotted/con-alias, `desde X importar Y` con uno/varios items/alias/`*`, `global` y `nolocal` con uno/varios nombres, anidamiento realista (función con `intentar` dentro como en `examples/08_excepciones.cor`, closure con `nolocal` como en `examples/09_closures.cor`), y errores específicos.
+- **21 tests verde** (9 unit + 12 integración).
 
 ### Añadido (Fase 3 sesión 3)
 - **`SENT_FUNCION`** en AST: nombre, parámetros, anotación de retorno opcional, cuerpo.

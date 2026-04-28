@@ -520,6 +520,70 @@ Sent *sent_clase(Arena *a, const char *nombre, int len_nombre,
     return s;
 }
 
+Sent *sent_intentar(Arena *a, Sent *cuerpo,
+                    ClausulaAtrapar *atrapadores, int n_atrapadores,
+                    Sent *sino, Sent *finalmente,
+                    int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_INTENTAR, linea, col);
+    if (s) {
+        s->como.intentar.cuerpo = cuerpo;
+        s->como.intentar.atrapadores = atrapadores;
+        s->como.intentar.n_atrapadores = n_atrapadores;
+        s->como.intentar.sino = sino;
+        s->como.intentar.finalmente = finalmente;
+    }
+    return s;
+}
+
+Sent *sent_lanzar(Arena *a, Expr *valor, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_LANZAR, linea, col);
+    if (s) s->como.lanzar.valor = valor;
+    return s;
+}
+
+Sent *sent_importar(Arena *a, Nombre *segmentos, int n_segmentos,
+                    Nombre alias, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_IMPORTAR, linea, col);
+    if (s) {
+        s->como.importar.segmentos = segmentos;
+        s->como.importar.n_segmentos = n_segmentos;
+        s->como.importar.alias = alias;
+    }
+    return s;
+}
+
+Sent *sent_desde_importar(Arena *a, Nombre *segmentos_modulo, int n_seg,
+                           ItemImportado *items, int n_items,
+                           bool importa_todo, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_DESDE_IMPORTAR, linea, col);
+    if (s) {
+        s->como.desde_importar.segmentos_modulo = segmentos_modulo;
+        s->como.desde_importar.n_segmentos_modulo = n_seg;
+        s->como.desde_importar.items = items;
+        s->como.desde_importar.n_items = n_items;
+        s->como.desde_importar.importa_todo = importa_todo;
+    }
+    return s;
+}
+
+Sent *sent_global(Arena *a, Nombre *nombres, int n_nombres, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_GLOBAL, linea, col);
+    if (s) {
+        s->como.global_o_nolocal.nombres = nombres;
+        s->como.global_o_nolocal.n_nombres = n_nombres;
+    }
+    return s;
+}
+
+Sent *sent_nolocal(Arena *a, Nombre *nombres, int n_nombres, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_NOLOCAL, linea, col);
+    if (s) {
+        s->como.global_o_nolocal.nombres = nombres;
+        s->como.global_o_nolocal.n_nombres = n_nombres;
+    }
+    return s;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * Sentencias — pretty-printer
  *
@@ -677,6 +741,105 @@ static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
             sent_a_buffer(s->como.clase.cuerpo, eb);
             wb_escribir(eb, ")");
             break;
+
+        case SENT_INTENTAR:
+            wb_escribir(eb, "(intentar ");
+            sent_a_buffer(s->como.intentar.cuerpo, eb);
+            for (int i = 0; i < s->como.intentar.n_atrapadores; i++) {
+                ClausulaAtrapar *ca = &s->como.intentar.atrapadores[i];
+                wb_escribir(eb, " (atrapar ");
+                if (ca->tipo) {
+                    expr_a_buffer(ca->tipo, eb);
+                } else {
+                    wb_escribir(eb, "nulo");
+                }
+                if (ca->alias.texto) {
+                    wb_escribir(eb, " (alias ");
+                    wb_escribir_lexema(eb, ca->alias.texto, ca->alias.longitud);
+                    wb_escribir(eb, ")");
+                }
+                wb_escribir(eb, " ");
+                sent_a_buffer(ca->cuerpo, eb);
+                wb_escribir(eb, ")");
+            }
+            if (s->como.intentar.sino) {
+                wb_escribir(eb, " (sino ");
+                sent_a_buffer(s->como.intentar.sino, eb);
+                wb_escribir(eb, ")");
+            }
+            if (s->como.intentar.finalmente) {
+                wb_escribir(eb, " (finalmente ");
+                sent_a_buffer(s->como.intentar.finalmente, eb);
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, ")");
+            break;
+
+        case SENT_LANZAR:
+            if (s->como.lanzar.valor) {
+                wb_escribir(eb, "(lanzar ");
+                expr_a_buffer(s->como.lanzar.valor, eb);
+                wb_escribir(eb, ")");
+            } else {
+                wb_escribir(eb, "(lanzar)");
+            }
+            break;
+
+        case SENT_IMPORTAR:
+            wb_escribir(eb, "(importar ");
+            for (int i = 0; i < s->como.importar.n_segmentos; i++) {
+                if (i > 0) wb_escribir(eb, ".");
+                wb_escribir_lexema(eb, s->como.importar.segmentos[i].texto,
+                                   s->como.importar.segmentos[i].longitud);
+            }
+            if (s->como.importar.alias.texto) {
+                wb_escribir(eb, " (alias ");
+                wb_escribir_lexema(eb, s->como.importar.alias.texto,
+                                   s->como.importar.alias.longitud);
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, ")");
+            break;
+
+        case SENT_DESDE_IMPORTAR:
+            wb_escribir(eb, "(desde ");
+            for (int i = 0; i < s->como.desde_importar.n_segmentos_modulo; i++) {
+                if (i > 0) wb_escribir(eb, ".");
+                wb_escribir_lexema(eb,
+                    s->como.desde_importar.segmentos_modulo[i].texto,
+                    s->como.desde_importar.segmentos_modulo[i].longitud);
+            }
+            wb_escribir(eb, " importar");
+            if (s->como.desde_importar.importa_todo) {
+                wb_escribir(eb, " *");
+            } else {
+                for (int i = 0; i < s->como.desde_importar.n_items; i++) {
+                    ItemImportado *it = &s->como.desde_importar.items[i];
+                    wb_escribir(eb, " (item ");
+                    wb_escribir_lexema(eb, it->nombre.texto, it->nombre.longitud);
+                    if (it->alias.texto) {
+                        wb_escribir(eb, " (alias ");
+                        wb_escribir_lexema(eb, it->alias.texto, it->alias.longitud);
+                        wb_escribir(eb, ")");
+                    }
+                    wb_escribir(eb, ")");
+                }
+            }
+            wb_escribir(eb, ")");
+            break;
+
+        case SENT_GLOBAL:
+        case SENT_NOLOCAL: {
+            const char *etiqueta = (s->tipo == SENT_GLOBAL) ? "global" : "nolocal";
+            wb_escribir(eb, "(%s", etiqueta);
+            for (int i = 0; i < s->como.global_o_nolocal.n_nombres; i++) {
+                wb_escribir(eb, " ");
+                wb_escribir_lexema(eb, s->como.global_o_nolocal.nombres[i].texto,
+                                   s->como.global_o_nolocal.nombres[i].longitud);
+            }
+            wb_escribir(eb, ")");
+            break;
+        }
     }
 }
 

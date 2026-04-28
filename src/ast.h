@@ -212,6 +212,12 @@ typedef enum {
     SENT_BLOQUE,         /* secuencia de sentencias (cuerpo de bloque) */
     SENT_FUNCION,        /* `funcion nombre(params): ... fin funcion` */
     SENT_CLASE,          /* `clase Nombre [extiende ...]: ... fin clase` */
+    SENT_INTENTAR,       /* `intentar: ... atrapar...: ... [sino:...] [finalmente:...] fin intentar` */
+    SENT_LANZAR,         /* `lanzar [expr]` (sin expr = re-raise) */
+    SENT_IMPORTAR,       /* `importar X.Y.Z [como W]` */
+    SENT_DESDE_IMPORTAR, /* `desde X.Y importar A [como A2], B, * ` */
+    SENT_GLOBAL,         /* `global a, b, c` */
+    SENT_NOLOCAL,        /* `nolocal a, b, c` */
 } TipoSent;
 
 /*
@@ -241,6 +247,39 @@ struct RamaSi {
     Sent *cuerpo;        /* siempre un SENT_BLOQUE */
     int linea, columna;  /* del 'si'/'sino si'/'sino' */
 };
+
+/*
+ * Nombre simbólico que apunta al buffer fuente. Usado para listas
+ * de identificadores en `global`/`nolocal`/`importar`/etc., evitando
+ * crear muchos pequeños nodos Expr.
+ */
+typedef struct {
+    const char *texto;
+    int longitud;
+} Nombre;
+
+/*
+ * Item importado en `desde X importar Y como Z, W, ...`. Si no hay
+ * alias, `alias.texto` es NULL.
+ */
+typedef struct {
+    Nombre nombre;
+    Nombre alias;
+    int linea, columna;
+} ItemImportado;
+
+/*
+ * Una cláusula `atrapar` de un bloque `intentar`. Tres formas:
+ *   atrapar:                    → tipo=NULL, alias.texto=NULL
+ *   atrapar TipoExc:            → tipo=Expr, alias.texto=NULL
+ *   atrapar TipoExc como e:     → tipo=Expr, alias=Nombre
+ */
+typedef struct {
+    Expr *tipo;             /* NULL si bare 'atrapar:' */
+    Nombre alias;           /* alias.texto NULL si no hay 'como' */
+    Sent *cuerpo;           /* SENT_BLOQUE */
+    int linea, columna;
+} ClausulaAtrapar;
 
 struct Sent {
     TipoSent tipo;
@@ -303,6 +342,37 @@ struct Sent {
             int n_superclases;
             Sent *cuerpo;               /* SENT_BLOQUE de métodos/asignaciones */
         } clase;
+
+        struct {
+            Sent *cuerpo;               /* SENT_BLOQUE del intentar */
+            ClausulaAtrapar *atrapadores;
+            int n_atrapadores;
+            Sent *sino;                 /* NULL si no hay 'sino' (no excepción) */
+            Sent *finalmente;           /* NULL si no hay */
+        } intentar;
+
+        struct {
+            Expr *valor;                /* NULL = re-raise */
+        } lanzar;
+
+        struct {
+            Nombre *segmentos;          /* `mat.geometria` → [mat, geometria] */
+            int n_segmentos;
+            Nombre alias;               /* 'como X', alias.texto NULL si no hay */
+        } importar;
+
+        struct {
+            Nombre *segmentos_modulo;
+            int n_segmentos_modulo;
+            ItemImportado *items;       /* lista de items importados */
+            int n_items;
+            bool importa_todo;          /* `desde X importar *` */
+        } desde_importar;
+
+        struct {
+            Nombre *nombres;            /* lista de identificadores */
+            int n_nombres;
+        } global_o_nolocal;             /* compartido por SENT_GLOBAL y SENT_NOLOCAL */
     } como;
 };
 
@@ -328,6 +398,18 @@ Sent *sent_funcion(Arena *a, const char *nombre, int len_nombre,
 Sent *sent_clase(Arena *a, const char *nombre, int len_nombre,
                  Expr **supers, int n_supers, Sent *cuerpo,
                  int linea, int col);
+Sent *sent_intentar(Arena *a, Sent *cuerpo,
+                    ClausulaAtrapar *atrapadores, int n_atrapadores,
+                    Sent *sino, Sent *finalmente,
+                    int linea, int col);
+Sent *sent_lanzar(Arena *a, Expr *valor, int linea, int col);
+Sent *sent_importar(Arena *a, Nombre *segmentos, int n_segmentos,
+                    Nombre alias, int linea, int col);
+Sent *sent_desde_importar(Arena *a, Nombre *segmentos_modulo, int n_seg,
+                           ItemImportado *items, int n_items,
+                           bool importa_todo, int linea, int col);
+Sent *sent_global(Arena *a, Nombre *nombres, int n_nombres, int linea, int col);
+Sent *sent_nolocal(Arena *a, Nombre *nombres, int n_nombres, int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);

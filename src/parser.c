@@ -455,9 +455,15 @@ static Sent *parsear_mientras(Parser *p);
 static Sent *parsear_para(Parser *p);
 static Sent *parsear_funcion(Parser *p);
 static Sent *parsear_clase(Parser *p);
+static Sent *parsear_intentar(Parser *p);
+static Sent *parsear_lanzar(Parser *p);
+static Sent *parsear_importar(Parser *p);
+static Sent *parsear_desde_importar(Parser *p);
+static Sent *parsear_global_o_nolocal(Parser *p, bool es_global);
 static Sent *parsear_asignar_o_expr(Parser *p);
 static Sent *parsear_cuerpo_bloque(Parser *p);
 static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out);
+static bool parsear_ruta_modulo(Parser *p, Nombre **out, int *n_out);
 static const char *etiqueta_para_bloque(TipoBloque t);
 static TipoToken token_para_bloque(TipoBloque t);
 static bool consumir_fin(Parser *p, TipoBloque tipo, int linea_apertura);
@@ -465,10 +471,28 @@ static bool empujar_bloque(Parser *p, TipoBloque tipo, int linea);
 static void salir_bloque(Parser *p);
 static bool en_inicio_de_termino(Parser *p);
 
-/* ¿El token actual termina un bloque (es `fin`, `sino`, EOF)? */
+/*
+ * ¿El token actual termina un bloque?
+ *
+ * Terminadores reconocidos:
+ *   - TT_FIN: fin <X>, cierre explícito de cualquier bloque.
+ *   - TT_SINO: rama 'sino' / 'sino si' de un 'si', 'mientras', 'para',
+ *     'intentar' (en este último indica el bloque sin excepción).
+ *   - TT_ATRAPAR / TT_FINALMENTE: cláusulas continuadoras del bloque
+ *     'intentar'.
+ *   - TT_FIN_ARCHIVO: fin del programa.
+ *
+ * Estas keywords solo son terminadores semánticamente cuando estamos
+ * dentro del bloque correcto, pero el parser dispatcher no tiene caso
+ * para ellas a nivel sentencia, así que tratarlas siempre como
+ * terminadores produce errores de sintaxis claros si aparecen
+ * misplaced.
+ */
 static bool en_inicio_de_termino(Parser *p) {
     return p->actual.tipo == TT_FIN
         || p->actual.tipo == TT_SINO
+        || p->actual.tipo == TT_ATRAPAR
+        || p->actual.tipo == TT_FINALMENTE
         || p->actual.tipo == TT_FIN_ARCHIVO;
 }
 
@@ -868,6 +892,12 @@ Sent *parser_parsear_sentencia(Parser *p) {
         case TT_PARA:      return parsear_para(p);
         case TT_FUNCION:   return parsear_funcion(p);
         case TT_CLASE:     return parsear_clase(p);
+        case TT_INTENTAR:  return parsear_intentar(p);
+        case TT_LANZAR:    return parsear_lanzar(p);
+        case TT_IMPORTAR:  return parsear_importar(p);
+        case TT_DESDE:     return parsear_desde_importar(p);
+        case TT_GLOBAL:    return parsear_global_o_nolocal(p, true);
+        case TT_NOLOCAL:   return parsear_global_o_nolocal(p, false);
 
         default:
             return parsear_asignar_o_expr(p);
@@ -1116,6 +1146,303 @@ static Expr *parsear_lambda(Parser *p) {
     if (cuerpo == NULL) return NULL;
 
     return expr_lambda(p->arena, params, n, cuerpo, linea, col);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Excepciones, módulos, declaraciones
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Parsea `intentar: ... atrapar...: ... [sino:...] [finalmente:...] fin intentar`.
+ *
+ * Permitimos cero `atrapar` SI hay `finalmente` (patrón try/finally).
+ * Si no hay ni atrapar ni finalmente, es error.
+ */
+static Sent *parsear_intentar(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'intentar' */
+    if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras 'intentar'")) {
+        return NULL;
+    }
+
+    if (!empujar_bloque(p, BLOQUE_INTENTAR, linea)) return NULL;
+
+    Sent *cuerpo = parsear_cuerpo_bloque(p);
+    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
+
+    /* Cláusulas atrapar (cero o más). */
+    ClausulaAtrapar *atrapadores = NULL;
+    int n_atrapadores = 0;
+    int cap = 0;
+
+    while (check(p, TT_ATRAPAR)) {
+        if (n_atrapadores >= cap) {
+            cap = cap == 0 ? 4 : cap * 2;
+            ClausulaAtrapar *nuevo = (ClausulaAtrapar *)arena_alocar(p->arena,
+                sizeof(ClausulaAtrapar) * (size_t)cap);
+            if (nuevo == NULL) { salir_bloque(p); return NULL; }
+            if (n_atrapadores > 0)
+                memcpy(nuevo, atrapadores,
+                    sizeof(ClausulaAtrapar) * (size_t)n_atrapadores);
+            atrapadores = nuevo;
+        }
+        ClausulaAtrapar *ca = &atrapadores[n_atrapadores];
+        ca->linea = p->actual.linea;
+        ca->columna = p->actual.columna;
+        avanzar(p); /* 'atrapar' */
+
+        ca->tipo = NULL;
+        ca->alias.texto = NULL;
+        ca->alias.longitud = 0;
+
+        /* Tres formas tras 'atrapar':
+           - ':' inmediato → bare atrapar (atrapa todo).
+           - expr ':' → atrapa de ese tipo, sin alias.
+           - expr 'como' IDENT ':' → atrapa con alias. */
+        if (!check(p, TT_DOS_PUNTOS)) {
+            ca->tipo = parser_parsear_expr(p);
+            if (ca->tipo == NULL) { salir_bloque(p); return NULL; }
+            if (consumir_si(p, TT_COMO)) {
+                if (!check(p, TT_IDENT)) {
+                    error_en(p, &p->actual,
+                        "se esperaba un nombre tras 'como' en cláusula 'atrapar'");
+                    salir_bloque(p);
+                    return NULL;
+                }
+                ca->alias.texto = p->actual.inicio;
+                ca->alias.longitud = p->actual.longitud;
+                avanzar(p);
+            }
+        }
+        if (!consumir(p, TT_DOS_PUNTOS,
+            "se esperaba ':' tras la cabecera de 'atrapar'")) {
+            salir_bloque(p);
+            return NULL;
+        }
+        ca->cuerpo = parsear_cuerpo_bloque(p);
+        if (ca->cuerpo == NULL) { salir_bloque(p); return NULL; }
+        n_atrapadores++;
+    }
+
+    /* 'sino' opcional (rama "sin excepción"). */
+    Sent *sino = NULL;
+    if (consumir_si(p, TT_SINO)) {
+        if (!consumir(p, TT_DOS_PUNTOS,
+            "se esperaba ':' tras 'sino' en 'intentar'")) {
+            salir_bloque(p);
+            return NULL;
+        }
+        sino = parsear_cuerpo_bloque(p);
+        if (sino == NULL) { salir_bloque(p); return NULL; }
+    }
+
+    /* 'finalmente' opcional. */
+    Sent *finalmente = NULL;
+    if (consumir_si(p, TT_FINALMENTE)) {
+        if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras 'finalmente'")) {
+            salir_bloque(p);
+            return NULL;
+        }
+        finalmente = parsear_cuerpo_bloque(p);
+        if (finalmente == NULL) { salir_bloque(p); return NULL; }
+    }
+
+    salir_bloque(p);
+
+    if (n_atrapadores == 0 && finalmente == NULL) {
+        error_en(p, &p->actual,
+            "'intentar' debe tener al menos una cláusula 'atrapar' o 'finalmente'");
+        return NULL;
+    }
+
+    if (!consumir_fin(p, BLOQUE_INTENTAR, linea)) return NULL;
+
+    return sent_intentar(p->arena, cuerpo, atrapadores, n_atrapadores,
+                         sino, finalmente, linea, col);
+}
+
+static Sent *parsear_lanzar(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'lanzar' */
+
+    /* Si lo que sigue está en otra línea o es fin/sino/EOF/atrapar/etc.,
+       es 'lanzar' sin valor (re-raise dentro de atrapar). */
+    if (p->actual.linea != linea
+        || p->actual.tipo == TT_FIN
+        || p->actual.tipo == TT_SINO
+        || p->actual.tipo == TT_ATRAPAR
+        || p->actual.tipo == TT_FINALMENTE
+        || p->actual.tipo == TT_FIN_ARCHIVO) {
+        return sent_lanzar(p->arena, NULL, linea, col);
+    }
+    Expr *e = parser_parsear_expr(p);
+    if (e == NULL) return NULL;
+    return sent_lanzar(p->arena, e, linea, col);
+}
+
+/*
+ * Parsea una ruta de módulo: IDENT ('.' IDENT)*. Devuelve true si OK.
+ * Aloca el array en arena.
+ */
+static bool parsear_ruta_modulo(Parser *p, Nombre **out, int *n_out) {
+    if (!check(p, TT_IDENT)) {
+        error_en(p, &p->actual,
+            "se esperaba un nombre de módulo");
+        return false;
+    }
+
+    Nombre *segs = NULL;
+    int n = 0;
+    int cap = 0;
+
+    do {
+        if (!check(p, TT_IDENT)) {
+            error_en(p, &p->actual,
+                "se esperaba un nombre tras '.' en ruta de módulo");
+            return false;
+        }
+        if (n >= cap) {
+            cap = cap == 0 ? 4 : cap * 2;
+            Nombre *nuevo = (Nombre *)arena_alocar(p->arena,
+                sizeof(Nombre) * (size_t)cap);
+            if (nuevo == NULL) return false;
+            if (n > 0) memcpy(nuevo, segs, sizeof(Nombre) * (size_t)n);
+            segs = nuevo;
+        }
+        segs[n].texto = p->actual.inicio;
+        segs[n].longitud = p->actual.longitud;
+        n++;
+        avanzar(p);
+    } while (consumir_si(p, TT_PUNTO));
+
+    *out = segs;
+    *n_out = n;
+    return true;
+}
+
+static Sent *parsear_importar(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'importar' */
+
+    Nombre *segmentos = NULL;
+    int n_segs = 0;
+    if (!parsear_ruta_modulo(p, &segmentos, &n_segs)) return NULL;
+
+    Nombre alias = { NULL, 0 };
+    if (consumir_si(p, TT_COMO)) {
+        if (!check(p, TT_IDENT)) {
+            error_en(p, &p->actual,
+                "se esperaba un alias tras 'como'");
+            return NULL;
+        }
+        alias.texto = p->actual.inicio;
+        alias.longitud = p->actual.longitud;
+        avanzar(p);
+    }
+
+    return sent_importar(p->arena, segmentos, n_segs, alias, linea, col);
+}
+
+static Sent *parsear_desde_importar(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'desde' */
+
+    Nombre *segmentos = NULL;
+    int n_segs = 0;
+    if (!parsear_ruta_modulo(p, &segmentos, &n_segs)) return NULL;
+
+    if (!consumir(p, TT_IMPORTAR,
+        "se esperaba 'importar' tras la ruta de módulo")) return NULL;
+
+    /* Caso `desde X importar *`. */
+    if (consumir_si(p, TT_ASTERISCO)) {
+        return sent_desde_importar(p->arena, segmentos, n_segs,
+                                    NULL, 0, true, linea, col);
+    }
+
+    /* Lista de items separados por coma. */
+    ItemImportado *items = NULL;
+    int n_items = 0;
+    int cap = 0;
+
+    do {
+        if (!check(p, TT_IDENT)) {
+            error_en(p, &p->actual,
+                "se esperaba un nombre a importar");
+            return NULL;
+        }
+        if (n_items >= cap) {
+            cap = cap == 0 ? 4 : cap * 2;
+            ItemImportado *nuevo = (ItemImportado *)arena_alocar(p->arena,
+                sizeof(ItemImportado) * (size_t)cap);
+            if (nuevo == NULL) return NULL;
+            if (n_items > 0)
+                memcpy(nuevo, items, sizeof(ItemImportado) * (size_t)n_items);
+            items = nuevo;
+        }
+        items[n_items].nombre.texto = p->actual.inicio;
+        items[n_items].nombre.longitud = p->actual.longitud;
+        items[n_items].alias.texto = NULL;
+        items[n_items].alias.longitud = 0;
+        items[n_items].linea = p->actual.linea;
+        items[n_items].columna = p->actual.columna;
+        avanzar(p);
+
+        if (consumir_si(p, TT_COMO)) {
+            if (!check(p, TT_IDENT)) {
+                error_en(p, &p->actual,
+                    "se esperaba un alias tras 'como'");
+                return NULL;
+            }
+            items[n_items].alias.texto = p->actual.inicio;
+            items[n_items].alias.longitud = p->actual.longitud;
+            avanzar(p);
+        }
+        n_items++;
+    } while (consumir_si(p, TT_COMA));
+
+    return sent_desde_importar(p->arena, segmentos, n_segs,
+                                items, n_items, false, linea, col);
+}
+
+static Sent *parsear_global_o_nolocal(Parser *p, bool es_global) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'global' o 'nolocal' */
+
+    Nombre *nombres = NULL;
+    int n = 0;
+    int cap = 0;
+
+    do {
+        if (!check(p, TT_IDENT)) {
+            error_en(p, &p->actual,
+                es_global
+                    ? "se esperaba un nombre tras 'global'"
+                    : "se esperaba un nombre tras 'nolocal'");
+            return NULL;
+        }
+        if (n >= cap) {
+            cap = cap == 0 ? 4 : cap * 2;
+            Nombre *nuevo = (Nombre *)arena_alocar(p->arena,
+                sizeof(Nombre) * (size_t)cap);
+            if (nuevo == NULL) return NULL;
+            if (n > 0) memcpy(nuevo, nombres, sizeof(Nombre) * (size_t)n);
+            nombres = nuevo;
+        }
+        nombres[n].texto = p->actual.inicio;
+        nombres[n].longitud = p->actual.longitud;
+        n++;
+        avanzar(p);
+    } while (consumir_si(p, TT_COMA));
+
+    return es_global
+        ? sent_global(p->arena, nombres, n, linea, col)
+        : sent_nolocal(p->arena, nombres, n, linea, col);
 }
 
 Sent **parser_parsear_programa(Parser *p, int *n_out) {
