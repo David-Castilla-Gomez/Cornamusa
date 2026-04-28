@@ -45,6 +45,7 @@ Donde `Letra` incluye toda letra Unicode (categoría `L`), incluyendo `ñ`, `Ñ`
 - Variables y funciones: `serpiente_minuscula` (`mi_variable`, `calcular_total`).
 - Clases: `MayusculaCamello` (`Persona`, `ListaEnlazada`).
 - Constantes: `MAYUSCULAS_CON_GUION` (`PI`, `MAX_INTENTOS`).
+- Primer parámetro de métodos de instancia: **`yo`** (decisión [B5](decisiones/B5-B6-yo-y-dunders.md)). Es convención, no keyword: el nombre del parámetro es libre, pero `yo` es la forma canónica de la stdlib y los ejemplos oficiales. Ver §6.6.
 
 ### 2.3 Palabras clave
 
@@ -72,7 +73,6 @@ Todas las palabras clave son **ASCII puro, sin tildes ni `ñ`, en minúscula** (
 | `clase` | declaración de clase |
 | `extiende` | herencia (`clase Hija extiende Madre:`) |
 | `super` | acceso a la superclase |
-| `yo` | referencia a la instancia (equivalente a `self`/`this`) — pendiente decisión B5 |
 | `importar` | importación de módulo |
 | `desde` | importación selectiva (`desde X importar Y`) |
 | `como` | renombrado en import o except |
@@ -317,25 +317,68 @@ fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
 | `resumen(x)` | `hash` | Hash para colecciones |
 | `repr(x)` | `repr` | Representación textual |
 
-### Métodos especiales (dunder)
+### Métodos especiales (dunders)
 
-| Cornamusa | Python | Propósito |
+Los nombres de métodos especiales en Cornamusa son **castellanos** (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md)). El runtime invoca estos nombres canónicos directamente; los nombres en inglés de Python no son reconocidos. Por ejemplo, `longitud(obj)` busca `__longitud__`, no `__len__`.
+
+#### Construcción y representación
+| Dunder | Python equivalente | Activación |
 |---|---|---|
-| `__iniciar__(yo, ...)` | `__init__` | Constructor |
-| `__cadena__(yo)` | `__str__` | Representación legible |
-| `__repr__(yo)` | `__repr__` | Representación inequívoca |
-| `__igual__(yo, otro)` | `__eq__` | Igualdad |
-| `__resumen__(yo)` | `__hash__` | Hash |
-| `__longitud__(yo)` | `__len__` | Tamaño |
-| `__llamar__(yo, ...)` | `__call__` | Hacer llamable la instancia |
+| `__iniciar__(yo, ...)` | `__init__` | Constructor: `Persona("Ana")` |
+| `__finalizar__(yo)` | `__del__` | Destructor (raro de implementar) |
+| `__cadena__(yo)` | `__str__` | `cadena(obj)`, `f"{obj}"`, `imprimir(obj)` |
+| `__repr__(yo)` | `__repr__` | `repr(obj)` — préstamo aceptado por brevedad |
+| `__booleano__(yo)` | `__bool__` | `booleano(obj)`, contexto de truthiness |
+
+#### Comparaciones
+| Dunder | Python equivalente | Activación |
+|---|---|---|
+| `__igual__(yo, otro)` | `__eq__` | `a == b` |
+| `__distinto__(yo, otro)` | `__ne__` | `a != b` |
+| `__menor__(yo, otro)` | `__lt__` | `a < b` |
+| `__menor_igual__(yo, otro)` | `__le__` | `a <= b` |
+| `__mayor__(yo, otro)` | `__gt__` | `a > b` |
+| `__mayor_igual__(yo, otro)` | `__ge__` | `a >= b` |
+| `__resumen__(yo)` | `__hash__` | `resumen(obj)`, claves de dict/set |
+
+#### Colecciones e iteración
+| Dunder | Python equivalente | Activación |
+|---|---|---|
+| `__longitud__(yo)` | `__len__` | `longitud(obj)` |
 | `__obtener__(yo, k)` | `__getitem__` | `obj[k]` |
 | `__establecer__(yo, k, v)` | `__setitem__` | `obj[k] = v` |
-| `__borrar__(yo, k)` | `__delitem__` | `del obj[k]` |
+| `__borrar__(yo, k)` | `__delitem__` | `borrar obj[k]` |
 | `__contiene__(yo, x)` | `__contains__` | `x en obj` |
-| `__iterar__(yo)` | `__iter__` | Devuelve iterador |
-| `__siguiente__(yo)` | `__next__` | Avance del iterador |
-| `__sumar__(yo, otro)` | `__add__` | `yo + otro` |
-| `__restar__`, `__multiplicar__`, `__dividir__`, `__modulo__`, `__potencia__`, ... | aritméticos correspondientes | |
+| `__iterar__(yo)` | `__iter__` | `para x en obj:` |
+| `__siguiente__(yo)` | `__next__` | `siguiente(it)` |
+
+#### Aritméticos
+| Dunder | Python equivalente | Activación |
+|---|---|---|
+| `__sumar__(yo, otro)` | `__add__` | `a + b` |
+| `__restar__(yo, otro)` | `__sub__` | `a - b` |
+| `__multiplicar__(yo, otro)` | `__mul__` | `a * b` |
+| `__dividir__(yo, otro)` | `__truediv__` | `a / b` |
+| `__div_entera__(yo, otro)` | `__floordiv__` | `a // b` |
+| `__modulo__(yo, otro)` | `__mod__` | `a % b` |
+| `__potencia__(yo, otro)` | `__pow__` | `a ** b` |
+| `__negar__(yo)` | `__neg__` | `-a` |
+| `__positivar__(yo)` | `__pos__` | `+a` |
+| `__absoluto__(yo)` | `__abs__` | `absoluto(a)` |
+
+#### Llamada y contexto
+| Dunder | Python equivalente | Activación |
+|---|---|---|
+| `__llamar__(yo, ...)` | `__call__` | `obj(args)` |
+| `__entrar__(yo)` | `__enter__` | `con obj como ...` (futuro) |
+| `__salir__(yo, exc)` | `__exit__` | `con obj como ...` (futuro) |
+
+#### Atributos dinámicos
+| Dunder | Python equivalente | Activación |
+|---|---|---|
+| `__obtener_atributo__(yo, nombre)` | `__getattr__` | `obj.x` cuando `x` no existe |
+| `__establecer_atributo__(yo, nombre, v)` | `__setattr__` | `obj.x = v` |
+| `__borrar_atributo__(yo, nombre)` | `__delattr__` | `borrar obj.x` |
 
 ---
 
@@ -509,8 +552,40 @@ Excepción
 
 - Toda entidad es un objeto con tipo (`tipo(x)`) y identidad (`id(x)`).
 - Atributos accesibles vía `obj.atributo`.
-- Acceso dinámico mediante `__obtener_atributo__` / `__establecer_atributo__` (en clases que lo implementen).
+- Acceso dinámico mediante `__obtener_atributo__` / `__establecer_atributo__` / `__borrar_atributo__` (ver §4).
 - En v0.10.0 se introducen **shapes / hidden classes** (paper SELF) para optimizar acceso, transparente al usuario.
+
+#### Métodos de instancia y la convención `yo`
+
+Los métodos de una clase reciben **explícitamente** la instancia como primer parámetro (estilo Python, no Java/Ruby). El nombre del parámetro es **libre**: no es palabra clave reservada. La convención de Cornamusa es llamarlo `yo` (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md)).
+
+```cornamusa
+clase Persona:
+    funcion __iniciar__(yo, nombre):     # convención
+        yo.nombre = nombre
+    fin funcion
+
+    funcion saludar(propio):              # también válido (nombre libre)
+        retornar f"Hola, {propio.nombre}"
+    fin funcion
+fin clase
+```
+
+La stdlib y los ejemplos oficiales usan `yo` consistentemente. Los formateadores y linters (futuros) sugerirán `yo` por convención, sin imponerlo.
+
+#### Operadores y dunders
+
+Los operadores se desazucaran a llamadas a dunders. Por ejemplo:
+
+| Sintaxis | Búsqueda en runtime |
+|---|---|
+| `a + b` | `tipo(a).__sumar__(a, b)`; si no existe o devuelve `NoImplementado`, prueba `tipo(b).__sumar_derecha__(b, a)` |
+| `longitud(x)` | `tipo(x).__longitud__(x)` |
+| `x en y` | `tipo(y).__contiene__(y, x)` |
+| `para x en y:` | `it = tipo(y).__iterar__(y); valor = tipo(it).__siguiente__(it); ...` |
+| `obj[k]` | `tipo(obj).__obtener__(obj, k)` |
+
+Si la clase no implementa el dunder correspondiente, el runtime lanza `ErrorDeTipo` con mensaje específico (ej. *"el tipo `Persona` no soporta el operador `+`"*).
 
 ---
 
