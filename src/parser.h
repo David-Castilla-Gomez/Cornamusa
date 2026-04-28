@@ -23,6 +23,24 @@
  * detiene el parseo y devuelve NULL.
  */
 
+/*
+ * Tipos de bloque que el parser puede tener abiertos. Se usa para
+ * validar que `fin <etiqueta>` cierra el bloque correcto (decisión B1).
+ */
+typedef enum {
+    BLOQUE_SI,
+    BLOQUE_MIENTRAS,
+    BLOQUE_PARA,
+    BLOQUE_FUNCION,
+    BLOQUE_CLASE,
+    BLOQUE_INTENTAR,
+} TipoBloque;
+
+typedef struct {
+    TipoBloque tipo;
+    int linea_apertura;
+} BloqueAbierto;
+
 typedef struct {
     Lexer *lexer;
     Arena *arena;
@@ -35,6 +53,10 @@ typedef struct {
 
     const char *fuente;      /* para mensajes con caret indicators */
     const char *archivo;     /* para mensajes con ubicación */
+
+    /* Stack de bloques abiertos para validar `fin <etiqueta>`. */
+    BloqueAbierto pila_bloques[64];
+    int profundidad_bloques;
 } Parser;
 
 /*
@@ -54,5 +76,19 @@ void parser_iniciar(Parser *p, Lexer *l, Arena *a,
  * El cliente puede consultar parser->tuvo_error para verificar éxito.
  */
 Expr *parser_parsear_expr(Parser *p);
+
+/*
+ * Parsea una sola sentencia. Devuelve el AST resultante o NULL si
+ * hubo un error. El parser consume todos los tokens de la sentencia
+ * incluyendo (cuando aplica) `fin <etiqueta>`.
+ */
+Sent *parser_parsear_sentencia(Parser *p);
+
+/*
+ * Parsea sentencias hasta TT_FIN_ARCHIVO. Devuelve un array alocado
+ * en la arena del parser, con `*n_out` siendo la cuenta. Si hay
+ * errores, `tuvo_error` se activa pero el parseo intenta seguir.
+ */
+Sent **parser_parsear_programa(Parser *p, int *n_out);
 
 #endif /* CORNAMUSA_PARSER_H */

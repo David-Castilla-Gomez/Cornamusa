@@ -8,10 +8,31 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ### En desarrollo (Fase 3 — Parser y AST, objetivo v0.3.0)
 - ✅ Sesión 1: AST + arena allocator + Pratt parser para expresiones.
-- ⏳ Sesión 2: sentencias simples (asignación, `si`/`mientras`/`para`, etc.).
+- ✅ Sesión 2: sentencias simples + control de flujo + validación `fin <etiqueta>`.
 - ⏳ Sesión 3: funciones, clases, lambda.
 - ⏳ Sesión 4: excepciones y módulos.
 - ⏳ Sesión 5: f-strings parseadas, listas/dicts, `--ast` flag, integración con ejemplos, tag v0.3.0.
+
+### Añadido (Fase 3 sesión 2)
+- **AST de sentencias** en `ast.{h,c}`: 11 variantes (`SENT_EXPR`, `SENT_ASIGNAR`, `SENT_ASIGNAR_AUG`, `SENT_PASAR`, `SENT_ROMPER`, `SENT_CONTINUAR`, `SENT_RETORNAR`, `SENT_SI` con cadena de `RamaSi`, `SENT_MIENTRAS`, `SENT_PARA`, `SENT_BLOQUE`). Pretty-printer en S-expression.
+- **Parser de sentencias**: `parser_parsear_sentencia` y `parser_parsear_programa`. Maneja:
+  - Sentencias simples: `pasar`, `romper`, `continuar`, `retornar [expr]`.
+  - **Asignación simple** (`x = expr`) y **aumentada** (`+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`).
+  - **Sentencia-expresión** (cualquier expresión usada como sentencia: `imprimir(x)`).
+  - **Bloques `si`/`sino si`/`sino`** con cadena completa de ramas, cerrado con `fin si`.
+  - **`mientras`/`fin mientras`** con cláusula `sino` opcional.
+  - **`para X en Y:`/`fin para`** con cláusula `sino` opcional.
+- **Detección de one-liners**: si tras `:` el siguiente token está en la misma línea, se parsea una sola sentencia sin requerir `fin <X>`. Si va a línea siguiente, se exige bloque multilínea cerrado con `fin <etiqueta>`.
+- **Validación de `fin <etiqueta>`** mediante stack de bloques abiertos en el parser (`pila_bloques[64]`):
+  - `fin si` solo cierra `si`. `fin para` solo cierra `para`. Etc.
+  - Mensaje específico cuando la etiqueta no coincide:
+    *"se esperaba 'fin si' (bloque abierto en línea 9), encontrado 'fin para'"*.
+  - Mensaje específico cuando falta el `fin`:
+    *"se esperaba 'fin si' para cerrar el bloque abierto en línea 9"*.
+- **Recuperación de errores** con panic mode: tras un error, el parser sale del modo pánico al inicio de cada sentencia para poder reportar varios errores en un programa.
+- **Anidamiento arbitrario**: `si` dentro de `para` dentro de `mientras` funciona; cada bloque tiene su propia entrada en el stack.
+- **`tests/unit/test_parser_sentencias.c`** con ~30 tests cubriendo: cada sentencia simple, asignaciones, todas las variantes de `si`/`mientras`/`para` (con/sin `sino`, one-liner vs multilínea), anidamiento, validación de etiquetas (`fin para` cerrando un `si` da error, etc.), errores de sintaxis (`fin` desnudo, falta `:`, falta `fin`), y un programa completo de varias sentencias.
+- **19 tests verde** (7 unit + 12 integración del lexer).
 
 ### Añadido (Fase 3 sesión 1)
 - **`src/arena.{h,c}`** — arena allocator con bloques crecientes (~80 líneas). Aloca alineado a 8 bytes, libera todo en una sola llamada con `arena_destruir`. Patrón estándar para ASTs (lo usan V8, GCC, LLVM).

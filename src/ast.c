@@ -363,3 +363,227 @@ int expr_a_cadena(const Expr *e, char *buffer, int capacidad) {
     buffer[eb.usado] = '\0';
     return eb.usado;
 }
+
+/* ══════════════════════════════════════════════════════════════════
+ * Sentencias — constructores
+ * ══════════════════════════════════════════════════════════════════ */
+
+static Sent *nuevo_sent(Arena *a, TipoSent tipo, int linea, int col) {
+    Sent *s = (Sent *)arena_alocar_cero(a, sizeof(Sent));
+    if (s == NULL) return NULL;
+    s->tipo = tipo;
+    s->linea = linea;
+    s->columna = col;
+    return s;
+}
+
+Sent *sent_expr(Arena *a, Expr *e, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_EXPR, linea, col);
+    if (s) s->como.expr.expr = e;
+    return s;
+}
+
+Sent *sent_asignar(Arena *a, Expr *destino, Expr *valor, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_ASIGNAR, linea, col);
+    if (s) { s->como.asignar.destino = destino; s->como.asignar.valor = valor; }
+    return s;
+}
+
+Sent *sent_asignar_aug(Arena *a, Expr *destino, TipoToken op, Expr *valor,
+                       int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_ASIGNAR_AUG, linea, col);
+    if (s) {
+        s->como.asignar_aug.destino = destino;
+        s->como.asignar_aug.op = op;
+        s->como.asignar_aug.valor = valor;
+    }
+    return s;
+}
+
+Sent *sent_pasar(Arena *a, int linea, int col) {
+    return nuevo_sent(a, SENT_PASAR, linea, col);
+}
+
+Sent *sent_romper(Arena *a, int linea, int col) {
+    return nuevo_sent(a, SENT_ROMPER, linea, col);
+}
+
+Sent *sent_continuar(Arena *a, int linea, int col) {
+    return nuevo_sent(a, SENT_CONTINUAR, linea, col);
+}
+
+Sent *sent_retornar(Arena *a, Expr *valor, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_RETORNAR, linea, col);
+    if (s) s->como.retornar.valor = valor;
+    return s;
+}
+
+Sent *sent_si(Arena *a, RamaSi *ramas, int n_ramas, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_SI, linea, col);
+    if (s) { s->como.si.ramas = ramas; s->como.si.n_ramas = n_ramas; }
+    return s;
+}
+
+Sent *sent_mientras(Arena *a, Expr *cond, Sent *cuerpo, Sent *sino,
+                    int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_MIENTRAS, linea, col);
+    if (s) {
+        s->como.mientras.condicion = cond;
+        s->como.mientras.cuerpo = cuerpo;
+        s->como.mientras.sino = sino;
+    }
+    return s;
+}
+
+Sent *sent_para(Arena *a, Expr *objetivo, Expr *iterable, Sent *cuerpo,
+                Sent *sino, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_PARA, linea, col);
+    if (s) {
+        s->como.para.objetivo = objetivo;
+        s->como.para.iterable = iterable;
+        s->como.para.cuerpo = cuerpo;
+        s->como.para.sino = sino;
+    }
+    return s;
+}
+
+Sent *sent_bloque(Arena *a, Sent **sentencias, int n, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_BLOQUE, linea, col);
+    if (s) {
+        s->como.bloque.sentencias = sentencias;
+        s->como.bloque.n_sentencias = n;
+    }
+    return s;
+}
+
+/* ══════════════════════════════════════════════════════════════════
+ * Sentencias — pretty-printer
+ *
+ * Formato S-expression coherente con el de expresiones:
+ *   (sent-expr <expr>)
+ *   (asignar <destino> <valor>)
+ *   (asignar-aug "+=" <destino> <valor>)
+ *   (pasar) (romper) (continuar)
+ *   (retornar [<expr>])
+ *   (si (rama <cond> <bloque>) (rama <cond> <bloque>) ... (rama nulo <bloque>))
+ *   (mientras <cond> <cuerpo> [<sino>])
+ *   (para <objetivo> <iterable> <cuerpo> [<sino>])
+ *   (bloque <s1> <s2> ...)
+ * ══════════════════════════════════════════════════════════════════ */
+
+static const char *nombre_op_aug(TipoToken t) {
+    switch (t) {
+        case TT_ASIGNAR_MAS:         return "+=";
+        case TT_ASIGNAR_MENOS:       return "-=";
+        case TT_ASIGNAR_ASTERISCO:   return "*=";
+        case TT_ASIGNAR_BARRA:       return "/=";
+        case TT_ASIGNAR_DOBLE_BARRA: return "//=";
+        case TT_ASIGNAR_PORCENTAJE:  return "%=";
+        case TT_ASIGNAR_DOBLE_ASTER: return "**=";
+        default: return "?=";
+    }
+}
+
+static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb);
+
+static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
+    if (s == NULL) { wb_escribir(eb, "(null)"); return; }
+    switch (s->tipo) {
+        case SENT_EXPR:
+            wb_escribir(eb, "(sent-expr ");
+            expr_a_buffer(s->como.expr.expr, eb);
+            wb_escribir(eb, ")");
+            break;
+        case SENT_ASIGNAR:
+            wb_escribir(eb, "(asignar ");
+            expr_a_buffer(s->como.asignar.destino, eb);
+            wb_escribir(eb, " ");
+            expr_a_buffer(s->como.asignar.valor, eb);
+            wb_escribir(eb, ")");
+            break;
+        case SENT_ASIGNAR_AUG:
+            wb_escribir(eb, "(asignar-aug \"%s\" ", nombre_op_aug(s->como.asignar_aug.op));
+            expr_a_buffer(s->como.asignar_aug.destino, eb);
+            wb_escribir(eb, " ");
+            expr_a_buffer(s->como.asignar_aug.valor, eb);
+            wb_escribir(eb, ")");
+            break;
+        case SENT_PASAR:     wb_escribir(eb, "(pasar)"); break;
+        case SENT_ROMPER:    wb_escribir(eb, "(romper)"); break;
+        case SENT_CONTINUAR: wb_escribir(eb, "(continuar)"); break;
+        case SENT_RETORNAR:
+            if (s->como.retornar.valor) {
+                wb_escribir(eb, "(retornar ");
+                expr_a_buffer(s->como.retornar.valor, eb);
+                wb_escribir(eb, ")");
+            } else {
+                wb_escribir(eb, "(retornar)");
+            }
+            break;
+        case SENT_SI:
+            wb_escribir(eb, "(si");
+            for (int i = 0; i < s->como.si.n_ramas; i++) {
+                RamaSi *r = &s->como.si.ramas[i];
+                wb_escribir(eb, " (rama ");
+                if (r->condicion) {
+                    expr_a_buffer(r->condicion, eb);
+                } else {
+                    wb_escribir(eb, "nulo");
+                }
+                wb_escribir(eb, " ");
+                sent_a_buffer(r->cuerpo, eb);
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, ")");
+            break;
+        case SENT_MIENTRAS:
+            wb_escribir(eb, "(mientras ");
+            expr_a_buffer(s->como.mientras.condicion, eb);
+            wb_escribir(eb, " ");
+            sent_a_buffer(s->como.mientras.cuerpo, eb);
+            if (s->como.mientras.sino) {
+                wb_escribir(eb, " ");
+                sent_a_buffer(s->como.mientras.sino, eb);
+            }
+            wb_escribir(eb, ")");
+            break;
+        case SENT_PARA:
+            wb_escribir(eb, "(para ");
+            expr_a_buffer(s->como.para.objetivo, eb);
+            wb_escribir(eb, " ");
+            expr_a_buffer(s->como.para.iterable, eb);
+            wb_escribir(eb, " ");
+            sent_a_buffer(s->como.para.cuerpo, eb);
+            if (s->como.para.sino) {
+                wb_escribir(eb, " ");
+                sent_a_buffer(s->como.para.sino, eb);
+            }
+            wb_escribir(eb, ")");
+            break;
+        case SENT_BLOQUE:
+            wb_escribir(eb, "(bloque");
+            for (int i = 0; i < s->como.bloque.n_sentencias; i++) {
+                wb_escribir(eb, " ");
+                sent_a_buffer(s->como.bloque.sentencias[i], eb);
+            }
+            wb_escribir(eb, ")");
+            break;
+    }
+}
+
+void sent_imprimir(const Sent *s, FILE *out) {
+    /* Implementación simple via buffer pequeño con re-impresión.
+       Para volumen real usaríamos buffer streaming, pero aquí es OK. */
+    char buffer[8192];
+    sent_a_cadena(s, buffer, sizeof(buffer));
+    fputs(buffer, out);
+}
+
+int sent_a_cadena(const Sent *s, char *buffer, int capacidad) {
+    if (capacidad <= 0) return 0;
+    EscrituraBuffer eb = { buffer, capacidad, 0 };
+    sent_a_buffer(s, &eb);
+    if (eb.usado >= eb.capacidad) eb.usado = eb.capacidad - 1;
+    buffer[eb.usado] = '\0';
+    return eb.usado;
+}

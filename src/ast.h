@@ -29,9 +29,13 @@
  * sentencias llegan en sesión 2.
  */
 
-/* Forward declaration para auto-referencias en variantes recursivas. */
+/* Forward declarations para auto-referencias entre Expr y Sent. */
 struct Expr;
 typedef struct Expr Expr;
+struct Sent;
+typedef struct Sent Sent;
+struct RamaSi;
+typedef struct RamaSi RamaSi;
 
 /* ──────────────────────────────────────────────────────────────────
  * Expresiones
@@ -168,5 +172,108 @@ void expr_imprimir(const Expr *e, FILE *salida);
  * samente — el cliente debe reservar buffer grande.
  */
 int expr_a_cadena(const Expr *e, char *buffer, int capacidad);
+
+/* ──────────────────────────────────────────────────────────────────
+ * Sentencias
+ *
+ * Una sentencia es una unidad ejecutable: asignación, control de
+ * flujo, expresión-como-sentencia. Cornamusa no es expresión-como-
+ * todo (Rust style); las sentencias son distintas de las expresiones.
+ *
+ * Esta versión (Fase 3 sesión 2) define las sentencias simples y
+ * de control de flujo. Funciones, clases, excepciones y módulos
+ * llegan en sesiones 3-4.
+ * ────────────────────────────────────────────────────────────────── */
+
+typedef enum {
+    SENT_EXPR,           /* `imprimir(x)` — expresión usada como sentencia */
+    SENT_ASIGNAR,        /* `x = expr` */
+    SENT_ASIGNAR_AUG,    /* `x += expr`, `x -= expr`, etc. */
+    SENT_PASAR,          /* `pasar` */
+    SENT_ROMPER,         /* `romper` */
+    SENT_CONTINUAR,      /* `continuar` */
+    SENT_RETORNAR,       /* `retornar [expr]` */
+    SENT_SI,             /* `si ... sino si ... sino ... fin si` */
+    SENT_MIENTRAS,       /* `mientras ... [sino ...] fin mientras` */
+    SENT_PARA,           /* `para X en Y: ... [sino ...] fin para` */
+    SENT_BLOQUE,         /* secuencia de sentencias (cuerpo de bloque) */
+} TipoSent;
+
+/*
+ * Una rama de un `si`. Para la rama `sino` final, `condicion` es NULL.
+ * Para las ramas `si` y `sino si`, `condicion` está presente.
+ */
+struct RamaSi {
+    Expr *condicion;     /* NULL en la rama 'sino' final */
+    Sent *cuerpo;        /* siempre un SENT_BLOQUE */
+    int linea, columna;  /* del 'si'/'sino si'/'sino' */
+};
+
+struct Sent {
+    TipoSent tipo;
+    int linea, columna;
+
+    union {
+        struct { Expr *expr; } expr;
+
+        struct {
+            Expr *destino;
+            Expr *valor;
+        } asignar;
+
+        struct {
+            Expr *destino;
+            TipoToken op;       /* TT_ASIGNAR_MAS, TT_ASIGNAR_MENOS, etc. */
+            Expr *valor;
+        } asignar_aug;
+
+        struct {
+            Expr *valor;        /* NULL si `retornar` sin expresión */
+        } retornar;
+
+        struct {
+            RamaSi *ramas;
+            int n_ramas;
+        } si;
+
+        struct {
+            Expr *condicion;
+            Sent *cuerpo;
+            Sent *sino;         /* NULL si no hay cláusula sino */
+        } mientras;
+
+        struct {
+            Expr *objetivo;     /* identificador (en sesión 5: tupla) */
+            Expr *iterable;
+            Sent *cuerpo;
+            Sent *sino;
+        } para;
+
+        struct {
+            Sent **sentencias;
+            int n_sentencias;
+        } bloque;
+    } como;
+};
+
+/* Constructores de sentencias. */
+Sent *sent_expr(Arena *a, Expr *e, int linea, int col);
+Sent *sent_asignar(Arena *a, Expr *destino, Expr *valor, int linea, int col);
+Sent *sent_asignar_aug(Arena *a, Expr *destino, TipoToken op, Expr *valor,
+                       int linea, int col);
+Sent *sent_pasar(Arena *a, int linea, int col);
+Sent *sent_romper(Arena *a, int linea, int col);
+Sent *sent_continuar(Arena *a, int linea, int col);
+Sent *sent_retornar(Arena *a, Expr *valor, int linea, int col);
+Sent *sent_si(Arena *a, RamaSi *ramas, int n_ramas, int linea, int col);
+Sent *sent_mientras(Arena *a, Expr *cond, Sent *cuerpo, Sent *sino,
+                    int linea, int col);
+Sent *sent_para(Arena *a, Expr *objetivo, Expr *iterable, Sent *cuerpo,
+                Sent *sino, int linea, int col);
+Sent *sent_bloque(Arena *a, Sent **sentencias, int n, int linea, int col);
+
+/* Pretty-printer para sentencias. Formato S-expression. */
+void sent_imprimir(const Sent *s, FILE *salida);
+int sent_a_cadena(const Sent *s, char *buffer, int capacidad);
 
 #endif /* CORNAMUSA_AST_H */

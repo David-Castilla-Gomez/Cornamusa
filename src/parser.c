@@ -90,6 +90,7 @@ void parser_iniciar(Parser *p, Lexer *l, Arena *a,
     p->archivo = archivo;
     p->tuvo_error = false;
     p->en_panico = false;
+    p->profundidad_bloques = 0;
     /* Pre-cargamos el primer token; previo se queda en cero hasta el
        primer avanzar real, lo que está bien porque nada lo lee antes. */
     p->previo = (Token){0};
@@ -423,4 +424,479 @@ static const ReglaParseo *obtener_regla(TipoToken tipo) {
         return &vacia;
     }
     return &reglas[tipo];
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Parseo de sentencias
+ *
+ * Algoritmo general:
+ *   - parsear_sentencia detecta el tipo según el primer token:
+ *     - TT_PASAR/TT_ROMPER/TT_CONTINUAR/TT_RETORNAR → simples
+ *     - TT_SI/TT_MIENTRAS/TT_PARA → bloques compuestos
+ *     - TT_IDENT u otro inicio de expresión → asignación o sent_expr
+ *   - Para bloques, después de `:`:
+ *     - Si el siguiente token está en la misma línea → one-liner
+ *       (un solo statement, sin `fin <X>`).
+ *     - Si está en línea siguiente → multilinea (bloque hasta
+ *       `fin <X>` requerido).
+ *   - Para `fin`, validamos contra el stack de bloques abiertos:
+ *     `fin si` solo cierra un bloque tipo SI, etc.
+ *
+ * Recuperación de errores: panic mode mínimo. En sesión 5 se afina.
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Forward declarations. */
+static Sent *parsear_si(Parser *p);
+static Sent *parsear_mientras(Parser *p);
+static Sent *parsear_para(Parser *p);
+static Sent *parsear_asignar_o_expr(Parser *p);
+static Sent *parsear_cuerpo_bloque(Parser *p);
+static const char *etiqueta_para_bloque(TipoBloque t);
+static TipoToken token_para_bloque(TipoBloque t);
+static bool consumir_fin(Parser *p, TipoBloque tipo, int linea_apertura);
+static bool empujar_bloque(Parser *p, TipoBloque tipo, int linea);
+static void salir_bloque(Parser *p);
+static bool en_inicio_de_termino(Parser *p);
+
+/* ¿El token actual termina un bloque (es `fin`, `sino`, EOF)? */
+static bool en_inicio_de_termino(Parser *p) {
+    return p->actual.tipo == TT_FIN
+        || p->actual.tipo == TT_SINO
+        || p->actual.tipo == TT_FIN_ARCHIVO;
+}
+
+/* Asignaciones aumentadas: `+=`, `-=`, etc. */
+static bool es_asignacion_aug(TipoToken t) {
+    return t == TT_ASIGNAR_MAS || t == TT_ASIGNAR_MENOS
+        || t == TT_ASIGNAR_ASTERISCO || t == TT_ASIGNAR_BARRA
+        || t == TT_ASIGNAR_DOBLE_BARRA || t == TT_ASIGNAR_PORCENTAJE
+        || t == TT_ASIGNAR_DOBLE_ASTER;
+}
+
+/* Stack de bloques. Al empujar, validamos overflow. */
+static bool empujar_bloque(Parser *p, TipoBloque tipo, int linea) {
+    if (p->profundidad_bloques >= 64) {
+        error_en(p, &p->actual,
+            "demasiados bloques anidados (máximo 64)");
+        return false;
+    }
+    p->pila_bloques[p->profundidad_bloques].tipo = tipo;
+    p->pila_bloques[p->profundidad_bloques].linea_apertura = linea;
+    p->profundidad_bloques++;
+    return true;
+}
+
+static void salir_bloque(Parser *p) {
+    if (p->profundidad_bloques > 0) p->profundidad_bloques--;
+}
+
+static const char *etiqueta_para_bloque(TipoBloque t) {
+    switch (t) {
+        case BLOQUE_SI:        return "si";
+        case BLOQUE_MIENTRAS:  return "mientras";
+        case BLOQUE_PARA:      return "para";
+        case BLOQUE_FUNCION:   return "funcion";
+        case BLOQUE_CLASE:     return "clase";
+        case BLOQUE_INTENTAR:  return "intentar";
+    }
+    return "?";
+}
+
+static TipoToken token_para_bloque(TipoBloque t) {
+    switch (t) {
+        case BLOQUE_SI:        return TT_SI;
+        case BLOQUE_MIENTRAS:  return TT_MIENTRAS;
+        case BLOQUE_PARA:      return TT_PARA;
+        case BLOQUE_FUNCION:   return TT_FUNCION;
+        case BLOQUE_CLASE:     return TT_CLASE;
+        case BLOQUE_INTENTAR:  return TT_INTENTAR;
+    }
+    return TT_ERROR;
+}
+
+/*
+ * Consume `fin <etiqueta>`. Verifica que la etiqueta coincide con
+ * el bloque que se está cerrando. Devuelve true si OK.
+ */
+static bool consumir_fin(Parser *p, TipoBloque tipo, int linea_apertura) {
+    if (!check(p, TT_FIN)) {
+        char buf[160];
+        snprintf(buf, sizeof(buf),
+            "se esperaba 'fin %s' para cerrar el bloque abierto en línea %d",
+            etiqueta_para_bloque(tipo), linea_apertura);
+        error_en(p, &p->actual, buf);
+        return false;
+    }
+    avanzar(p); /* consume 'fin' */
+
+    TipoToken esperado = token_para_bloque(tipo);
+    if (p->actual.tipo != esperado) {
+        char buf[200];
+        snprintf(buf, sizeof(buf),
+            "se esperaba 'fin %s' (bloque abierto en línea %d), encontrado 'fin %.*s'",
+            etiqueta_para_bloque(tipo),
+            linea_apertura,
+            p->actual.longitud,
+            p->actual.inicio);
+        error_en(p, &p->actual, buf);
+        return false;
+    }
+    avanzar(p); /* consume la etiqueta */
+    return true;
+}
+
+/*
+ * Parsea sentencias hasta encontrar fin/sino/EOF. Devuelve un
+ * SENT_BLOQUE con todas las sentencias acumuladas. No consume el
+ * token de cierre — la rutina llamante lo hace.
+ */
+static Sent *parsear_cuerpo_bloque(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+
+    Sent **sentencias = NULL;
+    int n = 0;
+    int capacidad = 0;
+
+    while (!en_inicio_de_termino(p)) {
+        if (n >= capacidad) {
+            capacidad = capacidad == 0 ? 8 : capacidad * 2;
+            Sent **nuevo = (Sent **)arena_alocar(p->arena,
+                sizeof(Sent *) * (size_t)capacidad);
+            if (nuevo == NULL) return NULL;
+            if (n > 0) memcpy(nuevo, sentencias, sizeof(Sent *) * (size_t)n);
+            sentencias = nuevo;
+        }
+        Sent *s = parser_parsear_sentencia(p);
+        if (s == NULL) {
+            /* Recuperación simple: si entramos en pánico, salir del
+               bloque para evitar loop infinito. */
+            if (p->en_panico) return NULL;
+            continue;
+        }
+        sentencias[n++] = s;
+    }
+
+    return sent_bloque(p->arena, sentencias, n, linea, col);
+}
+
+/*
+ * Parsea el cuerpo tras un `:`. Detecta one-liner vs bloque multilinea
+ * mirando si el siguiente token está en la misma línea que el `:`.
+ *
+ * Para one-liner: parsea una sola sentencia simple (no requiere `fin`).
+ * Para multilinea: parsea sentencias hasta fin/sino/EOF.
+ *
+ * Si `requiere_fin` es true, en el modo multilinea consume `fin <X>`.
+ * Si es false (ej. cuerpo de `si` cuando habrá `sino` o `sino si`),
+ * NO consume `fin`; el llamante es responsable.
+ *
+ * Devuelve siempre un SENT_BLOQUE (con 1 sentencia para one-liner).
+ */
+static Sent *parsear_cuerpo_tras_dospuntos(Parser *p, TipoBloque tipo_bloque,
+                                           bool requiere_fin,
+                                           int linea_apertura) {
+    /* Detectar one-liner: tras consumir ':', miramos si actual está
+       en la misma línea que ':' (que es ahora p->previo). */
+    bool es_one_liner = (p->previo.linea == p->actual.linea);
+
+    if (es_one_liner) {
+        Sent *s = parser_parsear_sentencia(p);
+        if (s == NULL) return NULL;
+        Sent **arr = (Sent **)arena_alocar(p->arena, sizeof(Sent *));
+        if (arr == NULL) return NULL;
+        arr[0] = s;
+        return sent_bloque(p->arena, arr, 1, s->linea, s->columna);
+    }
+
+    /* Multilinea. */
+    if (!empujar_bloque(p, tipo_bloque, linea_apertura)) return NULL;
+    Sent *cuerpo = parsear_cuerpo_bloque(p);
+    salir_bloque(p);
+    if (cuerpo == NULL) return NULL;
+
+    if (requiere_fin) {
+        if (!consumir_fin(p, tipo_bloque, linea_apertura)) return NULL;
+    }
+    return cuerpo;
+}
+
+static Sent *parsear_si(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'si' */
+
+    /* Recolectamos ramas en un array dinámico. */
+    RamaSi *ramas = NULL;
+    int n_ramas = 0;
+    int capacidad = 0;
+
+#define ANADIR_RAMA(_cond, _cuerpo, _l, _c)                                    \
+    do {                                                                       \
+        if (n_ramas >= capacidad) {                                            \
+            capacidad = capacidad == 0 ? 4 : capacidad * 2;                    \
+            RamaSi *nuevo = (RamaSi *)arena_alocar(p->arena,                   \
+                sizeof(RamaSi) * (size_t)capacidad);                           \
+            if (nuevo == NULL) return NULL;                                    \
+            if (n_ramas > 0)                                                   \
+                memcpy(nuevo, ramas, sizeof(RamaSi) * (size_t)n_ramas);        \
+            ramas = nuevo;                                                     \
+        }                                                                      \
+        ramas[n_ramas].condicion = (_cond);                                    \
+        ramas[n_ramas].cuerpo = (_cuerpo);                                     \
+        ramas[n_ramas].linea = (_l);                                           \
+        ramas[n_ramas].columna = (_c);                                         \
+        n_ramas++;                                                             \
+    } while (0)
+
+    Expr *cond = parser_parsear_expr(p);
+    if (cond == NULL) return NULL;
+    if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras la condición de 'si'")) {
+        return NULL;
+    }
+
+    /* Para detectar one-liner usamos la línea del ':'. Pero nuestra
+       función parsear_cuerpo_tras_dospuntos hace ese check. */
+    bool one_liner = (p->previo.linea == p->actual.linea);
+    Sent *cuerpo;
+
+    if (one_liner) {
+        /* One-liner: sin fin si, sin sino. */
+        cuerpo = parsear_cuerpo_tras_dospuntos(p, BLOQUE_SI, false, linea);
+        if (cuerpo == NULL) return NULL;
+        ANADIR_RAMA(cond, cuerpo, linea, col);
+        return sent_si(p->arena, ramas, n_ramas, linea, col);
+    }
+
+    /* Multilinea. Empujamos bloque manualmente porque hay sino/sino si. */
+    if (!empujar_bloque(p, BLOQUE_SI, linea)) return NULL;
+    cuerpo = parsear_cuerpo_bloque(p);
+    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
+    ANADIR_RAMA(cond, cuerpo, linea, col);
+
+    /* Cadena de sino si / sino. */
+    while (check(p, TT_SINO)) {
+        int rama_linea = p->actual.linea;
+        int rama_col = p->actual.columna;
+        avanzar(p); /* 'sino' */
+
+        if (check(p, TT_SI)) {
+            avanzar(p); /* 'si' */
+            Expr *c = parser_parsear_expr(p);
+            if (c == NULL) { salir_bloque(p); return NULL; }
+            if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras 'sino si'")) {
+                salir_bloque(p);
+                return NULL;
+            }
+            Sent *cu = parsear_cuerpo_bloque(p);
+            if (cu == NULL) { salir_bloque(p); return NULL; }
+            ANADIR_RAMA(c, cu, rama_linea, rama_col);
+        } else {
+            /* 'sino' final. */
+            if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras 'sino'")) {
+                salir_bloque(p);
+                return NULL;
+            }
+            Sent *cu = parsear_cuerpo_bloque(p);
+            if (cu == NULL) { salir_bloque(p); return NULL; }
+            ANADIR_RAMA(NULL, cu, rama_linea, rama_col);
+            break;
+        }
+    }
+
+    salir_bloque(p);
+    if (!consumir_fin(p, BLOQUE_SI, linea)) return NULL;
+
+    return sent_si(p->arena, ramas, n_ramas, linea, col);
+#undef ANADIR_RAMA
+}
+
+static Sent *parsear_mientras(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'mientras' */
+
+    Expr *cond = parser_parsear_expr(p);
+    if (cond == NULL) return NULL;
+    if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras la condición de 'mientras'")) {
+        return NULL;
+    }
+
+    bool one_liner = (p->previo.linea == p->actual.linea);
+    if (one_liner) {
+        Sent *cuerpo = parsear_cuerpo_tras_dospuntos(p, BLOQUE_MIENTRAS, false, linea);
+        if (cuerpo == NULL) return NULL;
+        return sent_mientras(p->arena, cond, cuerpo, NULL, linea, col);
+    }
+
+    if (!empujar_bloque(p, BLOQUE_MIENTRAS, linea)) return NULL;
+    Sent *cuerpo = parsear_cuerpo_bloque(p);
+    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
+
+    Sent *sino = NULL;
+    if (consumir_si(p, TT_SINO)) {
+        if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras 'sino' del 'mientras'")) {
+            salir_bloque(p);
+            return NULL;
+        }
+        sino = parsear_cuerpo_bloque(p);
+        if (sino == NULL) { salir_bloque(p); return NULL; }
+    }
+
+    salir_bloque(p);
+    if (!consumir_fin(p, BLOQUE_MIENTRAS, linea)) return NULL;
+
+    return sent_mientras(p->arena, cond, cuerpo, sino, linea, col);
+}
+
+static Sent *parsear_para(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'para' */
+
+    /* Objetivo: por ahora un único identificador. Multi-objetivo
+       (`a, b en pares`) llega en sesión 5. */
+    if (!check(p, TT_IDENT)) {
+        error_en(p, &p->actual,
+            "se esperaba un nombre de variable tras 'para'");
+        return NULL;
+    }
+    Token t_obj = p->actual;
+    avanzar(p);
+    Expr *objetivo = expr_ident(p->arena, t_obj.inicio, t_obj.longitud,
+                                 t_obj.linea, t_obj.columna);
+
+    if (!consumir(p, TT_EN, "se esperaba 'en' tras la variable de 'para'")) {
+        return NULL;
+    }
+    Expr *iterable = parser_parsear_expr(p);
+    if (iterable == NULL) return NULL;
+    if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras el iterable de 'para'")) {
+        return NULL;
+    }
+
+    bool one_liner = (p->previo.linea == p->actual.linea);
+    if (one_liner) {
+        Sent *cuerpo = parsear_cuerpo_tras_dospuntos(p, BLOQUE_PARA, false, linea);
+        if (cuerpo == NULL) return NULL;
+        return sent_para(p->arena, objetivo, iterable, cuerpo, NULL, linea, col);
+    }
+
+    if (!empujar_bloque(p, BLOQUE_PARA, linea)) return NULL;
+    Sent *cuerpo = parsear_cuerpo_bloque(p);
+    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
+
+    Sent *sino = NULL;
+    if (consumir_si(p, TT_SINO)) {
+        if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras 'sino' del 'para'")) {
+            salir_bloque(p);
+            return NULL;
+        }
+        sino = parsear_cuerpo_bloque(p);
+        if (sino == NULL) { salir_bloque(p); return NULL; }
+    }
+
+    salir_bloque(p);
+    if (!consumir_fin(p, BLOQUE_PARA, linea)) return NULL;
+
+    return sent_para(p->arena, objetivo, iterable, cuerpo, sino, linea, col);
+}
+
+/*
+ * Parsea una sentencia que empieza con una expresión: o bien
+ * asignación (simple o aumentada), o bien expresión-como-sentencia.
+ */
+static Sent *parsear_asignar_o_expr(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+
+    Expr *primero = parser_parsear_expr(p);
+    if (primero == NULL) return NULL;
+
+    if (consumir_si(p, TT_ASIGNAR)) {
+        Expr *valor = parser_parsear_expr(p);
+        if (valor == NULL) return NULL;
+        return sent_asignar(p->arena, primero, valor, linea, col);
+    }
+
+    if (es_asignacion_aug(p->actual.tipo)) {
+        TipoToken op = p->actual.tipo;
+        avanzar(p);
+        Expr *valor = parser_parsear_expr(p);
+        if (valor == NULL) return NULL;
+        return sent_asignar_aug(p->arena, primero, op, valor, linea, col);
+    }
+
+    return sent_expr(p->arena, primero, linea, col);
+}
+
+Sent *parser_parsear_sentencia(Parser *p) {
+    p->en_panico = false; /* nueva sentencia, salimos de pánico */
+
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+
+    switch (p->actual.tipo) {
+        case TT_PASAR:     avanzar(p); return sent_pasar(p->arena, linea, col);
+        case TT_ROMPER:    avanzar(p); return sent_romper(p->arena, linea, col);
+        case TT_CONTINUAR: avanzar(p); return sent_continuar(p->arena, linea, col);
+        case TT_RETORNAR: {
+            avanzar(p); /* consume 'retornar' */
+            /* Si tras 'retornar' viene algo que NO inicia expresión,
+               es 'retornar' sin valor. Heurística: si hay
+               salto de línea (token actual en línea distinta) o si es
+               fin/sino/EOF, no hay valor. */
+            if (p->actual.linea != linea
+                || p->actual.tipo == TT_FIN
+                || p->actual.tipo == TT_SINO
+                || p->actual.tipo == TT_FIN_ARCHIVO) {
+                return sent_retornar(p->arena, NULL, linea, col);
+            }
+            Expr *e = parser_parsear_expr(p);
+            if (e == NULL) return NULL;
+            return sent_retornar(p->arena, e, linea, col);
+        }
+        case TT_SI:        return parsear_si(p);
+        case TT_MIENTRAS:  return parsear_mientras(p);
+        case TT_PARA:      return parsear_para(p);
+
+        default:
+            return parsear_asignar_o_expr(p);
+    }
+}
+
+Sent **parser_parsear_programa(Parser *p, int *n_out) {
+    Sent **sentencias = NULL;
+    int n = 0;
+    int capacidad = 0;
+
+    while (p->actual.tipo != TT_FIN_ARCHIVO) {
+        if (n >= capacidad) {
+            capacidad = capacidad == 0 ? 16 : capacidad * 2;
+            Sent **nuevo = (Sent **)arena_alocar(p->arena,
+                sizeof(Sent *) * (size_t)capacidad);
+            if (nuevo == NULL) { *n_out = 0; return NULL; }
+            if (n > 0) memcpy(nuevo, sentencias, sizeof(Sent *) * (size_t)n);
+            sentencias = nuevo;
+        }
+        Sent *s = parser_parsear_sentencia(p);
+        if (s != NULL) {
+            sentencias[n++] = s;
+        } else if (p->en_panico) {
+            /* Recuperación: avanzar hasta inicio de siguiente sentencia
+               plausible (TT_FIN_ARCHIVO o keyword de inicio). */
+            while (p->actual.tipo != TT_FIN_ARCHIVO
+                && p->actual.tipo != TT_SI
+                && p->actual.tipo != TT_MIENTRAS
+                && p->actual.tipo != TT_PARA
+                && p->actual.tipo != TT_FUNCION
+                && p->actual.tipo != TT_CLASE) {
+                avanzar(p);
+            }
+            p->en_panico = false;
+        }
+    }
+
+    *n_out = n;
+    return sentencias;
 }
