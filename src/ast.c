@@ -109,6 +109,17 @@ Expr *expr_grupo(Arena *a, Expr *interna, int linea, int col) {
     return e;
 }
 
+Expr *expr_lambda(Arena *a, Parametro *params, int n_params, Expr *cuerpo,
+                  int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_LAMBDA, linea, col);
+    if (e) {
+        e->como.lambda.parametros = params;
+        e->como.lambda.n_parametros = n_params;
+        e->como.lambda.cuerpo = cuerpo;
+    }
+    return e;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Pretty-printer (S-expression style)
  *
@@ -352,6 +363,29 @@ static void expr_a_buffer(const Expr *e, EscrituraBuffer *eb) {
             expr_a_buffer(e->como.grupo.interna, eb);
             wb_escribir(eb, ")");
             break;
+        case EXPR_LAMBDA: {
+            wb_escribir(eb, "(lambda");
+            for (int i = 0; i < e->como.lambda.n_parametros; i++) {
+                Parametro *par = &e->como.lambda.parametros[i];
+                wb_escribir(eb, " (param ");
+                wb_escribir_lexema(eb, par->nombre, par->longitud_nombre);
+                if (par->anotacion_tipo) {
+                    wb_escribir(eb, " (tipo ");
+                    expr_a_buffer(par->anotacion_tipo, eb);
+                    wb_escribir(eb, ")");
+                }
+                if (par->valor_defecto) {
+                    wb_escribir(eb, " (defecto ");
+                    expr_a_buffer(par->valor_defecto, eb);
+                    wb_escribir(eb, ")");
+                }
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, " ");
+            expr_a_buffer(e->como.lambda.cuerpo, eb);
+            wb_escribir(eb, ")");
+            break;
+        }
     }
 }
 
@@ -452,6 +486,36 @@ Sent *sent_bloque(Arena *a, Sent **sentencias, int n, int linea, int col) {
     if (s) {
         s->como.bloque.sentencias = sentencias;
         s->como.bloque.n_sentencias = n;
+    }
+    return s;
+}
+
+Sent *sent_funcion(Arena *a, const char *nombre, int len_nombre,
+                   Parametro *params, int n_params,
+                   Expr *anot_retorno, Sent *cuerpo,
+                   int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_FUNCION, linea, col);
+    if (s) {
+        s->como.funcion.nombre = nombre;
+        s->como.funcion.longitud_nombre = len_nombre;
+        s->como.funcion.parametros = params;
+        s->como.funcion.n_parametros = n_params;
+        s->como.funcion.anotacion_retorno = anot_retorno;
+        s->como.funcion.cuerpo = cuerpo;
+    }
+    return s;
+}
+
+Sent *sent_clase(Arena *a, const char *nombre, int len_nombre,
+                 Expr **supers, int n_supers, Sent *cuerpo,
+                 int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_CLASE, linea, col);
+    if (s) {
+        s->como.clase.nombre = nombre;
+        s->como.clase.longitud_nombre = len_nombre;
+        s->como.clase.superclases = supers;
+        s->como.clase.n_superclases = n_supers;
+        s->como.clase.cuerpo = cuerpo;
     }
     return s;
 }
@@ -566,6 +630,51 @@ static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
                 wb_escribir(eb, " ");
                 sent_a_buffer(s->como.bloque.sentencias[i], eb);
             }
+            wb_escribir(eb, ")");
+            break;
+        case SENT_FUNCION:
+            wb_escribir(eb, "(funcion ");
+            wb_escribir_lexema(eb, s->como.funcion.nombre,
+                               s->como.funcion.longitud_nombre);
+            for (int i = 0; i < s->como.funcion.n_parametros; i++) {
+                Parametro *par = &s->como.funcion.parametros[i];
+                wb_escribir(eb, " (param ");
+                wb_escribir_lexema(eb, par->nombre, par->longitud_nombre);
+                if (par->anotacion_tipo) {
+                    wb_escribir(eb, " (tipo ");
+                    expr_a_buffer(par->anotacion_tipo, eb);
+                    wb_escribir(eb, ")");
+                }
+                if (par->valor_defecto) {
+                    wb_escribir(eb, " (defecto ");
+                    expr_a_buffer(par->valor_defecto, eb);
+                    wb_escribir(eb, ")");
+                }
+                wb_escribir(eb, ")");
+            }
+            if (s->como.funcion.anotacion_retorno) {
+                wb_escribir(eb, " (retorno ");
+                expr_a_buffer(s->como.funcion.anotacion_retorno, eb);
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, " ");
+            sent_a_buffer(s->como.funcion.cuerpo, eb);
+            wb_escribir(eb, ")");
+            break;
+        case SENT_CLASE:
+            wb_escribir(eb, "(clase ");
+            wb_escribir_lexema(eb, s->como.clase.nombre,
+                               s->como.clase.longitud_nombre);
+            if (s->como.clase.n_superclases > 0) {
+                wb_escribir(eb, " (extiende");
+                for (int i = 0; i < s->como.clase.n_superclases; i++) {
+                    wb_escribir(eb, " ");
+                    expr_a_buffer(s->como.clase.superclases[i], eb);
+                }
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, " ");
+            sent_a_buffer(s->como.clase.cuerpo, eb);
             wb_escribir(eb, ")");
             break;
     }

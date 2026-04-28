@@ -9,9 +9,39 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 ### En desarrollo (Fase 3 — Parser y AST, objetivo v0.3.0)
 - ✅ Sesión 1: AST + arena allocator + Pratt parser para expresiones.
 - ✅ Sesión 2: sentencias simples + control de flujo + validación `fin <etiqueta>`.
-- ⏳ Sesión 3: funciones, clases, lambda.
+- ✅ Sesión 3: funciones, clases, lambda.
 - ⏳ Sesión 4: excepciones y módulos.
 - ⏳ Sesión 5: f-strings parseadas, listas/dicts, `--ast` flag, integración con ejemplos, tag v0.3.0.
+
+### Añadido (Fase 3 sesión 3)
+- **`SENT_FUNCION`** en AST: nombre, parámetros, anotación de retorno opcional, cuerpo.
+- **`SENT_CLASE`** en AST: nombre, lista de superclases (`extiende A, B, C`), cuerpo.
+- **`EXPR_LAMBDA`** en AST: parámetros + cuerpo (una sola expresión, no bloque).
+- **`Parametro`** struct: nombre + anotación de tipo opcional + valor por defecto opcional.
+- **Parser de funciones**:
+  - `funcion nombre(p1, p2, ...) [-> tipo]:`
+  - Parámetros con anotación de tipo (`n: entero`) y valor por defecto (`idioma="es"`) en cualquier combinación.
+  - Anotación de retorno con `-> tipo`.
+  - Cuerpo: bloque multilínea cerrado con `fin funcion`, o one-liner.
+- **Parser de clases**:
+  - `clase Nombre [extiende A, B, ...]:`
+  - Multi-herencia sintácticamente aceptada (semántica MRO en runtime).
+  - Cuerpo cerrado con `fin clase`. Métodos son sentencias `funcion` dentro.
+- **Parser de lambda**:
+  - `lambda x, y, n=10: x + y + n`
+  - Parámetros sin paréntesis. Defaults permitidos. **Anotaciones de tipo NO permitidas** en lambda (el `:` siempre es terminador).
+  - Cuerpo es una sola expresión.
+- **Pretty-printer extendido**: `(funcion nombre (param x) (param y (defecto ...)) (retorno ...) (bloque ...))`, `(clase Nombre (extiende ...) (bloque ...))`, `(lambda (param x) <expr-cuerpo>)`.
+- **Validación de etiquetas extendida**: `fin funcion` y `fin clase` ahora se validan correctamente. `fin si` cerrando una función produce mensaje específico.
+- **`tests/unit/test_parser_funciones.c`** con ~20 tests cubriendo:
+  - Funciones con 0/1/varios parámetros, anotaciones de tipo, defaults, anotación de retorno, one-liner.
+  - Clases vacías, con métodos, con herencia simple y múltiple, ejemplo realista del `examples/07_clases_herencia.cor`.
+  - Lambdas vacías, con uno/varios parámetros, con defaults, anidadas en llamadas (`mapear(lambda x: x*2, lista)`).
+  - Validación: `fin funcion` no cierra `si` (y viceversa).
+  - Errores: función sin nombre, sin `(`, clase sin nombre, lambda sin cuerpo.
+  - Anidamiento realista: función con `si` dentro (patrón fibonacci).
+- **Limitación documentada**: las palabras `y`, `o`, `no`, `en`, `es` (operadores lógicos/comparativos como palabra) **son keywords y no se pueden usar como identificadores**. Tests usan nombres alternativos (`z`, `n`).
+- **20 tests verde** (8 unit + 12 integración).
 
 ### Añadido (Fase 3 sesión 2)
 - **AST de sentencias** en `ast.{h,c}`: 11 variantes (`SENT_EXPR`, `SENT_ASIGNAR`, `SENT_ASIGNAR_AUG`, `SENT_PASAR`, `SENT_ROMPER`, `SENT_CONTINUAR`, `SENT_RETORNAR`, `SENT_SI` con cadena de `RamaSi`, `SENT_MIENTRAS`, `SENT_PARA`, `SENT_BLOQUE`). Pretty-printer en S-expression.

@@ -65,6 +65,7 @@ static Expr *parsear_ident(Parser *p);
 static Expr *parsear_grupo(Parser *p);
 static Expr *parsear_unario(Parser *p);
 static Expr *parsear_no(Parser *p);
+static Expr *parsear_lambda(Parser *p);
 static Expr *parsear_binario(Parser *p, Expr *izq);
 static Expr *parsear_logica(Parser *p, Expr *izq);
 static Expr *parsear_potencia(Parser *p, Expr *izq);
@@ -414,6 +415,9 @@ static void inicializar_reglas(void) {
     reglas[TT_O]           = (ReglaParseo){ NULL, parsear_logica, PREC_O };
     reglas[TT_NO]          = (ReglaParseo){ parsear_no, NULL, PREC_NULA };
 
+    /* Lambda como expresión. */
+    reglas[TT_LAMBDA]      = (ReglaParseo){ parsear_lambda, NULL, PREC_NULA };
+
     reglas_inicializadas = true;
 }
 
@@ -449,8 +453,11 @@ static const ReglaParseo *obtener_regla(TipoToken tipo) {
 static Sent *parsear_si(Parser *p);
 static Sent *parsear_mientras(Parser *p);
 static Sent *parsear_para(Parser *p);
+static Sent *parsear_funcion(Parser *p);
+static Sent *parsear_clase(Parser *p);
 static Sent *parsear_asignar_o_expr(Parser *p);
 static Sent *parsear_cuerpo_bloque(Parser *p);
+static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out);
 static const char *etiqueta_para_bloque(TipoBloque t);
 static TipoToken token_para_bloque(TipoBloque t);
 static bool consumir_fin(Parser *p, TipoBloque tipo, int linea_apertura);
@@ -859,10 +866,256 @@ Sent *parser_parsear_sentencia(Parser *p) {
         case TT_SI:        return parsear_si(p);
         case TT_MIENTRAS:  return parsear_mientras(p);
         case TT_PARA:      return parsear_para(p);
+        case TT_FUNCION:   return parsear_funcion(p);
+        case TT_CLASE:     return parsear_clase(p);
 
         default:
             return parsear_asignar_o_expr(p);
     }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Parámetros, funciones, clases, lambda
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Parsea una lista de parámetros entre paréntesis. Asume que se está
+ * a punto de consumir el `(`. Tras la llamada, `(` y `)` están
+ * consumidos. Devuelve true si OK.
+ *
+ * Cada parámetro es: IDENT [: tipo] [= valor_defecto]
+ * ESPEC §5: parametro ← IDENT (":" expr)? ("=" expr)?
+ *
+ * En sesión 5 podríamos añadir *args y **kwargs si los necesitamos.
+ */
+static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
+    if (!consumir(p, TT_PARENT_IZQ,
+        "se esperaba '(' tras el nombre")) return false;
+
+    Parametro *params = NULL;
+    int n = 0;
+    int capacidad = 0;
+
+    if (!check(p, TT_PARENT_DER)) {
+        do {
+            if (!check(p, TT_IDENT)) {
+                error_en(p, &p->actual,
+                    "se esperaba un nombre de parámetro");
+                return false;
+            }
+            Token t_nombre = p->actual;
+            avanzar(p);
+
+            Expr *anot_tipo = NULL;
+            Expr *valor_defecto = NULL;
+
+            if (consumir_si(p, TT_DOS_PUNTOS)) {
+                /* Anotación de tipo. */
+                anot_tipo = parser_parsear_expr(p);
+                if (anot_tipo == NULL) return false;
+            }
+            if (consumir_si(p, TT_ASIGNAR)) {
+                /* Valor por defecto. */
+                valor_defecto = parser_parsear_expr(p);
+                if (valor_defecto == NULL) return false;
+            }
+
+            if (n >= capacidad) {
+                capacidad = capacidad == 0 ? 4 : capacidad * 2;
+                Parametro *nuevo = (Parametro *)arena_alocar(p->arena,
+                    sizeof(Parametro) * (size_t)capacidad);
+                if (nuevo == NULL) return false;
+                if (n > 0) memcpy(nuevo, params, sizeof(Parametro) * (size_t)n);
+                params = nuevo;
+            }
+            params[n].nombre = t_nombre.inicio;
+            params[n].longitud_nombre = t_nombre.longitud;
+            params[n].anotacion_tipo = anot_tipo;
+            params[n].valor_defecto = valor_defecto;
+            params[n].linea = t_nombre.linea;
+            params[n].columna = t_nombre.columna;
+            n++;
+        } while (consumir_si(p, TT_COMA));
+    }
+
+    if (!consumir(p, TT_PARENT_DER,
+        "se esperaba ')' al final de la lista de parámetros")) return false;
+
+    *out = params;
+    *n_out = n;
+    return true;
+}
+
+static Sent *parsear_funcion(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* consume 'funcion' */
+
+    if (!check(p, TT_IDENT)) {
+        error_en(p, &p->actual,
+            "se esperaba un nombre tras 'funcion'");
+        return NULL;
+    }
+    Token t_nombre = p->actual;
+    avanzar(p);
+
+    Parametro *params = NULL;
+    int n_params = 0;
+    if (!parsear_lista_parametros(p, &params, &n_params)) return NULL;
+
+    /* Anotación de retorno opcional `-> tipo`. */
+    Expr *anot_retorno = NULL;
+    if (consumir_si(p, TT_FLECHA)) {
+        anot_retorno = parser_parsear_expr(p);
+        if (anot_retorno == NULL) return NULL;
+    }
+
+    if (!consumir(p, TT_DOS_PUNTOS,
+        "se esperaba ':' tras la cabecera de la función")) return NULL;
+
+    /* Cuerpo: one-liner o multilinea. */
+    bool one_liner = (p->previo.linea == p->actual.linea);
+    Sent *cuerpo;
+    if (one_liner) {
+        cuerpo = parsear_cuerpo_tras_dospuntos(p, BLOQUE_FUNCION, false, linea);
+    } else {
+        if (!empujar_bloque(p, BLOQUE_FUNCION, linea)) return NULL;
+        cuerpo = parsear_cuerpo_bloque(p);
+        salir_bloque(p);
+        if (cuerpo == NULL) return NULL;
+        if (!consumir_fin(p, BLOQUE_FUNCION, linea)) return NULL;
+    }
+    if (cuerpo == NULL) return NULL;
+
+    return sent_funcion(p->arena, t_nombre.inicio, t_nombre.longitud,
+                        params, n_params, anot_retorno, cuerpo, linea, col);
+}
+
+static Sent *parsear_clase(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* consume 'clase' */
+
+    if (!check(p, TT_IDENT)) {
+        error_en(p, &p->actual,
+            "se esperaba un nombre tras 'clase'");
+        return NULL;
+    }
+    Token t_nombre = p->actual;
+    avanzar(p);
+
+    /* Superclases opcionales: `extiende Padre1, Padre2, ...`. */
+    Expr **supers = NULL;
+    int n_supers = 0;
+    int cap_supers = 0;
+
+    if (consumir_si(p, TT_EXTIENDE)) {
+        do {
+            Expr *padre = parser_parsear_expr(p);
+            if (padre == NULL) return NULL;
+            if (n_supers >= cap_supers) {
+                cap_supers = cap_supers == 0 ? 4 : cap_supers * 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap_supers);
+                if (nuevo == NULL) return NULL;
+                if (n_supers > 0)
+                    memcpy(nuevo, supers, sizeof(Expr *) * (size_t)n_supers);
+                supers = nuevo;
+            }
+            supers[n_supers++] = padre;
+        } while (consumir_si(p, TT_COMA));
+    }
+
+    if (!consumir(p, TT_DOS_PUNTOS,
+        "se esperaba ':' tras la cabecera de la clase")) return NULL;
+
+    /* Cuerpo: típicamente multilinea con métodos. One-liners en clases
+       son raros pero válidos según la regla general. */
+    bool one_liner = (p->previo.linea == p->actual.linea);
+    Sent *cuerpo;
+    if (one_liner) {
+        cuerpo = parsear_cuerpo_tras_dospuntos(p, BLOQUE_CLASE, false, linea);
+    } else {
+        if (!empujar_bloque(p, BLOQUE_CLASE, linea)) return NULL;
+        cuerpo = parsear_cuerpo_bloque(p);
+        salir_bloque(p);
+        if (cuerpo == NULL) return NULL;
+        if (!consumir_fin(p, BLOQUE_CLASE, linea)) return NULL;
+    }
+    if (cuerpo == NULL) return NULL;
+
+    return sent_clase(p->arena, t_nombre.inicio, t_nombre.longitud,
+                      supers, n_supers, cuerpo, linea, col);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Lambda como expresión: `lambda x, y: x + y`
+ *
+ * El parser de expresiones llama esta función cuando ve TT_LAMBDA.
+ * La sintaxis es `lambda` seguido de parámetros (sin paréntesis,
+ * a diferencia de `funcion`), `:`, y una sola expresión como cuerpo.
+ *
+ * Nota especial sobre defaults: lambda permite `=` para defaults
+ * porque tras consumir un parámetro buscamos `,` o `:`. Esto significa
+ * que dentro de una lambda no se puede asignar a una variable como
+ * expresión (Cornamusa no tiene walrus operator, así que no hay
+ * conflicto).
+ * ────────────────────────────────────────────────────────────────── */
+static Expr *parsear_lambda(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* consume 'lambda' */
+
+    Parametro *params = NULL;
+    int n = 0;
+    int capacidad = 0;
+
+    /* Lista de parámetros sin paréntesis: `x, y, z` o vacía.
+       En lambda NO se admiten anotaciones de tipo: el `:` siempre
+       termina la lista de parámetros. Solo `= valor_defecto` opcional. */
+    if (!check(p, TT_DOS_PUNTOS)) {
+        do {
+            if (!check(p, TT_IDENT)) {
+                error_en(p, &p->actual,
+                    "se esperaba un nombre de parámetro en lambda");
+                return NULL;
+            }
+            Token t_nombre = p->actual;
+            avanzar(p);
+
+            Expr *anot_tipo = NULL;  /* Lambda no admite anotaciones. */
+            Expr *valor_defecto = NULL;
+            if (consumir_si(p, TT_ASIGNAR)) {
+                valor_defecto = parser_parsear_expr(p);
+                if (valor_defecto == NULL) return NULL;
+            }
+
+            if (n >= capacidad) {
+                capacidad = capacidad == 0 ? 4 : capacidad * 2;
+                Parametro *nuevo = (Parametro *)arena_alocar(p->arena,
+                    sizeof(Parametro) * (size_t)capacidad);
+                if (nuevo == NULL) return NULL;
+                if (n > 0)
+                    memcpy(nuevo, params, sizeof(Parametro) * (size_t)n);
+                params = nuevo;
+            }
+            params[n].nombre = t_nombre.inicio;
+            params[n].longitud_nombre = t_nombre.longitud;
+            params[n].anotacion_tipo = anot_tipo;
+            params[n].valor_defecto = valor_defecto;
+            params[n].linea = t_nombre.linea;
+            params[n].columna = t_nombre.columna;
+            n++;
+        } while (consumir_si(p, TT_COMA));
+    }
+
+    if (!consumir(p, TT_DOS_PUNTOS,
+        "se esperaba ':' tras los parámetros de lambda")) return NULL;
+
+    Expr *cuerpo = parser_parsear_expr(p);
+    if (cuerpo == NULL) return NULL;
+
+    return expr_lambda(p->arena, params, n, cuerpo, linea, col);
 }
 
 Sent **parser_parsear_programa(Parser *p, int *n_out) {

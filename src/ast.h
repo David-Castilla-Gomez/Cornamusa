@@ -36,6 +36,8 @@ struct Sent;
 typedef struct Sent Sent;
 struct RamaSi;
 typedef struct RamaSi RamaSi;
+struct Parametro;
+typedef struct Parametro Parametro;
 
 /* ──────────────────────────────────────────────────────────────────
  * Expresiones
@@ -64,6 +66,9 @@ typedef enum {
 
     /* Agrupación / sentinela */
     EXPR_GRUPO,                 /* (expr) — preserva el AST aunque no aporta semántica */
+
+    /* Lambda: cuerpo es una sola expresión (no bloque). */
+    EXPR_LAMBDA,                /* lambda x, y: x + y */
 } TipoExpr;
 
 struct Expr {
@@ -123,6 +128,12 @@ struct Expr {
         struct {
             Expr *interna;
         } grupo;
+
+        struct {
+            Parametro *parametros;
+            int n_parametros;
+            Expr *cuerpo;       /* una sola expresión tras `:` */
+        } lambda;
     } como;
 };
 
@@ -150,6 +161,8 @@ Expr *expr_logica(Arena *a, Expr *izq, bool es_y, Expr *der, int linea, int col)
 Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, int col);
 Expr *expr_atributo(Arena *a, Expr *objeto, const char *nombre, int len, int linea, int col);
 Expr *expr_grupo(Arena *a, Expr *interna, int linea, int col);
+Expr *expr_lambda(Arena *a, Parametro *params, int n_params, Expr *cuerpo,
+                  int linea, int col);
 
 /* ──────────────────────────────────────────────────────────────────
  * Pretty-printer
@@ -197,7 +210,27 @@ typedef enum {
     SENT_MIENTRAS,       /* `mientras ... [sino ...] fin mientras` */
     SENT_PARA,           /* `para X en Y: ... [sino ...] fin para` */
     SENT_BLOQUE,         /* secuencia de sentencias (cuerpo de bloque) */
+    SENT_FUNCION,        /* `funcion nombre(params): ... fin funcion` */
+    SENT_CLASE,          /* `clase Nombre [extiende ...]: ... fin clase` */
 } TipoSent;
+
+/*
+ * Un parámetro de función o lambda. Por ESPEC §5:
+ *   parametro ← IDENT (":" expr)? ("=" expr)?
+ *
+ * Ej. `nombre`, `nombre: cadena`, `idioma="es"`, `n: entero=0`.
+ *
+ * El AST guarda anotacion_tipo aunque Cornamusa no la enforce
+ * (tipado dinámico). Se reserva para análisis estático opcional
+ * en versiones futuras.
+ */
+struct Parametro {
+    const char *nombre;
+    int longitud_nombre;
+    Expr *anotacion_tipo;       /* NULL si no hay */
+    Expr *valor_defecto;        /* NULL si no hay */
+    int linea, columna;
+};
 
 /*
  * Una rama de un `si`. Para la rama `sino` final, `condicion` es NULL.
@@ -253,6 +286,23 @@ struct Sent {
             Sent **sentencias;
             int n_sentencias;
         } bloque;
+
+        struct {
+            const char *nombre;
+            int longitud_nombre;
+            Parametro *parametros;
+            int n_parametros;
+            Expr *anotacion_retorno;    /* `-> tipo`, NULL si no hay */
+            Sent *cuerpo;               /* SENT_BLOQUE */
+        } funcion;
+
+        struct {
+            const char *nombre;
+            int longitud_nombre;
+            Expr **superclases;         /* lista; vacía si no hay `extiende` */
+            int n_superclases;
+            Sent *cuerpo;               /* SENT_BLOQUE de métodos/asignaciones */
+        } clase;
     } como;
 };
 
@@ -271,6 +321,13 @@ Sent *sent_mientras(Arena *a, Expr *cond, Sent *cuerpo, Sent *sino,
 Sent *sent_para(Arena *a, Expr *objetivo, Expr *iterable, Sent *cuerpo,
                 Sent *sino, int linea, int col);
 Sent *sent_bloque(Arena *a, Sent **sentencias, int n, int linea, int col);
+Sent *sent_funcion(Arena *a, const char *nombre, int len_nombre,
+                   Parametro *params, int n_params,
+                   Expr *anot_retorno, Sent *cuerpo,
+                   int linea, int col);
+Sent *sent_clase(Arena *a, const char *nombre, int len_nombre,
+                 Expr **supers, int n_supers, Sent *cuerpo,
+                 int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);
