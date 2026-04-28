@@ -1,0 +1,886 @@
+#include "evaluador.h"
+
+#include <math.h>
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "tommath.h"
+
+/* ──────────────────────────────────────────────────────────────────
+ * Errores
+ *
+ * El evaluador no usa setjmp/longjmp. En su lugar cada función pone el
+ * flag de error y devuelve `valor_nulo()`. Las funciones llamadoras
+ * deben comprobar `ev->error.tuvo_error` tras evaluar sub-expresiones
+ * para no continuar tras un fallo.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor error_en(Evaluador *ev, const Expr *e, const char *fmt, ...) {
+    if (!ev->error.tuvo_error) {
+        ev->error.tuvo_error = true;
+        ev->error.linea = e->linea;
+        ev->error.columna = e->columna;
+        va_list ap;
+        va_start(ap, fmt);
+        vsnprintf(ev->error.mensaje, sizeof(ev->error.mensaje), fmt, ap);
+        va_end(ap);
+    }
+    return valor_nulo();
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * API pública
+ * ────────────────────────────────────────────────────────────────── */
+
+void evaluador_iniciar(Evaluador *ev, Entorno *globales) {
+    ev->globales = globales;
+    ev->entorno_actual = globales;
+    ev->error.tuvo_error = false;
+    ev->error.mensaje[0] = '\0';
+    ev->error.linea = 0;
+    ev->error.columna = 0;
+}
+
+void evaluador_limpiar_error(Evaluador *ev) {
+    ev->error.tuvo_error = false;
+    ev->error.mensaje[0] = '\0';
+}
+
+bool evaluador_tiene_error(const Evaluador *ev) {
+    return ev->error.tuvo_error;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Helpers numéricos
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Convierte un VAL_ENTERO o VAL_BOOLEANO a double. Asume tipo válido. */
+static double valor_a_doble(const Valor *v) {
+    if (v->tipo == VAL_ENTERO) return mp_get_double(v->como.entero);
+    if (v->tipo == VAL_BOOLEANO) return v->como.booleano ? 1.0 : 0.0;
+    if (v->tipo == VAL_DECIMAL) return v->como.decimal;
+    return 0.0;
+}
+
+/*
+ * `True` y `False` son enteros 1 y 0 en Python para fines aritméticos.
+ * En Cornamusa adoptamos la misma semántica: si una operación requiere
+ * entero, un booleano se promueve a 1/0. Esta función crea un mp_int
+ * temporal cuando es necesario; el llamador debe destruir con mp_clear+free.
+ *
+ * Devuelve NULL si OOM. Si el valor ya es entero, devuelve directamente
+ * v->como.entero (sin transferir propiedad: NO destruir).
+ *
+ * La bandera `propio_out` indica si el llamador debe liberar.
+ */
+static mp_int *como_mp_int(const Valor *v, bool *propio_out) {
+    *propio_out = false;
+    if (v->tipo == VAL_ENTERO) {
+        return v->como.entero;
+    }
+    if (v->tipo == VAL_BOOLEANO) {
+        mp_int *m = (mp_int *)malloc(sizeof(mp_int));
+        if (!m) return NULL;
+        if (mp_init(m) != MP_OKAY) { free(m); return NULL; }
+        mp_set_l(m, v->como.booleano ? 1 : 0);
+        *propio_out = true;
+        return m;
+    }
+    return NULL;
+}
+
+/* Construye un Valor entero a partir de un mp_int recién inicializado.
+   Toma posesión del puntero. */
+static Valor valor_entero_de_mp(mp_int *m) {
+    Valor v;
+    v.tipo = VAL_ENTERO;
+    v.dueno_cadena = false;
+    v.como.entero = m;
+    return v;
+}
+
+/* Aloca un mp_int inicializado. NULL si OOM. */
+static mp_int *nuevo_mp(void) {
+    mp_int *m = (mp_int *)malloc(sizeof(mp_int));
+    if (!m) return NULL;
+    if (mp_init(m) != MP_OKAY) { free(m); return NULL; }
+    return m;
+}
+
+static void liberar_mp(mp_int *m) {
+    if (!m) return;
+    mp_clear(m);
+    free(m);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Aritmética entero ⊕ entero
+ *
+ * Devuelve un Valor nuevo. Si hay error (OOM, división por cero, etc.)
+ * pone el error en el evaluador y devuelve nulo.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor entero_op_entero(Evaluador *ev, TipoToken op,
+                              mp_int *a, mp_int *b, const Expr *e) {
+    mp_int *r = nuevo_mp();
+    if (!r) return error_en(ev, e, "memoria insuficiente");
+
+    int rc = MP_OKAY;
+    switch (op) {
+        case TT_MAS:        rc = mp_add(a, b, r); break;
+        case TT_MENOS:      rc = mp_sub(a, b, r); break;
+        case TT_ASTERISCO:  rc = mp_mul(a, b, r); break;
+
+        case TT_DOBLE_BARRA: {
+            /* Floor division con semántica Python: floor(a/b).
+             * mp_div es truncante. Ajustamos si hay resto y los signos
+             * difieren. */
+            if (mp_iszero(b) == MP_YES) {
+                liberar_mp(r);
+                return error_en(ev, e,
+                    "ErrorAritmetico: division por cero");
+            }
+            mp_int rem;
+            if (mp_init(&rem) != MP_OKAY) {
+                liberar_mp(r);
+                return error_en(ev, e, "memoria insuficiente");
+            }
+            rc = mp_div(a, b, r, &rem);
+            if (rc == MP_OKAY && mp_iszero(&rem) == MP_NO) {
+                bool a_neg = (mp_isneg(a) == MP_YES);
+                bool b_neg = (mp_isneg(b) == MP_YES);
+                if (a_neg != b_neg) {
+                    rc = mp_sub_d(r, 1, r);
+                }
+            }
+            mp_clear(&rem);
+            break;
+        }
+
+        case TT_PORCENTAJE: {
+            /* Mod matemático (Python style): 0 <= result < |b|.
+             * mp_mod ya hace exactamente eso. */
+            if (mp_iszero(b) == MP_YES) {
+                liberar_mp(r);
+                return error_en(ev, e,
+                    "ErrorAritmetico: modulo por cero");
+            }
+            rc = mp_mod(a, b, r);
+            break;
+        }
+
+        case TT_DOBLE_ASTERISCO: {
+            /* Potencia: solo manejamos exponente no negativo que cabe
+             * en uint32_t. Para exponente negativo Python devuelve
+             * decimal — ese caso lo cubre el llamador convirtiendo a
+             * doble antes. */
+            if (mp_isneg(b) == MP_YES) {
+                liberar_mp(r);
+                /* Convertir a aritmética flotante: 1 / a^|b|. */
+                double ad = mp_get_double(a);
+                double bd = mp_get_double(b);
+                return valor_decimal(pow(ad, bd));
+            }
+            uint64_t exp = 0;
+            /* mp_get_u64 no falla por sí mismo; truncará si no cabe.
+             * Comprobamos primero el tamaño. */
+            if (mp_count_bits(b) > 32) {
+                liberar_mp(r);
+                return error_en(ev, e,
+                    "ErrorDeValor: exponente demasiado grande para potencia entera");
+            }
+            exp = mp_get_u64(b);
+            rc = mp_expt_n(a, (int)exp, r);
+            break;
+        }
+
+        case TT_AMPERSAND:  rc = mp_and(a, b, r); break;
+        case TT_BARRA_VERT: rc = mp_or(a, b, r); break;
+        case TT_CIRCUNFLEJO: rc = mp_xor(a, b, r); break;
+
+        case TT_DESPL_IZQ: {
+            /* a << b : multiplica por 2^b. b debe ser no negativo y
+             * caber en int. */
+            if (mp_isneg(b) == MP_YES) {
+                liberar_mp(r);
+                return error_en(ev, e,
+                    "ErrorDeValor: desplazamiento negativo");
+            }
+            if (mp_count_bits(b) > 31) {
+                liberar_mp(r);
+                return error_en(ev, e,
+                    "ErrorDeValor: desplazamiento demasiado grande");
+            }
+            int n = (int)mp_get_u64(b);
+            rc = mp_mul_2d(a, n, r);
+            break;
+        }
+        case TT_DESPL_DER: {
+            /* a >> b : divide por 2^b (con rounding hacia -inf como Python). */
+            if (mp_isneg(b) == MP_YES) {
+                liberar_mp(r);
+                return error_en(ev, e,
+                    "ErrorDeValor: desplazamiento negativo");
+            }
+            if (mp_count_bits(b) > 31) {
+                liberar_mp(r);
+                /* Para a no negativo el resultado es 0; para negativo es -1.
+                 * Ese caso límite no compensa el coste — error explícito. */
+                return error_en(ev, e,
+                    "ErrorDeValor: desplazamiento demasiado grande");
+            }
+            int n = (int)mp_get_u64(b);
+            /* mp_div_2d trunca hacia cero; para Python necesitamos
+             * floor. Si a < 0 y se pierde algún bit, restar 1. */
+            mp_int rem;
+            if (mp_init(&rem) != MP_OKAY) {
+                liberar_mp(r);
+                return error_en(ev, e, "memoria insuficiente");
+            }
+            rc = mp_div_2d(a, n, r, &rem);
+            if (rc == MP_OKAY && mp_isneg(a) == MP_YES
+                && mp_iszero(&rem) == MP_NO) {
+                rc = mp_sub_d(r, 1, r);
+            }
+            mp_clear(&rem);
+            break;
+        }
+
+        default:
+            liberar_mp(r);
+            return error_en(ev, e,
+                "operador no soportado entre enteros");
+    }
+
+    if (rc != MP_OKAY) {
+        liberar_mp(r);
+        return error_en(ev, e, "fallo en operacion entera");
+    }
+    return valor_entero_de_mp(r);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Aritmética decimal ⊕ decimal (con promociones desde entero/booleano)
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor decimal_op_decimal(Evaluador *ev, TipoToken op,
+                                double a, double b, const Expr *e) {
+    switch (op) {
+        case TT_MAS:       return valor_decimal(a + b);
+        case TT_MENOS:     return valor_decimal(a - b);
+        case TT_ASTERISCO: return valor_decimal(a * b);
+        case TT_BARRA:
+            if (b == 0.0) {
+                return error_en(ev, e,
+                    "ErrorAritmetico: division por cero");
+            }
+            return valor_decimal(a / b);
+        case TT_DOBLE_BARRA:
+            if (b == 0.0) {
+                return error_en(ev, e,
+                    "ErrorAritmetico: division por cero");
+            }
+            return valor_decimal(floor(a / b));
+        case TT_PORCENTAJE: {
+            if (b == 0.0) {
+                return error_en(ev, e,
+                    "ErrorAritmetico: modulo por cero");
+            }
+            /* Python: a - floor(a/b)*b */
+            double r = a - floor(a / b) * b;
+            return valor_decimal(r);
+        }
+        case TT_DOBLE_ASTERISCO:
+            return valor_decimal(pow(a, b));
+        default:
+            return error_en(ev, e,
+                "operador no soportado entre decimales");
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Aritmética y operadores con cadenas
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor cadena_concatenar(Evaluador *ev, const Valor *a, const Valor *b,
+                                const Expr *e) {
+    int la = a->como.cadena.longitud;
+    int lb = b->como.cadena.longitud;
+    char *buf = (char *)malloc((size_t)la + (size_t)lb + 1);
+    if (!buf) return error_en(ev, e, "memoria insuficiente");
+    if (la > 0) memcpy(buf, a->como.cadena.texto, (size_t)la);
+    if (lb > 0) memcpy(buf + la, b->como.cadena.texto, (size_t)lb);
+    buf[la + lb] = '\0';
+    Valor v;
+    v.tipo = VAL_CADENA;
+    v.dueno_cadena = true;
+    v.como.cadena.texto = buf;
+    v.como.cadena.longitud = la + lb;
+    return v;
+}
+
+/* Repetición de cadena por entero: "ab" * 3 → "ababab".
+   Solo se admite multiplicación con entero no negativo. */
+static Valor cadena_repetir(Evaluador *ev, const Valor *cad, mp_int *veces,
+                             const Expr *e) {
+    if (mp_isneg(veces) == MP_YES) {
+        return valor_cadena_duplicar("", 0);  /* Python: "x" * -1 == "" */
+    }
+    if (mp_count_bits(veces) > 31) {
+        return error_en(ev, e,
+            "ErrorDeValor: repeticion de cadena demasiado grande");
+    }
+    uint64_t n = mp_get_u64(veces);
+    size_t la = (size_t)cad->como.cadena.longitud;
+    /* Comprobar overflow del tamaño total. */
+    if (la > 0 && n > 0 && n > ((size_t)-1) / la) {
+        return error_en(ev, e,
+            "ErrorDeValor: repeticion de cadena produce tamaño excesivo");
+    }
+    size_t total = la * (size_t)n;
+    char *buf = (char *)malloc(total + 1);
+    if (!buf) return error_en(ev, e, "memoria insuficiente");
+    for (uint64_t i = 0; i < n; i++) {
+        if (la > 0) memcpy(buf + (size_t)i * la,
+                            cad->como.cadena.texto, la);
+    }
+    buf[total] = '\0';
+    Valor v;
+    v.tipo = VAL_CADENA;
+    v.dueno_cadena = true;
+    v.como.cadena.texto = buf;
+    v.como.cadena.longitud = (int)total;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Comparaciones (devuelven booleano)
+ *
+ * Para tipos numéricos hacen comparación matemática (entero<->decimal
+ * via doble). Para cadenas, lexicográfica byte a byte. Para booleanos,
+ * se promueven a entero (false=0, true=1) si la otra parte es numérica.
+ * ────────────────────────────────────────────────────────────────── */
+
+typedef enum { ORD_LT = -1, ORD_EQ = 0, ORD_GT = 1, ORD_INCOMP = 2 } Orden;
+
+static Orden comparar_valores(const Valor *a, const Valor *b) {
+    /* Cadena vs cadena: lexicográfico. */
+    if (a->tipo == VAL_CADENA && b->tipo == VAL_CADENA) {
+        int la = a->como.cadena.longitud;
+        int lb = b->como.cadena.longitud;
+        int min = la < lb ? la : lb;
+        int c = (min > 0) ? memcmp(a->como.cadena.texto,
+                                    b->como.cadena.texto, (size_t)min) : 0;
+        if (c < 0) return ORD_LT;
+        if (c > 0) return ORD_GT;
+        if (la == lb) return ORD_EQ;
+        return la < lb ? ORD_LT : ORD_GT;
+    }
+
+    /* Numéricos (incluyendo booleano). */
+    bool an_num = (a->tipo == VAL_ENTERO || a->tipo == VAL_DECIMAL
+                   || a->tipo == VAL_BOOLEANO);
+    bool bn_num = (b->tipo == VAL_ENTERO || b->tipo == VAL_DECIMAL
+                   || b->tipo == VAL_BOOLEANO);
+    if (!an_num || !bn_num) return ORD_INCOMP;
+
+    /* Si ambos son enteros (o booleanos), comparar como bignum. */
+    bool a_entero = (a->tipo == VAL_ENTERO || a->tipo == VAL_BOOLEANO);
+    bool b_entero = (b->tipo == VAL_ENTERO || b->tipo == VAL_BOOLEANO);
+    if (a_entero && b_entero) {
+        bool propio_a, propio_b;
+        mp_int *ma = como_mp_int(a, &propio_a);
+        mp_int *mb = como_mp_int(b, &propio_b);
+        if (!ma || !mb) {
+            if (propio_a) liberar_mp(ma);
+            if (propio_b) liberar_mp(mb);
+            return ORD_INCOMP;
+        }
+        int c = mp_cmp(ma, mb);
+        if (propio_a) liberar_mp(ma);
+        if (propio_b) liberar_mp(mb);
+        if (c == MP_LT) return ORD_LT;
+        if (c == MP_GT) return ORD_GT;
+        return ORD_EQ;
+    }
+
+    /* Caso mixto entero/decimal: convertir a doble. */
+    double ad = valor_a_doble(a);
+    double bd = valor_a_doble(b);
+    if (ad < bd) return ORD_LT;
+    if (ad > bd) return ORD_GT;
+    return ORD_EQ;
+}
+
+static Valor evaluar_comparacion(Evaluador *ev, TipoToken op,
+                                  const Valor *a, const Valor *b,
+                                  const Expr *e) {
+    if (op == TT_IGUAL)    return valor_booleano(valor_iguales(a, b));
+    if (op == TT_DISTINTO) return valor_booleano(!valor_iguales(a, b));
+
+    Orden o = comparar_valores(a, b);
+    if (o == ORD_INCOMP) {
+        return error_en(ev, e,
+            "ErrorDeTipo: no se puede comparar '%s' con '%s'",
+            valor_nombre_tipo(a), valor_nombre_tipo(b));
+    }
+    switch (op) {
+        case TT_MENOR:        return valor_booleano(o == ORD_LT);
+        case TT_MENOR_IGUAL:  return valor_booleano(o != ORD_GT);
+        case TT_MAYOR:        return valor_booleano(o == ORD_GT);
+        case TT_MAYOR_IGUAL:  return valor_booleano(o != ORD_LT);
+        default:
+            return error_en(ev, e, "comparador interno desconocido");
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Operador `es` (identidad) y `en` (pertenencia)
+ *
+ * Sesión 2: `es` aplica a cualquier par de valores. Para enteros
+ * pequeños y booleanos coincide con igualdad estructural; para tipos
+ * con identidad de objeto (cadenas, futuras colecciones) pueden diver-
+ * gir, pero sin objetos heap interned todavía adoptamos la regla
+ * conservadora `a es b ↔ valor_iguales(a, b)` cuando ambos son
+ * inmutables. Esto se refinará en F4 S5 con identidad real para
+ * funciones y futuras instancias.
+ *
+ * `en`: para esta sesión solo soporta `subcadena en cadena`. Listas y
+ * diccionarios llegan en F5.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor evaluar_es(const Valor *a, const Valor *b) {
+    /* Para funciones (y futura clase/instancia) basta comparar puntero. */
+    if (a->tipo == VAL_FUNCION && b->tipo == VAL_FUNCION) {
+        return valor_booleano(a->como.funcion == b->como.funcion);
+    }
+    if (a->tipo == VAL_NATIVA && b->tipo == VAL_NATIVA) {
+        return valor_booleano(a->como.nativa == b->como.nativa);
+    }
+    /* nulo es nulo, verdadero es verdadero, etc. — coincide con igualdad. */
+    return valor_booleano(valor_iguales(a, b));
+}
+
+static Valor evaluar_en(Evaluador *ev, const Valor *a, const Valor *b,
+                        const Expr *e) {
+    if (b->tipo != VAL_CADENA) {
+        return error_en(ev, e,
+            "ErrorDeTipo: el operador 'en' aun no soporta '%s' en esta version",
+            valor_nombre_tipo(b));
+    }
+    if (a->tipo != VAL_CADENA) {
+        return error_en(ev, e,
+            "ErrorDeTipo: subcadena debe ser cadena, no '%s'",
+            valor_nombre_tipo(a));
+    }
+    int la = a->como.cadena.longitud;
+    int lb = b->como.cadena.longitud;
+    if (la == 0) return valor_booleano(true);  /* "" en cualquiera */
+    if (la > lb) return valor_booleano(false);
+    const char *ta = a->como.cadena.texto;
+    const char *tb = b->como.cadena.texto;
+    for (int i = 0; i + la <= lb; i++) {
+        if (memcmp(tb + i, ta, (size_t)la) == 0) return valor_booleano(true);
+    }
+    return valor_booleano(false);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Despachadores
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor eval_binario(Evaluador *ev, const Expr *e);
+static Valor eval_unario(Evaluador *ev, const Expr *e);
+static Valor eval_logica(Evaluador *ev, const Expr *e);
+
+Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
+    if (ev->error.tuvo_error) return valor_nulo();
+
+    switch (e->tipo) {
+        case EXPR_LITERAL_NULO:
+            return valor_nulo();
+        case EXPR_LITERAL_BOOLEANO:
+            return valor_booleano(e->como.booleano.valor);
+        case EXPR_LITERAL_ENTERO:
+            return valor_entero_de_lexema(e->como.literal.lexema,
+                                           e->como.literal.longitud);
+        case EXPR_LITERAL_DECIMAL:
+            return valor_decimal_de_lexema(e->como.literal.lexema,
+                                            e->como.literal.longitud);
+        case EXPR_LITERAL_CADENA: {
+            /* El lexema incluye comillas: "hola" o 'mundo'. Las quitamos
+             * y procesamos las secuencias de escape mínimas (\n \t \\
+             * \" \'). Para esta sesión basta una pasada simple — la
+             * versión completa con \xHH y \uHHHH llega en F4 S3 cuando
+             * el evaluador trate cadenas como ciudadanos completos. */
+            const char *lex = e->como.literal.lexema;
+            int len = e->como.literal.longitud;
+            if (len < 2) return valor_cadena_referencia("", 0);
+            char delim = lex[0];
+            (void)delim;
+            const char *src = lex + 1;
+            int srclen = len - 2;  /* sin comillas */
+            char *buf = (char *)malloc((size_t)srclen + 1);
+            if (!buf) return error_en(ev, e, "memoria insuficiente");
+            int j = 0;
+            for (int i = 0; i < srclen; i++) {
+                char c = src[i];
+                if (c == '\\' && i + 1 < srclen) {
+                    char nx = src[++i];
+                    switch (nx) {
+                        case 'n': buf[j++] = '\n'; break;
+                        case 't': buf[j++] = '\t'; break;
+                        case 'r': buf[j++] = '\r'; break;
+                        case '0': buf[j++] = '\0'; break;
+                        case '\\': buf[j++] = '\\'; break;
+                        case '\'': buf[j++] = '\''; break;
+                        case '"': buf[j++] = '"'; break;
+                        default:
+                            /* Escape no reconocido: copia literal del
+                             * carácter siguiente; el lexer ya validó las
+                             * formas conocidas. */
+                            buf[j++] = nx; break;
+                    }
+                } else {
+                    buf[j++] = c;
+                }
+            }
+            buf[j] = '\0';
+            Valor v;
+            v.tipo = VAL_CADENA;
+            v.dueno_cadena = true;
+            v.como.cadena.texto = buf;
+            v.como.cadena.longitud = j;
+            return v;
+        }
+        case EXPR_LITERAL_F_CADENA:
+            return error_en(ev, e,
+                "f-cadenas con interpolacion aun no implementadas en v0.4");
+
+        case EXPR_IDENT: {
+            Valor v;
+            if (!entorno_obtener(ev->entorno_actual,
+                                  e->como.ident.nombre,
+                                  e->como.ident.longitud, &v)) {
+                return error_en(ev, e,
+                    "ErrorDeNombre: nombre '%.*s' no esta definido",
+                    e->como.ident.longitud, e->como.ident.nombre);
+            }
+            return v;
+        }
+
+        case EXPR_GRUPO:
+            return evaluador_evaluar_expr(ev, e->como.grupo.interna);
+
+        case EXPR_BINARIO:  return eval_binario(ev, e);
+        case EXPR_UNARIO:   return eval_unario(ev, e);
+        case EXPR_LOGICA:   return eval_logica(ev, e);
+
+        case EXPR_LLAMADA:
+        case EXPR_ATRIBUTO:
+        case EXPR_LAMBDA:
+        case EXPR_LISTA:
+        case EXPR_DICCIONARIO:
+        case EXPR_CONJUNTO:
+        case EXPR_TUPLA:
+        case EXPR_INDICE:
+        case EXPR_REBANADA:
+            return error_en(ev, e,
+                "esta forma de expresion aun no esta implementada en v0.4");
+    }
+    return error_en(ev, e, "tipo de expresion desconocido");
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Binario
+ * ────────────────────────────────────────────────────────────────── */
+
+static bool es_numerico(const Valor *v) {
+    return v->tipo == VAL_ENTERO || v->tipo == VAL_DECIMAL
+        || v->tipo == VAL_BOOLEANO;
+}
+
+static bool es_aritmetico(TipoToken op) {
+    switch (op) {
+        case TT_MAS: case TT_MENOS: case TT_ASTERISCO:
+        case TT_BARRA: case TT_DOBLE_BARRA:
+        case TT_PORCENTAJE: case TT_DOBLE_ASTERISCO:
+            return true;
+        default: return false;
+    }
+}
+
+static bool es_bitwise(TipoToken op) {
+    switch (op) {
+        case TT_AMPERSAND: case TT_BARRA_VERT: case TT_CIRCUNFLEJO:
+        case TT_DESPL_IZQ: case TT_DESPL_DER:
+            return true;
+        default: return false;
+    }
+}
+
+static bool es_comparacion(TipoToken op) {
+    switch (op) {
+        case TT_IGUAL: case TT_DISTINTO:
+        case TT_MENOR: case TT_MENOR_IGUAL:
+        case TT_MAYOR: case TT_MAYOR_IGUAL:
+            return true;
+        default: return false;
+    }
+}
+
+static Valor eval_binario(Evaluador *ev, const Expr *e) {
+    Valor a = evaluador_evaluar_expr(ev, e->como.binario.izq);
+    if (ev->error.tuvo_error) { valor_destruir(&a); return valor_nulo(); }
+    Valor b = evaluador_evaluar_expr(ev, e->como.binario.der);
+    if (ev->error.tuvo_error) {
+        valor_destruir(&a); valor_destruir(&b); return valor_nulo();
+    }
+
+    TipoToken op = e->como.binario.op;
+    Valor resultado = valor_nulo();
+
+    /* Identidad y pertenencia. */
+    if (op == TT_ES) {
+        resultado = evaluar_es(&a, &b);
+        valor_destruir(&a); valor_destruir(&b);
+        return resultado;
+    }
+    if (op == TT_EN) {
+        resultado = evaluar_en(ev, &a, &b, e);
+        valor_destruir(&a); valor_destruir(&b);
+        return resultado;
+    }
+
+    /* Comparaciones (devuelven booleano). */
+    if (es_comparacion(op)) {
+        resultado = evaluar_comparacion(ev, op, &a, &b, e);
+        valor_destruir(&a); valor_destruir(&b);
+        return resultado;
+    }
+
+    /* Concatenación y repetición de cadena (operador '+' y '*'). */
+    if (op == TT_MAS && a.tipo == VAL_CADENA && b.tipo == VAL_CADENA) {
+        resultado = cadena_concatenar(ev, &a, &b, e);
+        valor_destruir(&a); valor_destruir(&b);
+        return resultado;
+    }
+    if (op == TT_ASTERISCO
+        && ((a.tipo == VAL_CADENA && (b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO))
+         || (b.tipo == VAL_CADENA && (a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)))) {
+        const Valor *cad = (a.tipo == VAL_CADENA) ? &a : &b;
+        const Valor *otr = (a.tipo == VAL_CADENA) ? &b : &a;
+        bool propio;
+        mp_int *m = como_mp_int(otr, &propio);
+        if (!m) {
+            valor_destruir(&a); valor_destruir(&b);
+            return error_en(ev, e, "memoria insuficiente");
+        }
+        resultado = cadena_repetir(ev, cad, m, e);
+        if (propio) liberar_mp(m);
+        valor_destruir(&a); valor_destruir(&b);
+        return resultado;
+    }
+
+    /* Bitwise: requiere ambos enteros (booleano permitido). */
+    if (es_bitwise(op)) {
+        if (!(a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)
+         || !(b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO)) {
+            resultado = error_en(ev, e,
+                "ErrorDeTipo: operador bitwise requiere enteros, no '%s' y '%s'",
+                valor_nombre_tipo(&a), valor_nombre_tipo(&b));
+            valor_destruir(&a); valor_destruir(&b);
+            return resultado;
+        }
+        bool pa, pb;
+        mp_int *ma = como_mp_int(&a, &pa);
+        mp_int *mb = como_mp_int(&b, &pb);
+        resultado = entero_op_entero(ev, op, ma, mb, e);
+        if (pa) liberar_mp(ma);
+        if (pb) liberar_mp(mb);
+        valor_destruir(&a); valor_destruir(&b);
+        return resultado;
+    }
+
+    /* Aritmética. */
+    if (es_aritmetico(op)) {
+        if (!es_numerico(&a) || !es_numerico(&b)) {
+            resultado = error_en(ev, e,
+                "ErrorDeTipo: operador '%s' no aplica entre '%s' y '%s'",
+                op == TT_MAS ? "+" :
+                op == TT_MENOS ? "-" :
+                op == TT_ASTERISCO ? "*" :
+                op == TT_BARRA ? "/" :
+                op == TT_DOBLE_BARRA ? "//" :
+                op == TT_PORCENTAJE ? "%" :
+                op == TT_DOBLE_ASTERISCO ? "**" : "?",
+                valor_nombre_tipo(&a), valor_nombre_tipo(&b));
+            valor_destruir(&a); valor_destruir(&b);
+            return resultado;
+        }
+
+        /* Caso especial: '/' siempre produce decimal. */
+        if (op == TT_BARRA) {
+            double ad = valor_a_doble(&a);
+            double bd = valor_a_doble(&b);
+            valor_destruir(&a); valor_destruir(&b);
+            if (bd == 0.0) {
+                return error_en(ev, e,
+                    "ErrorAritmetico: division por cero");
+            }
+            return valor_decimal(ad / bd);
+        }
+
+        /* Si alguno es decimal, todo va por aritmética doble. */
+        bool a_dec = (a.tipo == VAL_DECIMAL);
+        bool b_dec = (b.tipo == VAL_DECIMAL);
+        if (a_dec || b_dec) {
+            double ad = valor_a_doble(&a);
+            double bd = valor_a_doble(&b);
+            resultado = decimal_op_decimal(ev, op, ad, bd, e);
+            valor_destruir(&a); valor_destruir(&b);
+            return resultado;
+        }
+
+        /* Ambos son enteros (o booleanos): usar libtommath. */
+        bool pa, pb;
+        mp_int *ma = como_mp_int(&a, &pa);
+        mp_int *mb = como_mp_int(&b, &pb);
+        if (!ma || !mb) {
+            if (pa) liberar_mp(ma);
+            if (pb) liberar_mp(mb);
+            valor_destruir(&a); valor_destruir(&b);
+            return error_en(ev, e, "memoria insuficiente");
+        }
+        resultado = entero_op_entero(ev, op, ma, mb, e);
+        if (pa) liberar_mp(ma);
+        if (pb) liberar_mp(mb);
+        valor_destruir(&a); valor_destruir(&b);
+        return resultado;
+    }
+
+    valor_destruir(&a); valor_destruir(&b);
+    return error_en(ev, e, "operador binario desconocido");
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Unario
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor eval_unario(Evaluador *ev, const Expr *e) {
+    Valor v = evaluador_evaluar_expr(ev, e->como.unario.operando);
+    if (ev->error.tuvo_error) { valor_destruir(&v); return valor_nulo(); }
+
+    TipoToken op = e->como.unario.op;
+    switch (op) {
+        case TT_NO:
+            return (Valor){
+                .tipo = VAL_BOOLEANO,
+                .dueno_cadena = false,
+                .como.booleano = !valor_es_verdadero(&v),
+            };
+
+        case TT_MAS:
+            /* +x: identidad numérica. */
+            if (v.tipo == VAL_ENTERO || v.tipo == VAL_DECIMAL) return v;
+            if (v.tipo == VAL_BOOLEANO) {
+                bool b = v.como.booleano;
+                valor_destruir(&v);
+                return valor_entero_de_long(b ? 1 : 0);
+            }
+            valor_destruir(&v);
+            return error_en(ev, e,
+                "ErrorDeTipo: el operador '+' unario requiere numerico");
+
+        case TT_MENOS: {
+            if (v.tipo == VAL_DECIMAL) {
+                double d = -v.como.decimal;
+                valor_destruir(&v);
+                return valor_decimal(d);
+            }
+            if (v.tipo == VAL_ENTERO) {
+                mp_int *r = nuevo_mp();
+                if (!r) {
+                    valor_destruir(&v);
+                    return error_en(ev, e, "memoria insuficiente");
+                }
+                if (mp_neg(v.como.entero, r) != MP_OKAY) {
+                    liberar_mp(r); valor_destruir(&v);
+                    return error_en(ev, e, "fallo en negacion entera");
+                }
+                valor_destruir(&v);
+                return valor_entero_de_mp(r);
+            }
+            if (v.tipo == VAL_BOOLEANO) {
+                long n = v.como.booleano ? -1 : 0;
+                valor_destruir(&v);
+                return valor_entero_de_long(n);
+            }
+            valor_destruir(&v);
+            return error_en(ev, e,
+                "ErrorDeTipo: el operador '-' unario requiere numerico");
+        }
+
+        case TT_TILDE_BIT: {
+            /* ~x: complemento a uno. Para entero usa mp_complement (sí
+             * existe en libtommath). Booleano se promueve a entero. */
+            if (v.tipo == VAL_ENTERO || v.tipo == VAL_BOOLEANO) {
+                bool propio;
+                mp_int *m = como_mp_int(&v, &propio);
+                if (!m) {
+                    valor_destruir(&v);
+                    return error_en(ev, e, "memoria insuficiente");
+                }
+                mp_int *r = nuevo_mp();
+                if (!r) {
+                    if (propio) liberar_mp(m);
+                    valor_destruir(&v);
+                    return error_en(ev, e, "memoria insuficiente");
+                }
+                if (mp_complement(m, r) != MP_OKAY) {
+                    liberar_mp(r);
+                    if (propio) liberar_mp(m);
+                    valor_destruir(&v);
+                    return error_en(ev, e, "fallo en complemento bit a bit");
+                }
+                if (propio) liberar_mp(m);
+                valor_destruir(&v);
+                return valor_entero_de_mp(r);
+            }
+            valor_destruir(&v);
+            return error_en(ev, e,
+                "ErrorDeTipo: el operador '~' requiere entero");
+        }
+
+        default:
+            valor_destruir(&v);
+            return error_en(ev, e, "operador unario desconocido");
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Lógica con cortocircuito
+ *
+ * `a y b`: si `a` es falso, devuelve `a` sin evaluar `b`.
+ * `a o b`: si `a` es verdadero, devuelve `a` sin evaluar `b`.
+ * Devuelve el valor "decisor" original (no booleano), igual que Python.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor eval_logica(Evaluador *ev, const Expr *e) {
+    Valor izq = evaluador_evaluar_expr(ev, e->como.logica.izq);
+    if (ev->error.tuvo_error) { valor_destruir(&izq); return valor_nulo(); }
+
+    bool es_y = e->como.logica.es_y;
+    bool izq_v = valor_es_verdadero(&izq);
+
+    if (es_y) {
+        if (!izq_v) return izq;     /* `falso y X` → `falso` (sin evaluar X) */
+    } else {
+        if (izq_v)  return izq;     /* `verdadero o X` → `verdadero` */
+    }
+
+    valor_destruir(&izq);
+    return evaluador_evaluar_expr(ev, e->como.logica.der);
+}

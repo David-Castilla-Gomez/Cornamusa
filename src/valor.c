@@ -362,6 +362,31 @@ bool valor_iguales(const Valor *a, const Valor *b) {
         return a->como.decimal == mp_get_double(b->como.entero);
     }
 
+    /* Booleanos se comparan como enteros con otros tipos numéricos
+       (Python: True == 1 == 1.0). */
+    if (a->tipo == VAL_BOOLEANO
+        && (b->tipo == VAL_ENTERO || b->tipo == VAL_DECIMAL)) {
+        long ai = a->como.booleano ? 1 : 0;
+        if (b->tipo == VAL_DECIMAL) return (double)ai == b->como.decimal;
+        mp_int tmp;
+        if (mp_init(&tmp) != MP_OKAY) return false;
+        mp_set_l(&tmp, ai);
+        bool igual = mp_cmp(&tmp, b->como.entero) == MP_EQ;
+        mp_clear(&tmp);
+        return igual;
+    }
+    if (b->tipo == VAL_BOOLEANO
+        && (a->tipo == VAL_ENTERO || a->tipo == VAL_DECIMAL)) {
+        long bi = b->como.booleano ? 1 : 0;
+        if (a->tipo == VAL_DECIMAL) return a->como.decimal == (double)bi;
+        mp_int tmp;
+        if (mp_init(&tmp) != MP_OKAY) return false;
+        mp_set_l(&tmp, bi);
+        bool igual = mp_cmp(a->como.entero, &tmp) == MP_EQ;
+        mp_clear(&tmp);
+        return igual;
+    }
+
     if (a->tipo != b->tipo) return false;
 
     switch (a->tipo) {
