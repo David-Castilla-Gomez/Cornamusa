@@ -10,9 +10,30 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif
+
 #include "common.h"
 
 #define LINEA_MAX 1024
+
+/*
+ * Configura la consola para emitir y aceptar UTF-8.
+ *
+ * En Windows, la consola usa por defecto code pages legacy (CP-850, CP-1252)
+ * que producen mojibake al imprimir caracteres como ñ, á o ¡. Sin esta
+ * llamada, "¡Hola, mundo!" se ve como "íHola, mundo!" en cmd.exe.
+ *
+ * En Linux y macOS la consola ya es UTF-8 por defecto: la función no hace
+ * nada.
+ */
+static void configurar_consola_utf8(void) {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
+}
 
 static void imprimir_uso(const char *programa) {
     fprintf(stderr,
@@ -81,6 +102,8 @@ static int correr_archivo(const char *ruta) {
 }
 
 int main(int argc, char **argv) {
+    configurar_consola_utf8();
+
     /* Parseo simple de argumentos (sin getopt para evitar dependencia POSIX). */
     const char *archivo = NULL;
     for (int i = 1; i < argc; i++) {
