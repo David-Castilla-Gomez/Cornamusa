@@ -10,8 +10,28 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 1: esqueleto del lexer + tokens simples (símbolos, operadores, comentarios).
 - ✅ Sesión 2: literales numéricos y cadenas básicas.
 - ✅ Sesión 3: identificadores Unicode + NFC + tabla de keywords.
-- ⏳ Sesión 4: f-strings y triple-quoted strings.
+- ✅ Sesión 4: f-strings y triple-quoted strings.
 - ⏳ Sesión 5: mensajes de error pulidos siguiendo MENSAJES.md + tests exhaustivos.
+
+### Añadido (Fase 2 sesión 4)
+- Lexer reconoce **f-strings** (`TT_F_CADENA`):
+  - Prefijo `f` o `F` inmediatamente seguido de comilla simple o doble.
+  - Interpolación `{expresión}` con tracking de profundidad de llaves balanceadas.
+  - `{{` y `}}` son llaves literales (no abren ni cierran interpolación).
+  - El lexema completo (incluyendo `f` y comillas) se almacena en el token; el parser/AST hará el mini-parse de cada interpolación cuando llegue Fase 3.
+- Lexer reconoce **cadenas triple-quoted** (`"""..."""` y `'''...'''`):
+  - Multilínea: el contador de líneas avanza correctamente al ver `\n` interno.
+  - Comillas dobles o simples sueltas dentro no cierran la triple (solo tres consecutivas idénticas a la apertura).
+  - Compatible con prefijo `f`: `f"""..."""` y `f'''...'''` se reconocen como `TT_F_CADENA`.
+- Refactor interno: `escanear_cadena` es ahora dispatcher entre `escanear_cadena_simple` y `escanear_cadena_triple`. Helpers `procesar_escape` y `saltar_interpolacion` factorizan la lógica de escapes y brace tracking. Firma `bool` para señalar errores limpiamente.
+- Errores nuevos:
+  - `f"hola {sin cerrar` → "interpolación de f-cadena sin cerrar antes del fin de archivo".
+  - `f"hola {x\ny}"` (newline dentro de interp en f-string simple) → mensaje específico.
+  - `f"hola }"` → "'}' inesperado en f-cadena (usa '}}' para llave literal)".
+  - `"""sin cerrar` → "cadena triple sin cerrar antes del fin de archivo".
+- `tests/unit/test_lexer_f_cadenas.c` añadido con 36 tests cubriendo: f-strings sin/con interpolación, mayúsculas (`F`), comillas simples, llaves literales, triple-quoted con conteo de líneas correcto, combinación f+triple, escapes, errores específicos, distinción `f"..."` vs `f` + `"..."` (ident + cadena), lexemas y secuencias realistas inspiradas en `examples/03_fibonacci.cor` y `06_diccionarios.cor`.
+- `tests/unit/test_lexer_literales.c` renombrado a `tests/unit/test_lexer_numeros_cadenas.c` por consistencia (el nombre describe mejor el contenido).
+- 5/5 tests verde con build Release optimizado: smoke + simbolos + numeros_cadenas + identificadores + f_cadenas.
 
 ### Añadido (Fase 2 sesión 3)
 - Vendoreado [utf8proc 2.10.0](https://github.com/JuliaStrings/utf8proc) en `vendor/utf8proc/` (~700 KB) para soporte Unicode y NFC. Compilado como librería estática que se enlaza al binario y los tests.

@@ -359,52 +359,213 @@ static Token escanear_numero(Lexer *l, char primero) {
 /* ──────────────────────────────────────────────────────────────────
  * Escaneo de cadenas
  *
- * En sesión 2 soportamos cadenas de una línea con comilla simple `'`
- * o doble `"`. El lexema incluye las comillas; el parser hace unescape
- * cuando construye el nodo del AST.
+ * Cornamusa soporta cuatro variantes:
+ *   1. Simple   "hola"            (cierre por '\n' o '"')
+ *   2. Triple   """hola\nmundo""" (multilínea)
+ *   3. f-simple f"hola {x}"       (interpolación, una línea)
+ *   4. f-triple f"""hola {x}"""   (interpolación + multilínea)
  *
- * Escapes válidos: \n \t \r \\ \' \" \0 \x... \u...
- * La validación profunda de \x (2 hex dígitos) y \u (4 hex o
- * \u{HHHHHH}) llega en sesión 5. Aquí solo aceptamos el prefijo y
- * dejamos pasar lo que siga.
+ * El lexema incluye las comillas (y el prefijo `f` si lo hay). El parser
+ * hará el unescape y el mini-parse de las expresiones de interpolación
+ * cuando construya el AST literal.
  *
- * Saltos de línea dentro de cadena simple son error: para multilínea
- * usar `"""..."""` (sesión 4).
+ * Escapes válidos: \n \t \r \\ \' \" \0 \x... \u... y \<newline> en
+ * triple. La validación profunda de \xHH y \uHHHH se aplaza a sesión 5.
+ *
+ * En f-cadenas el lexer trackea profundidad de llaves para encontrar
+ * el cierre correcto: {{ y }} son literales; { abre interpolación, }
+ * la cierra. Anidamiento balanceado a base de contar.
  * ────────────────────────────────────────────────────────────────── */
-static Token escanear_cadena(Lexer *l, char delimitador) {
-    while (!en_fin(l) && mirar(l) != delimitador) {
+
+/*
+ * Comprueba si las TRES posiciones siguientes (incluyendo la actual)
+ * coinciden con `delim`. Seguro de leer fuera del buffer porque la
+ * fuente está terminada en '\0' y el lazy-and corta.
+ */
+static bool es_triple_cierre(const Lexer *l, char delim) {
+    return *l->actual == delim
+        && *(l->actual + 1) == delim
+        && *(l->actual + 2) == delim;
+}
+
+/*
+ * Procesa una secuencia de escape que empieza en l->actual (apuntando
+ * al `\\`). Avanza el lexer pasado el carácter de escape. Si el escape
+ * incluye un salto de línea (line continuation), avanza el contador
+ * de línea. Devuelve true si hubo error y rellena *err_out; false si OK.
+ *
+ * En triple permitimos `\<newline>` (line continuation); en simple no.
+ */
+static bool procesar_escape(Lexer *l, bool en_triple, Token *err_out) {
+    avanzar(l); /* consume backslash */
+    if (en_fin(l)) {
+        *err_out = token_error(l,
+            "secuencia de escape sin completar al fin de archivo");
+        return true;
+    }
+    char esc = mirar(l);
+
+    /* En triple, '\<newline>' es line continuation. */
+    if (en_triple && esc == '\n') {
+        avanzar(l);
+        l->linea++;
+        l->inicio_linea = l->actual;
+        return false;
+    }
+
+    if (esc != 'n' && esc != 't' && esc != 'r' && esc != '\\' &&
+        esc != '\'' && esc != '"' && esc != '0' && esc != 'x' &&
+        esc != 'u') {
+        *err_out = token_error(l, "secuencia de escape no reconocida");
+        return true;
+    }
+    avanzar(l);
+    return false;
+}
+
+/*
+ * En f-cadenas: tras consumir una `{`, salta hasta su `}` correspondiente,
+ * tracking profundidad de llaves anidadas. Devuelve true si error.
+ *
+ * Nota de simplificación: NO trackeamos cadenas dentro de {...}. Si el
+ * usuario escribe `f"{f(\"x\")}"` con cadenas anidadas raras, podríamos
+ * confundirnos. El parser detectará inconsistencias en sesión posterior.
+ */
+static bool saltar_interpolacion(Lexer *l, bool permitir_newline,
+                                  Token *err_out) {
+    int profundidad = 1;
+    while (!en_fin(l) && profundidad > 0) {
         char c = mirar(l);
+        if (c == '\n') {
+            if (!permitir_newline) {
+                *err_out = token_error(l,
+                    "interpolación de f-cadena sin cerrar antes del fin de línea");
+                return true;
+            }
+            avanzar(l);
+            l->linea++;
+            l->inicio_linea = l->actual;
+        } else if (c == '{') {
+            profundidad++;
+            avanzar(l);
+        } else if (c == '}') {
+            profundidad--;
+            avanzar(l);
+        } else {
+            avanzar(l);
+        }
+    }
+    if (profundidad > 0) {
+        *err_out = token_error(l,
+            "interpolación de f-cadena sin cerrar antes del fin de archivo");
+        return true;
+    }
+    return false;
+}
+
+/*
+ * Escanea el cuerpo de una cadena simple (no triple). delim ya se
+ * consumió. Devuelve TT_CADENA o TT_F_CADENA según es_f_cadena.
+ */
+static Token escanear_cadena_simple(Lexer *l, char delim, bool es_f_cadena) {
+    while (!en_fin(l)) {
+        char c = mirar(l);
+
+        if (c == delim) {
+            avanzar(l);
+            return crear_token(l, es_f_cadena ? TT_F_CADENA : TT_CADENA);
+        }
         if (c == '\n') {
             return token_error(l, "cadena sin cerrar antes del fin de línea");
         }
         if (c == '\\') {
-            avanzar(l);
-            if (en_fin(l)) {
-                return token_error(l, "secuencia de escape sin completar al fin de archivo");
-            }
-            char esc = mirar(l);
-            /* Aceptamos: n t r \\ ' " 0 x u — la validación de los
-               argumentos de \x y \u se hace en sesión 5. Cualquier otra
-               letra es escape no reconocido. */
-            if (esc != 'n' && esc != 't' && esc != 'r' && esc != '\\' &&
-                esc != '\'' && esc != '"' && esc != '0' && esc != 'x' &&
-                esc != 'u') {
-                return token_error(l, "secuencia de escape no reconocida");
-            }
-            avanzar(l);
-            /* Si el escape consume más bytes (\xHH, \uHHHH, \u{H...}),
-               los validaremos en sesión 5. Por ahora seguimos. */
+            Token err;
+            if (procesar_escape(l, false, &err)) return err;
             continue;
+        }
+        if (es_f_cadena && c == '{') {
+            avanzar(l); /* consume '{' */
+            if (mirar(l) == '{') {
+                avanzar(l); /* literal '{{' */
+                continue;
+            }
+            Token err;
+            if (saltar_interpolacion(l, false, &err)) return err;
+            continue;
+        }
+        if (es_f_cadena && c == '}') {
+            avanzar(l);
+            if (mirar(l) == '}') {
+                avanzar(l); /* literal '}}' */
+                continue;
+            }
+            return token_error(l,
+                "'}' inesperado en f-cadena (usa '}}' para llave literal)");
         }
         avanzar(l);
     }
+    return token_error(l, "cadena sin cerrar antes del fin de archivo");
+}
 
-    if (en_fin(l)) {
-        return token_error(l, "cadena sin cerrar antes del fin de archivo");
+/*
+ * Escanea el cuerpo de una cadena triple. Los tres delimitadores de
+ * apertura ya se consumieron. Newlines internos son válidos y avanzan
+ * el contador de línea.
+ */
+static Token escanear_cadena_triple(Lexer *l, char delim, bool es_f_cadena) {
+    while (!en_fin(l)) {
+        if (es_triple_cierre(l, delim)) {
+            avanzar(l); avanzar(l); avanzar(l);
+            return crear_token(l, es_f_cadena ? TT_F_CADENA : TT_CADENA);
+        }
+
+        char c = mirar(l);
+        if (c == '\n') {
+            avanzar(l);
+            l->linea++;
+            l->inicio_linea = l->actual;
+            continue;
+        }
+        if (c == '\\') {
+            Token err;
+            if (procesar_escape(l, true, &err)) return err;
+            continue;
+        }
+        if (es_f_cadena && c == '{') {
+            avanzar(l);
+            if (mirar(l) == '{') {
+                avanzar(l);
+                continue;
+            }
+            Token err;
+            if (saltar_interpolacion(l, true, &err)) return err;
+            continue;
+        }
+        if (es_f_cadena && c == '}') {
+            avanzar(l);
+            if (mirar(l) == '}') {
+                avanzar(l);
+                continue;
+            }
+            return token_error(l,
+                "'}' inesperado en f-cadena triple (usa '}}' para llave literal)");
+        }
+        avanzar(l);
     }
+    return token_error(l, "cadena triple sin cerrar antes del fin de archivo");
+}
 
-    avanzar(l); /* consumir delimitador de cierre */
-    return crear_token(l, TT_CADENA);
+/*
+ * Punto de entrada. delim ya se consumió en lexer_siguiente. Decide
+ * si es triple (los siguientes dos chars también son delim) o simple.
+ */
+static Token escanear_cadena(Lexer *l, char delim, bool es_f_cadena) {
+    if (mirar(l) == delim && *(l->actual + 1) == delim) {
+        avanzar(l);
+        avanzar(l);
+        return escanear_cadena_triple(l, delim, es_f_cadena);
+    }
+    return escanear_cadena_simple(l, delim, es_f_cadena);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -616,7 +777,16 @@ Token lexer_siguiente(Lexer *l) {
 
     /* Cadenas literales: comilla simple o doble. */
     if (c == '"' || c == '\'') {
-        return escanear_cadena(l, c);
+        return escanear_cadena(l, c, false);
+    }
+
+    /* f-cadenas: prefijo 'f' o 'F' inmediatamente seguido de comilla.
+       El sufijo identifica el resto del lexema como cadena normal,
+       NO como un identificador llamado 'f' seguido de cadena. La
+       distinción depende de no haber whitespace entre `f` y la comilla. */
+    if ((c == 'f' || c == 'F') && (mirar(l) == '"' || mirar(l) == '\'')) {
+        char delim = avanzar(l);
+        return escanear_cadena(l, delim, true);
     }
 
     /* Identificadores ASCII (camino rápido). */

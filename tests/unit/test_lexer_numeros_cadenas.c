@@ -426,9 +426,9 @@ int main(void) {
     test_lexema_de_cadena_apunta_a_fuente();
 
     if (fallos == 0) {
-        printf("test_lexer_literales: todos los asserts pasan\n");
+        printf("test_lexer_numeros_cadenas: todos los asserts pasan\n");
         return 0;
     }
-    fprintf(stderr, "test_lexer_literales: %d fallo(s)\n", fallos);
+    fprintf(stderr, "test_lexer_numeros_cadenas: %d fallo(s)\n", fallos);
     return 1;
 }
