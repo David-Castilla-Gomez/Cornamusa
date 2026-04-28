@@ -47,6 +47,14 @@ typedef struct {
     const Chunk *chunk;
     const uint8_t *ip;
 
+    /*
+     * Variables globales: Diccionario de cadena → Valor. La VM es
+     * dueña — el `dicc_liberar` se llama en `vm_destruir`. Persiste
+     * entre llamadas a `vm_ejecutar` para que el REPL pueda reutilizar
+     * el estado.
+     */
+    Diccionario *globales;
+
     EvalError error;
 } VM;
 

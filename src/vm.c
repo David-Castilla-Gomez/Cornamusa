@@ -76,6 +76,7 @@ void vm_iniciar(VM *vm) {
     vm->tope = vm->pila;
     vm->chunk = NULL;
     vm->ip = NULL;
+    vm->globales = dicc_nuevo();
     vm->error.tuvo_error = false;
     vm->error.mensaje[0] = '\0';
     vm->error.linea = 0;
@@ -87,6 +88,10 @@ void vm_destruir(VM *vm) {
     while (vm->tope > vm->pila) {
         Valor v = *(--vm->tope);
         valor_destruir(&v);
+    }
+    if (vm->globales) {
+        dicc_liberar(vm->globales);
+        vm->globales = NULL;
     }
 }
 
@@ -184,21 +189,93 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 return VM_OK;
             }
 
+            /* ─── Globales ─── */
+            case OP_DEFINIR_GLOBAL: {
+                /* nombre = constantes[idx] (cadena), valor = tope. */
+                uint8_t idx = LEER_BYTE();
+                Valor nombre = valor_clonar(&vm->chunk->constantes[idx]);
+                Valor valor = sacar(vm);
+                if (!dicc_asignar(vm->globales, nombre, valor)) {
+                    vm->error.tuvo_error = true;
+                    vm->error.linea = linea_actual(vm);
+                    snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                        "memoria insuficiente al definir global");
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+            case OP_OBTENER_GLOBAL: {
+                uint8_t idx = LEER_BYTE();
+                const Valor *nombre = &vm->chunk->constantes[idx];
+                Valor v;
+                if (!dicc_obtener(vm->globales, nombre, &v)) {
+                    vm->error.tuvo_error = true;
+                    vm->error.linea = linea_actual(vm);
+                    snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                        "ErrorDeNombre: nombre '%.*s' no esta definido",
+                        nombre->como.cadena.longitud,
+                        nombre->como.cadena.texto);
+                    return VM_ERROR_RUNTIME;
+                }
+                empujar(vm, v);
+                break;
+            }
+            case OP_ASIGNAR_GLOBAL: {
+                /* Como OP_DEFINIR_GLOBAL pero requiere que la clave ya
+                   exista. Cornamusa no distingue declaración de
+                   asignación, así que en la práctica el compilador
+                   solo emite OP_DEFINIR_GLOBAL. Esta forma queda para
+                   futuras semánticas más estrictas. */
+                uint8_t idx = LEER_BYTE();
+                const Valor *nombre = &vm->chunk->constantes[idx];
+                if (!dicc_contiene(vm->globales, nombre)) {
+                    vm->error.tuvo_error = true;
+                    vm->error.linea = linea_actual(vm);
+                    snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                        "ErrorDeNombre: nombre '%.*s' no esta definido",
+                        nombre->como.cadena.longitud,
+                        nombre->como.cadena.texto);
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor clave_clon = valor_clonar(nombre);
+                Valor valor = sacar(vm);
+                dicc_asignar(vm->globales, clave_clon, valor);
+                break;
+            }
+
+            /* ─── Built-in print ─── */
+            case OP_IMPRIMIR: {
+                uint8_t n = LEER_BYTE();
+                /* Args en stack en orden de izq a der; los sacamos en
+                   orden inverso, los imprimimos en el orden correcto.
+                   El buffer fijo de 256 cabe el máximo (uint8_t). */
+                Valor args[256];
+                for (int i = n - 1; i >= 0; i--) args[i] = sacar(vm);
+                char buffer[1024];
+                for (int i = 0; i < n; i++) {
+                    if (i > 0) fputc(' ', stdout);
+                    valor_a_cadena(&args[i], buffer, sizeof(buffer));
+                    fputs(buffer, stdout);
+                }
+                fputc('\n', stdout);
+                fflush(stdout);
+                for (int i = 0; i < n; i++) valor_destruir(&args[i]);
+                /* `imprimir(...)` es una expresión: empuja nulo. */
+                empujar(vm, valor_nulo());
+                break;
+            }
+
             /* Opcodes reservados para sesiones siguientes. */
             case OP_SALTAR:
             case OP_SALTAR_SI_FALSO:
             case OP_BUCLE:
             case OP_OBTENER_LOCAL:
             case OP_ASIGNAR_LOCAL:
-            case OP_OBTENER_GLOBAL:
-            case OP_DEFINIR_GLOBAL:
-            case OP_ASIGNAR_GLOBAL:
             case OP_LLAMAR:
-            case OP_IMPRIMIR:
                 vm->error.tuvo_error = true;
                 vm->error.linea = linea_actual(vm);
                 snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                    "OpCode %s no implementado en v0.6 sesion 2",
+                    "OpCode %s no implementado en esta version",
                     opcode_nombre(op));
                 return VM_ERROR_RUNTIME;
         }

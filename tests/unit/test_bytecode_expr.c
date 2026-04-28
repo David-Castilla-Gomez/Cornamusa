@@ -224,13 +224,15 @@ static void test_errores_runtime(void) {
     verificar_error("\"a\" + 1", "no aplica");
 }
 
-/* ───── Errores de compilación ───── */
+/* ───── Errores de compilación / runtime ───── */
 
 static void test_errores_compilacion(void) {
-    /* Identificadores no soportados todavía en bytecode. */
-    verificar_error("x", "no esta implementada");
-    verificar_error("x + 1", "no esta implementada");
-    /* Llamadas / lambda / cortocircuito no soportados. */
+    /* `x` ya se compila a OP_OBTENER_GLOBAL en S3; el error es ahora
+       de runtime cuando la variable no está definida. */
+    verificar_error("x", "no esta definido");
+    verificar_error("x + 1", "no esta definido");
+    /* Llamadas a funciones no nativas y cortocircuito siguen
+       sin compilar en S3. */
     verificar_error("lambda x: x", "no esta implementada");
     verificar_error("verdadero y verdadero", "no esta implementada");
 }

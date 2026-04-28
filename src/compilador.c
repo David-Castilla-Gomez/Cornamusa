@@ -101,6 +101,22 @@ static Valor cadena_desde_lexema(const char *lex, int len) {
  * Compilación de expresiones
  * ────────────────────────────────────────────────────────────────── */
 
+/*
+ * Emite el bytecode necesario para resolver un identificador como
+ * variable global. Útil tanto para EXPR_IDENT (lectura) como para
+ * SENT_ASIGNAR (escritura).
+ *
+ * Devuelve el índice de la constante (nombre clonado) en el chunk,
+ * o -1 si excede 255 (limitación de v0.6 sesión 3 — `OP_OBTENER_GLOBAL`
+ * usa operando byte). Para más globales habrá que añadir variantes
+ * `*_LARGO`, igual que con `OP_CONST_LARGO`.
+ */
+static int agregar_nombre_global(Compilador *c, const char *texto, int len) {
+    Valor name = valor_cadena_duplicar(texto, len);
+    int idx = chunk_agregar_constante(c->chunk, name);
+    return idx;
+}
+
 bool compilador_compilar_expr(Compilador *c, const Expr *e) {
     if (c->error.tuvo_error) return false;
 
@@ -170,11 +186,50 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             }
         }
 
+        case EXPR_IDENT: {
+            int idx = agregar_nombre_global(c, e->como.ident.nombre,
+                                              e->como.ident.longitud);
+            if (idx < 0 || idx > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "demasiadas constantes para v0.6 (operando byte)");
+                return false;
+            }
+            chunk_emitir_byte2(c->chunk, OP_OBTENER_GLOBAL, (uint8_t)idx, e->linea);
+            return true;
+        }
+
+        case EXPR_LLAMADA: {
+            /*
+             * En v0.6 sesión 3 solo se compila el caso especial
+             * `imprimir(args...)` (built-in). Otras llamadas necesitan
+             * OP_LLAMAR + frames, que llegan en S5.
+             */
+            const Expr *callee = e->como.llamada.callee;
+            bool es_imprimir =
+                callee->tipo == EXPR_IDENT
+                && callee->como.ident.longitud == 8
+                && memcmp(callee->como.ident.nombre, "imprimir", 8) == 0;
+            if (!es_imprimir) {
+                error_compilacion(c, e->linea, e->columna,
+                    "llamadas a funciones definidas por el usuario aun no estan en bytecode v0.6 sesion 3");
+                return false;
+            }
+            if (e->como.llamada.n_args > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "imprimir() no puede tener mas de 255 argumentos");
+                return false;
+            }
+            for (int i = 0; i < e->como.llamada.n_args; i++) {
+                if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+            }
+            chunk_emitir_byte2(c->chunk, OP_IMPRIMIR,
+                               (uint8_t)e->como.llamada.n_args, e->linea);
+            return true;
+        }
+
         /* Aplazadas a sesiones siguientes. */
         case EXPR_LITERAL_F_CADENA:
-        case EXPR_IDENT:
         case EXPR_LOGICA:
-        case EXPR_LLAMADA:
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
         case EXPR_LISTA:
@@ -184,7 +239,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         case EXPR_INDICE:
         case EXPR_REBANADA:
             error_compilacion(c, e->linea, e->columna,
-                "esta forma de expresion no esta implementada en bytecode v0.6 sesion 2");
+                "esta forma de expresion no esta implementada en bytecode v0.6 sesion 3");
             return false;
     }
 
@@ -196,5 +251,98 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
 bool compilador_compilar_expr_top(Compilador *c, const Expr *e) {
     if (!compilador_compilar_expr(c, e)) return false;
     chunk_emitir_byte(c->chunk, OP_RETORNAR, e->linea);
+    return true;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Sentencias
+ *
+ * Sesión 3 soporta el subconjunto necesario para programas reales
+ * lineales: asignación a global, sentencia-expresión (típicamente
+ * llamadas a `imprimir`), `pasar`, y `bloque` para anidamiento.
+ * Control de flujo (`si`, `mientras`, `para`) llega en S4. Funciones
+ * y `retornar` en S5.
+ * ────────────────────────────────────────────────────────────────── */
+
+static bool compilar_asignar(Compilador *c, const Sent *s) {
+    Expr *destino = s->como.asignar.destino;
+    if (destino->tipo != EXPR_IDENT) {
+        error_compilacion(c, s->linea, s->columna,
+            "ErrorDeSintaxis: destino de asignacion no soportado en bytecode v0.6 sesion 3");
+        return false;
+    }
+    if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+    int idx = agregar_nombre_global(c, destino->como.ident.nombre,
+                                      destino->como.ident.longitud);
+    if (idx < 0 || idx > 255) {
+        error_compilacion(c, s->linea, s->columna,
+            "demasiadas constantes para v0.6 (operando byte)");
+        return false;
+    }
+    chunk_emitir_byte2(c->chunk, OP_DEFINIR_GLOBAL, (uint8_t)idx, s->linea);
+    return true;
+}
+
+bool compilador_compilar_sent(Compilador *c, const Sent *s) {
+    if (c->error.tuvo_error) return false;
+
+    switch (s->tipo) {
+        case SENT_PASAR:
+            return true;
+
+        case SENT_EXPR:
+            if (!compilador_compilar_expr(c, s->como.expr.expr)) return false;
+            chunk_emitir_byte(c->chunk, OP_DESCARTAR, s->linea);
+            return true;
+
+        case SENT_ASIGNAR:
+            return compilar_asignar(c, s);
+
+        case SENT_BLOQUE: {
+            int n = s->como.bloque.n_sentencias;
+            for (int i = 0; i < n; i++) {
+                if (!compilador_compilar_sent(c, s->como.bloque.sentencias[i])) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        /* Sin soporte aún. */
+        case SENT_ASIGNAR_AUG:
+        case SENT_ROMPER:
+        case SENT_CONTINUAR:
+        case SENT_RETORNAR:
+        case SENT_SI:
+        case SENT_MIENTRAS:
+        case SENT_PARA:
+        case SENT_FUNCION:
+        case SENT_CLASE:
+        case SENT_INTENTAR:
+        case SENT_LANZAR:
+        case SENT_IMPORTAR:
+        case SENT_DESDE_IMPORTAR:
+        case SENT_GLOBAL:
+        case SENT_NOLOCAL:
+            error_compilacion(c, s->linea, s->columna,
+                "esta sentencia aun no esta implementada en bytecode v0.6 sesion 3");
+            return false;
+    }
+    error_compilacion(c, s->linea, s->columna,
+        "tipo de sentencia desconocido");
+    return false;
+}
+
+bool compilador_compilar_programa(Compilador *c, Sent **sents, int n) {
+    for (int i = 0; i < n; i++) {
+        if (!compilador_compilar_sent(c, sents[i])) return false;
+    }
+    /* OP_RETORNAR final con nulo: la VM termina y el cliente recibe
+       nulo como "valor del programa" (las sentencias no producen
+       valor; lo importante es el side-effect de las asignaciones a
+       globales). */
+    int linea_final = (n > 0) ? sents[n - 1]->linea : 1;
+    chunk_emitir_byte(c->chunk, OP_NULO, linea_final);
+    chunk_emitir_byte(c->chunk, OP_RETORNAR, linea_final);
     return true;
 }

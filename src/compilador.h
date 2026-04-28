@@ -48,4 +48,17 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e);
  */
 bool compilador_compilar_expr_top(Compilador *c, const Expr *e);
 
+/*
+ * Compila una sentencia. Las sentencias simples (asignación,
+ * sentencia-expresión, pasar, bloque) ya están soportadas. Funciones,
+ * control de flujo y excepciones llegan en sesiones siguientes.
+ */
+bool compilador_compilar_sent(Compilador *c, const Sent *s);
+
+/*
+ * Compila un programa completo: cada sentencia en orden y emite al
+ * final un OP_NULO + OP_RETORNAR para que `vm_ejecutar` retorne nulo.
+ */
+bool compilador_compilar_programa(Compilador *c, Sent **sents, int n);
+
 #endif /* CORNAMUSA_COMPILADOR_H */

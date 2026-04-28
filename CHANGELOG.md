@@ -9,7 +9,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 ### En desarrollo (Fase 6 — Compilador + VM bytecode, objetivo v0.6.0)
 - ✅ Sesión 1: infraestructura `Chunk` + enum `OpCode` + disassembler.
 - ✅ Sesión 2: refactor del evaluador (helpers reutilizables) + compilador para expresiones + VM stack-based con dispatch loop.
-- ⏳ Sesión 3: globales, comparaciones, `imprimir`, string interning.
+- ✅ Sesión 3: variables globales (DEFINIR/OBTENER/ASIGNAR), `imprimir(...)` como built-in en bytecode, sentencias básicas (asignación, expresión, pasar, bloque).
 - ⏳ Sesión 4: control de flujo (jumps, loops).
 - ⏳ Sesión 5: funciones top-level, locales, closures con upvalues.
 - ⏳ Sesión 6: colecciones + transición a tagged i63 + flag `--tree-walking` + tests diferenciales + tag v0.6.0.
@@ -56,6 +56,25 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
   - Aplazadas con error explícito: `EXPR_IDENT`, `EXPR_LOGICA`, `EXPR_LLAMADA`, `EXPR_LAMBDA`, colecciones, indexación, slicing, f-strings, atributos.
 - **`tests/unit/test_bytecode_expr.c`** con 8 grupos de tests end-to-end (`lex → parse → compilar → vm_ejecutar`): literales (cada tipo + escapes), aritmética bignum (precedencia, asociatividad, floor div Python, 2^100 = 31 dígitos), aritmética decimal y mixta (true div siempre decimal, promoción), comparaciones (todas + cross-tipo entero=decimal + lexicográfico de cadenas + tipos incomparables → error), unarios (`-`, `+`, `no`, doble negación), realistas (Pitágoras, promedio decimal, semántica izquierda-a-derecha de Cornamusa sin chained comparisons), errores de runtime (división por cero, tipo incompatible) y errores de compilación (identificadores/lambda/lógica explícitamente no implementados todavía).
 - **53 tests verde** (20 unit + 33 integración).
+
+### Añadido (Fase 6 sesión 3)
+- **Variables globales en la VM**: la `VM` ahora contiene un `Diccionario *globales` (refcount) que persiste entre llamadas a `vm_ejecutar` (útil para REPL futuro). Inicializado en `vm_iniciar`, liberado en `vm_destruir`.
+  - **`OP_DEFINIR_GLOBAL [idx]`**: lee el nombre de `chunk->constantes[idx]`, saca el valor del tope, define o sobrescribe en globales. Cornamusa no distingue declaración de asignación, así que esta es la operación habitual.
+  - **`OP_OBTENER_GLOBAL [idx]`**: empuja al stack una copia del valor; si la clave no existe, `ErrorDeNombre: nombre 'X' no esta definido`.
+  - **`OP_ASIGNAR_GLOBAL [idx]`**: variante estricta (la clave debe existir); reservada para futuras semánticas más rigurosas, no usada por el compilador en S3.
+- **Built-in `imprimir(...)` en bytecode**: nuevo `OP_IMPRIMIR [n]` que saca `n` valores del stack, los imprime separados por espacio + newline, y empuja `nulo` (porque `imprimir(...)` es expresión y `SENT_EXPR` la envuelve con `OP_DESCARTAR`). Soporta hasta 255 argumentos.
+- **`compilador_compilar_sent`** soporta:
+  - **`SENT_PASAR`**: no-op explícito.
+  - **`SENT_EXPR`**: compila la expresión y emite `OP_DESCARTAR`.
+  - **`SENT_ASIGNAR`** con destino `EXPR_IDENT`: compila el valor y emite `OP_DEFINIR_GLOBAL` con el nombre como constante. Tuple destructuring, atributos e índices como destino quedan para S6+.
+  - **`SENT_BLOQUE`**: compila secuencialmente cada sentencia.
+  - Resto de sentencias (`if/while/for/funcion/clase/intentar/lanzar/importar`) producen error explícito con su sesión objetivo.
+- **`compilador_compilar_programa(c, sents, n)`**: compila cada sentencia y emite `OP_NULO + OP_RETORNAR` al final, dejando el chunk listo para `vm_ejecutar`.
+- **`EXPR_IDENT`** ahora se compila a `OP_OBTENER_GLOBAL` (lookup en globales).
+- **`EXPR_LLAMADA` con callee `imprimir`** se detecta como caso especial en el compilador y emite `OP_IMPRIMIR [n]`. Otras llamadas siguen produciendo error "no implementado en bytecode v0.6 sesión 3" — el sistema completo de funciones definidas por el usuario llega en S5.
+- **Limitación documentada**: nombres de globales con índice >255 en el pool del chunk dan error explícito ("demasiadas constantes para v0.6 (operando byte)"). Se resolverá con variantes `*_LARGO` cuando sea necesario.
+- **`tests/unit/test_bytecode_programa.c`** con 5 grupos: asignación a global (incluye reasignación, varias variables, cambio de tipo libre), error de nombre no definido en runtime, captura de stdout para `imprimir(...)` (con redirección dup/dup2 portable Windows/POSIX), `pasar` y un programa combinado (Pitágoras 3-4-5 imprimiendo "hipotenusa: 5.0").
+- **54 tests verde** (21 unit + 33 integración).
 
 Cierre de Fase 5: tree-walking interpreter con todas las colecciones
 básicas. **Último release con tree-walking activo** según decisión
