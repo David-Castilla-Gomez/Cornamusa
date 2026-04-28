@@ -8,7 +8,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ### En desarrollo (Fase 5 — Estructuras de datos, objetivo v0.5.0)
 - ✅ Sesión 1: tipo `Lista` con refcount + literal `[a, b, c]` + indexación + operadores `+`/`*`/`en`/`==` + iteración `para x en lista` + integración con `longitud()` y `tipo()`.
-- ⏳ Sesión 2: slicing `lista[a:b:c]`, mutación `lista[i] = v`, métodos básicos (agregar, quitar, ordenar) vía built-ins.
+- ✅ Sesión 2: mutación `lista[i] = v`, slicing `lista[a:b:c]`, métodos via built-ins (agregar, quitar, insertar, invertir, ordenar).
 - ⏳ Sesión 3: tipo `Diccionario` con tabla hash + literal `{k: v}` + acceso `dicc[k]` + iteración.
 - ⏳ Sesión 4: tipo `Conjunto` (`{1, 2, 3}`) y `Tupla` `(a, b)` inmutable. Distinción tupla vs grupo.
 - ⏳ Sesión 5: ejemplos jugables + tag v0.5.0 (último release del tree-walking activo; desde v0.6 motor bytecode).
@@ -29,6 +29,26 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - **`longitud(lista)`** built-in: devuelve `cuenta` como entero. `tipo(lista)` devuelve `"lista"`.
 - **`tests/unit/test_runtime_listas.c`** con 8 grupos: literal (vacío, mixto, anidado, trailing comma), indexación (positivo/negativo/fuera-de-rango, no-entero, anidado), operadores (`+`/`*`/`en`/`no en`/`==` con cross-tipo entero=decimal), iteración (suma, concat, romper, sino), built-ins, referencia compartida (asignar `b = a` no rompe), programa promedio decimal, construcción de cuadrados con `rango()` y concat.
 - **42 tests verde** (15 unit + 27 integración).
+
+### Añadido (Fase 5 sesión 2)
+- **Mutación `lista[i] = valor`**: extendido `SENT_ASIGNAR` para aceptar `EXPR_INDICE` como destino. Soporta índices negativos. `ErrorDeIndice` específico cuando fuera de rango. La asignación destruye el valor previo y toma posesión del nuevo.
+- **Mutación aumentada `lista[i] op= valor`**: `SENT_ASIGNAR_AUG` extendido con misma lógica. Lee, computa con `aplicar_binario`, escribe atómicamente. Funciona para todas las variantes (`+=`, `-=`, `*=`, `/=`, `//=`, `%=`, `**=`).
+- **Semántica de referencia confirmada por tests**: `b = a; b[0] = 99` cambia también `a[0]` (Python-like). `agregar(b, 4); longitud(a)` reporta 4.
+- **Slicing `lista[a:b:c]`** (`EXPR_REBANADA`) con semántica Python:
+  - Cualquier campo opcional (`[:]`, `[a:]`, `[:b]`, `[::c]`, `[a:b:c]`).
+  - Defaults dependientes del signo del paso: paso > 0 → `inicio=0`, `fin=cuenta`; paso < 0 → `inicio=cuenta-1`, `fin=-1`.
+  - Índices negativos cuentan desde el final.
+  - Índices fuera de rango se *clampean* silenciosamente (no error).
+  - Paso negativo invierte: `[1,2,3,4,5][::-1] == [5,4,3,2,1]`.
+  - Paso 0 produce `ErrorDeValor`.
+- **Built-ins de mutación de listas** (estilo función-libre hasta que F8 traiga método-syntax `lista.agregar(x)`):
+  - **`agregar(lista, x)`**: añade al final. Devuelve nulo.
+  - **`quitar(lista, indice=-1)`**: elimina y devuelve el elemento. Sin índice quita el último. Negativos cuentan desde el final. Lista vacía → `ErrorDeIndice`.
+  - **`insertar(lista, indice, valor)`**: inserta antes del índice. Indices fuera de rango se clampean a [0, cuenta] (Python `list.insert`).
+  - **`invertir(lista)`**: invierte en sitio (O(n/2) swaps).
+  - **`ordenar(lista)`**: ordena in-place con `qsort` libc + comparador propio. Numéricos (entero/decimal/booleano) por valor; cadenas lexicográfico. Tipos mixtos no comparables → error explícito.
+- **`tests/unit/test_runtime_listas_mut.c`** con 11 grupos: mutación simple/aug, referencia compartida en mutación, slicing básico (omisiones, negativos, clamping), slicing con paso (positivo/negativo, paso 0 → error), `agregar`, `quitar` (con/sin índice, vacía), `insertar` (con clamping), `invertir`, `ordenar` (numérico/cadenas/mixto/incomparable), y un quicksort recursivo end-to-end como prueba de integración.
+- **43 tests verde** (16 unit + 27 integración).
 
 ## [0.4.0] — 2026-04-28 — primer release jugable
 

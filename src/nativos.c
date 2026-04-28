@@ -234,6 +234,238 @@ fail:
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Métodos sobre listas (built-ins de mutación)
+ *
+ * Cornamusa todavía no tiene método-syntax sobre tipos primitivos
+ * (eso requiere clases, F8). Mientras tanto, las operaciones
+ * mutadoras se exponen como funciones top-level que reciben la lista
+ * como primer argumento. Cuando lleguen las clases mudaremos a
+ * `lista.agregar(x)` con esta misma semántica.
+ * ────────────────────────────────────────────────────────────────── */
+
+static bool indice_a_long_natural(const Valor *v, long *out, int total) {
+    long i;
+    if (v->tipo == VAL_BOOLEANO) i = v->como.booleano ? 1 : 0;
+    else if (v->tipo == VAL_ENTERO) {
+        if (mp_count_bits(v->como.entero) > 62) return false;
+        i = (long)mp_get_i64(v->como.entero);
+    } else {
+        return false;
+    }
+    if (i < 0) i += total;
+    if (i < 0 || i >= total) return false;
+    *out = i;
+    return true;
+}
+
+/*
+ * agregar(lista, x) — añade `x` al final. Devuelve nulo (Python
+ * `list.append`).
+ */
+static Valor nativa_agregar(Evaluador *ev, int n_args, Valor *args,
+                             int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: agregar() requiere 2 argumentos (lista, valor), recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: agregar() requiere una lista como primer argumento, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    /* Tomamos un clon del valor: el llamador conserva ownership de args. */
+    Valor copia = valor_clonar(&args[1]);
+    if (!lista_agregar(args[0].como.lista, copia)) {
+        return error_nativa(ev, linea, columna, "memoria insuficiente");
+    }
+    return valor_nulo();
+}
+
+/*
+ * quitar(lista, indice=-1) — elimina y devuelve el elemento en `indice`.
+ * Sin argumento de índice usa -1 (último). Indice negativo cuenta
+ * desde el final.
+ */
+static Valor nativa_quitar(Evaluador *ev, int n_args, Valor *args,
+                            int linea, int columna) {
+    if (n_args < 1 || n_args > 2) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: quitar() requiere 1 o 2 argumentos, recibio %d", n_args);
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: quitar() requiere una lista, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *l = args[0].como.lista;
+    if (l->cuenta == 0) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeIndice: quitar() de una lista vacia");
+    }
+    long i;
+    if (n_args == 2) {
+        if (!indice_a_long_natural(&args[1], &i, l->cuenta)) {
+            return error_nativa(ev, linea, columna,
+                "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
+        }
+    } else {
+        i = l->cuenta - 1;
+    }
+    /* Extraer el valor (transferir ownership al cliente) y desplazar
+       el resto del array. */
+    Valor extraido = l->elementos[i];
+    for (int k = (int)i; k < l->cuenta - 1; k++) {
+        l->elementos[k] = l->elementos[k + 1];
+    }
+    l->cuenta--;
+    return extraido;
+}
+
+/*
+ * insertar(lista, indice, valor) — inserta antes del índice indicado.
+ */
+static Valor nativa_insertar(Evaluador *ev, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 3) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: insertar() requiere 3 argumentos, recibio %d", n_args);
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: insertar() requiere una lista, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *l = args[0].como.lista;
+    /* Para insertar permitimos índices en [-cuenta, cuenta] (clamping
+       a [0, cuenta] tras normalizar). */
+    long i;
+    if (args[1].tipo == VAL_BOOLEANO) i = args[1].como.booleano ? 1 : 0;
+    else if (args[1].tipo == VAL_ENTERO
+             && mp_count_bits(args[1].como.entero) <= 62) {
+        i = (long)mp_get_i64(args[1].como.entero);
+    } else {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: indice de insertar() debe ser entero");
+    }
+    if (i < 0) i += l->cuenta;
+    if (i < 0) i = 0;
+    if (i > l->cuenta) i = l->cuenta;
+
+    /* Reservar espacio (lista_agregar para forzar crecimiento, luego
+       desplazar). */
+    if (!lista_agregar(l, valor_nulo())) {
+        return error_nativa(ev, linea, columna, "memoria insuficiente");
+    }
+    for (int k = l->cuenta - 1; k > (int)i; k--) {
+        l->elementos[k] = l->elementos[k - 1];
+    }
+    l->elementos[i] = valor_clonar(&args[2]);
+    return valor_nulo();
+}
+
+/*
+ * invertir(lista) — invierte la lista en su sitio.
+ */
+static Valor nativa_invertir(Evaluador *ev, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: invertir() requiere 1 argumento, recibio %d", n_args);
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: invertir() requiere una lista, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *l = args[0].como.lista;
+    for (int i = 0, j = l->cuenta - 1; i < j; i++, j--) {
+        Valor tmp = l->elementos[i];
+        l->elementos[i] = l->elementos[j];
+        l->elementos[j] = tmp;
+    }
+    return valor_nulo();
+}
+
+/*
+ * Comparador para ordenar(): devuelve <0, 0, >0 según el orden total
+ * matemático/lexicográfico de los Valores. Tipos no comparables se
+ * marcan vía estado global (puentea qsort que no admite contexto).
+ */
+static bool g_ordenar_error = false;
+
+static int comparador_ordenar(const void *pa, const void *pb) {
+    if (g_ordenar_error) return 0;
+    const Valor *a = (const Valor *)pa;
+    const Valor *b = (const Valor *)pb;
+
+    /* Numéricos (entero/decimal/booleano) se comparan matemáticamente. */
+    bool an = a->tipo == VAL_ENTERO || a->tipo == VAL_DECIMAL || a->tipo == VAL_BOOLEANO;
+    bool bn = b->tipo == VAL_ENTERO || b->tipo == VAL_DECIMAL || b->tipo == VAL_BOOLEANO;
+    if (an && bn) {
+        bool a_ent = a->tipo == VAL_ENTERO || a->tipo == VAL_BOOLEANO;
+        bool b_ent = b->tipo == VAL_ENTERO || b->tipo == VAL_BOOLEANO;
+        if (a_ent && b_ent) {
+            mp_int ma, mb;
+            if (mp_init_multi(&ma, &mb, NULL) != MP_OKAY) return 0;
+            mp_err r1 = MP_OKAY, r2 = MP_OKAY;
+            if (a->tipo == VAL_BOOLEANO) mp_set_l(&ma, a->como.booleano ? 1 : 0);
+            else r1 = mp_copy(a->como.entero, &ma);
+            if (b->tipo == VAL_BOOLEANO) mp_set_l(&mb, b->como.booleano ? 1 : 0);
+            else r2 = mp_copy(b->como.entero, &mb);
+            (void)r1; (void)r2;
+            int c = mp_cmp(&ma, &mb);
+            mp_clear_multi(&ma, &mb, NULL);
+            if (c == MP_LT) return -1;
+            if (c == MP_GT) return 1;
+            return 0;
+        }
+        double da = a->tipo == VAL_DECIMAL ? a->como.decimal
+                  : a->tipo == VAL_BOOLEANO ? (a->como.booleano ? 1.0 : 0.0)
+                  : mp_get_double(a->como.entero);
+        double db = b->tipo == VAL_DECIMAL ? b->como.decimal
+                  : b->tipo == VAL_BOOLEANO ? (b->como.booleano ? 1.0 : 0.0)
+                  : mp_get_double(b->como.entero);
+        if (da < db) return -1;
+        if (da > db) return 1;
+        return 0;
+    }
+    if (a->tipo == VAL_CADENA && b->tipo == VAL_CADENA) {
+        int la = a->como.cadena.longitud;
+        int lb = b->como.cadena.longitud;
+        int min = la < lb ? la : lb;
+        int c = (min > 0) ? memcmp(a->como.cadena.texto,
+                                    b->como.cadena.texto, (size_t)min) : 0;
+        if (c != 0) return c < 0 ? -1 : 1;
+        return la < lb ? -1 : (la > lb ? 1 : 0);
+    }
+    g_ordenar_error = true;
+    return 0;
+}
+
+static Valor nativa_ordenar(Evaluador *ev, int n_args, Valor *args,
+                             int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: ordenar() requiere 1 argumento, recibio %d", n_args);
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: ordenar() requiere una lista, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *l = args[0].como.lista;
+    g_ordenar_error = false;
+    qsort(l->elementos, (size_t)l->cuenta, sizeof(Valor), comparador_ordenar);
+    if (g_ordenar_error) {
+        g_ordenar_error = false;
+        return error_nativa(ev, linea, columna,
+            "ErrorDeTipo: ordenar() no puede comparar tipos mixtos no numericos");
+    }
+    return valor_nulo();
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
@@ -245,6 +477,11 @@ void nativos_registrar(Entorno *globales) {
     static const char NOMBRE_LONGITUD[] = "longitud";
     static const char NOMBRE_TIPO[]     = "tipo";
     static const char NOMBRE_RANGO[]    = "rango";
+    static const char NOMBRE_AGREGAR[]  = "agregar";
+    static const char NOMBRE_QUITAR[]   = "quitar";
+    static const char NOMBRE_INSERTAR[] = "insertar";
+    static const char NOMBRE_INVERTIR[] = "invertir";
+    static const char NOMBRE_ORDENAR[]  = "ordenar";
 
     entorno_definir(globales, NOMBRE_IMPRIMIR, 8,
         valor_nativa(NOMBRE_IMPRIMIR, nativa_imprimir));
@@ -254,4 +491,15 @@ void nativos_registrar(Entorno *globales) {
         valor_nativa(NOMBRE_TIPO, nativa_tipo));
     entorno_definir(globales, NOMBRE_RANGO, 5,
         valor_nativa(NOMBRE_RANGO, nativa_rango));
+
+    entorno_definir(globales, NOMBRE_AGREGAR, 7,
+        valor_nativa(NOMBRE_AGREGAR, nativa_agregar));
+    entorno_definir(globales, NOMBRE_QUITAR, 6,
+        valor_nativa(NOMBRE_QUITAR, nativa_quitar));
+    entorno_definir(globales, NOMBRE_INSERTAR, 8,
+        valor_nativa(NOMBRE_INSERTAR, nativa_insertar));
+    entorno_definir(globales, NOMBRE_INVERTIR, 8,
+        valor_nativa(NOMBRE_INVERTIR, nativa_invertir));
+    entorno_definir(globales, NOMBRE_ORDENAR, 7,
+        valor_nativa(NOMBRE_ORDENAR, nativa_ordenar));
 }

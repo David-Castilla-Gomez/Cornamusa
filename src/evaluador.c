@@ -513,6 +513,7 @@ static Valor eval_logica(Evaluador *ev, const Expr *e);
 static Valor eval_llamada(Evaluador *ev, const Expr *e);
 static Valor eval_lista(Evaluador *ev, const Expr *e);
 static Valor eval_indice(Evaluador *ev, const Expr *e);
+static Valor eval_rebanada(Evaluador *ev, const Expr *e);
 
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
     if (ev->error.tuvo_error) return valor_nulo();
@@ -600,13 +601,13 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
         case EXPR_LLAMADA:  return eval_llamada(ev, e);
         case EXPR_LISTA:    return eval_lista(ev, e);
         case EXPR_INDICE:   return eval_indice(ev, e);
+        case EXPR_REBANADA: return eval_rebanada(ev, e);
 
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
         case EXPR_DICCIONARIO:
         case EXPR_CONJUNTO:
         case EXPR_TUPLA:
-        case EXPR_REBANADA:
             return error_en(ev, e,
                 "esta forma de expresion aun no esta implementada en v0.5");
     }
@@ -1032,68 +1033,171 @@ static void ejec_bloque(Evaluador *ev, const Sent *s) {
 }
 
 /*
- * SENT_ASIGNAR: solo se acepta destino IDENT en v0.4 sesión 3. Asigna
- * en el entorno actual (define o sobrescribe). Tuple destructuring
- * (`a, b = ...`), atributos (`obj.x = ...`) e índices (`l[i] = ...`)
- * llegan en versiones posteriores (v0.3.1 / F5).
+ * Helper: convierte un Valor entero/booleano en `long` y normaliza
+ * un índice negativo a positivo respecto a `total`. Devuelve true si
+ * OK; false si tipo incorrecto o fuera de rango.
  */
-static void ejec_asignar(Evaluador *ev, const Sent *s) {
-    Expr *destino = s->como.asignar.destino;
-    if (destino->tipo != EXPR_IDENT) {
-        sent_set_error(ev, s,
-            "ErrorDeSintaxis: destino de asignacion no soportado en v0.4 (solo identificadores)");
+static bool indice_normalizar(const Valor *idx, int total, long *out) {
+    long i;
+    if (idx->tipo == VAL_BOOLEANO) { i = idx->como.booleano ? 1 : 0; }
+    else if (idx->tipo == VAL_ENTERO) {
+        if (mp_count_bits(idx->como.entero) > 62) return false;
+        i = (long)mp_get_i64(idx->como.entero);
+    } else {
+        return false;
+    }
+    if (i < 0) i += total;
+    if (i < 0 || i >= total) return false;
+    *out = i;
+    return true;
+}
+
+/*
+ * Asignación a `lista[i] = valor`. Destruye el valor anterior y
+ * almacena el nuevo. Reporta `ErrorDeIndice` si fuera de rango.
+ */
+static void asignar_indice(Evaluador *ev, const Sent *s, Expr *destino,
+                            Valor nuevo) {
+    Valor obj = evaluador_evaluar_expr(ev, destino->como.indice.objeto);
+    if (ev->error.tuvo_error) {
+        valor_destruir(&obj); valor_destruir(&nuevo);
+        return;
+    }
+    Valor idx = evaluador_evaluar_expr(ev, destino->como.indice.indice);
+    if (ev->error.tuvo_error) {
+        valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
         return;
     }
 
-    Valor v = evaluador_evaluar_expr(ev, s->como.asignar.valor);
-    if (ev->error.tuvo_error) { valor_destruir(&v); return; }
-
-    if (!entorno_definir(ev->entorno_actual,
-                          destino->como.ident.nombre,
-                          destino->como.ident.longitud, v)) {
-        sent_set_error(ev, s, "memoria insuficiente al asignar");
+    if (obj.tipo != VAL_LISTA) {
+        sent_set_error(ev, s,
+            "ErrorDeTipo: '%s' no soporta asignacion por indice",
+            valor_nombre_tipo(&obj));
+        valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
+        return;
     }
+    Lista *l = obj.como.lista;
+    long i;
+    if (!indice_normalizar(&idx, l->cuenta, &i)) {
+        sent_set_error(ev, s,
+            "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
+        valor_destruir(&obj); valor_destruir(&idx); valor_destruir(&nuevo);
+        return;
+    }
+    /* `lista_asignar` destruye el valor previo y toma posesión del nuevo. */
+    lista_asignar(l, (int)i, nuevo);
+    valor_destruir(&obj); valor_destruir(&idx);
+}
+
+/*
+ * SENT_ASIGNAR: dos destinos soportados en v0.5:
+ *   - IDENT: define o sobrescribe en el entorno actual.
+ *   - INDICE (`lista[i] = v`): asigna en la lista referenciada.
+ * Tuple destructuring y atributos (`obj.x = v`) llegan después.
+ */
+static void ejec_asignar(Evaluador *ev, const Sent *s) {
+    Expr *destino = s->como.asignar.destino;
+
+    if (destino->tipo == EXPR_IDENT) {
+        Valor v = evaluador_evaluar_expr(ev, s->como.asignar.valor);
+        if (ev->error.tuvo_error) { valor_destruir(&v); return; }
+        if (!entorno_definir(ev->entorno_actual,
+                              destino->como.ident.nombre,
+                              destino->como.ident.longitud, v)) {
+            sent_set_error(ev, s, "memoria insuficiente al asignar");
+        }
+        return;
+    }
+
+    if (destino->tipo == EXPR_INDICE) {
+        Valor v = evaluador_evaluar_expr(ev, s->como.asignar.valor);
+        if (ev->error.tuvo_error) { valor_destruir(&v); return; }
+        asignar_indice(ev, s, destino, v);
+        return;
+    }
+
+    sent_set_error(ev, s,
+        "ErrorDeSintaxis: destino de asignacion no soportado en v0.5");
 }
 
 /*
  * SENT_ASIGNAR_AUG: `x op= expr`. El destino debe estar previamente
- * definido (semántica Python: NameError si x no existe).
+ * definido (semántica Python: NameError si x no existe). Soporta:
+ *   - IDENT: lee del entorno, computa, escribe.
+ *   - INDICE: lee de lista[i], computa, escribe.
  */
 static void ejec_asignar_aug(Evaluador *ev, const Sent *s) {
     Expr *destino = s->como.asignar_aug.destino;
-    if (destino->tipo != EXPR_IDENT) {
-        sent_set_error(ev, s,
-            "ErrorDeSintaxis: destino de asignacion aumentada no soportado en v0.4");
-        return;
-    }
-
-    /* Obtener el valor actual (clon). */
-    Valor actual;
-    if (!entorno_obtener(ev->entorno_actual,
-                          destino->como.ident.nombre,
-                          destino->como.ident.longitud, &actual)) {
-        sent_set_error(ev, s,
-            "ErrorDeNombre: nombre '%.*s' no esta definido",
-            destino->como.ident.longitud, destino->como.ident.nombre);
-        return;
-    }
-
-    Valor incremento = evaluador_evaluar_expr(ev, s->como.asignar_aug.valor);
-    if (ev->error.tuvo_error) {
-        valor_destruir(&actual);
-        valor_destruir(&incremento);
-        return;
-    }
-
     TipoToken op = aug_a_binario(s->como.asignar_aug.op);
-    Valor resultado = aplicar_binario(ev, op, actual, incremento, destino);
-    if (ev->error.tuvo_error) { valor_destruir(&resultado); return; }
 
-    if (!entorno_definir(ev->entorno_actual,
-                          destino->como.ident.nombre,
-                          destino->como.ident.longitud, resultado)) {
-        sent_set_error(ev, s, "memoria insuficiente al asignar");
+    if (destino->tipo == EXPR_IDENT) {
+        Valor actual;
+        if (!entorno_obtener(ev->entorno_actual,
+                              destino->como.ident.nombre,
+                              destino->como.ident.longitud, &actual)) {
+            sent_set_error(ev, s,
+                "ErrorDeNombre: nombre '%.*s' no esta definido",
+                destino->como.ident.longitud, destino->como.ident.nombre);
+            return;
+        }
+        Valor incremento = evaluador_evaluar_expr(ev, s->como.asignar_aug.valor);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&actual); valor_destruir(&incremento);
+            return;
+        }
+        Valor resultado = aplicar_binario(ev, op, actual, incremento, destino);
+        if (ev->error.tuvo_error) { valor_destruir(&resultado); return; }
+        if (!entorno_definir(ev->entorno_actual,
+                              destino->como.ident.nombre,
+                              destino->como.ident.longitud, resultado)) {
+            sent_set_error(ev, s, "memoria insuficiente al asignar");
+        }
+        return;
     }
+
+    if (destino->tipo == EXPR_INDICE) {
+        /* Evaluar objeto e índice una sola vez (idéntico a Python). */
+        Valor obj = evaluador_evaluar_expr(ev, destino->como.indice.objeto);
+        if (ev->error.tuvo_error) { valor_destruir(&obj); return; }
+        Valor idx = evaluador_evaluar_expr(ev, destino->como.indice.indice);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&obj); valor_destruir(&idx); return;
+        }
+
+        if (obj.tipo != VAL_LISTA) {
+            sent_set_error(ev, s,
+                "ErrorDeTipo: '%s' no soporta asignacion aumentada por indice",
+                valor_nombre_tipo(&obj));
+            valor_destruir(&obj); valor_destruir(&idx); return;
+        }
+        Lista *l = obj.como.lista;
+        long i;
+        if (!indice_normalizar(&idx, l->cuenta, &i)) {
+            sent_set_error(ev, s,
+                "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
+            valor_destruir(&obj); valor_destruir(&idx); return;
+        }
+
+        Valor actual = valor_clonar(&l->elementos[i]);
+        Valor incremento = evaluador_evaluar_expr(ev, s->como.asignar_aug.valor);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&actual); valor_destruir(&incremento);
+            valor_destruir(&obj); valor_destruir(&idx);
+            return;
+        }
+        Valor resultado = aplicar_binario(ev, op, actual, incremento, destino);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&resultado);
+            valor_destruir(&obj); valor_destruir(&idx);
+            return;
+        }
+        lista_asignar(l, (int)i, resultado);
+        valor_destruir(&obj); valor_destruir(&idx);
+        return;
+    }
+
+    sent_set_error(ev, s,
+        "ErrorDeSintaxis: destino de asignacion aumentada no soportado en v0.5");
 }
 
 static void ejec_si(Evaluador *ev, const Sent *s) {
@@ -1624,4 +1728,133 @@ static Valor eval_indice(Evaluador *ev, const Expr *e) {
         valor_nombre_tipo(&obj));
     valor_destruir(&obj); valor_destruir(&idx);
     return err;
+}
+
+/*
+ * Slicing `objeto[a:b:c]` con semántica Python:
+ *   - Cualquier campo puede omitirse y se aplica el default.
+ *   - Defaults dependen del signo de paso:
+ *       paso > 0:  inicio=0,        fin=cuenta
+ *       paso < 0:  inicio=cuenta-1, fin=-1 (uno antes de 0)
+ *   - paso == 0 → error.
+ *   - Índices negativos cuentan desde el final.
+ *   - Índices fuera de rango se clamp-ean (NO da error, igual que Py).
+ */
+static Valor eval_rebanada(Evaluador *ev, const Expr *e) {
+    Valor obj = evaluador_evaluar_expr(ev, e->como.rebanada.objeto);
+    if (ev->error.tuvo_error) { valor_destruir(&obj); return valor_nulo(); }
+
+    if (obj.tipo != VAL_LISTA) {
+        Valor err = error_en(ev, e,
+            "ErrorDeTipo: '%s' no soporta slicing en v0.5",
+            valor_nombre_tipo(&obj));
+        valor_destruir(&obj);
+        return err;
+    }
+
+    long paso = 1;
+    if (e->como.rebanada.paso != NULL) {
+        Valor pv = evaluador_evaluar_expr(ev, e->como.rebanada.paso);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&pv); valor_destruir(&obj); return valor_nulo();
+        }
+        if (pv.tipo != VAL_ENTERO && pv.tipo != VAL_BOOLEANO) {
+            Valor err = error_en(ev, e,
+                "ErrorDeTipo: paso de rebanada debe ser entero, no '%s'",
+                valor_nombre_tipo(&pv));
+            valor_destruir(&pv); valor_destruir(&obj); return err;
+        }
+        if (pv.tipo == VAL_BOOLEANO) {
+            paso = pv.como.booleano ? 1 : 0;
+        } else {
+            if (mp_count_bits(pv.como.entero) > 62) {
+                valor_destruir(&pv); valor_destruir(&obj);
+                return error_en(ev, e,
+                    "ErrorDeValor: paso de rebanada demasiado grande");
+            }
+            paso = (long)mp_get_i64(pv.como.entero);
+        }
+        valor_destruir(&pv);
+        if (paso == 0) {
+            valor_destruir(&obj);
+            return error_en(ev, e,
+                "ErrorDeValor: el paso de una rebanada no puede ser 0");
+        }
+    }
+
+    int total = obj.como.lista->cuenta;
+
+    /* Helper para resolver inicio/fin opcionales con defaults dependientes
+       del signo de paso. Para slicing usamos el rango [-cuenta, cuenta]
+       sin error de bounds: Python clamp-ea silenciosamente. */
+    long inicio, fin;
+    if (e->como.rebanada.inicio != NULL) {
+        Valor iv = evaluador_evaluar_expr(ev, e->como.rebanada.inicio);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&iv); valor_destruir(&obj); return valor_nulo();
+        }
+        if (iv.tipo == VAL_BOOLEANO) inicio = iv.como.booleano ? 1 : 0;
+        else if (iv.tipo == VAL_ENTERO && mp_count_bits(iv.como.entero) <= 62) {
+            inicio = (long)mp_get_i64(iv.como.entero);
+        } else {
+            valor_destruir(&iv); valor_destruir(&obj);
+            return error_en(ev, e,
+                "ErrorDeTipo: inicio de rebanada debe ser entero");
+        }
+        valor_destruir(&iv);
+        if (inicio < 0) inicio += total;
+    } else {
+        inicio = (paso > 0) ? 0 : total - 1;
+    }
+
+    if (e->como.rebanada.fin != NULL) {
+        Valor fv = evaluador_evaluar_expr(ev, e->como.rebanada.fin);
+        if (ev->error.tuvo_error) {
+            valor_destruir(&fv); valor_destruir(&obj); return valor_nulo();
+        }
+        if (fv.tipo == VAL_BOOLEANO) fin = fv.como.booleano ? 1 : 0;
+        else if (fv.tipo == VAL_ENTERO && mp_count_bits(fv.como.entero) <= 62) {
+            fin = (long)mp_get_i64(fv.como.entero);
+        } else {
+            valor_destruir(&fv); valor_destruir(&obj);
+            return error_en(ev, e,
+                "ErrorDeTipo: fin de rebanada debe ser entero");
+        }
+        valor_destruir(&fv);
+        if (fin < 0) fin += total;
+    } else {
+        fin = (paso > 0) ? total : -1;
+    }
+
+    /* Clamping al rango válido (no error). */
+    if (paso > 0) {
+        if (inicio < 0) inicio = 0;
+        if (inicio > total) inicio = total;
+        if (fin < 0) fin = 0;
+        if (fin > total) fin = total;
+    } else {
+        if (inicio < 0) inicio = -1;
+        if (inicio >= total) inicio = total - 1;
+        if (fin < -1) fin = -1;
+        if (fin >= total) fin = total - 1;
+    }
+
+    /* Construir lista resultante. */
+    Lista *resultado = lista_nueva(0);
+    if (!resultado) {
+        valor_destruir(&obj);
+        return error_en(ev, e, "memoria insuficiente");
+    }
+    Lista *src = obj.como.lista;
+    if (paso > 0) {
+        for (long i = inicio; i < fin; i += paso) {
+            lista_agregar(resultado, valor_clonar(&src->elementos[i]));
+        }
+    } else {
+        for (long i = inicio; i > fin; i += paso) {
+            lista_agregar(resultado, valor_clonar(&src->elementos[i]));
+        }
+    }
+    valor_destruir(&obj);
+    return valor_lista(resultado);
 }
