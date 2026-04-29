@@ -6,6 +6,43 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.6.1] — 2026-04-29 — bytecode con iteración
+
+Bytecode amplía soporte: `SENT_PARA` con iteradores genéricos sobre
+listas, tuplas, cadenas (UTF-8), rangos, diccionarios y conjuntos.
+Asignación aumentada con destino índice (`dicc[k] += 1`). 7 de 9
+ejemplos jugables corren ya por bytecode.
+
+### Añadido (v0.6.1)
+- **`VAL_ITERADOR`** y **`struct Iterador`** en `valor.{h,c}`: tipo VM-only (no expuesto al usuario) que mantiene el estado de iteración. Campos: copia con refcount del iterable + cursor int. La función `iter_siguiente` despacha por tipo:
+  - **Lista/Tupla**: cursor = índice.
+  - **Cadena**: cursor = byte position; avanza por code points UTF-8 con `utf8proc_iterate`.
+  - **Diccionario/Conjunto**: cursor = slot interno; salta entradas vacías; emite claves (dict) o elementos (conjunto).
+  - **Rango**: cursor = número de iteración; calcula `inicio + cursor*paso` cada vez.
+- **`OP_ITER_INICIAR`**: pop iterable, push iterador (validado con `valor_es_iterable`).
+- **`OP_ITER_SIGUIENTE [byte slot] [u16 offset]`**: lee el iterador del slot dado del frame actual. Si tiene siguiente, push valor; si no, salta `offset` bytes (los `OP_ASIGNAR_LOCAL` siguientes no se ejecutan, el slot iterador se libera con el frame).
+- **`SENT_PARA` en compilador**:
+  - Compila iterable + `OP_ITER_INICIAR`.
+  - Reserva un local oculto `$iter` con el iterador en su slot.
+  - Si el objetivo es local: pre-asigna con `OP_NULO` y emite `OP_ASIGNAR_LOCAL` en cada iteración (evita el bug "asignar al top sobre sí mismo").
+  - Si es top-level: emite `OP_DEFINIR_GLOBAL` en cada iteración.
+  - Soporta `romper`/`continuar` y cláusula `sino` (ejecutada solo al agotarse el iterador, no por break).
+- **Locales en scope top-level**: el compilador permite registrar locales (vía `agregar_local`) incluso en `es_funcion=false`. Esto habilita el slot oculto `$iter` y evita interferencias con globales del usuario.
+- **`OP_DUP_2`**: duplica los dos valores del tope (`a, b → a, b, a, b`). Necesario para implementar aug-assign en índice sin reevaluar `obj` y `key`.
+- **`compilar_asignar_aug` con destino `EXPR_INDICE`**: compila como `obj key OP_DUP_2 OP_INDICE valor OP_op OP_ASIGNAR_INDICE OP_DESCARTAR`. Permite `dicc[k] += 1`, `lista[i] *= 2`, etc.
+- **`OP_ES` y `OP_EN`** añadidos al enum `OpCode` y mapeados desde `TT_ES`/`TT_EN` en el compilador. La VM los despacha a `evaluador_aplicar_binario` igual que las comparaciones — la lógica completa (identidad, membership en cadena/lista/dicc/conjunto/tupla) se reusa del refactor de S2.
+- **Versión** bump a `0.6.1`.
+- **`tests/unit/test_bytecode_iter.c`** con 10 grupos: `para` sobre cadena (incluido UTF-8), rango (con paso negativo y `rango(n)`), lista/tupla, dicc/conjunto, `romper`, `continuar`, cláusula `sino`, `para` dentro de función (conteo de vocales en `"murcielago"`), aug-assign con índice (frecuencia de letras en `"abracadabra"`, mutación de lista), factorial(25) iterativo via bytecode (26 dígitos).
+- **`bc_run_*` ampliados**: `02_fizzbuzz`, `14_contar_vocales`, `15_fizzbuzz_jugable`, `17_dicc_frecuencia`, `18_conj_y_tupla` ahora se ejecutan con `--bytecode` y verifican misma salida que tree-walking.
+- **65 tests verde** (25 unit + 40 integración: 12 lex + 8 parse + 13 run + 7 bc_run).
+
+### Aplazado a v0.6.2+
+- **Closures con upvalues** (estilo clox cap. 25): funciones anidadas que capturan locales del scope enclosing. Requiere `OP_CLOSURE`, `OP_GET_UPVALUE`, `OP_SET_UPVALUE`, `OP_CLOSE_UPVALUE` y tracking runtime de upvalues abiertos.
+- **Lambdas** (`lambda x: x*2`): mismo modelo que `SENT_FUNCION` pero como expresión.
+- **Slicing** (`lista[a:b:c]`): `OP_REBANADA`.
+- **Atributos** (`obj.attr`): hace falta primero el sistema de objetos (Fase 8).
+- **Excepciones** (`intentar`/`atrapar`/`finalmente`): tabla de excepciones por chunk, manejo de stack unwinding.
+
 ## [0.6.0] — 2026-04-29 — motor bytecode (opt-in)
 
 Cierre de Fase 6 según el plan: compilador AST → bytecode + VM

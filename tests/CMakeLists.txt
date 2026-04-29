@@ -164,3 +164,55 @@ set_tests_properties(bc_run_13_factorial_jugable PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "100! = 9332621544394415268169923885626670049071596826438162146859296389521759999322991560894146397615651828625369792082722375825118521091686400000000000000000000000"
 )
+
+# v0.6.1: tests bytecode adicionales que ahora pasan gracias a iteradores
+# y aug-assign con destino indice.
+add_test(
+    NAME bc_run_02_fizzbuzz
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/02_fizzbuzz.cor
+)
+set_tests_properties(bc_run_02_fizzbuzz PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "FizzBuzz"
+)
+
+add_test(
+    NAME bc_run_14_contar_vocales
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/14_contar_vocales.cor
+)
+set_tests_properties(bc_run_14_contar_vocales PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "murcielago tiene 5 vocales"
+)
+
+add_test(
+    NAME bc_run_15_fizzbuzz_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/15_fizzbuzz_jugable.cor
+)
+set_tests_properties(bc_run_15_fizzbuzz_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "FizzBuzz"
+)
+
+add_test(
+    NAME bc_run_17_dicc_frecuencia
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/17_dicc_frecuencia.cor
+)
+set_tests_properties(bc_run_17_dicc_frecuencia PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Total de letras: 11"
+)
+
+add_test(
+    NAME bc_run_18_conj_y_tupla
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/18_conj_y_tupla.cor
+)
+set_tests_properties(bc_run_18_conj_y_tupla PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Suma de unicos: 30"
+)

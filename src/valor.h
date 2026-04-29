@@ -52,6 +52,7 @@ typedef enum {
     VAL_CONJUNTO,      /* tabla hash de Valor sin valor con refcount */
     VAL_TUPLA,         /* secuencia inmutable de Valor con refcount */
     VAL_FUNCION_BC,    /* función compilada a bytecode con refcount */
+    VAL_ITERADOR,      /* iterador interno (uso VM-only para `para`) */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -61,6 +62,7 @@ typedef struct Diccionario Diccionario;
 typedef struct Conjunto Conjunto;
 typedef struct Tupla Tupla;
 typedef struct FuncionBC FuncionBC;
+typedef struct Iterador Iterador;
 
 /*
  * Firma de una función nativa (puntero a función C). Recibe un
@@ -134,6 +136,7 @@ typedef struct Valor {
         Conjunto *conjunto; /* refcount */
         Tupla *tupla;       /* refcount, inmutable */
         FuncionBC *funcion_bc; /* refcount; función compilada a bytecode */
+        Iterador *iterador; /* uso VM-only; vida corta en stack */
     } como;
 } Valor;
 
@@ -268,6 +271,36 @@ void tupla_retener(Tupla *t);
 void tupla_liberar(Tupla *t);
 
 Valor valor_tupla(Tupla *t);
+
+/*
+ * Iterador VM-only (Fase 6 / v0.6.1).
+ *
+ * Cornamusa no expone este tipo al usuario — es la representación
+ * intermedia que la VM bytecode usa para implementar `para X en Y`.
+ * Vive solo en la pila de la VM y nunca se hashea, asigna a globales
+ * ni clona profundamente.
+ *
+ * Estado:
+ *   - `iterable`: copia con refcount del iterable original (lista,
+ *     tupla, diccionario, conjunto, cadena, rango).
+ *   - `cursor`: posición en bytes (cadena), índice (lista/tupla/rango)
+ *     o slot interno (diccionario/conjunto).
+ */
+struct Iterador {
+    Valor iterable;
+    int cursor;
+};
+
+bool valor_es_iterable(const Valor *v);
+
+Iterador *iter_nuevo(const Valor *iterable);
+void iter_destruir(Iterador *it);
+
+/* Obtiene el siguiente valor (con ownership). Devuelve true si quedaba
+   uno; false si se agotó (en cuyo caso `*out` queda en VAL_NULO). */
+bool iter_siguiente(Iterador *it, Valor *out);
+
+Valor valor_iterador(Iterador *it);
 
 /* ──────────────────────────────────────────────────────────────────
  * Constructores

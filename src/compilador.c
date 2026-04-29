@@ -210,6 +210,8 @@ static int token_a_opcode_binario(TipoToken op) {
         case TT_MENOR_IGUAL:     return OP_MENOR_IGUAL;
         case TT_MAYOR:           return OP_MAYOR;
         case TT_MAYOR_IGUAL:     return OP_MAYOR_IGUAL;
+        case TT_ES:              return OP_ES;
+        case TT_EN:              return OP_EN;
         default:                 return -1;
     }
 }
@@ -528,6 +530,7 @@ bool compilador_compilar_expr_top(Compilador *c, const Expr *e) {
  * ────────────────────────────────────────────────────────────────── */
 
 static bool compilar_funcion(Compilador *c, const Sent *s);
+static bool compilar_para(Compilador *c, const Sent *s);
 
 static bool compilar_asignar(Compilador *c, const Sent *s) {
     Expr *destino = s->como.asignar.destino;
@@ -590,6 +593,45 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
  */
 static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
     Expr *destino = s->como.asignar_aug.destino;
+
+    /* Destino EXPR_INDICE: `obj[key] op= valor` se desazucara a:
+     *
+     *   compile obj
+     *   compile key
+     *   OP_DUP_2                      ; preserva obj, key para asignar
+     *   OP_INDICE                     ; pop obj, key; push obj[key]
+     *   compile valor
+     *   OP_op
+     *   OP_ASIGNAR_INDICE             ; pop obj, key, resultado
+     *   OP_DESCARTAR                  ; descarta el nulo de ASIGNAR_INDICE
+     */
+    if (destino->tipo == EXPR_INDICE) {
+        TipoToken op_aug = s->como.asignar_aug.op;
+        int op_byte = -1;
+        switch (op_aug) {
+            case TT_ASIGNAR_MAS:         op_byte = OP_SUMAR; break;
+            case TT_ASIGNAR_MENOS:       op_byte = OP_RESTAR; break;
+            case TT_ASIGNAR_ASTERISCO:   op_byte = OP_MULTIPLICAR; break;
+            case TT_ASIGNAR_BARRA:       op_byte = OP_DIVIDIR; break;
+            case TT_ASIGNAR_DOBLE_BARRA: op_byte = OP_DIVIDIR_ENTERO; break;
+            case TT_ASIGNAR_PORCENTAJE:  op_byte = OP_MODULO; break;
+            case TT_ASIGNAR_DOBLE_ASTER: op_byte = OP_POTENCIA; break;
+            default:
+                error_compilacion(c, s->linea, s->columna,
+                    "operador de asignacion aumentada desconocido");
+                return false;
+        }
+        if (!compilador_compilar_expr(c, destino->como.indice.objeto)) return false;
+        if (!compilador_compilar_expr(c, destino->como.indice.indice)) return false;
+        chunk_emitir_byte(c->actual->chunk, OP_DUP_2, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_INDICE, s->linea);
+        if (!compilador_compilar_expr(c, s->como.asignar_aug.valor)) return false;
+        chunk_emitir_byte(c->actual->chunk, (uint8_t)op_byte, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_ASIGNAR_INDICE, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        return true;
+    }
+
     if (destino->tipo != EXPR_IDENT) {
         error_compilacion(c, s->linea, s->columna,
             "ErrorDeSintaxis: destino de asignacion aumentada no soportado en bytecode v0.6");
@@ -818,8 +860,10 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             return true;
         }
 
-        /* Sin soporte aún. */
         case SENT_PARA:
+            return compilar_para(c, s);
+
+        /* Sin soporte aún. */
         case SENT_CLASE:
         case SENT_INTENTAR:
         case SENT_LANZAR:
@@ -932,5 +976,110 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
     }
     chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
                         (uint8_t)idx_nombre, s->linea);
+    return true;
+}
+
+/*
+ * SENT_PARA en bytecode:
+ *
+ *   compile iterable
+ *   OP_ITER_INICIAR              ; pop iterable, push iterador
+ *   OP_ASIGNAR_LOCAL [iter_slot] ; pop iterador a slot oculto
+ * inicio_loop:
+ *   OP_ITER_SIGUIENTE [iter_slot] [u16 offset_salir]
+ *   ASIGNAR objetivo             ; el valor está en tope
+ *   compile cuerpo
+ *   OP_BUCLE inicio_loop
+ * salir:
+ *   compile sino?                ; si la cláusula sino existe
+ *   (los `romper` saltan a aquí, después del sino)
+ *
+ * El iterador vive en un slot del frame durante toda la iteración,
+ * para que el cuerpo pueda usar locales arbitrarios sin interferir.
+ *
+ * Funciona tanto en top-level como dentro de función gracias a que
+ * los locales también son válidos en el scope raíz desde v0.6.1.
+ */
+static bool compilar_para(Compilador *c, const Sent *s) {
+    Expr *objetivo = s->como.para.objetivo;
+    if (objetivo->tipo != EXPR_IDENT) {
+        error_compilacion(c, s->linea, s->columna,
+            "ErrorDeSintaxis: objetivo de 'para' debe ser un identificador");
+        return false;
+    }
+
+    /* Compilar iterable y emitir OP_ITER_INICIAR. El iterador queda
+       en el tope del stack como un local oculto. */
+    if (!compilador_compilar_expr(c, s->como.para.iterable)) return false;
+    chunk_emitir_byte(c->actual->chunk, OP_ITER_INICIAR, s->linea);
+
+    static const char NOMBRE_ITER_OCULTO[] = "$iter";
+    int iter_slot = agregar_local(c, NOMBRE_ITER_OCULTO, 5, s->linea);
+    if (iter_slot < 0) return false;
+
+    /*
+     * Si el objetivo es local (estamos en función o se trata como
+     * tal), preasignamos su slot con OP_NULO para que la primera
+     * iteración pueda hacer un OP_ASIGNAR_LOCAL "destruyendo el nulo
+     * y asignando el primer valor".
+     *
+     * En top-level, el objetivo se trata como global y se asigna con
+     * OP_DEFINIR_GLOBAL en cada iteración (sin slot reservado).
+     */
+    int objetivo_slot = -1;
+    if (c->actual->es_funcion) {
+        int existente = buscar_local(c->actual, objetivo->como.ident.nombre,
+                                        objetivo->como.ident.longitud);
+        if (existente >= 0) {
+            objetivo_slot = existente;
+        } else {
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
+            objetivo_slot = agregar_local(c, objetivo->como.ident.nombre,
+                                              objetivo->como.ident.longitud,
+                                              s->linea);
+            if (objetivo_slot < 0) return false;
+        }
+    }
+
+    /* inicio_loop: aquí saltan `continuar` y el OP_BUCLE final. */
+    int inicio_loop = c->actual->chunk->cuenta;
+
+    /* OP_ITER_SIGUIENTE [byte iter_slot] [u16 offset_fin]. */
+    chunk_emitir_byte2(c->actual->chunk, OP_ITER_SIGUIENTE,
+                        (uint8_t)iter_slot, s->linea);
+    chunk_emitir_byte(c->actual->chunk, 0xff, s->linea);
+    chunk_emitir_byte(c->actual->chunk, 0xff, s->linea);
+    int offset_placeholder = c->actual->chunk->cuenta - 2;
+
+    /* Asignar el valor producido por SIGUIENTE al objetivo. */
+    if (objetivo_slot >= 0) {
+        chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                            (uint8_t)objetivo_slot, s->linea);
+    } else {
+        int idx = agregar_nombre_global(c, objetivo->como.ident.nombre,
+                                          objetivo->como.ident.longitud);
+        if (idx < 0 || idx > 255) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiadas constantes para v0.6 (operando byte)");
+            return false;
+        }
+        chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                            (uint8_t)idx, s->linea);
+    }
+
+    if (!empujar_bucle(c, inicio_loop, s->linea)) return false;
+
+    if (!compilador_compilar_sent(c, s->como.para.cuerpo)) return false;
+
+    emitir_bucle(c, inicio_loop, s->linea);
+
+    /* Patchear el salto de OP_ITER_SIGUIENTE al fin del bucle. */
+    parchear_salto(c, offset_placeholder, s->linea);
+
+    if (s->como.para.sino != NULL) {
+        if (!compilador_compilar_sent(c, s->como.para.sino)) return false;
+    }
+
+    cerrar_bucle(c, s->linea);
     return true;
 }

@@ -104,8 +104,11 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_MENOR_IGUAL:     return instruccion_simple("OP_MENOR_IGUAL", offset, out);
         case OP_MAYOR:           return instruccion_simple("OP_MAYOR", offset, out);
         case OP_MAYOR_IGUAL:     return instruccion_simple("OP_MAYOR_IGUAL", offset, out);
+        case OP_ES:              return instruccion_simple("OP_ES", offset, out);
+        case OP_EN:              return instruccion_simple("OP_EN", offset, out);
 
         case OP_DESCARTAR:       return instruccion_simple("OP_DESCARTAR", offset, out);
+        case OP_DUP_2:           return instruccion_simple("OP_DUP_2", offset, out);
 
         case OP_SALTAR:          return instruccion_u16("OP_SALTAR", c, offset, +1, out);
         case OP_SALTAR_SI_FALSO: return instruccion_u16("OP_SALTAR_SI_FALSO", c, offset, +1, out);
@@ -126,7 +129,16 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_INDICE:          return instruccion_simple("OP_INDICE", offset, out);
         case OP_ASIGNAR_INDICE:  return instruccion_simple("OP_ASIGNAR_INDICE", offset, out);
         case OP_ITER_INICIAR:    return instruccion_simple("OP_ITER_INICIAR", offset, out);
-        case OP_ITER_SIGUIENTE:  return instruccion_u16("OP_ITER_SIGUIENTE", c, offset, +1, out);
+        case OP_ITER_SIGUIENTE: {
+            /* Formato: [byte slot] [u16 offset]. */
+            uint8_t slot = c->codigo[offset + 1];
+            uint16_t off = (uint16_t)((c->codigo[offset + 2] << 8)
+                                       | c->codigo[offset + 3]);
+            int destino = offset + 4 + off;
+            fprintf(out, "%-20s %4d %4d -> %04d\n",
+                "OP_ITER_SIGUIENTE", slot, off, destino);
+            return offset + 4;
+        }
         case OP_RETORNAR:        return instruccion_simple("OP_RETORNAR", offset, out);
     }
 

@@ -27,7 +27,10 @@ const char *opcode_nombre(OpCode op) {
         case OP_MENOR_IGUAL:     return "OP_MENOR_IGUAL";
         case OP_MAYOR:           return "OP_MAYOR";
         case OP_MAYOR_IGUAL:     return "OP_MAYOR_IGUAL";
+        case OP_ES:              return "OP_ES";
+        case OP_EN:              return "OP_EN";
         case OP_DESCARTAR:       return "OP_DESCARTAR";
+        case OP_DUP_2:           return "OP_DUP_2";
         case OP_SALTAR:          return "OP_SALTAR";
         case OP_SALTAR_SI_FALSO: return "OP_SALTAR_SI_FALSO";
         case OP_BUCLE:           return "OP_BUCLE";

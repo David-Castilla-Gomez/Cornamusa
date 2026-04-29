@@ -6,6 +6,7 @@
 
 #include "chunk.h"   /* FuncionBC: definición completa para refcount */
 #include "tommath.h"
+#include "utf8proc.h" /* iteración UTF-8 en cadenas */
 
 /* ──────────────────────────────────────────────────────────────────
  * Helpers internos
@@ -404,6 +405,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_DICCIONARIO:
         case VAL_CONJUNTO:
         case VAL_RANGO:
+        case VAL_ITERADOR:
             return false;
         case VAL_TUPLA:
             /* Tupla es hashable solo si todos sus elementos lo son. */
@@ -713,6 +715,163 @@ Valor valor_tupla(Tupla *t) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Iterador (uso VM-only)
+ * ────────────────────────────────────────────────────────────────── */
+
+bool valor_es_iterable(const Valor *v) {
+    if (v == NULL) return false;
+    switch (v->tipo) {
+        case VAL_CADENA:
+        case VAL_LISTA:
+        case VAL_TUPLA:
+        case VAL_DICCIONARIO:
+        case VAL_CONJUNTO:
+        case VAL_RANGO:
+            return true;
+        default:
+            return false;
+    }
+}
+
+Iterador *iter_nuevo(const Valor *iterable) {
+    Iterador *it = (Iterador *)malloc(sizeof(Iterador));
+    if (!it) return NULL;
+    it->iterable = valor_clonar(iterable);  /* refcount o copia según tipo */
+    it->cursor = 0;
+    return it;
+}
+
+void iter_destruir(Iterador *it) {
+    if (!it) return;
+    valor_destruir(&it->iterable);
+    free(it);
+}
+
+bool iter_siguiente(Iterador *it, Valor *out) {
+    if (!it) { *out = valor_nulo(); return false; }
+    const Valor *iter = &it->iterable;
+
+    switch (iter->tipo) {
+        case VAL_LISTA: {
+            const Lista *l = iter->como.lista;
+            if (it->cursor >= l->cuenta) { *out = valor_nulo(); return false; }
+            *out = valor_clonar(&l->elementos[it->cursor]);
+            it->cursor++;
+            return true;
+        }
+        case VAL_TUPLA: {
+            const Tupla *t = iter->como.tupla;
+            if (it->cursor >= t->cuenta) { *out = valor_nulo(); return false; }
+            *out = valor_clonar(&t->elementos[it->cursor]);
+            it->cursor++;
+            return true;
+        }
+        case VAL_CADENA: {
+            int len = iter->como.cadena.longitud;
+            if (it->cursor >= len) { *out = valor_nulo(); return false; }
+            const char *texto = iter->como.cadena.texto;
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t consumido = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(texto + it->cursor),
+                (utf8proc_ssize_t)(len - it->cursor), &cp);
+            if (consumido <= 0) { *out = valor_nulo(); return false; }
+            *out = valor_cadena_duplicar(texto + it->cursor, (int)consumido);
+            it->cursor += (int)consumido;
+            return true;
+        }
+        case VAL_DICCIONARIO: {
+            /* Yields claves en orden de slot. */
+            const Diccionario *d = iter->como.dicc;
+            while (it->cursor < d->capacidad) {
+                if (d->entradas[it->cursor].ocupada) {
+                    *out = valor_clonar(&d->entradas[it->cursor].clave);
+                    it->cursor++;
+                    return true;
+                }
+                it->cursor++;
+            }
+            *out = valor_nulo();
+            return false;
+        }
+        case VAL_CONJUNTO: {
+            const Conjunto *c = iter->como.conjunto;
+            while (it->cursor < c->capacidad) {
+                if (c->entradas[it->cursor].ocupada) {
+                    *out = valor_clonar(&c->entradas[it->cursor].elemento);
+                    it->cursor++;
+                    return true;
+                }
+                it->cursor++;
+            }
+            *out = valor_nulo();
+            return false;
+        }
+        case VAL_RANGO: {
+            /* Calcular `inicio + cursor*paso` y comparar con fin
+               según el signo del paso. */
+            mp_int actual;
+            if (mp_init(&actual) != MP_OKAY) {
+                *out = valor_nulo();
+                return false;
+            }
+            if (mp_copy(iter->como.rango.inicio, &actual) != MP_OKAY) {
+                mp_clear(&actual);
+                *out = valor_nulo();
+                return false;
+            }
+            if (it->cursor > 0) {
+                mp_int delta, cur_mp;
+                if (mp_init_multi(&delta, &cur_mp, NULL) != MP_OKAY) {
+                    mp_clear(&actual);
+                    *out = valor_nulo();
+                    return false;
+                }
+                mp_set_l(&cur_mp, (long)it->cursor);
+                mp_err r1 = mp_mul(&cur_mp, iter->como.rango.paso, &delta);
+                mp_err r2 = mp_add(&actual, &delta, &actual);
+                (void)r1; (void)r2;
+                mp_clear_multi(&delta, &cur_mp, NULL);
+            }
+            int cmp = mp_cmp(&actual, iter->como.rango.fin);
+            bool paso_neg = (mp_isneg(iter->como.rango.paso) == MP_YES);
+            bool sigue = paso_neg ? (cmp == MP_GT) : (cmp == MP_LT);
+            if (!sigue) {
+                mp_clear(&actual);
+                *out = valor_nulo();
+                return false;
+            }
+            mp_int *resultado = (mp_int *)malloc(sizeof(mp_int));
+            if (!resultado || mp_init(resultado) != MP_OKAY
+                           || mp_copy(&actual, resultado) != MP_OKAY) {
+                free(resultado);
+                mp_clear(&actual);
+                *out = valor_nulo();
+                return false;
+            }
+            mp_clear(&actual);
+            Valor v;
+            v.tipo = VAL_ENTERO;
+            v.dueno_cadena = false;
+            v.como.entero = resultado;
+            *out = v;
+            it->cursor++;
+            return true;
+        }
+        default:
+            *out = valor_nulo();
+            return false;
+    }
+}
+
+Valor valor_iterador(Iterador *it) {
+    Valor v;
+    v.tipo = VAL_ITERADOR;
+    v.dueno_cadena = false;
+    v.como.iterador = it;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
 
@@ -768,6 +927,10 @@ void valor_destruir(Valor *v) {
         case VAL_FUNCION_BC:
             funcion_bc_liberar(v->como.funcion_bc);
             v->como.funcion_bc = NULL;
+            break;
+        case VAL_ITERADOR:
+            iter_destruir(v->como.iterador);
+            v->como.iterador = NULL;
             break;
         default:
             break;
@@ -852,6 +1015,10 @@ Valor valor_clonar(const Valor *v) {
         case VAL_FUNCION_BC:
             funcion_bc_retener(v->como.funcion_bc);
             return valor_funcion_bc(v->como.funcion_bc);
+        case VAL_ITERADOR:
+            /* Iteradores no son clonables (son uso interno de la VM
+               con vida corta). Devolvemos nulo si alguien lo intenta. */
+            return valor_nulo();
     }
     return valor_nulo();
 }
@@ -1041,6 +1208,9 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                 f->longitud_nombre, f->nombre);
             break;
         }
+        case VAL_ITERADOR:
+            n = snprintf(buffer, (size_t)capacidad, "<iterador>");
+            break;
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -1089,6 +1259,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_CONJUNTO:    return "conjunto";
         case VAL_TUPLA:       return "tupla";
         case VAL_FUNCION_BC:  return "funcion";
+        case VAL_ITERADOR:    return "iterador";
     }
     return "desconocido";
 }
@@ -1139,6 +1310,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.tupla && v->como.tupla->cuenta > 0;
         case VAL_FUNCION_BC:
             return v->como.funcion_bc != NULL;
+        case VAL_ITERADOR:
+            return v->como.iterador != NULL;
     }
     return false;
 }
@@ -1253,6 +1426,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
         }
         case VAL_FUNCION_BC:
             return a->como.funcion_bc == b->como.funcion_bc;
+        case VAL_ITERADOR:
+            return a->como.iterador == b->como.iterador;
     }
     return false;
 }

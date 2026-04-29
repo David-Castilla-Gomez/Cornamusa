@@ -61,9 +61,12 @@ typedef enum {
     OP_MENOR_IGUAL,
     OP_MAYOR,
     OP_MAYOR_IGUAL,
+    OP_ES,           /* identidad */
+    OP_EN,           /* membership */
 
     /* ---- Stack management ---- */
     OP_DESCARTAR,       /* pop sin usar */
+    OP_DUP_2,           /* duplica los 2 valores del tope (a, b -> a, b, a, b) */
 
     /* ---- Control de flujo (sesión 4) ---- */
     /* Los siguientes opcodes se reservan ahora para que el orden

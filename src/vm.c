@@ -67,6 +67,8 @@ static int opcode_a_token_binario(OpCode op) {
         case OP_MENOR_IGUAL:     return TT_MENOR_IGUAL;
         case OP_MAYOR:           return TT_MAYOR;
         case OP_MAYOR_IGUAL:     return TT_MAYOR_IGUAL;
+        case OP_ES:              return TT_ES;
+        case OP_EN:              return TT_EN;
         default:                 return -1;
     }
 }
@@ -155,7 +157,8 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
             case OP_POTENCIA:
             case OP_IGUAL: case OP_DISTINTO:
             case OP_MENOR: case OP_MENOR_IGUAL:
-            case OP_MAYOR: case OP_MAYOR_IGUAL: {
+            case OP_MAYOR: case OP_MAYOR_IGUAL:
+            case OP_ES: case OP_EN: {
                 int linea = linea_actual_frame(frame);
                 Valor b = sacar(vm);
                 Valor a = sacar(vm);
@@ -199,6 +202,14 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
             case OP_DESCARTAR: {
                 Valor v = sacar(vm);
                 valor_destruir(&v);
+                break;
+            }
+            case OP_DUP_2: {
+                /* Stack: [..., a, b] → [..., a, b, a, b]. */
+                Valor a = vm->tope[-2];
+                Valor b = vm->tope[-1];
+                empujar(vm, valor_clonar(&a));
+                empujar(vm, valor_clonar(&b));
                 break;
             }
 
@@ -480,12 +491,49 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 break;
             }
 
-            /* ─── Iteradores (sesión 6) ─── */
-            case OP_ITER_INICIAR:
-            case OP_ITER_SIGUIENTE:
-                VM_ERROR("OpCode %s no implementado en v0.6 sesion 6 todavia",
-                         opcode_nombre(op));
-                return VM_ERROR_RUNTIME;
+            /* ─── Iteradores ─── */
+            case OP_ITER_INICIAR: {
+                /* Pop iterable, push iterador. */
+                Valor it_v = sacar(vm);
+                if (!valor_es_iterable(&it_v)) {
+                    VM_ERROR("ErrorDeTipo: 'para' no soporta iterar sobre '%s'",
+                             valor_nombre_tipo(&it_v));
+                    valor_destruir(&it_v);
+                    return VM_ERROR_RUNTIME;
+                }
+                Iterador *iter = iter_nuevo(&it_v);
+                valor_destruir(&it_v);
+                if (!iter) {
+                    VM_ERROR("memoria insuficiente al crear iterador");
+                    return VM_ERROR_RUNTIME;
+                }
+                empujar(vm, valor_iterador(iter));
+                break;
+            }
+            case OP_ITER_SIGUIENTE: {
+                /* Operandos: [u8 slot] [u16 offset_fin].
+                   El iterador vive en `frame->base_pila[slot]` (un local
+                   oculto reservado por el compilador). Si tiene siguiente,
+                   push valor. Si no, deja el slot intacto (se libera con
+                   el frame al final) y salta `offset_fin` bytes adelante. */
+                uint8_t slot = LEER_BYTE();
+                uint8_t hi = LEER_BYTE();
+                uint8_t lo = LEER_BYTE();
+                uint16_t offset = ((uint16_t)hi << 8) | lo;
+                Valor *iter_v = &frame->base_pila[slot];
+                if (iter_v->tipo != VAL_ITERADOR) {
+                    VM_ERROR("estado interno corrupto: OP_ITER_SIGUIENTE sin iterador en slot %u",
+                             slot);
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor v;
+                if (iter_siguiente(iter_v->como.iterador, &v)) {
+                    empujar(vm, v);
+                } else {
+                    frame->ip += offset;
+                }
+                break;
+            }
 
             /* ─── Built-in print ─── */
             case OP_IMPRIMIR: {
