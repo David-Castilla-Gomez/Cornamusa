@@ -262,6 +262,20 @@ struct Closure {
     FuncionBC *plantilla;
     Upvalue **upvalues;       /* array dinámico, longitud = plantilla->n_upvalues */
     int refcount;
+    /*
+     * Clase donde este closure fue registrado como método (v0.8.2).
+     * NULL si no es método (función top-level, lambda, función nested).
+     *
+     * Crítico para `super` multinivel: cuando un método de Hijo hace
+     * `super.x()`, debemos buscar `x` en `Hijo.superclase`, no en
+     * `yo.clase.superclase` (que sería Hijo si yo es de Nieto).
+     *
+     * Antes de v0.8.2 (con refcount sin GC) este campo crearía un
+     * ciclo (Clase → metodos[m] → Closure → clase_definicion → Clase)
+     * que refcount no podía romper. Ahora con GC mark-sweep se rompe
+     * automáticamente cuando la clase deja de ser alcanzable.
+     */
+    Clase *clase_definicion;
 };
 
 Closure *closure_nuevo(FuncionBC *fn);

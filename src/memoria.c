@@ -214,6 +214,11 @@ void gc_marcar_objeto(GCObject *obj) {
                     gc_marcar_objeto(&c->upvalues[i]->obj);
                 }
             }
+            /* v0.8.2: marcar la clase definicional (si es método) para
+               que `super` pueda resolverse correctamente. */
+            if (c->clase_definicion) {
+                gc_marcar_objeto(&c->clase_definicion->obj);
+            }
             break;
         }
         case GC_TIPO_UPVALUE: {

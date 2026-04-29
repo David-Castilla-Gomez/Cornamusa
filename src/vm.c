@@ -1030,7 +1030,10 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             }
             case OP_METODO: {
                 /* Stack: [..., clase, closure]. Pop closure y guardarla
-                   en clase.metodos[name]. La clase queda en el tope. */
+                   en clase.metodos[name]. La clase queda en el tope.
+                   v0.8.2: además set closure->clase_definicion = clase
+                   (con retención) para que `super` multinivel resuelva
+                   correctamente desde dentro de este método. */
                 uint8_t idx = LEER_BYTE();
                 const Valor *nombre = &frame->chunk->constantes[idx];
                 Valor closure = sacar(vm);
@@ -1040,6 +1043,21 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     return VM_ERROR_RUNTIME;
                 }
                 Clase *cl = vm->tope[-1].como.clase;
+                /* Set clase_definicion. Si OP_HEREDAR copió este closure
+                   desde un padre, ya tendrá clase_definicion=Padre — no
+                   sobreescribimos en ese caso (super seguiría apuntando
+                   al abuelo). Pero OP_METODO se invoca específicamente
+                   cuando la clase actual (cl) define o redefine el
+                   método, así que este es el lugar correcto para
+                   actualizar. */
+                if (closure.tipo == VAL_FUNCION_BC && closure.como.closure) {
+                    Closure *cl_obj = closure.como.closure;
+                    if (cl_obj->clase_definicion) {
+                        clase_liberar(cl_obj->clase_definicion);
+                    }
+                    clase_retener(cl);
+                    cl_obj->clase_definicion = cl;
+                }
                 Valor clave_clon = valor_clonar(nombre);
                 if (!dicc_asignar(cl->metodos, clave_clon, closure)) {
                     VM_ERROR("memoria insuficiente al registrar metodo");
@@ -1050,15 +1068,19 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             case OP_SUPER_INVOCAR: {
                 /*
                  * Stack: [..., yo, arg1, ..., argN].
-                 * Resuelve `yo.clase.superclase.metodos[name]` y
-                 * lo despacha como un método con `yo` como receptor.
                  *
-                 * Limitación v0.7.1: la búsqueda usa `yo.clase`, no la
-                 * clase en la que el método actual fue definido. Para
-                 * herencia de un solo nivel coincide; para varios niveles
-                 * (Padre → Hijo → Nieto, super dentro de Hijo) requiere
-                 * almacenar `clase_definicion` en Closure (llega en
-                 * v0.8.0 con GC).
+                 * v0.8.2: resuelve `clase_definicion.superclase.metodos[name]`
+                 * (no `yo.clase.superclase`). Esto hace que la búsqueda
+                 * sea correcta para herencia multinivel: dentro de un
+                 * método declarado en Hijo, super.X busca en Padre,
+                 * incluso si yo es de Nieto. La clase definicional la
+                 * guarda OP_METODO en `closure->clase_definicion`.
+                 *
+                 * Si por alguna razón el closure no tiene
+                 * clase_definicion (función llamada como método de
+                 * instancia sin pasar por una declaración de clase),
+                 * cae al esquema antiguo (`yo.clase.superclase`) como
+                 * fallback.
                  */
                 uint8_t name_idx = LEER_BYTE();
                 uint8_t n_args = LEER_BYTE();
@@ -1070,11 +1092,17 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     VM_ERROR("'super' solo puede usarse en metodos de instancia");
                     return VM_ERROR_RUNTIME;
                 }
-                Clase *super = yo.como.instancia->clase->superclase;
+                Clase *clase_origen = NULL;
+                if (frame->closure && frame->closure->clase_definicion) {
+                    clase_origen = frame->closure->clase_definicion;
+                } else {
+                    clase_origen = yo.como.instancia->clase;
+                }
+                Clase *super = clase_origen->superclase;
                 if (!super) {
                     VM_ERROR("la clase '%.*s' no tiene superclase",
-                             yo.como.instancia->clase->longitud_nombre,
-                             yo.como.instancia->clase->nombre);
+                             clase_origen->longitud_nombre,
+                             clase_origen->nombre);
                     return VM_ERROR_RUNTIME;
                 }
                 Valor met_v;

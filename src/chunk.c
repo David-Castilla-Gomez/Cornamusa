@@ -238,6 +238,7 @@ Closure *closure_nuevo(FuncionBC *fn) {
     c->plantilla = fn;
     funcion_bc_retener(fn);
     c->refcount = 1;
+    c->clase_definicion = NULL;   /* set por OP_METODO si llega a ser método */
     if (fn->n_upvalues > 0) {
         c->upvalues = (Upvalue **)calloc((size_t)fn->n_upvalues,
                                             sizeof(Upvalue *));
@@ -266,6 +267,9 @@ void closure_liberar(Closure *c) {
         free(c->upvalues);
     }
     funcion_bc_liberar(c->plantilla);
+    if (c->clase_definicion) {
+        clase_liberar(c->clase_definicion);
+    }
     gc_desenlazar(&c->obj);
     free(c);
 }

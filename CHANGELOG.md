@@ -6,6 +6,60 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.8.2] — 2026-04-29 — super multinivel correcto
+
+Resuelve la limitación de `super` que llevaba arrastrándose desde
+v0.7.1: ahora `super.metodo()` funciona correctamente con cualquier
+profundidad de herencia, no solo 1 nivel.
+
+### Añadido (v0.8.2)
+- **Campo `Clase *clase_definicion` en `Closure`**: la clase donde el
+  closure fue registrado como método. NULL si no es método (función
+  top-level, lambda, función anidada).
+  - Antes de v0.8.2 (refcount sin GC), este campo crearía un ciclo
+    `Clase → metodos[m] → Closure → clase_definicion → Clase` que el
+    refcount no podía romper. Ahora con GC mark-sweep (v0.8.0+), el
+    ciclo se rompe automáticamente cuando la clase deja de ser
+    alcanzable. La razón por la que esta sesión es post-v0.8.1.
+- **`OP_METODO`** ahora set `closure->clase_definicion = clase` (con
+  retención) tras meter la closure en `clase.metodos`. Cada
+  declaración o redefinición de método actualiza este campo en el
+  closure correspondiente.
+- **`OP_HEREDAR`** preserva el `clase_definicion` heredado: cuando el
+  hijo hereda un método del padre via copia, el closure compartido
+  mantiene `clase_definicion = Padre`. Esto es lo que queremos —
+  `super` dentro de un método heredado busca en el padre original,
+  no en la clase del hijo.
+- **`OP_SUPER_INVOCAR`** ahora resuelve
+  `frame->closure->clase_definicion->superclase` en lugar de
+  `yo.clase.superclase`. Resultado correcto para varios niveles:
+  - `Abuelo → Padre → Nieto`. Si el método actual fue declarado en
+    Padre, super busca en Abuelo, **incluso si `yo` es un Nieto**.
+  - Si `yo.clase` se usara (v0.7.1), `super` desde Padre.metodo en una
+    instancia de Nieto resolvería incorrectamente a Padre, causando
+    recursión infinita.
+  - Fallback al esquema antiguo (`yo.clase.superclase`) si el closure
+    no tiene `clase_definicion` set (caso edge: función llamada como
+    método sin pasar por una declaración de clase).
+- **`gc_marcar_objeto` para closure** ahora también propaga la marca a
+  `clase_definicion` para que la clase no sea barrida mientras el
+  método siga vivo.
+- **`closure_liberar`** decrementa el refcount de `clase_definicion`
+  además de la plantilla y los upvalues.
+- **Tests nuevos** en `test_bytecode_clases.c`:
+  - `test_super_multinivel`: Abuelo → Padre → Nieto. Padre.via_super()
+    llama super.m(); con un Nieto como receptor, el resultado es
+    `"abuelo"` (no `"padre"` como sería con la implementación
+    incorrecta).
+  - `test_super_multinivel_constructor`: Cadena de constructores
+    Nieto→Padre→Abuelo via super.__iniciar__(), cada uno añadiendo un
+    atributo. Verificar que los tres atributos se asignan.
+- **Versión** bump a `0.8.2`.
+
+### Limitaciones que aún quedan
+- `__cadena__` y otros dunders runtime aún sin implementar — llegan
+  en v0.8.3 si se sigue por esta línea, o se aplazan a Fase 9.
+
 ## [0.8.1] — 2026-04-29 — GC automático + recolectar() built-in
 
 Activa el trigger automático del recolector que en v0.8.0 quedó

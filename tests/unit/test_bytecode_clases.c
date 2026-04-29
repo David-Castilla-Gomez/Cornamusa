@@ -728,6 +728,69 @@ static void test_super_sin_punto(void) {
     }
 }
 
+/* ───── super multinivel (v0.8.2) ───── */
+
+static void test_super_multinivel(void) {
+    /* Tres niveles de herencia: Abuelo → Padre → Nieto. Si un método
+       de Padre llama super.m(), debe ir a Abuelo (clase definicional
+       del método = Padre, padre.superclase = Abuelo) — NO a Padre
+       (que sería el resultado erróneo de yo.clase.superclase si yo
+       es Nieto y la clase de yo es Nieto, cuya superclase es Padre).
+
+       Pre-v0.8.2: super dentro de Padre.metodo en una instancia de
+       Nieto resolvería a Padre (incorrecto, recursión infinita
+       potencial). v0.8.2: resuelve correctamente a Abuelo. */
+    verificar_var(
+        "clase Abuelo:\n"
+        "    funcion m(yo):\n"
+        "        retornar \"abuelo\"\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Padre extiende Abuelo:\n"
+        "    funcion m(yo):\n"
+        "        retornar \"padre\"\n"
+        "    fin funcion\n"
+        "    funcion via_super(yo):\n"
+        "        retornar super.m()\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Nieto extiende Padre:\n"
+        "    funcion m(yo):\n"
+        "        retornar \"nieto\"\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "n = Nieto()\n"
+        "z = n.via_super()",
+        "z", "abuelo");
+}
+
+static void test_super_multinivel_constructor(void) {
+    /* Constructores en cadena: Nieto.__iniciar__ llama super (Padre),
+       Padre.__iniciar__ llama super (Abuelo). Cada nivel añade un
+       atributo. */
+    verificar_var(
+        "clase Abuelo:\n"
+        "    funcion __iniciar__(yo):\n"
+        "        yo.a = \"A\"\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Padre extiende Abuelo:\n"
+        "    funcion __iniciar__(yo):\n"
+        "        super.__iniciar__()\n"
+        "        yo.b = \"B\"\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Nieto extiende Padre:\n"
+        "    funcion __iniciar__(yo):\n"
+        "        super.__iniciar__()\n"
+        "        yo.c = \"C\"\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "n = Nieto()\n"
+        "z = n.a + n.b + n.c",
+        "z", "ABC");
+}
+
 /* ───── Identidad de instancias ───── */
 
 static void test_identidad(void) {
@@ -782,6 +845,8 @@ int main(void) {
     test_super_metodo_inexistente();
     test_super_fuera_de_metodo();
     test_super_sin_punto();
+    test_super_multinivel();
+    test_super_multinivel_constructor();
     test_atributo_funcion();
     test_identidad();
 
