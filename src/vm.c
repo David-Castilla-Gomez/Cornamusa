@@ -124,6 +124,9 @@ static int opcode_a_token_binario(OpCode op) {
     }
 }
 
+/* Forward decl del adapter; definición tras vm_iniciar. */
+static void gc_marcar_raices_adapter(void *ctx);
+
 /* ──────────────────────────────────────────────────────────────────
  * API pública
  * ────────────────────────────────────────────────────────────────── */
@@ -138,18 +141,32 @@ void vm_iniciar(VM *vm) {
     vm->error.linea = 0;
     vm->error.columna = 0;
     /*
-     * Fase 7 S1: inicializar el GC e instalarlo como memoria global
+     * Fase 7: inicializar el GC e instalarlo como memoria global
      * antes de crear el diccionario de globales (que ya pasa por
-     * gc_alocar) o registrar nativas.
+     * gc_alocar). El callback se registra aquí, pero `gc_habilitado`
+     * queda en false: durante la fase de compilación, el cliente
+     * crea heap-objects referenciados solo desde C-locals (FuncionBC,
+     * plantillas, etc.) que aún no son alcanzables desde las raíces
+     * de la VM; si el GC triggerara, los barrería. El flag se activa
+     * al entrar a `vm_ejecutar` y se desactiva al salir.
      */
     memoria_iniciar(&vm->memoria);
     gc_instalar(&vm->memoria);
+    gc_set_marcador_raices(&vm->memoria, gc_marcar_raices_adapter, vm);
+#ifdef CORNAMUSA_GC_STRESS
+    vm->memoria.gc_stress = true;
+#endif
 
     vm->globales = dicc_nuevo();
     /* Registrar built-ins en globales: imprimir, longitud, tipo, rango,
        agregar, quitar, insertar, invertir, ordenar, claves, valores,
        conjunto. */
     if (vm->globales) nativos_registrar_dicc(vm->globales);
+}
+
+/* Adapter para FnMarcarRaices (firma `void(void *ctx)`). */
+static void gc_marcar_raices_adapter(void *ctx) {
+    gc_marcar_raices((VM *)ctx);
 }
 
 void gc_marcar_raices(VM *vm) {
@@ -162,10 +179,22 @@ void gc_marcar_raices(VM *vm) {
     if (vm->globales) {
         gc_marcar_objeto(&vm->globales->obj);
     }
-    /* Frames: cada uno tiene una closure (NULL en top-level). */
+    /* Frames: cada uno tiene una closure (NULL en top-level). Marcar
+       también los `constantes` del chunk activo: el frame top-level
+       no tiene closure pero sí un chunk con plantillas y cadenas
+       dueñas que deben sobrevivir al GC. Para frames con closure,
+       marcar el closure ya cubre la plantilla y sus constantes via
+       propagación; pero marcar las constantes del chunk explícitamente
+       es idempotente y no añade coste apreciable. */
     for (int i = 0; i < vm->n_frames; i++) {
         Closure *c = vm->frames[i].closure;
         if (c) gc_marcar_objeto(&c->obj);
+        const Chunk *ch = vm->frames[i].chunk;
+        if (ch) {
+            for (int j = 0; j < ch->constantes_cuenta; j++) {
+                gc_marcar_valor(&ch->constantes[j]);
+            }
+        }
     }
     /* Open upvalues: linked list. Aunque sus posiciones están en stack
        y se marcaron arriba, el propio Upvalue es heap-rastreado. */
@@ -207,7 +236,10 @@ void vm_destruir(VM *vm) {
         snprintf(vm->error.mensaje, sizeof(vm->error.mensaje), __VA_ARGS__);   \
     } while (0)
 
-ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
+/* Dispatch interno; la wrapper pública vm_ejecutar gestiona el flag
+   gc_habilitado en cualquier path de salida. */
+static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
+                                          Valor *resultado_out) {
     vm->tope = vm->pila;
     vm->n_frames = 0;
     vm->error.tuvo_error = false;
@@ -221,6 +253,8 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
     frame->base_pila = vm->pila;
     frame->closure = NULL;
     frame->es_constructor = false;
+
+    /* `gc_habilitado` lo gestiona el wrapper público vm_ejecutar. */
 
     for (;;) {
         uint8_t opbyte = *frame->ip++;
@@ -1392,3 +1426,10 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
 
 #undef LEER_BYTE
 #undef VM_ERROR
+
+ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
+    vm->memoria.gc_habilitado = true;
+    ResultadoVM r = vm_ejecutar_dispatch(vm, chunk, resultado_out);
+    vm->memoria.gc_habilitado = false;
+    return r;
+}

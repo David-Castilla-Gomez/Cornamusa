@@ -6,6 +6,97 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.8.0] — 2026-04-29 — GC mark-sweep tri-color (Fase 7)
+
+Sustituye al refcount como fundamento del modelo de memoria, sin
+eliminarlo todavía: refcount sigue siendo el liberador primario y el
+GC complementa para limpiar ciclos. **74 tests verde**.
+
+Esta versión es principalmente infraestructura — no hay cambios
+visibles al usuario en el lenguaje. Habilita correcciones futuras
+(super multinivel, `__cadena__`, etc.) que requieren ciclos seguros
+en el modelo de memoria.
+
+### Añadido (v0.8.0)
+- **`src/memoria.{h,c}`** con la infraestructura completa de GC
+  mark-sweep tri-color simplificado (white/black, sin gris explícito):
+  - `GCObject` header (siguiente, marcado, tipo): primer campo de cada
+    struct heap-rastreado.
+  - `Memoria` con linked-list `cabeza` de objetos vivos + estadísticas
+    (total_alocado, total_objetos, umbral_gc) + flag `gc_stress`.
+  - `gc_alocar(size, tipo)`: alocator central que enlaza el objeto a
+    la lista de la `Memoria` global instalada via `gc_instalar`.
+  - `gc_desenlazar(GCObject *)`: usado por los `*_liberar` de refcount
+    para sacar el objeto de la lista cuando el refcount los libera.
+  - `gc_marcar_valor(Valor *)` y `gc_marcar_objeto(GCObject *)`:
+    propagación recursiva idempotente (corta ciclos via flag marcado).
+  - `gc_barrer(Memoria *)`: recorre la lista, libera no-marcados con
+    un destructor "no recursivo" que solo libera partes propietarias
+    no-GC (mp_int, char* dueño, buffers de tablas hash) y la struct
+    misma. NO decrementa refcounts de hijos heap-rastreados — esos se
+    procesan en la misma pasada cuando el barrido los alcance.
+  - `gc_recolectar(Memoria *, FnMarcarRaices, void *ctx)`: orquesta el
+    ciclo completo (desmarcar + marcar raíces + barrer).
+  - `gc_set_marcador_raices(Memoria *, FnMarcarRaices, void *ctx)`:
+    registra el callback que `gc_alocar` usaría para gatillar
+    recolección automática (deshabilitado en v0.8.0 — ver limitaciones).
+- **Migración de los 12 tipos heap del runtime** a usar `GCObject obj`
+  como primer campo: Lista, Diccionario, Conjunto, Tupla, FuncionBC,
+  Closure, Upvalue, Iterador, Excepcion, Clase, Instancia,
+  MetodoLigado. Sus factory functions usan `gc_alocar`; sus liberadores
+  llaman `gc_desenlazar` antes de `free`.
+- **VM con `Memoria` propia**: `vm_iniciar` la inicializa e instala
+  como global. `vm_destruir` la barre y desinstala — defensa contra
+  ciclos refcount cuando el cliente destruye la VM sin haber
+  recolectado manualmente.
+- **`gc_marcar_raices(VM *)`** en `src/vm.c`: marca el stack
+  (pila..tope), las globales (Diccionario), los closures de cada frame
+  + las constantes del chunk activo (incluido el frame top-level cuyo
+  closure es NULL), y los open_upvalues.
+- **Flag `--gc-stress` (CMake `CORNAMUSA_GC_STRESS=ON`)** activable en
+  build para habilitar el trigger automático en cada `gc_alocar`.
+  Compila pero NO funciona correctamente todavía (ver limitaciones).
+- **`tests/unit/test_memoria.c`** con 17 tests cubriendo: alocación con
+  y sin Memoria instalada, enlace y desenlace correctos, destrucción
+  masiva, integración con cada tipo migrado, mark de valores planos
+  (no-op), recursión via lista anidada, dicc clave/valor, clase +
+  instancia + superclase + atributos, idempotencia, ciclos sin
+  recursión infinita, raíces de la VM real, sweep libera no marcados,
+  recolección rompe ciclos refcount, recolección preserva marcados,
+  destrucción de Memoria sin leaks visibles.
+
+### Limitaciones conocidas en v0.8.0 (a resolver en v0.8.x)
+- **Trigger automático del GC deshabilitado**. La razón: muchas factory
+  functions anidan llamadas a `gc_alocar` (ej. `clase_nueva` aloca la
+  Clase y luego un Diccionario para sus métodos; `instancia_nueva`
+  igual). Tras la primera alocación el objeto está en la lista pero
+  todavía no es alcanzable desde ninguna raíz; un trigger interno lo
+  barrería incorrectamente. La solución limpia es añadir paréntesis
+  `gc_pausar/gc_reanudar` en cada factory, o un modelo de trigger a
+  nivel de opcode-boundary. En v0.8.0 el GC se invoca solo manualmente
+  via `gc_recolectar` desde C; el built-in `recolectar()` para código
+  Cornamusa llega en v0.8.1.
+- **Refcount sigue siendo primario**. El GC limpia solo lo que el
+  refcount no liberó (típicamente ciclos). Eliminar el refcount por
+  completo requiere primero arreglar el trigger automático.
+- **`super` multinivel sigue restringido a 1 nivel** (limitación
+  documentada de v0.7.1). Resolver requiere `clase_definicion` en
+  Closure que crea un ciclo refcount; ahora con GC es posible, pero el
+  cambio se aplaza a v0.8.x junto con la activación automática.
+- **`__cadena__` y otros dunders runtime** siguen sin implementar —
+  llegan en v0.8.x ahora que GC permite invocar métodos durante
+  `imprimir()` sin riesgo de leaks.
+
+### Cambios internos
+- `chunk.c` ahora `#include "memoria.h"` para gc_alocar/gc_desenlazar
+  en `funcion_bc_nueva`/`closure_nuevo`/`upvalue_nuevo` y sus
+  liberadores.
+- `valor.h` `#include "memoria.h"` para que cada struct heap pueda
+  tener `GCObject obj` como primer campo.
+- Refactor `vm_ejecutar` → `vm_ejecutar_dispatch` (interno) +
+  `vm_ejecutar` (wrapper público que activaría el flag `gc_habilitado`
+  cuando el trigger automático esté disponible).
+
 ## [0.7.1] — 2026-04-29 — super en bytecode
 
 Cierra el ciclo OOP en bytecode añadiendo `super.metodo(args)` para

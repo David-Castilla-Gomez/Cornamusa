@@ -69,12 +69,31 @@ typedef struct GCObject {
  * Estado del recolector. Una instancia vive en la VM; el VM la
  * instala como global en `vm_iniciar`.
  */
+/* Forward decl del callback de marcado (definido más abajo). */
+typedef void (*FnMarcarRaices)(void *contexto);
+
 typedef struct Memoria {
     GCObject *cabeza;             /* head de la linked list de objetos vivos */
     size_t total_alocado;         /* bytes totales alocados (estadística) */
     size_t total_objetos;         /* objetos vivos rastreados */
     size_t umbral_gc;             /* bytes alocados que disparan el siguiente GC */
     bool gc_stress;               /* si true, GC en cada allocation (debug) */
+    /*
+     * Callback que la VM (u otro cliente) registra para que el
+     * allocator pueda disparar recolección automática. Si es NULL, no
+     * se dispara GC desde gc_alocar (solo manual via gc_recolectar).
+     */
+    FnMarcarRaices fn_marcar_raices;
+    void *contexto_raices;
+    bool recolectando;            /* protege contra recursión infinita */
+    /*
+     * Si false, gc_alocar NO dispara recolección automática (aunque
+     * gc_stress esté activo o se cruce umbral). Útil para deshabilitar
+     * el GC durante fases en las que las raíces no son consistentes
+     * (compilación, construcción de globales en vm_iniciar, etc.).
+     * El recolector manual via `gc_recolectar` ignora este flag.
+     */
+    bool gc_habilitado;
 } Memoria;
 
 /* Inicializa la memoria con valores por defecto. No instala globalmente. */
@@ -177,5 +196,40 @@ void gc_desmarcar_todos(Memoria *m);
 
 /* Cuenta objetos marcados (solo para tests/diagnóstico). */
 size_t gc_contar_marcados(const Memoria *m);
+
+/*
+ * ──────────────────────────────────────────────────────────────────
+ * Sweep phase (Fase 7 sesión 4).
+ *
+ * Recorre la linked list de objetos vivos y libera los no marcados.
+ * Para cada objeto recogido invoca un destructor "no recursivo" que
+ * libera partes propietarias no-GC (mp_int, char* dueño) y la propia
+ * struct, pero NO decrementa refcounts de objetos heap-rastreados
+ * contenidos — esos se procesan en la misma pasada cuando el barrido
+ * los alcance. Esto es lo que permite cerrar ciclos refcount.
+ *
+ * `gc_barrer` por sí solo no marca: el llamador debe haber llamado a
+ * `gc_marcar_raices` (o equivalentes) antes. Devuelve el número de
+ * objetos liberados en esta pasada.
+ *
+ * `gc_recolectar` orquesta el ciclo completo:
+ *   1. Desmarca todos los objetos.
+ *   2. Marca raíces (vía callback proporcionado por el llamador).
+ *   3. Barre los no marcados.
+ *   4. Desmarca los marcados (estado limpio para el siguiente ciclo).
+ * ──────────────────────────────────────────────────────────────────
+ */
+
+size_t gc_barrer(Memoria *m);
+
+/*
+ * Registra el callback que `gc_alocar` usará para gatillar recolección
+ * automática (si `gc_stress` está activo o se cruza `umbral_gc`).
+ * Llamar con `fn=NULL` desactiva la recolección automática.
+ */
+void gc_set_marcador_raices(Memoria *m, FnMarcarRaices fn, void *contexto);
+
+size_t gc_recolectar(Memoria *m, FnMarcarRaices marcar_raices,
+                      void *contexto);
 
 #endif /* CORNAMUSA_MEMORIA_H */

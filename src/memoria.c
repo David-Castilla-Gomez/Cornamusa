@@ -23,6 +23,16 @@ void memoria_iniciar(Memoria *m) {
     m->total_objetos = 0;
     m->umbral_gc = UMBRAL_GC_INICIAL;
     m->gc_stress = false;
+    m->fn_marcar_raices = NULL;
+    m->contexto_raices = NULL;
+    m->recolectando = false;
+    m->gc_habilitado = false;
+}
+
+void gc_set_marcador_raices(Memoria *m, FnMarcarRaices fn, void *contexto) {
+    if (!m) return;
+    m->fn_marcar_raices = fn;
+    m->contexto_raices = contexto;
 }
 
 void memoria_destruir(Memoria *m) {
@@ -68,6 +78,23 @@ Memoria *gc_actual(void) {
 }
 
 void *gc_alocar(size_t size, TipoGC tipo) {
+    /*
+     * v0.8.0: el trigger automático del recolector queda deshabilitado.
+     * El motivo es que muchas factory functions (clase_nueva, instancia_nueva,
+     * iter_nuevo, etc.) anidan llamadas a `gc_alocar`: tras una primera
+     * alocación, el nuevo objeto está enlazado en la lista de la
+     * memoria pero todavía no es alcanzable desde ninguna raíz; si el
+     * GC triggerara durante una alocación interna posterior, lo
+     * barrería incorrectamente. Resolverlo limpiamente requiere
+     * paréntesis pause/resume en cada factory, o un modelo de trigger
+     * a nivel de opcode-boundary.
+     *
+     * En v0.8.0 el GC se invoca solo manualmente vía `gc_recolectar`.
+     * Refcount sigue siendo el liberador primario; `gc_recolectar`
+     * existe para que el usuario pueda romper ciclos cuando los
+     * sospeche. La automaticidad llega en una versión posterior tras
+     * añadir el modelo de pausing en factories.
+     */
     void *p = malloc(size);
     if (!p) return NULL;
     GCObject *obj = (GCObject *)p;
@@ -242,6 +269,224 @@ size_t gc_contar_marcados(const Memoria *m) {
         if (o->marcado) n++;
     }
     return n;
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Sweep phase (Fase 7 sesión 4)
+ *
+ * Liberar un objeto recogido por sweep es delicado: NO podemos llamar
+ * a `lista_liberar`/etc. (recursos via valor_destruir → liberar de hijos
+ * que pueden estar en el mismo ciclo, generando use-after-free). En su
+ * lugar, liberamos solo:
+ *   - partes propietarias NO heap-rastreadas (mp_int, char* dueño,
+ *     buffers internos como elementos[]),
+ *   - y la struct misma.
+ * Las referencias a otros heap-rastreados (sub-listas, métodos de
+ * clase, etc.) NO se decrementan: esos objetos están en la misma
+ * lista del GC y serán barridos por su cuenta cuando el sweep llegue
+ * a ellos.
+ * ────────────────────────────────────────────────────────────────── */
+
+static void liberar_partes_no_gc_valor(Valor *v) {
+    if (!v) return;
+    switch (v->tipo) {
+        case VAL_ENTERO:
+            if (v->como.entero) {
+                mp_clear(v->como.entero);
+                free(v->como.entero);
+                v->como.entero = NULL;
+            }
+            break;
+        case VAL_CADENA:
+            if (v->dueno_cadena && v->como.cadena.texto) {
+                free((char *)v->como.cadena.texto);
+                v->como.cadena.texto = NULL;
+                v->dueno_cadena = false;
+            }
+            break;
+        case VAL_RANGO:
+            if (v->como.rango.inicio) {
+                mp_clear(v->como.rango.inicio); free(v->como.rango.inicio);
+                v->como.rango.inicio = NULL;
+            }
+            if (v->como.rango.fin) {
+                mp_clear(v->como.rango.fin); free(v->como.rango.fin);
+                v->como.rango.fin = NULL;
+            }
+            if (v->como.rango.paso) {
+                mp_clear(v->como.rango.paso); free(v->como.rango.paso);
+                v->como.rango.paso = NULL;
+            }
+            break;
+        default:
+            /* Tipos planos sin alocaciones extra, o tipos heap-rastreados
+               (Lista/Dicc/Conjunto/Tupla/FuncionBC/PlantillaBC/Iterador/
+               Excepcion/Clase/Instancia/MetodoLigado): nada que hacer aquí —
+               sweep los procesa por separado. */
+            break;
+    }
+    v->tipo = VAL_NULO;
+}
+
+static void gc_destruir_chunk_no_recursivo(Chunk *c) {
+    if (!c) return;
+    free(c->codigo);
+    free(c->lineas);
+    if (c->constantes) {
+        for (int i = 0; i < c->constantes_cuenta; i++) {
+            liberar_partes_no_gc_valor(&c->constantes[i]);
+        }
+        free(c->constantes);
+    }
+    c->codigo = NULL;
+    c->lineas = NULL;
+    c->constantes = NULL;
+    c->cuenta = 0;
+    c->capacidad = 0;
+    c->constantes_cuenta = 0;
+    c->constantes_capacidad = 0;
+}
+
+static void gc_liberar_objeto(GCObject *o) {
+    if (!o) return;
+    switch ((TipoGC)o->tipo) {
+        case GC_TIPO_LISTA: {
+            Lista *l = (Lista *)o;
+            if (l->elementos) {
+                for (int i = 0; i < l->cuenta; i++) {
+                    liberar_partes_no_gc_valor(&l->elementos[i]);
+                }
+                free(l->elementos);
+            }
+            free(l);
+            break;
+        }
+        case GC_TIPO_DICCIONARIO: {
+            Diccionario *d = (Diccionario *)o;
+            if (d->entradas) {
+                for (int i = 0; i < d->capacidad; i++) {
+                    if (d->entradas[i].ocupada) {
+                        liberar_partes_no_gc_valor(&d->entradas[i].clave);
+                        liberar_partes_no_gc_valor(&d->entradas[i].valor);
+                    }
+                }
+                free(d->entradas);
+            }
+            free(d);
+            break;
+        }
+        case GC_TIPO_CONJUNTO: {
+            Conjunto *c = (Conjunto *)o;
+            if (c->entradas) {
+                for (int i = 0; i < c->capacidad; i++) {
+                    if (c->entradas[i].ocupada) {
+                        liberar_partes_no_gc_valor(&c->entradas[i].elemento);
+                    }
+                }
+                free(c->entradas);
+            }
+            free(c);
+            break;
+        }
+        case GC_TIPO_TUPLA: {
+            Tupla *t = (Tupla *)o;
+            if (t->elementos) {
+                for (int i = 0; i < t->cuenta; i++) {
+                    liberar_partes_no_gc_valor(&t->elementos[i]);
+                }
+                free(t->elementos);
+            }
+            free(t);
+            break;
+        }
+        case GC_TIPO_FUNCION_BC: {
+            FuncionBC *f = (FuncionBC *)o;
+            gc_destruir_chunk_no_recursivo(&f->chunk);
+            free(f->nombre);
+            free(f);
+            break;
+        }
+        case GC_TIPO_CLOSURE: {
+            Closure *c = (Closure *)o;
+            free(c->upvalues);
+            free(c);
+            break;
+        }
+        case GC_TIPO_UPVALUE: {
+            Upvalue *u = (Upvalue *)o;
+            if (u->posicion == &u->cerrado) {
+                liberar_partes_no_gc_valor(&u->cerrado);
+            }
+            free(u);
+            break;
+        }
+        case GC_TIPO_ITERADOR: {
+            Iterador *it = (Iterador *)o;
+            liberar_partes_no_gc_valor(&it->iterable);
+            free(it);
+            break;
+        }
+        case GC_TIPO_EXCEPCION: {
+            Excepcion *e = (Excepcion *)o;
+            free(e->clase);
+            free(e->mensaje);
+            free(e);
+            break;
+        }
+        case GC_TIPO_CLASE: {
+            Clase *c = (Clase *)o;
+            free(c->nombre);
+            free(c);
+            break;
+        }
+        case GC_TIPO_INSTANCIA: {
+            Instancia *i = (Instancia *)o;
+            free(i);
+            break;
+        }
+        case GC_TIPO_METODO_LIGADO: {
+            MetodoLigado *m = (MetodoLigado *)o;
+            liberar_partes_no_gc_valor(&m->receptor);
+            free(m);
+            break;
+        }
+    }
+}
+
+size_t gc_barrer(Memoria *m) {
+    if (!m) return 0;
+    size_t liberados = 0;
+    GCObject *prev = NULL;
+    GCObject *o = m->cabeza;
+    while (o != NULL) {
+        if (o->marcado) {
+            o->marcado = false;       /* desmarcar para el siguiente ciclo */
+            prev = o;
+            o = o->siguiente;
+        } else {
+            GCObject *recoger = o;
+            o = o->siguiente;
+            if (prev != NULL) prev->siguiente = o;
+            else              m->cabeza = o;
+            if (m->total_objetos > 0) m->total_objetos -= 1;
+            gc_liberar_objeto(recoger);
+            liberados++;
+        }
+    }
+    return liberados;
+}
+
+size_t gc_recolectar(Memoria *m, FnMarcarRaices marcar_raices,
+                      void *contexto) {
+    if (!m) return 0;
+    /* 1. Desmarcar todos (estado conocido: white). */
+    for (GCObject *o = m->cabeza; o != NULL; o = o->siguiente) {
+        o->marcado = false;
+    }
+    /* 2. Marcar raíces — el callback recorre el contexto del cliente. */
+    if (marcar_raices) marcar_raices(contexto);
+    /* 3. Barrer no-marcados. (Esto también desmarca los que quedaron). */
+    return gc_barrer(m);
 }
 
 void gc_desenlazar(GCObject *obj) {

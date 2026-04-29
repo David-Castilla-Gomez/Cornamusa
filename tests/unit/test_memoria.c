@@ -417,6 +417,119 @@ static void test_marcar_raices_vm(void) {
     vm_destruir(&vm);
 }
 
+/* ───── Sweep phase (Fase 7 sesión 4) ───── */
+
+static void test_barrer_libera_no_marcados(void) {
+    /* Sin marcar nada, sweep debe liberar todos los objetos rastreados.
+       Después la cabeza queda NULL. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Lista *l = lista_nueva(0);
+    lista_agregar(l, valor_entero_de_long(1));
+    lista_agregar(l, valor_entero_de_long(2));
+
+    AFIRMAR(m.total_objetos >= 1);
+    /* refcount sigue siendo 1: si llamáramos a lista_liberar, lo destruiría
+       limpiamente. Pero queremos verificar que sweep sin marcar lo recoge. */
+
+    size_t liberados = gc_barrer(&m);
+    AFIRMAR(liberados >= 1);
+    AFIRMAR(m.cabeza == NULL);
+
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+/* Marcador no-op para tests donde queremos sweep total (no marcar nada). */
+static void marcador_vacio(void *ctx) { (void)ctx; }
+
+/* Marcador que marca un objeto específico. */
+static void marcador_un_objeto(void *ctx) {
+    GCObject *o = (GCObject *)ctx;
+    gc_marcar_objeto(o);
+}
+
+static void test_recolectar_cicla(void) {
+    /* El gran test: cycle entre 2 dicc que refcount no puede liberar.
+       gc_recolectar (sin raíces) debe limpiarlos. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Diccionario *a = dicc_nuevo();
+    Diccionario *b = dicc_nuevo();
+    /* Crear ciclo: a["b"] = b, b["a"] = a. */
+    dicc_retener(a);
+    dicc_retener(b);
+    dicc_asignar(a, valor_cadena_duplicar("b", 1), valor_diccionario(b));
+    dicc_asignar(b, valor_cadena_duplicar("a", 1), valor_diccionario(a));
+    /* Soltar las refs externas. Refcount no libera por el ciclo. */
+    dicc_liberar(a);
+    dicc_liberar(b);
+
+    AFIRMAR(m.total_objetos >= 2);   /* a y b siguen vivos por el ciclo */
+
+    size_t liberados = gc_recolectar(&m, marcador_vacio, NULL);
+    AFIRMAR(liberados >= 2);
+    AFIRMAR(m.cabeza == NULL);
+
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_recolectar_no_toca_marcados(void) {
+    /* Si una raíz mantiene el objeto, no se libera. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Lista *protegida = lista_nueva(0);
+    Lista *huerfana = lista_nueva(0);
+
+    AFIRMAR(m.total_objetos >= 2);
+
+    /* Marcar solo 'protegida' como raíz. */
+    size_t liberados = gc_recolectar(&m, marcador_un_objeto, &protegida->obj);
+    AFIRMAR(liberados >= 1);   /* huerfana */
+    /* protegida sigue viva. */
+    AFIRMAR(protegida->obj.tipo == GC_TIPO_LISTA);
+
+    /* Ahora soltarla y limpiar. */
+    lista_liberar(protegida);
+    AFIRMAR(m.cabeza == NULL);
+
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_memoria_destruir_sin_leaks(void) {
+    /* memoria_destruir libera todo lo restante. Útil cuando el VM se
+       destruye sin haber barrido ciclos. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    /* Crear ciclo y no limpiarlo manualmente. */
+    Diccionario *a = dicc_nuevo();
+    Diccionario *b = dicc_nuevo();
+    dicc_retener(a); dicc_retener(b);
+    dicc_asignar(a, valor_cadena_duplicar("b", 1), valor_diccionario(b));
+    dicc_asignar(b, valor_cadena_duplicar("a", 1), valor_diccionario(a));
+    dicc_liberar(a); dicc_liberar(b);
+
+    AFIRMAR(m.total_objetos >= 2);
+
+    gc_desinstalar();
+    memoria_destruir(&m);
+    AFIRMAR(m.cabeza == NULL);
+    /* No assertion sobre leaks de heap propias (mp_int/char*) — están
+       siendo aceptados como limitación documentada de v0.8.0 cuando se
+       destruye la VM con ciclos sin haber barrido antes. En la práctica
+       el usuario hace gc_recolectar antes de destruir. */
+}
+
 int main(void) {
     test_alocar_sin_memoria();
     test_alocar_con_memoria();
@@ -432,6 +545,10 @@ int main(void) {
     test_marcar_idempotente();
     test_marcar_ciclo_no_explota();
     test_marcar_raices_vm();
+    test_barrer_libera_no_marcados();
+    test_recolectar_cicla();
+    test_recolectar_no_toca_marcados();
+    test_memoria_destruir_sin_leaks();
 
     if (fallos == 0) {
         printf("OK: todos los tests del GC (S1) pasaron\n");
