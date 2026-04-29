@@ -286,6 +286,137 @@ static void test_lanzar_cadena(void) {
         "msg", "Excepcion: algo");
 }
 
+/* ───── v0.8.3: atrapar Tipo, sino, finalmente, lanzar re-raise ───── */
+
+static void test_atrapar_por_tipo(void) {
+    /* atrapar Tipo solo coincide si excepcion.clase == Tipo. */
+    verificar_var(
+        "intentar:\n"
+        "    lanzar ErrorAritmetico(\"div\")\n"
+        "atrapar ErrorDeTipo como e:\n"
+        "    msg = \"tipo\"\n"
+        "atrapar ErrorAritmetico como e:\n"
+        "    msg = \"aritmetico\"\n"
+        "fin intentar",
+        "msg", "aritmetico");
+}
+
+static void test_atrapar_excepcion_atrapa_todo(void) {
+    /* `atrapar Excepcion` atrapa cualquier tipo (genérico). */
+    verificar_var(
+        "intentar:\n"
+        "    lanzar ErrorDeTipo(\"x\")\n"
+        "atrapar Excepcion como e:\n"
+        "    msg = \"atrapado\"\n"
+        "fin intentar",
+        "msg", "atrapado");
+}
+
+static void test_atrapar_sin_match_propaga(void) {
+    /* Si ningún atrapador coincide, la excepción se propaga. */
+    verificar_error(
+        "intentar:\n"
+        "    lanzar ErrorAritmetico(\"x\")\n"
+        "atrapar ErrorDeTipo como e:\n"
+        "    msg = \"tipo\"\n"
+        "fin intentar",
+        "ErrorAritmetico");
+}
+
+static void test_sino(void) {
+    /* sino solo se ejecuta si NO hubo excepción. */
+    verificar_var(
+        "ejecutado = falso\n"
+        "intentar:\n"
+        "    x = 42\n"
+        "atrapar Excepcion como e:\n"
+        "    pasar\n"
+        "sino:\n"
+        "    ejecutado = verdadero\n"
+        "fin intentar",
+        "ejecutado", "verdadero");
+
+    /* sino NO se ejecuta si hubo excepción. */
+    verificar_var(
+        "ejecutado = falso\n"
+        "intentar:\n"
+        "    lanzar ErrorAritmetico(\"x\")\n"
+        "atrapar Excepcion como e:\n"
+        "    pasar\n"
+        "sino:\n"
+        "    ejecutado = verdadero\n"
+        "fin intentar",
+        "ejecutado", "falso");
+}
+
+static void test_finalmente(void) {
+    /* finalmente se ejecuta tras salida limpia. */
+    verificar_var(
+        "ejecutado = falso\n"
+        "intentar:\n"
+        "    x = 1\n"
+        "finalmente:\n"
+        "    ejecutado = verdadero\n"
+        "fin intentar",
+        "ejecutado", "verdadero");
+
+    /* finalmente se ejecuta tras un atrapar exitoso. */
+    verificar_var(
+        "ejecutado = falso\n"
+        "intentar:\n"
+        "    lanzar ErrorAritmetico(\"x\")\n"
+        "atrapar Excepcion como e:\n"
+        "    pasar\n"
+        "finalmente:\n"
+        "    ejecutado = verdadero\n"
+        "fin intentar",
+        "ejecutado", "verdadero");
+}
+
+static void test_lanzar_reraise(void) {
+    /* Dentro de un atrapar con alias, `lanzar` sin valor re-emite la
+       excepción capturada para que el siguiente nivel la atrape. */
+    verificar_var(
+        "funcion fallar():\n"
+        "    intentar:\n"
+        "        lanzar ErrorDeTipo(\"profunda\")\n"
+        "    atrapar Excepcion como e:\n"
+        "        lanzar\n"
+        "    fin intentar\n"
+        "fin funcion\n"
+        "intentar:\n"
+        "    fallar()\n"
+        "atrapar Excepcion como e:\n"
+        "    msg = e\n"
+        "fin intentar",
+        "msg", "ErrorDeTipo: profunda");
+}
+
+static void test_lanzar_reraise_sin_alias_es_error(void) {
+    /* lanzar sin valor sin un alias activo es error de compilación. */
+    verificar_error(
+        "lanzar",
+        "solo es valido dentro de");
+}
+
+static void test_intentar_blocks_repetidos(void) {
+    /* Múltiples bloques intentar en top-level no deben contaminarse:
+       el segundo bloque debe ver SU propia excepción, no la primera. */
+    verificar_var(
+        "intentar:\n"
+        "    lanzar ErrorAritmetico(\"primera\")\n"
+        "atrapar Excepcion como e:\n"
+        "    msg1 = e\n"
+        "fin intentar\n"
+        "intentar:\n"
+        "    lanzar ErrorDeTipo(\"segunda\")\n"
+        "atrapar Excepcion como e:\n"
+        "    msg2 = e\n"
+        "fin intentar\n"
+        "x = msg2",
+        "x", "ErrorDeTipo: segunda");
+}
+
 int main(void) {
     test_construir_excepciones();
     test_atrapar_simple();
@@ -296,6 +427,14 @@ int main(void) {
     test_no_atrapada();
     test_anidamiento();
     test_lanzar_cadena();
+    test_atrapar_por_tipo();
+    test_atrapar_excepcion_atrapa_todo();
+    test_atrapar_sin_match_propaga();
+    test_sino();
+    test_finalmente();
+    test_lanzar_reraise();
+    test_lanzar_reraise_sin_alias_es_error();
+    test_intentar_blocks_repetidos();
 
     if (fallos == 0) {
         printf("OK: todos los tests del bytecode con excepciones pasaron\n");

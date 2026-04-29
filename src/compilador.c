@@ -48,6 +48,7 @@ void compilador_iniciar(Compilador *c, Chunk *chunk) {
     c->error.mensaje[0] = '\0';
     c->error.linea = 0;
     c->error.columna = 0;
+    c->n_atrapadores_activos = 0;
 }
 
 /* Busca un local por nombre en el scope actual. Devuelve el slot
@@ -1116,9 +1117,18 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
 
         case SENT_LANZAR: {
             if (s->como.lanzar.valor == NULL) {
-                error_compilacion(c, s->linea, s->columna,
-                    "'lanzar' sin valor (re-raise) aun no esta en bytecode v0.6.3");
-                return false;
+                /* Re-raise (v0.8.3): solo válido dentro de un atrapar
+                   con alias. Emitimos OBTENER_LOCAL del alias top + LANZAR. */
+                if (c->n_atrapadores_activos == 0) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "'lanzar' sin valor solo es valido dentro de 'atrapar Tipo como e:'");
+                    return false;
+                }
+                int slot = c->atrapador_alias_slots[c->n_atrapadores_activos - 1];
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                    (uint8_t)slot, s->linea);
+                chunk_emitir_byte(c->actual->chunk, OP_LANZAR, s->linea);
+                return true;
             }
             if (!compilador_compilar_expr(c, s->como.lanzar.valor)) return false;
             chunk_emitir_byte(c->actual->chunk, OP_LANZAR, s->linea);
@@ -1297,6 +1307,11 @@ static bool compilar_para(Compilador *c, const Sent *s) {
         return false;
     }
 
+    /* Guardar n_locales para restaurar al salir (mismo motivo que en
+       compilar_intentar: locals transitorios — $iter, objetivo en
+       función — no deben quedar como "ocupados" tras el bucle). */
+    int n_locales_entrada = c->actual->n_locales;
+
     /* Compilar iterable y emitir OP_ITER_INICIAR. El iterador queda
        en el tope del stack como un local oculto. */
     if (!compilador_compilar_expr(c, s->como.para.iterable)) return false;
@@ -1370,44 +1385,84 @@ static bool compilar_para(Compilador *c, const Sent *s) {
     }
 
     cerrar_bucle(c, s->linea);
+    /* Limpiar locals introducidos por el bucle ($iter, target si es
+       función-scope, locals declaradas en el cuerpo). Sin esto los
+       slots quedan ocupados con basura al volver al contexto exterior. */
+    {
+        int drops = c->actual->n_locales - n_locales_entrada;
+        for (int j = 0; j < drops; j++) {
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        }
+    }
+    c->actual->n_locales = n_locales_entrada;
     return true;
 }
 
 /*
- * SENT_INTENTAR en bytecode (v0.6.3):
+ * SENT_INTENTAR en bytecode (v0.8.3 — completo).
  *
- *   OP_INTENTAR_INICIAR [u16 offset_handler]
- *   compile cuerpo
+ * Soporta:
+ *   - Múltiples atrapadores con discriminación por tipo (nombre).
+ *   - `atrapar Excepcion as e:` atrapa todo (tipo genérico).
+ *   - `atrapar Tipo as e:` solo si excepción.clase == "Tipo".
+ *   - `sino:` ejecuta solo si NO hubo excepción.
+ *   - `finalmente:` ejecuta SIEMPRE: tras salida limpia, tras cada
+ *     atrapar exitoso, y antes del re-lanzar si ningún atrapador
+ *     coincide. (Limitación: NO se ejecuta cuando hay un `retornar`,
+ *     `romper` o `continuar` que sale del intentar — llega en
+ *     v0.8.4 si se necesita.)
+ *   - `lanzar` sin valor (re-raise) dentro de un atrapar con alias.
+ *
+ * Estructura emitida:
+ *
+ *   OP_INTENTAR_INICIAR offset_handler
+ *   ... cuerpo ...
  *   OP_INTENTAR_FIN
- *   OP_SALTAR [u16 offset_fin]      ; salida limpia: salta el handler
- * [handler]:
- *   ; OP_LANZAR ha pushed la excepción al tope.
- *   compile primer atrapador (declarando alias si lo hay; descartar si no)
- * [fin]:
+ *   ... [opcional] sino ...
+ *   ... [opcional] finalmente ...
+ *   OP_SALTAR fin
  *
- * Limitaciones v0.6.3:
- *   - Solo se compila el primer atrapador (los demás se ignoran).
- *   - Atrapar con tipo (`atrapar Tipo:`) no se compara — se trata como
- *     bare (atrapa todo). El tipo se evalúa silenciosamente y se descarta.
- *   - `sino` y `finalmente` aún no soportados — error explícito.
+ * [handler]:
+ *   ; excepción en stack[-1].
+ *   por cada atrapador:
+ *     ; chequear tipo (si lo tiene):
+ *     OP_COMPROBAR_TIPO_EXC name_idx       ; push bool sin descartar exc
+ *     OP_SALTAR_SI_FALSO siguiente_atr
+ *     OP_DESCARTAR                          ; pop bool
+ *     ; (sin tipo: saltar el chequeo y caer aquí directamente)
+ *     ... gestionar alias o descartar exc ...
+ *     ... compile cuerpo ...
+ *     ... compile finalmente (si hay) ...
+ *     OP_SALTAR fin
+ *   siguiente_atr:
+ *     OP_DESCARTAR                          ; pop bool del COMPROBAR previo
+ *
+ *   ; ningún atrapador coincidió — re-lanzar.
+ *   ... compile finalmente (si hay) ...
+ *   OP_LANZAR                                ; exc todavía en stack
+ *
+ * [fin]:
  */
 static bool compilar_intentar(Compilador *c, const Sent *s) {
-    if (s->como.intentar.sino != NULL) {
-        error_compilacion(c, s->linea, s->columna,
-            "clausula 'sino' de 'intentar' aun no esta en bytecode v0.6.3");
-        return false;
-    }
-    if (s->como.intentar.finalmente != NULL) {
-        error_compilacion(c, s->linea, s->columna,
-            "clausula 'finalmente' aun no esta en bytecode v0.6.3");
-        return false;
-    }
     int n_atrapadores = s->como.intentar.n_atrapadores;
-    if (n_atrapadores == 0) {
+    Sent *clausula_sino = s->como.intentar.sino;
+    Sent *clausula_finalmente = s->como.intentar.finalmente;
+
+    if (n_atrapadores == 0 && clausula_finalmente == NULL) {
         error_compilacion(c, s->linea, s->columna,
-            "'intentar' requiere al menos un 'atrapar' (sin 'finalmente' en v0.6.3)");
+            "'intentar' requiere al menos un 'atrapar' o 'finalmente'");
         return false;
     }
+
+    /*
+     * Guardamos n_locales al entrar para restaurarlo al salir. Los
+     * locals declarados dentro del intentar (alias de atrapadores,
+     * locals en cuerpos de atrapar) son transitorios — solo válidos
+     * dentro del bloque. Sin esta restauración, el compilador pierde
+     * sincronía con el runtime stack, que es especialmente crítico en
+     * top-level donde múltiples bloques intentar comparten scope.
+     */
+    int n_locales_entrada = c->actual->n_locales;
 
     /* Emitir OP_INTENTAR_INICIAR con offset placeholder. */
     int salto_handler = emitir_salto(c, OP_INTENTAR_INICIAR, s->linea);
@@ -1415,51 +1470,162 @@ static bool compilar_intentar(Compilador *c, const Sent *s) {
     /* Compilar el cuerpo del intentar. */
     if (!compilador_compilar_sent(c, s->como.intentar.cuerpo)) return false;
 
-    /* Salida limpia: pop handler y saltar al final. */
+    /* Salida limpia: pop handler y (opcional) ejecutar sino. */
     chunk_emitir_byte(c->actual->chunk, OP_INTENTAR_FIN, s->linea);
-    int salto_fin = emitir_salto(c, OP_SALTAR, s->linea);
+    if (clausula_sino != NULL) {
+        if (!compilador_compilar_sent(c, clausula_sino)) return false;
+    }
+    /* (Salida limpia) ejecutar finalmente si lo hay, después salto al fin. */
+    if (clausula_finalmente != NULL) {
+        if (!compilador_compilar_sent(c, clausula_finalmente)) return false;
+    }
+    /*
+     * Limpiar locals introducidos durante el body o el sino (drops del
+     * runtime stack hasta volver a la posición de entrada). Necesario
+     * porque sin esto los slots de los locals quedan ocupados con
+     * basura, y bloques posteriores al intentar leen valores stale.
+     */
+    {
+        int drops = c->actual->n_locales - n_locales_entrada;
+        for (int j = 0; j < drops; j++) {
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        }
+    }
+    /* Saltos al fin desde rutas exitosas (salida limpia + cada atrapar). */
+    int saltos_fin[COMPILADOR_ATRAPADORES_MAX + 1];
+    int n_saltos_fin = 0;
+    saltos_fin[n_saltos_fin++] = emitir_salto(c, OP_SALTAR, s->linea);
 
     /* Aquí empieza el handler (parchear el OP_INTENTAR_INICIAR). */
     parchear_salto(c, salto_handler, s->linea);
 
-    /* La excepción ha sido pushed por OP_LANZAR. v0.6.3 solo compila
-       el primer atrapador. */
-    ClausulaAtrapar *atrapador = &s->como.intentar.atrapadores[0];
+    /*
+     * En el momento de entrar al handler, el runtime garantiza que la
+     * excepción está en el slot `n_locales_handler` (mismo número que
+     * n_locales tenía al entrar al intentar). Para que cada atrapador
+     * vea la excepción en el mismo slot, reseteamos n_locales a este
+     * valor al inicio de cada atrapador. Locals declaradas dentro de
+     * un cuerpo de atrapador son válidas solo dentro de ese cuerpo
+     * (mutuamente exclusivas con otros atrapadores).
+     */
+    int n_locales_handler = c->actual->n_locales;
 
-    if (atrapador->tipo != NULL) {
-        /* Evaluamos el tipo y descartamos (limitación v0.6.3 — no se
-           compara). Para mantener la pila balanceada. */
-        if (!compilador_compilar_expr(c, atrapador->tipo)) return false;
-        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
-                            atrapador->linea);
-    }
+    /* Para cada atrapador, comprobar tipo (si tiene) y ejecutar cuerpo. */
+    int salto_anterior_no_match = -1;
+    for (int i = 0; i < n_atrapadores; i++) {
+        ClausulaAtrapar *atr = &s->como.intentar.atrapadores[i];
 
-    if (atrapador->alias.texto != NULL) {
-        /* Registrar el alias como local; la excepción ya está en el
-           tope del stack (mismo patrón que SENT_ASIGNAR creando local
-           nuevo). */
-        int existente = buscar_local(c->actual, atrapador->alias.texto,
-                                        atrapador->alias.longitud);
-        if (existente >= 0) {
-            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
-                                (uint8_t)existente, atrapador->linea);
-        } else {
-            int slot = agregar_local(c, atrapador->alias.texto,
-                                          atrapador->alias.longitud,
-                                          atrapador->linea);
-            if (slot < 0) return false;
+        /* Reset de locals al estado pre-handler para que cada
+           atrapador asigne sus locals (incluyendo el alias) en los
+           mismos slots, coincidiendo con la posición real en stack. */
+        c->actual->n_locales = n_locales_handler;
+
+        /* Si hubo un atrapador anterior con tipo, parchear su salto
+           "no match" aquí. Antes hacer pop del bool del COMPROBAR. */
+        if (salto_anterior_no_match >= 0) {
+            parchear_salto(c, salto_anterior_no_match, atr->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, atr->linea);
         }
-    } else {
-        /* Sin alias: descartamos la excepción. */
-        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
-                            atrapador->linea);
+        salto_anterior_no_match = -1;
+
+        if (atr->tipo != NULL) {
+            /* Limitación v0.8.3: solo soportamos `atrapar Tipo` con
+               Tipo siendo un identificador simple. Se compara la
+               cadena del nombre del identificador con excepcion.clase. */
+            if (atr->tipo->tipo != EXPR_IDENT) {
+                error_compilacion(c, atr->linea, atr->columna,
+                    "'atrapar Tipo' solo admite un identificador simple en v0.8.3");
+                return false;
+            }
+            int idx_nombre = chunk_agregar_constante(c->actual->chunk,
+                valor_cadena_duplicar(atr->tipo->como.ident.nombre,
+                                        atr->tipo->como.ident.longitud));
+            if (idx_nombre < 0 || idx_nombre > 255) {
+                error_compilacion(c, atr->linea, atr->columna,
+                    "demasiadas constantes para v0.8 (operando byte)");
+                return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_COMPROBAR_TIPO_EXC,
+                                (uint8_t)idx_nombre, atr->linea);
+            /* Si bool=falso, salta al siguiente atrapador. */
+            salto_anterior_no_match = emitir_salto(c, OP_SALTAR_SI_FALSO,
+                                                     atr->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, atr->linea);
+        }
+
+        /* Match: gestionar alias o descartar la excepción.
+           Siempre añadimos un nuevo local para el alias (no reusamos
+           el slot de un atrapador previo): los slots reusados causarían
+           que la asignación pop/write desplazara `tope` por debajo del
+           local existente. Cada atrapador tiene su propio scope
+           conceptual; locals con el mismo nombre se sombrean de modo
+           que `buscar_local` (que itera de n_locales-1 hacia abajo)
+           encuentra siempre el más reciente. */
+        int alias_slot = -1;
+        if (atr->alias.texto != NULL) {
+            int slot = agregar_local(c, atr->alias.texto,
+                                          atr->alias.longitud,
+                                          atr->linea);
+            if (slot < 0) return false;
+            alias_slot = slot;
+            /* Push al stack de atrapadores activos para `lanzar` re-raise. */
+            if (c->n_atrapadores_activos >= COMPILADOR_ATRAPADORES_MAX) {
+                error_compilacion(c, atr->linea, atr->columna,
+                    "anidamiento de atrapadores excede %d",
+                    COMPILADOR_ATRAPADORES_MAX);
+                return false;
+            }
+            c->atrapador_alias_slots[c->n_atrapadores_activos++] = alias_slot;
+        } else {
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, atr->linea);
+        }
+
+        /* Compilar cuerpo del atrapar. */
+        if (!compilador_compilar_sent(c, atr->cuerpo)) return false;
+
+        if (alias_slot >= 0) {
+            c->n_atrapadores_activos--;
+        }
+
+        /* Tras atrapar exitoso: ejecutar finalmente si lo hay, después
+           limpiar locals (alias + locals declaradas dentro del cuerpo)
+           y saltar al fin. */
+        if (clausula_finalmente != NULL) {
+            if (!compilador_compilar_sent(c, clausula_finalmente)) return false;
+        }
+        {
+            int drops = c->actual->n_locales - n_locales_entrada;
+            for (int j = 0; j < drops; j++) {
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, atr->linea);
+            }
+        }
+        if (n_saltos_fin >= COMPILADOR_ATRAPADORES_MAX + 1) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiados atrapadores");
+            return false;
+        }
+        saltos_fin[n_saltos_fin++] = emitir_salto(c, OP_SALTAR, atr->linea);
     }
 
-    /* Compilar cuerpo del atrapar. */
-    if (!compilador_compilar_sent(c, atrapador->cuerpo)) return false;
+    /* Si ningún atrapador coincidió: ejecutar finalmente y re-lanzar.
+       La excepción todavía está en stack. */
+    if (salto_anterior_no_match >= 0) {
+        parchear_salto(c, salto_anterior_no_match, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+    }
+    if (clausula_finalmente != NULL) {
+        if (!compilador_compilar_sent(c, clausula_finalmente)) return false;
+    }
+    chunk_emitir_byte(c->actual->chunk, OP_LANZAR, s->linea);
 
-    /* Saltar al final. */
-    parchear_salto(c, salto_fin, s->linea);
+    /* Parchear todos los saltos al fin. */
+    for (int i = 0; i < n_saltos_fin; i++) {
+        parchear_salto(c, saltos_fin[i], s->linea);
+    }
+
+    /* Restaurar n_locales — los locals introducidos dentro del intentar
+       (aliases, locals de cuerpos) son transitorios. */
+    c->actual->n_locales = n_locales_entrada;
     return true;
 }
 

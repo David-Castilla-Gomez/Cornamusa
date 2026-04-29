@@ -101,6 +101,15 @@ typedef struct ScopeCompilador {
     struct ScopeCompilador *padre;
 } ScopeCompilador;
 
+/*
+ * Pila de aliases de atrapadores anidados activos en el sitio de
+ * compilación actual. Cada entrada es el slot del local que contiene
+ * la excepción atrapada. `lanzar` sin valor (re-raise) emite
+ * `OP_OBTENER_LOCAL [slot top] + OP_LANZAR`. Si `n_atrapadores_activos
+ * == 0`, `lanzar` sin valor es error de compilación.
+ */
+#define COMPILADOR_ATRAPADORES_MAX 16
+
 typedef struct {
     /*
      * El scope raíz se almacena directamente en el Compilador (más
@@ -110,6 +119,9 @@ typedef struct {
     ScopeCompilador raiz;
     ScopeCompilador *actual;
     EvalError error;
+    /* Aliases de atrapadores activos para `lanzar` re-raise (v0.8.3). */
+    int atrapador_alias_slots[COMPILADOR_ATRAPADORES_MAX];
+    int n_atrapadores_activos;
 } Compilador;
 
 void compilador_iniciar(Compilador *c, Chunk *chunk);

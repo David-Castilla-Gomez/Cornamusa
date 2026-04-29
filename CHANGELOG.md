@@ -6,6 +6,72 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.8.3] — 2026-04-29 — excepciones polish
+
+Completa el modelo de excepciones que llevaba postergado desde
+v0.6.3: discriminación por tipo, `sino`, `finalmente`, y `lanzar`
+re-raise. **75 tests verde**.
+
+### Añadido (v0.8.3)
+- **`atrapar Tipo como e:`** discriminado: el atrapador solo coincide
+  si la clase de la excepción coincide con el nombre del tipo
+  (comparación por cadena del identificador). `atrapar Excepcion`
+  funciona como tipo genérico (atrapa cualquier excepción).
+- **Múltiples atrapadores** en un mismo `intentar` ahora se compilan
+  todos: el primero que coincide se ejecuta; si ninguno coincide, la
+  excepción se re-lanza al handler exterior.
+- **`sino:`** ejecuta solo si el cuerpo del `intentar` terminó sin
+  excepción.
+- **`finalmente:`** ejecuta SIEMPRE: tras salida limpia, tras cada
+  atrapar exitoso, y antes del re-lanzar si ningún atrapador
+  coincide. (Limitación: NO se ejecuta cuando hay `retornar`,
+  `romper` o `continuar` que sale del intentar — llega en una versión
+  posterior si se necesita.)
+- **`lanzar` sin valor (re-raise)**: dentro de un `atrapar Tipo como e:`
+  re-emite la excepción capturada. El compilador rastrea aliases de
+  atrapadores activos en una pila (`Compilador.atrapador_alias_slots`)
+  para que `lanzar` sin valor compile correctamente. Fuera de un
+  atrapar con alias, error de compilación claro.
+- **Opcode nuevo `OP_COMPROBAR_TIPO_EXC [byte name_idx]`**: peek la
+  excepción top, compara su `clase` con la cadena en
+  constantes[name_idx], empuja un bool sin descartar la excepción.
+  Permite que el handler chequee el tipo antes de decidir si atrapa
+  o re-lanza.
+
+### Correcciones críticas en compilar_intentar/compilar_para
+- **Bug del aliasing en `OP_ASIGNAR_LOCAL`**: cuando el slot de
+  destino y el slot que se acababa de pop coincidían (caso muy común
+  en top-level cuando el handler asignaba la excepción al slot 0),
+  `valor_destruir(destino)` liberaba el valor que `nuevo` aún
+  apuntaba — use-after-free. Detectamos `destino == vm->tope` tras
+  `sacar` y saltamos el destruir.
+- **Bug del scope persistente**: el compilador acumulaba locals en el
+  scope top-level entre bloques `intentar`/`para`, pero el runtime
+  stack es transitorio. Ahora `compilar_intentar` y `compilar_para`
+  guardan `n_locales` al entrar y emiten `OP_DESCARTAR` por cada
+  local introducido al salir (cuerpo, alias, $iter, target). Sin
+  esto, bloques posteriores leían valores stale del slot 0.
+- **Bug de aliasing entre atrapadores**: si dos atrapadores usaban el
+  mismo nombre de alias (`e` por convención), el segundo encontraba
+  el slot del primero via `buscar_local` y emitía `ASIGNAR_LOCAL`
+  que dropeaba `tope` por debajo del local. Ahora cada atrapador
+  añade un local fresco; entre atrapadores se resetea `n_locales` al
+  valor de entrada al handler para que cada alias caiga en el mismo
+  slot consistente con la posición real en stack.
+
+### Tests nuevos
+- `test_atrapar_por_tipo`, `test_atrapar_excepcion_atrapa_todo`,
+  `test_atrapar_sin_match_propaga`: discriminación por tipo y
+  fallback a re-raise.
+- `test_sino`: ejecuta solo si no hubo excepción (positivo y negativo).
+- `test_finalmente`: tras salida limpia y tras atrapar exitoso.
+- `test_lanzar_reraise`: re-raise dentro de función propaga al
+  llamador.
+- `test_lanzar_reraise_sin_alias_es_error`: `lanzar` sin valor sin
+  contexto → error de compilación.
+- `test_intentar_blocks_repetidos`: bloques intentar consecutivos en
+  top-level no se contaminan (test del bug de scope persistente).
+
 ## [0.8.2] — 2026-04-29 — super multinivel correcto
 
 Resuelve la limitación de `super` que llevaba arrastrándose desde

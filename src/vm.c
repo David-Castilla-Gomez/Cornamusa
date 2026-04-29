@@ -851,10 +851,24 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             }
             case OP_ASIGNAR_LOCAL: {
                 uint8_t slot = LEER_BYTE();
-                /* Pop el valor del tope, lo asignamos al slot. */
                 Valor nuevo = sacar(vm);
-                valor_destruir(&frame->base_pila[slot]);
-                frame->base_pila[slot] = nuevo;
+                Valor *destino = &frame->base_pila[slot];
+                /*
+                 * v0.8.3: detectar aliasing. Si el slot del local
+                 * coincide con el slot que acabamos de pop (común
+                 * cuando se asigna un valor recién pushed a un local
+                 * en la posición exacta del pop), `valor_destruir`
+                 * sobre `destino` liberaría el Excepcion/Lista/...
+                 * que `nuevo` aún apunta — use-after-free. En ese
+                 * caso, `nuevo` ya tiene la struct correcta; solo
+                 * reescribimos sin destruir.
+                 */
+                if (destino == vm->tope) {
+                    *destino = nuevo;
+                } else {
+                    valor_destruir(destino);
+                    *destino = nuevo;
+                }
                 break;
             }
 
@@ -939,6 +953,39 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 /* Saltar al handler. */
                 frame = &vm->frames[vm->n_frames - 1];
                 frame->ip = h.ip_handler;
+                break;
+            }
+            case OP_COMPROBAR_TIPO_EXC: {
+                /*
+                 * v0.8.3: peek la excepción top, compara su `clase`
+                 * (cadena del nombre del tipo de excepción) con la
+                 * cadena en constantes[idx]. Empuja un bool sin descartar
+                 * la excepción para que el atrapar pueda re-lanzar si
+                 * no coincide.
+                 */
+                uint8_t idx = LEER_BYTE();
+                const Valor *esperado = &frame->chunk->constantes[idx];
+                if (vm->tope == vm->pila || vm->tope[-1].tipo != VAL_EXCEPCION) {
+                    VM_ERROR("estado interno corrupto: OP_COMPROBAR_TIPO_EXC sin excepcion en stack");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (esperado->tipo != VAL_CADENA) {
+                    VM_ERROR("estado interno corrupto: tipo de excepcion no es cadena");
+                    return VM_ERROR_RUNTIME;
+                }
+                const Excepcion *e = vm->tope[-1].como.excepcion;
+                bool igual =
+                    e->longitud_clase == esperado->como.cadena.longitud
+                    && memcmp(e->clase, esperado->como.cadena.texto,
+                              (size_t)e->longitud_clase) == 0;
+                /* Caso especial: el atrapador puede usar "Excepcion"
+                   como tipo genérico (Excepcion atrapa cualquier
+                   excepción, igual que `except Exception` en Python). */
+                if (!igual && esperado->como.cadena.longitud == 9
+                    && memcmp(esperado->como.cadena.texto, "Excepcion", 9) == 0) {
+                    igual = true;
+                }
+                empujar(vm, valor_booleano(igual));
                 break;
             }
 

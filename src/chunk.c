@@ -49,6 +49,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_INTENTAR_INICIAR: return "OP_INTENTAR_INICIAR";
         case OP_INTENTAR_FIN:    return "OP_INTENTAR_FIN";
         case OP_LANZAR:          return "OP_LANZAR";
+        case OP_COMPROBAR_TIPO_EXC: return "OP_COMPROBAR_TIPO_EXC";
         case OP_CLASE:           return "OP_CLASE";
         case OP_OBTENER_ATRIBUTO: return "OP_OBTENER_ATRIBUTO";
         case OP_ASIGNAR_ATRIBUTO: return "OP_ASIGNAR_ATRIBUTO";

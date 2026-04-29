@@ -93,6 +93,10 @@ typedef enum {
     OP_INTENTAR_INICIAR,        /* [u16 offset_handler] empuja un handler frame */
     OP_INTENTAR_FIN,            /* pop el handler frame al salir limpio del intentar */
     OP_LANZAR,                  /* pop la excepción del tope, salta al handler */
+    /* v0.8.3: chequear el tipo (nombre de clase) de la excepción top
+       contra una cadena del pool. Empuja bool sin descartar la
+       excepción. Útil para `atrapar Tipo:`. */
+    OP_COMPROBAR_TIPO_EXC,      /* [byte name_idx] */
 
     /* ---- Clases / atributos (v0.7.0 Fase 8 sesión 1) ---- */
     OP_CLASE,                   /* [byte name_idx]: crea Clase y empuja VAL_CLASE */
