@@ -36,6 +36,7 @@
 struct Sent;
 struct Entorno;
 struct Evaluador;
+struct EvalError;
 
 typedef enum {
     VAL_NULO,
@@ -62,14 +63,19 @@ typedef struct Tupla Tupla;
 typedef struct FuncionBC FuncionBC;
 
 /*
- * Firma de una función nativa (puntero a función C). Definida con
- * `struct Valor` porque el typedef `Valor` no existe todavía dentro
- * de su propia definición. Recibe argumentos ya evaluados (el
+ * Firma de una función nativa (puntero a función C). Recibe un
+ * `EvalError *` para reportar errores de runtime (preserva el primer
+ * error ya activo si lo hubiese), los argumentos ya evaluados (el
  * llamador conserva ownership y los destruye al finalizar la
  * llamada) y la posición del call-site. Devuelve el Valor resultado
  * del que el llamador toma posesión.
+ *
+ * Refactor en F6 S6: antes recibía `Evaluador *ev`. Ahora `EvalError *`
+ * hace que las nativas puedan invocarse tanto desde el evaluador
+ * tree-walking (`&ev->error`) como desde la VM bytecode (`&vm->error`)
+ * sin acoplarlas a una de las dos.
  */
-typedef struct Valor (*FnNativa)(struct Evaluador *ev, int n_args,
+typedef struct Valor (*FnNativa)(struct EvalError *err, int n_args,
                                   struct Valor *args,
                                   int linea, int columna);
 

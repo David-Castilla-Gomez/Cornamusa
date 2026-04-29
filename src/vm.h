@@ -30,8 +30,8 @@ typedef enum {
     VM_ERROR_RUNTIME,
 } ResultadoVM;
 
-#define VM_PILA_MAX 1024
-#define VM_FRAMES_MAX 64
+#define VM_PILA_MAX 8192
+#define VM_FRAMES_MAX 256
 
 /*
  * CallFrame: representa una llamada activa.

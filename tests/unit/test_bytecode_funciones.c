@@ -310,6 +310,33 @@ static void test_locales_aisladas(void) {
     }
 }
 
+/* ───── Built-ins nativas via OP_LLAMAR ───── */
+
+static void test_nativas(void) {
+    /* longitud sobre cadena. */
+    verificar_var("x = longitud(\"hola\")", "x", "4");
+    /* longitud sobre cadena UTF-8 (4 code points). */
+    verificar_var("x = longitud(\"niño\")", "x", "4");
+    /* tipo sobre varios tipos. */
+    verificar_var("x = tipo(42)", "x", "entero");
+    verificar_var("x = tipo(3.14)", "x", "decimal");
+    verificar_var("x = tipo(\"hola\")", "x", "cadena");
+    verificar_var("x = tipo(verdadero)", "x", "booleano");
+    verificar_var("x = tipo(nulo)", "x", "nulo");
+    /* rango() devuelve un tipo "rango"; longitud(rango(N)) = N. */
+    verificar_var("x = longitud(rango(10))", "x", "10");
+    verificar_var("x = longitud(rango(2, 12))", "x", "10");
+    verificar_var("x = longitud(rango(0, 10, 3))", "x", "4");
+
+    /* Composición de nativas con cálculos. */
+    verificar_var(
+        "funcion mide(s):\n"
+        "    retornar longitud(s) * 2\n"
+        "fin funcion\n"
+        "x = mide(\"abc\")",
+        "x", "6");
+}
+
 /* ───── Programa realista: factorial(50) bignum ───── */
 
 static void test_factorial_grande(void) {
@@ -333,6 +360,7 @@ int main(void) {
     test_retornar();
     test_no_invocable();
     test_locales_aisladas();
+    test_nativas();
     test_factorial_grande();
 
     if (fallos == 0) {

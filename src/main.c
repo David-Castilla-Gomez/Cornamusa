@@ -27,7 +27,9 @@
 
 #include "arena.h"
 #include "ast.h"
+#include "chunk.h"
 #include "common.h"
+#include "compilador.h"
 #include "entorno.h"
 #include "errores.h"
 #include "evaluador.h"
@@ -36,6 +38,7 @@
 #include "nativos.h"
 #include "parser.h"
 #include "valor.h"
+#include "vm.h"
 
 #define LINEA_MAX 1024
 #define BUFFER_REPL_MAX 16384
@@ -60,8 +63,11 @@ static void imprimir_uso(const char *programa) {
         "  -v, --version    Muestra la versión\n"
         "      --tokens     Tokeniza el archivo y vuelca los tokens\n"
         "      --ast        Parsea el archivo y vuelca el AST\n"
+        "      --bytecode   Ejecuta el archivo con el motor bytecode (Fase 6)\n"
+        "                   en lugar del tree-walking. v0.6 sin SENT_PARA;\n"
+        "                   programas que usan `para` deben usar el default.\n"
         "\n"
-        "Sin argumentos abre el REPL interactivo.\n",
+        "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
 }
 
@@ -196,6 +202,66 @@ static int ejecutar_archivo(const char *ruta) {
     int rc = ejecutar_fuente(fc.fuente, ruta, &globales, NULL);
 
     entorno_destruir(&globales);
+    fuente_destruir(&fc);
+    return rc;
+}
+
+/*
+ * Pipeline alternativo con motor bytecode: lex → parse → compilar →
+ * VM. v0.6 sin soporte de `para`; los demás programas se ejecutan
+ * idénticamente al tree-walking. El cliente activa esta ruta con
+ * la flag `--bytecode`.
+ */
+static int ejecutar_archivo_bytecode(const char *ruta) {
+    FuenteCargada fc = fuente_cargar_archivo(ruta);
+    if (fc.codigo != FUENTE_OK) {
+        fprintf(stderr, "Error al cargar '%s': %s\n", ruta, fc.mensaje_error);
+        return 74;
+    }
+
+    Lexer l;
+    lexer_iniciar(&l, fc.fuente, ruta);
+
+    Arena a;
+    arena_iniciar(&a, 16384);
+
+    Parser p;
+    parser_iniciar(&p, &l, &a, fc.fuente, ruta);
+
+    int n = 0;
+    Sent **sents = parser_parsear_programa(&p, &n);
+
+    if (p.tuvo_error) {
+        arena_destruir(&a);
+        fuente_destruir(&fc);
+        return 65;
+    }
+
+    Chunk chunk;
+    chunk_iniciar(&chunk);
+    Compilador c;
+    compilador_iniciar(&c, &chunk);
+    if (!compilador_compilar_programa(&c, sents, n)) {
+        EvalError er = c.error;
+        imprimir_error_runtime(&er, fc.fuente, ruta);
+        chunk_destruir(&chunk); arena_destruir(&a); fuente_destruir(&fc);
+        return 65;
+    }
+
+    VM vm;
+    vm_iniciar(&vm);
+    Valor resultado = valor_nulo();
+    ResultadoVM rc_vm = vm_ejecutar(&vm, &chunk, &resultado);
+
+    int rc = 0;
+    if (rc_vm != VM_OK) {
+        imprimir_error_runtime(&vm.error, fc.fuente, ruta);
+        rc = 70;
+    }
+    valor_destruir(&resultado);
+    vm_destruir(&vm);
+    chunk_destruir(&chunk);
+    arena_destruir(&a);
     fuente_destruir(&fc);
     return rc;
 }
@@ -445,6 +511,7 @@ int main(int argc, char **argv) {
     const char *archivo = NULL;
     bool volcar_tokens = false;
     bool volcar_ast = false;
+    bool usar_bytecode = false;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -466,6 +533,10 @@ int main(int argc, char **argv) {
             volcar_ast = true;
             continue;
         }
+        if (strcmp(arg, "--bytecode") == 0) {
+            usar_bytecode = true;
+            continue;
+        }
         if (arg[0] == '-') {
             fprintf(stderr, "Opción no reconocida: %s\n", arg);
             imprimir_uso(argv[0]);
@@ -477,12 +548,14 @@ int main(int argc, char **argv) {
     if (archivo != NULL) {
         if (volcar_ast)    return parsear_y_volcar_ast(archivo);
         if (volcar_tokens) return volcar_tokens_archivo(archivo);
+        if (usar_bytecode) return ejecutar_archivo_bytecode(archivo);
         return ejecutar_archivo(archivo);
     }
 
-    if (volcar_tokens || volcar_ast) {
+    if (volcar_tokens || volcar_ast || usar_bytecode) {
         fprintf(stderr, "%s requiere un archivo .cor\n",
-            volcar_ast ? "--ast" : "--tokens");
+            volcar_ast ? "--ast" :
+            volcar_tokens ? "--tokens" : "--bytecode");
         return 64;
     }
 

@@ -35,7 +35,7 @@
 
 #define EVAL_MENSAJE_MAX 512
 
-typedef struct {
+typedef struct EvalError {
     bool tuvo_error;
     char mensaje[EVAL_MENSAJE_MAX];
     int linea;

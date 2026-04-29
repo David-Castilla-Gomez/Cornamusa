@@ -1812,7 +1812,8 @@ static Valor eval_llamada(Evaluador *ev, const Expr *e) {
 
     Valor resultado;
     if (callee.tipo == VAL_NATIVA) {
-        resultado = callee.como.nativa.fn(ev, n, args, e->linea, e->columna);
+        resultado = callee.como.nativa.fn(&ev->error, n, args,
+                                            e->linea, e->columna);
     } else if (callee.tipo == VAL_FUNCION) {
         resultado = llamar_usuario(ev, callee.como.funcion.def,
                                     callee.como.funcion.entorno_definicion,

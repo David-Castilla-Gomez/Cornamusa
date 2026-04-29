@@ -139,3 +139,28 @@ set_tests_properties(run_18_conj_y_tupla PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "Suma de unicos: 30"
 )
+
+# ───── Tests de ejecución end-to-end con motor BYTECODE (Fase 6) ─────
+# Confirman que el motor bytecode ejecuta los ejemplos compatibles
+# (sin SENT_PARA — eso queda aplazado a v0.6.1) produciendo la misma
+# salida que el tree-walking. Los demás ejemplos siguen ejecutándose
+# con el motor por defecto.
+add_test(
+    NAME bc_run_01_hola_mundo
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/01_hola_mundo.cor
+)
+set_tests_properties(bc_run_01_hola_mundo PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Bienvenido a Cornamusa"
+)
+
+add_test(
+    NAME bc_run_13_factorial_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/13_factorial_jugable.cor
+)
+set_tests_properties(bc_run_13_factorial_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "100! = 9332621544394415268169923885626670049071596826438162146859296389521759999322991560894146397615651828625369792082722375825118521091686400000000000000000000000"
+)

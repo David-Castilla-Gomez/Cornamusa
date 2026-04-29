@@ -38,6 +38,14 @@ const char *opcode_nombre(OpCode op) {
         case OP_ASIGNAR_GLOBAL:  return "OP_ASIGNAR_GLOBAL";
         case OP_LLAMAR:          return "OP_LLAMAR";
         case OP_IMPRIMIR:        return "OP_IMPRIMIR";
+        case OP_BUILD_LISTA:     return "OP_BUILD_LISTA";
+        case OP_BUILD_TUPLA:     return "OP_BUILD_TUPLA";
+        case OP_BUILD_DICC:      return "OP_BUILD_DICC";
+        case OP_BUILD_CONJUNTO:  return "OP_BUILD_CONJUNTO";
+        case OP_INDICE:          return "OP_INDICE";
+        case OP_ASIGNAR_INDICE:  return "OP_ASIGNAR_INDICE";
+        case OP_ITER_INICIAR:    return "OP_ITER_INICIAR";
+        case OP_ITER_SIGUIENTE:  return "OP_ITER_SIGUIENTE";
         case OP_RETORNAR:        return "OP_RETORNAR";
     }
     return NULL;

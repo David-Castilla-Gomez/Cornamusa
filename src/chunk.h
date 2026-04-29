@@ -80,8 +80,23 @@ typedef enum {
     OP_ASIGNAR_GLOBAL,
     OP_LLAMAR,                  /* CALL [byte n_args] */
 
-    /* ---- Built-in print (temporal hasta funciones nativas reales) ---- */
+    /* ---- Built-in print (atajo del compilador) ---- */
     OP_IMPRIMIR,
+
+    /* ---- Construcción de colecciones (Fase 6 sesión 6) ---- */
+    OP_BUILD_LISTA,    /* [n_elementos] → pop n, push lista */
+    OP_BUILD_TUPLA,    /* [n_elementos] → pop n, push tupla */
+    OP_BUILD_DICC,     /* [n_pares]     → pop n*2 (k,v,k,v...), push dicc */
+    OP_BUILD_CONJUNTO, /* [n_elementos] → pop n, push conjunto */
+
+    /* ---- Indexación (lectura y escritura) ---- */
+    OP_INDICE,         /* pop key, pop obj, push obj[key] */
+    OP_ASIGNAR_INDICE, /* pop value, pop key, pop obj — sets obj[key] = value */
+
+    /* ---- Iteración ---- */
+    OP_ITER_INICIAR,   /* pop iterable, push iterador (estado interno) */
+    OP_ITER_SIGUIENTE, /* operando u16 = offset_fin; lee tope (iterador),
+                          si hay siguiente push valor; si no, pop y salta */
 
     /* ---- Retorno ---- */
     OP_RETORNAR,

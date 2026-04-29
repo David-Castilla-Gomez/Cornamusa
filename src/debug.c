@@ -118,7 +118,15 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_ASIGNAR_GLOBAL:  return instruccion_byte("OP_ASIGNAR_GLOBAL", c, offset, out);
         case OP_LLAMAR:          return instruccion_byte("OP_LLAMAR", c, offset, out);
 
-        case OP_IMPRIMIR:        return instruccion_simple("OP_IMPRIMIR", offset, out);
+        case OP_IMPRIMIR:        return instruccion_byte("OP_IMPRIMIR", c, offset, out);
+        case OP_BUILD_LISTA:     return instruccion_byte("OP_BUILD_LISTA", c, offset, out);
+        case OP_BUILD_TUPLA:     return instruccion_byte("OP_BUILD_TUPLA", c, offset, out);
+        case OP_BUILD_DICC:      return instruccion_byte("OP_BUILD_DICC", c, offset, out);
+        case OP_BUILD_CONJUNTO:  return instruccion_byte("OP_BUILD_CONJUNTO", c, offset, out);
+        case OP_INDICE:          return instruccion_simple("OP_INDICE", offset, out);
+        case OP_ASIGNAR_INDICE:  return instruccion_simple("OP_ASIGNAR_INDICE", offset, out);
+        case OP_ITER_INICIAR:    return instruccion_simple("OP_ITER_INICIAR", offset, out);
+        case OP_ITER_SIGUIENTE:  return instruccion_u16("OP_ITER_SIGUIENTE", c, offset, +1, out);
         case OP_RETORNAR:        return instruccion_simple("OP_RETORNAR", offset, out);
     }
 

@@ -14,15 +14,15 @@
  * Helper: pone un error en el evaluador desde un built-in. Las
  * built-ins no tienen un Expr* sino sólo línea/columna del call-site.
  */
-static Valor error_nativa(Evaluador *ev, int linea, int columna,
+static Valor error_nativa(EvalError *err, int linea, int columna,
                           const char *fmt, ...) {
-    if (ev->error.tuvo_error) return valor_nulo();
-    ev->error.tuvo_error = true;
-    ev->error.linea = linea;
-    ev->error.columna = columna;
+    if (err->tuvo_error) return valor_nulo();
+    err->tuvo_error = true;
+    err->linea = linea;
+    err->columna = columna;
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(ev->error.mensaje, sizeof(ev->error.mensaje), fmt, ap);
+    vsnprintf(err->mensaje, sizeof(err->mensaje), fmt, ap);
     va_end(ap);
     return valor_nulo();
 }
@@ -37,9 +37,9 @@ static Valor error_nativa(Evaluador *ev, int linea, int columna,
  * Devuelve nulo.
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor nativa_imprimir(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_imprimir(EvalError *err, int n_args, Valor *args,
                               int linea, int columna) {
-    (void)ev; (void)linea; (void)columna;
+    (void)err; (void)linea; (void)columna;
     char buffer[1024];
     for (int i = 0; i < n_args; i++) {
         if (i > 0) fputc(' ', stdout);
@@ -59,10 +59,10 @@ static Valor nativa_imprimir(Evaluador *ev, int n_args, Valor *args,
  * Para otros: ErrorDeTipo.
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor nativa_longitud(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_longitud(EvalError *err, int n_args, Valor *args,
                               int linea, int columna) {
     if (n_args != 1) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: longitud() requiere 1 argumento, recibio %d", n_args);
     }
     const Valor *v = &args[0];
@@ -76,7 +76,7 @@ static Valor nativa_longitud(Evaluador *ev, int n_args, Valor *args,
                 (const utf8proc_uint8_t *)(v->como.cadena.texto + pos),
                 (utf8proc_ssize_t)(total - pos), &cp);
             if (consumido <= 0) {
-                return error_nativa(ev, linea, columna,
+                return error_nativa(err, linea, columna,
                     "ErrorDeValor: cadena con UTF-8 invalido");
             }
             n++;
@@ -143,7 +143,7 @@ static Valor nativa_longitud(Evaluador *ev, int n_args, Valor *args,
         out.como.entero = resultado;
         return out;
     }
-    return error_nativa(ev, linea, columna,
+    return error_nativa(err, linea, columna,
         "ErrorDeTipo: longitud() no soporta '%s'", valor_nombre_tipo(v));
 }
 
@@ -153,10 +153,10 @@ static Valor nativa_longitud(Evaluador *ev, int n_args, Valor *args,
  * Devuelve cadena con el nombre del tipo del valor, en castellano.
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor nativa_tipo(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_tipo(EvalError *err, int n_args, Valor *args,
                          int linea, int columna) {
     if (n_args != 1) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: tipo() requiere 1 argumento, recibio %d", n_args);
     }
     const char *nombre = valor_nombre_tipo(&args[0]);
@@ -186,16 +186,16 @@ static bool extraer_entero(const Valor *v, mp_int *out) {
     return false;
 }
 
-static Valor nativa_rango(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_rango(EvalError *err, int n_args, Valor *args,
                           int linea, int columna) {
     if (n_args < 1 || n_args > 3) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: rango() acepta 1, 2 o 3 argumentos, recibio %d",
             n_args);
     }
     for (int i = 0; i < n_args; i++) {
         if (args[i].tipo != VAL_ENTERO && args[i].tipo != VAL_BOOLEANO) {
-            return error_nativa(ev, linea, columna,
+            return error_nativa(err, linea, columna,
                 "ErrorDeTipo: rango() solo acepta enteros, recibio '%s'",
                 valor_nombre_tipo(&args[i]));
         }
@@ -206,11 +206,11 @@ static Valor nativa_rango(Evaluador *ev, int n_args, Valor *args,
     mp_int *mp = (mp_int *)malloc(sizeof(mp_int));
     if (!mi || !mf || !mp) {
         free(mi); free(mf); free(mp);
-        return error_nativa(ev, linea, columna, "memoria insuficiente");
+        return error_nativa(err, linea, columna, "memoria insuficiente");
     }
     if (mp_init_multi(mi, mf, mp, NULL) != MP_OKAY) {
         free(mi); free(mf); free(mp);
-        return error_nativa(ev, linea, columna, "memoria insuficiente");
+        return error_nativa(err, linea, columna, "memoria insuficiente");
     }
 
     if (n_args == 1) {
@@ -226,7 +226,7 @@ static Valor nativa_rango(Evaluador *ev, int n_args, Valor *args,
                 mp_clear(mi); free(mi);
                 mp_clear(mf); free(mf);
                 mp_clear(mp); free(mp);
-                return error_nativa(ev, linea, columna,
+                return error_nativa(err, linea, columna,
                     "ErrorDeValor: rango() no admite paso 0");
             }
         } else {
@@ -239,7 +239,7 @@ fail:
     mp_clear(mi); free(mi);
     mp_clear(mf); free(mf);
     mp_clear(mp); free(mp);
-    return error_nativa(ev, linea, columna, "memoria insuficiente");
+    return error_nativa(err, linea, columna, "memoria insuficiente");
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -271,32 +271,32 @@ static bool indice_a_long_natural(const Valor *v, long *out, int total) {
  * agregar(lista|conjunto, x) — añade x al final (lista) o como nuevo
  * elemento (conjunto, deduplicado). Devuelve nulo.
  */
-static Valor nativa_agregar(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_agregar(EvalError *err, int n_args, Valor *args,
                              int linea, int columna) {
     if (n_args != 2) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: agregar() requiere 2 argumentos, recibio %d", n_args);
     }
     if (args[0].tipo == VAL_LISTA) {
         Valor copia = valor_clonar(&args[1]);
         if (!lista_agregar(args[0].como.lista, copia)) {
-            return error_nativa(ev, linea, columna, "memoria insuficiente");
+            return error_nativa(err, linea, columna, "memoria insuficiente");
         }
         return valor_nulo();
     }
     if (args[0].tipo == VAL_CONJUNTO) {
         if (!valor_es_hashable(&args[1])) {
-            return error_nativa(ev, linea, columna,
+            return error_nativa(err, linea, columna,
                 "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
                 valor_nombre_tipo(&args[1]));
         }
         Valor copia = valor_clonar(&args[1]);
         if (!conj_agregar(args[0].como.conjunto, copia)) {
-            return error_nativa(ev, linea, columna, "memoria insuficiente");
+            return error_nativa(err, linea, columna, "memoria insuficiente");
         }
         return valor_nulo();
     }
-    return error_nativa(ev, linea, columna,
+    return error_nativa(err, linea, columna,
         "ErrorDeTipo: agregar() no soporta '%s' como primer argumento",
         valor_nombre_tipo(&args[0]));
 }
@@ -306,26 +306,26 @@ static Valor nativa_agregar(Evaluador *ev, int n_args, Valor *args,
  * Sin argumento de índice usa -1 (último). Indice negativo cuenta
  * desde el final.
  */
-static Valor nativa_quitar(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_quitar(EvalError *err, int n_args, Valor *args,
                             int linea, int columna) {
     if (n_args < 1 || n_args > 2) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: quitar() requiere 1 o 2 argumentos, recibio %d", n_args);
     }
     if (args[0].tipo != VAL_LISTA) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: quitar() requiere una lista, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
     Lista *l = args[0].como.lista;
     if (l->cuenta == 0) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeIndice: quitar() de una lista vacia");
     }
     long i;
     if (n_args == 2) {
         if (!indice_a_long_natural(&args[1], &i, l->cuenta)) {
-            return error_nativa(ev, linea, columna,
+            return error_nativa(err, linea, columna,
                 "ErrorDeIndice: indice fuera de rango (lista de %d)", l->cuenta);
         }
     } else {
@@ -344,14 +344,14 @@ static Valor nativa_quitar(Evaluador *ev, int n_args, Valor *args,
 /*
  * insertar(lista, indice, valor) — inserta antes del índice indicado.
  */
-static Valor nativa_insertar(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_insertar(EvalError *err, int n_args, Valor *args,
                               int linea, int columna) {
     if (n_args != 3) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: insertar() requiere 3 argumentos, recibio %d", n_args);
     }
     if (args[0].tipo != VAL_LISTA) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: insertar() requiere una lista, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
@@ -364,7 +364,7 @@ static Valor nativa_insertar(Evaluador *ev, int n_args, Valor *args,
              && mp_count_bits(args[1].como.entero) <= 62) {
         i = (long)mp_get_i64(args[1].como.entero);
     } else {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: indice de insertar() debe ser entero");
     }
     if (i < 0) i += l->cuenta;
@@ -374,7 +374,7 @@ static Valor nativa_insertar(Evaluador *ev, int n_args, Valor *args,
     /* Reservar espacio (lista_agregar para forzar crecimiento, luego
        desplazar). */
     if (!lista_agregar(l, valor_nulo())) {
-        return error_nativa(ev, linea, columna, "memoria insuficiente");
+        return error_nativa(err, linea, columna, "memoria insuficiente");
     }
     for (int k = l->cuenta - 1; k > (int)i; k--) {
         l->elementos[k] = l->elementos[k - 1];
@@ -386,14 +386,14 @@ static Valor nativa_insertar(Evaluador *ev, int n_args, Valor *args,
 /*
  * invertir(lista) — invierte la lista en su sitio.
  */
-static Valor nativa_invertir(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_invertir(EvalError *err, int n_args, Valor *args,
                               int linea, int columna) {
     if (n_args != 1) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: invertir() requiere 1 argumento, recibio %d", n_args);
     }
     if (args[0].tipo != VAL_LISTA) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: invertir() requiere una lista, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
@@ -462,14 +462,14 @@ static int comparador_ordenar(const void *pa, const void *pb) {
     return 0;
 }
 
-static Valor nativa_ordenar(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_ordenar(EvalError *err, int n_args, Valor *args,
                              int linea, int columna) {
     if (n_args != 1) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: ordenar() requiere 1 argumento, recibio %d", n_args);
     }
     if (args[0].tipo != VAL_LISTA) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: ordenar() requiere una lista, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
@@ -478,7 +478,7 @@ static Valor nativa_ordenar(Evaluador *ev, int n_args, Valor *args,
     qsort(l->elementos, (size_t)l->cuenta, sizeof(Valor), comparador_ordenar);
     if (g_ordenar_error) {
         g_ordenar_error = false;
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: ordenar() no puede comparar tipos mixtos no numericos");
     }
     return valor_nulo();
@@ -489,14 +489,14 @@ static Valor nativa_ordenar(Evaluador *ev, int n_args, Valor *args,
  * inicializa con los elementos de `iterable` (lista, tupla, cadena, rango).
  * Necesario porque `{}` es diccionario vacío en la sintaxis literal.
  */
-static Valor nativa_conjunto(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_conjunto(EvalError *err, int n_args, Valor *args,
                               int linea, int columna) {
     if (n_args > 1) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: conjunto() acepta 0 o 1 argumento, recibio %d", n_args);
     }
     Conjunto *c = conj_nuevo();
-    if (!c) return error_nativa(ev, linea, columna, "memoria insuficiente");
+    if (!c) return error_nativa(err, linea, columna, "memoria insuficiente");
     if (n_args == 0) return valor_conjunto(c);
 
     const Valor *it = &args[0];
@@ -505,7 +505,7 @@ static Valor nativa_conjunto(Evaluador *ev, int n_args, Valor *args,
         for (int i = 0; i < l->cuenta; i++) {
             if (!valor_es_hashable(&l->elementos[i])) {
                 conj_liberar(c);
-                return error_nativa(ev, linea, columna,
+                return error_nativa(err, linea, columna,
                     "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
                     valor_nombre_tipo(&l->elementos[i]));
             }
@@ -516,7 +516,7 @@ static Valor nativa_conjunto(Evaluador *ev, int n_args, Valor *args,
         for (int i = 0; i < t->cuenta; i++) {
             if (!valor_es_hashable(&t->elementos[i])) {
                 conj_liberar(c);
-                return error_nativa(ev, linea, columna,
+                return error_nativa(err, linea, columna,
                     "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
                     valor_nombre_tipo(&t->elementos[i]));
             }
@@ -524,7 +524,7 @@ static Valor nativa_conjunto(Evaluador *ev, int n_args, Valor *args,
         }
     } else {
         conj_liberar(c);
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: conjunto() no acepta '%s' como iterable",
             valor_nombre_tipo(it));
     }
@@ -540,20 +540,20 @@ static Valor nativa_conjunto(Evaluador *ev, int n_args, Valor *args,
  * del hash table — Python 3.7+ garantiza orden de inserción; nosotros
  * iteramos por slot, lo que NO conserva el orden. Documentado.
  */
-static Valor nativa_claves(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_claves(EvalError *err, int n_args, Valor *args,
                             int linea, int columna) {
     if (n_args != 1) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: claves() requiere 1 argumento, recibio %d", n_args);
     }
     if (args[0].tipo != VAL_DICCIONARIO) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: claves() requiere un diccionario, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
     Diccionario *d = args[0].como.dicc;
     Lista *l = lista_nueva(d->cuenta);
-    if (!l) return error_nativa(ev, linea, columna, "memoria insuficiente");
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
     for (int i = 0; i < d->capacidad; i++) {
         if (d->entradas[i].ocupada) {
             lista_agregar(l, valor_clonar(&d->entradas[i].clave));
@@ -563,20 +563,20 @@ static Valor nativa_claves(Evaluador *ev, int n_args, Valor *args,
 }
 
 /* valores(dicc) → lista de valores. Mismo orden indeterminado que claves(). */
-static Valor nativa_valores(Evaluador *ev, int n_args, Valor *args,
+static Valor nativa_valores(EvalError *err, int n_args, Valor *args,
                              int linea, int columna) {
     if (n_args != 1) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: valores() requiere 1 argumento, recibio %d", n_args);
     }
     if (args[0].tipo != VAL_DICCIONARIO) {
-        return error_nativa(ev, linea, columna,
+        return error_nativa(err, linea, columna,
             "ErrorDeTipo: valores() requiere un diccionario, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
     Diccionario *d = args[0].como.dicc;
     Lista *l = lista_nueva(d->cuenta);
-    if (!l) return error_nativa(ev, linea, columna, "memoria insuficiente");
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
     for (int i = 0; i < d->capacidad; i++) {
         if (d->entradas[i].ocupada) {
             lista_agregar(l, valor_clonar(&d->entradas[i].valor));
@@ -589,46 +589,47 @@ static Valor nativa_valores(Evaluador *ev, int n_args, Valor *args,
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
+/*
+ * Lista canónica de nativas. Tanto `nativos_registrar` (Entorno) como
+ * `nativos_registrar_dicc` (Diccionario) iteran esta tabla. Mantener
+ * en un solo sitio garantiza que ambos motores ofrezcan exactamente
+ * los mismos built-ins.
+ */
+typedef struct {
+    const char *nombre;
+    int longitud;
+    FnNativa fn;
+} EntradaNativa;
+
+static const EntradaNativa NATIVAS[] = {
+    {"imprimir", 8, nativa_imprimir},
+    {"longitud", 8, nativa_longitud},
+    {"tipo",     4, nativa_tipo},
+    {"rango",    5, nativa_rango},
+    {"agregar",  7, nativa_agregar},
+    {"quitar",   6, nativa_quitar},
+    {"insertar", 8, nativa_insertar},
+    {"invertir", 8, nativa_invertir},
+    {"ordenar",  7, nativa_ordenar},
+    {"claves",   6, nativa_claves},
+    {"valores",  7, nativa_valores},
+    {"conjunto", 8, nativa_conjunto},
+};
+
+#define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))
+
 void nativos_registrar(Entorno *globales) {
-    /* Los nombres apuntan a literales de cadena estáticos: viven todo
-       el programa, no se liberan. Las claves del entorno guardan estos
-       punteros directamente. */
-    static const char NOMBRE_IMPRIMIR[] = "imprimir";
-    static const char NOMBRE_LONGITUD[] = "longitud";
-    static const char NOMBRE_TIPO[]     = "tipo";
-    static const char NOMBRE_RANGO[]    = "rango";
-    static const char NOMBRE_AGREGAR[]  = "agregar";
-    static const char NOMBRE_QUITAR[]   = "quitar";
-    static const char NOMBRE_INSERTAR[] = "insertar";
-    static const char NOMBRE_INVERTIR[] = "invertir";
-    static const char NOMBRE_ORDENAR[]  = "ordenar";
-    static const char NOMBRE_CLAVES[]   = "claves";
-    static const char NOMBRE_VALORES[]  = "valores";
-    static const char NOMBRE_CONJUNTO[] = "conjunto";
+    for (int i = 0; i < N_NATIVAS; i++) {
+        entorno_definir(globales, NATIVAS[i].nombre, NATIVAS[i].longitud,
+            valor_nativa(NATIVAS[i].nombre, NATIVAS[i].fn));
+    }
+}
 
-    entorno_definir(globales, NOMBRE_IMPRIMIR, 8,
-        valor_nativa(NOMBRE_IMPRIMIR, nativa_imprimir));
-    entorno_definir(globales, NOMBRE_LONGITUD, 8,
-        valor_nativa(NOMBRE_LONGITUD, nativa_longitud));
-    entorno_definir(globales, NOMBRE_TIPO, 4,
-        valor_nativa(NOMBRE_TIPO, nativa_tipo));
-    entorno_definir(globales, NOMBRE_RANGO, 5,
-        valor_nativa(NOMBRE_RANGO, nativa_rango));
-
-    entorno_definir(globales, NOMBRE_AGREGAR, 7,
-        valor_nativa(NOMBRE_AGREGAR, nativa_agregar));
-    entorno_definir(globales, NOMBRE_QUITAR, 6,
-        valor_nativa(NOMBRE_QUITAR, nativa_quitar));
-    entorno_definir(globales, NOMBRE_INSERTAR, 8,
-        valor_nativa(NOMBRE_INSERTAR, nativa_insertar));
-    entorno_definir(globales, NOMBRE_INVERTIR, 8,
-        valor_nativa(NOMBRE_INVERTIR, nativa_invertir));
-    entorno_definir(globales, NOMBRE_ORDENAR, 7,
-        valor_nativa(NOMBRE_ORDENAR, nativa_ordenar));
-    entorno_definir(globales, NOMBRE_CLAVES, 6,
-        valor_nativa(NOMBRE_CLAVES, nativa_claves));
-    entorno_definir(globales, NOMBRE_VALORES, 7,
-        valor_nativa(NOMBRE_VALORES, nativa_valores));
-    entorno_definir(globales, NOMBRE_CONJUNTO, 8,
-        valor_nativa(NOMBRE_CONJUNTO, nativa_conjunto));
+void nativos_registrar_dicc(Diccionario *globales) {
+    for (int i = 0; i < N_NATIVAS; i++) {
+        Valor clave = valor_cadena_referencia(NATIVAS[i].nombre,
+                                                NATIVAS[i].longitud);
+        Valor fn = valor_nativa(NATIVAS[i].nombre, NATIVAS[i].fn);
+        dicc_asignar(globales, clave, fn);
+    }
 }

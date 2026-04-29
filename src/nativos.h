@@ -2,6 +2,7 @@
 #define CORNAMUSA_NATIVOS_H
 
 #include "entorno.h"
+#include "valor.h"   /* Diccionario */
 
 /*
  * Built-ins de Cornamusa (Fase 4 sesión 4).
@@ -23,7 +24,14 @@
  * Registra los built-ins en el entorno proporcionado (típicamente el
  * global). Idempotente: re-registrar sobreescribe sin liberar nada
  * crítico (los Valores nativa son inmutables y livianos).
+ *
+ * `nativos_registrar` es para el evaluador tree-walking (que usa
+ * `Entorno` como scope). `nativos_registrar_dicc` es la variante para
+ * la VM bytecode (que usa `Diccionario` como tabla de globales). Ambas
+ * registran exactamente la misma lista de nativas — el motor solo
+ * decide la estructura subyacente.
  */
 void nativos_registrar(Entorno *globales);
+void nativos_registrar_dicc(Diccionario *globales);
 
 #endif /* CORNAMUSA_NATIVOS_H */

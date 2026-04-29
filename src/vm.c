@@ -1,9 +1,12 @@
 #include "vm.h"
 
+#include <limits.h>
 #include <stdio.h>
 
 #include "evaluador.h"   /* evaluador_aplicar_binario / unario */
 #include "lexer.h"       /* TipoToken */
+#include "nativos.h"     /* nativos_registrar para los built-ins */
+#include "tommath.h"
 #include "valor.h"
 
 /* ──────────────────────────────────────────────────────────────────
@@ -80,6 +83,11 @@ void vm_iniciar(VM *vm) {
     vm->error.mensaje[0] = '\0';
     vm->error.linea = 0;
     vm->error.columna = 0;
+    /* Registrar built-ins en globales: imprimir, longitud, tipo, rango,
+       agregar, quitar, insertar, invertir, ordenar, claves, valores,
+       conjunto. Funcionan idénticamente al evaluador tree-walking porque
+       las nativas usan EvalError* (no Evaluador*) tras el refactor de S6. */
+    if (vm->globales) nativos_registrar_dicc(vm->globales);
 }
 
 void vm_destruir(VM *vm) {
@@ -274,6 +282,211 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 break;
             }
 
+            /* ─── Construcción de colecciones ─── */
+            case OP_BUILD_LISTA: {
+                uint8_t n = LEER_BYTE();
+                Lista *l = lista_nueva(n);
+                if (!l) {
+                    VM_ERROR("memoria insuficiente al construir lista");
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Slots en stack: [..., e0, e1, ..., e(n-1)]. Para
+                   preservar el orden los movemos directamente, sin
+                   sacar+invertir. */
+                Valor *base = vm->tope - n;
+                for (int i = 0; i < n; i++) {
+                    lista_agregar(l, base[i]);  /* toma posesión */
+                }
+                vm->tope = base;
+                empujar(vm, valor_lista(l));
+                break;
+            }
+            case OP_BUILD_TUPLA: {
+                uint8_t n = LEER_BYTE();
+                Tupla *t = tupla_nueva(n);
+                if (!t) {
+                    VM_ERROR("memoria insuficiente al construir tupla");
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor *base = vm->tope - n;
+                for (int i = 0; i < n; i++) t->elementos[i] = base[i];
+                vm->tope = base;
+                empujar(vm, valor_tupla(t));
+                break;
+            }
+            case OP_BUILD_DICC: {
+                uint8_t n_pares = LEER_BYTE();
+                Diccionario *d = dicc_nuevo();
+                if (!d) {
+                    VM_ERROR("memoria insuficiente al construir diccionario");
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor *base = vm->tope - n_pares * 2;
+                for (int i = 0; i < n_pares; i++) {
+                    Valor k = base[i * 2];
+                    Valor v = base[i * 2 + 1];
+                    if (!valor_es_hashable(&k)) {
+                        valor_destruir(&k); valor_destruir(&v);
+                        for (int j = i + 1; j < n_pares; j++) {
+                            valor_destruir(&base[j * 2]);
+                            valor_destruir(&base[j * 2 + 1]);
+                        }
+                        dicc_liberar(d);
+                        vm->tope = base;
+                        VM_ERROR("ErrorDeTipo: clave no hashable en literal de diccionario");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    dicc_asignar(d, k, v);
+                }
+                vm->tope = base;
+                empujar(vm, valor_diccionario(d));
+                break;
+            }
+            case OP_BUILD_CONJUNTO: {
+                uint8_t n = LEER_BYTE();
+                Conjunto *cj = conj_nuevo();
+                if (!cj) {
+                    VM_ERROR("memoria insuficiente al construir conjunto");
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor *base = vm->tope - n;
+                for (int i = 0; i < n; i++) {
+                    Valor el = base[i];
+                    if (!valor_es_hashable(&el)) {
+                        valor_destruir(&el);
+                        for (int j = i + 1; j < n; j++) valor_destruir(&base[j]);
+                        conj_liberar(cj);
+                        vm->tope = base;
+                        VM_ERROR("ErrorDeTipo: elemento no hashable en literal de conjunto");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    conj_agregar(cj, el);
+                }
+                vm->tope = base;
+                empujar(vm, valor_conjunto(cj));
+                break;
+            }
+
+            /* ─── Indexación ─── */
+            case OP_INDICE: {
+                Valor key = sacar(vm);
+                Valor obj = sacar(vm);
+                Valor r = valor_nulo();
+                /* Lista, tupla, diccionario, cadena. */
+                if (obj.tipo == VAL_LISTA) {
+                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                        VM_ERROR("ErrorDeTipo: indice de lista debe ser entero, no '%s'",
+                                 valor_nombre_tipo(&key));
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    Lista *l = obj.como.lista;
+                    long i;
+                    if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
+                    else if (mp_count_bits(key.como.entero) > 62) i = LONG_MAX;
+                    else i = (long)mp_get_i64(key.como.entero);
+                    if (i < 0) i += l->cuenta;
+                    if (i < 0 || i >= l->cuenta) {
+                        VM_ERROR("ErrorDeIndice: indice %ld fuera de rango (lista de %d)",
+                                 i, l->cuenta);
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    r = valor_clonar(&l->elementos[i]);
+                } else if (obj.tipo == VAL_TUPLA) {
+                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                        VM_ERROR("ErrorDeTipo: indice de tupla debe ser entero");
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    Tupla *t = obj.como.tupla;
+                    long i;
+                    if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
+                    else if (mp_count_bits(key.como.entero) > 62) i = LONG_MAX;
+                    else i = (long)mp_get_i64(key.como.entero);
+                    if (i < 0) i += t->cuenta;
+                    if (i < 0 || i >= t->cuenta) {
+                        VM_ERROR("ErrorDeIndice: indice fuera de rango (tupla de %d)",
+                                 t->cuenta);
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    r = valor_clonar(&t->elementos[i]);
+                } else if (obj.tipo == VAL_DICCIONARIO) {
+                    if (!valor_es_hashable(&key)) {
+                        VM_ERROR("ErrorDeTipo: '%s' no se puede usar como clave",
+                                 valor_nombre_tipo(&key));
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    if (!dicc_obtener(obj.como.dicc, &key, &r)) {
+                        char buf[128];
+                        valor_a_repr(&key, buf, sizeof(buf));
+                        VM_ERROR("ErrorDeClave: %s", buf);
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                } else {
+                    VM_ERROR("ErrorDeTipo: '%s' no es indexable",
+                             valor_nombre_tipo(&obj));
+                    valor_destruir(&key); valor_destruir(&obj);
+                    return VM_ERROR_RUNTIME;
+                }
+                valor_destruir(&key); valor_destruir(&obj);
+                empujar(vm, r);
+                break;
+            }
+            case OP_ASIGNAR_INDICE: {
+                /* Stack: [..., obj, key, valor]. */
+                Valor valor = sacar(vm);
+                Valor key = sacar(vm);
+                Valor obj = sacar(vm);
+                if (obj.tipo == VAL_LISTA) {
+                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                        VM_ERROR("ErrorDeTipo: indice de lista debe ser entero");
+                        valor_destruir(&valor); valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    Lista *l = obj.como.lista;
+                    long i;
+                    if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
+                    else i = (long)mp_get_i64(key.como.entero);
+                    if (i < 0) i += l->cuenta;
+                    if (i < 0 || i >= l->cuenta) {
+                        VM_ERROR("ErrorDeIndice: indice fuera de rango (lista de %d)",
+                                 l->cuenta);
+                        valor_destruir(&valor); valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    lista_asignar(l, (int)i, valor);
+                    valor_destruir(&key); valor_destruir(&obj);
+                    empujar(vm, valor_nulo());  /* la sentencia descarta */
+                } else if (obj.tipo == VAL_DICCIONARIO) {
+                    if (!valor_es_hashable(&key)) {
+                        VM_ERROR("ErrorDeTipo: clave no hashable");
+                        valor_destruir(&valor); valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    dicc_asignar(obj.como.dicc, key, valor);
+                    /* `key` y `valor` transferidos. */
+                    valor_destruir(&obj);
+                    empujar(vm, valor_nulo());
+                } else {
+                    VM_ERROR("ErrorDeTipo: '%s' no soporta asignacion por indice",
+                             valor_nombre_tipo(&obj));
+                    valor_destruir(&valor); valor_destruir(&key); valor_destruir(&obj);
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+
+            /* ─── Iteradores (sesión 6) ─── */
+            case OP_ITER_INICIAR:
+            case OP_ITER_SIGUIENTE:
+                VM_ERROR("OpCode %s no implementado en v0.6 sesion 6 todavia",
+                         opcode_nombre(op));
+                return VM_ERROR_RUNTIME;
+
             /* ─── Built-in print ─── */
             case OP_IMPRIMIR: {
                 uint8_t n = LEER_BYTE();
@@ -342,31 +555,55 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                    El callee está en `tope - n_args - 1`. */
                 Valor *base_nuevo = vm->tope - n_args - 1;
                 Valor callee = *base_nuevo;
-                if (callee.tipo != VAL_FUNCION_BC) {
-                    VM_ERROR("ErrorDeTipo: '%s' no es invocable en bytecode v0.6",
-                             valor_nombre_tipo(&callee));
-                    return VM_ERROR_RUNTIME;
+
+                if (callee.tipo == VAL_NATIVA) {
+                    /* Las nativas reciben los args sin tomar posesión;
+                       el llamador los destruye al volver. */
+                    int linea = linea_actual_frame(frame);
+                    Valor *args = base_nuevo + 1;
+                    Valor r = callee.como.nativa.fn(&vm->error, n_args,
+                                                     args, linea, 0);
+                    if (vm->error.tuvo_error) {
+                        valor_destruir(&r);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    /* Limpiar args y callee del stack, empujar resultado. */
+                    for (int i = 0; i < n_args; i++) {
+                        Valor v = *(--vm->tope);
+                        valor_destruir(&v);
+                    }
+                    Valor cv = *(--vm->tope);
+                    valor_destruir(&cv);
+                    empujar(vm, r);
+                    break;
                 }
-                FuncionBC *fn = callee.como.funcion_bc;
-                if (n_args != fn->aridad) {
-                    VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
-                             fn->longitud_nombre, fn->nombre,
-                             fn->aridad, n_args);
-                    return VM_ERROR_RUNTIME;
+
+                if (callee.tipo == VAL_FUNCION_BC) {
+                    FuncionBC *fn = callee.como.funcion_bc;
+                    if (n_args != fn->aridad) {
+                        VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                                 fn->longitud_nombre, fn->nombre,
+                                 fn->aridad, n_args);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    if (vm->n_frames >= VM_FRAMES_MAX) {
+                        VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
+                                 VM_FRAMES_MAX);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    /* Crear nuevo frame con base_pila apuntando al callee
+                       (que ocupa el slot 0 del frame; los args quedan en
+                       slots 1..n_args). */
+                    frame = &vm->frames[vm->n_frames++];
+                    frame->chunk = &fn->chunk;
+                    frame->ip = fn->chunk.codigo;
+                    frame->base_pila = base_nuevo;
+                    break;
                 }
-                if (vm->n_frames >= VM_FRAMES_MAX) {
-                    VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
-                             VM_FRAMES_MAX);
-                    return VM_ERROR_RUNTIME;
-                }
-                /* Crear nuevo frame con base_pila apuntando al callee
-                   (que ocupa el slot 0 del frame; los args quedan en
-                   slots 1..n_args). */
-                frame = &vm->frames[vm->n_frames++];
-                frame->chunk = &fn->chunk;
-                frame->ip = fn->chunk.codigo;
-                frame->base_pila = base_nuevo;
-                break;
+
+                VM_ERROR("ErrorDeTipo: '%s' no es invocable",
+                         valor_nombre_tipo(&callee));
+                return VM_ERROR_RUNTIME;
             }
         }
     }

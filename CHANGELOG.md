@@ -6,12 +6,46 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
-### En desarrollo (Fase 6 — Compilador + VM bytecode, objetivo v0.6.0)
-- ✅ Sesión 1: infraestructura `Chunk` + enum `OpCode` + disassembler.
-- ✅ Sesión 2: refactor del evaluador (helpers reutilizables) + compilador para expresiones + VM stack-based con dispatch loop.
-- ✅ Sesión 3: variables globales (DEFINIR/OBTENER/ASIGNAR), `imprimir(...)` como built-in en bytecode, sentencias básicas (asignación, expresión, pasar, bloque).
-- ✅ Sesión 4: control de flujo en bytecode (`si`/`mientras` con `romper`/`continuar`/`sino`, lógica con cortocircuito, asignación aumentada).
-- ✅ Sesión 5: funciones top-level con recursión + variables locales + llamadas en bytecode (sin closures todavía — aplazadas a S5b/S6).
+## [0.6.0] — 2026-04-29 — motor bytecode (opt-in)
+
+Cierre de Fase 6 según el plan: compilador AST → bytecode + VM
+stack-based ejecutando expresiones, sentencias, control de flujo,
+funciones con recursión y colecciones. Motor opt-in con flag
+`--bytecode`; el tree-walking sigue siendo el por defecto en v0.6.0
+para preservar la cobertura completa del lenguaje (incluida la
+iteración `para`, que el bytecode aún no soporta).
+
+### Añadido (Fase 6 sesión 6)
+- **`FnNativa` refactorizado para `EvalError *`**: las funciones nativas (built-ins) ya no dependen del struct `Evaluador` — toman `EvalError *` directamente. Esto permite invocarlas tanto desde el evaluador tree-walking como desde la VM bytecode sin acoplarlas a uno de los dos motores. Cambio de firma propagado a todas las nativas (`imprimir`, `longitud`, `tipo`, `rango`, `agregar`, `quitar`, `insertar`, `invertir`, `ordenar`, `claves`, `valores`, `conjunto`).
+- **`nativos_registrar_dicc(Diccionario *globales)`** en paralelo a `nativos_registrar(Entorno *)`: ambos iteran una **lista canónica única** de nativas (`NATIVAS[]` en `nativos.c`) garantizando que tree-walking y bytecode ofrezcan los mismos built-ins.
+- **VM `vm_iniciar` ahora registra los built-ins** en `vm->globales` automáticamente — los programas bytecode ya tienen acceso a `imprimir`, `longitud`, `tipo`, `rango`, etc. desde el primer byte de ejecución.
+- **`OP_LLAMAR` en VM extendido para `VAL_NATIVA`**: cuando el callee es una nativa, la VM la invoca pasando `&vm->error` y limpia los args/callee del stack al volver. Las funciones definidas por el usuario (`VAL_FUNCION_BC`) siguen creando un `CallFrame` nuevo como en S5.
+- **Colecciones literales en bytecode** con cuatro nuevos opcodes:
+  - `OP_BUILD_LISTA [n]`: pop n elementos, push lista.
+  - `OP_BUILD_TUPLA [n]`: pop n elementos, push tupla.
+  - `OP_BUILD_DICC [n_pares]`: pop 2n elementos (k,v intercalados), push diccionario.
+  - `OP_BUILD_CONJUNTO [n]`: pop n elementos hashables, push conjunto.
+- **Indexación en bytecode**:
+  - `OP_INDICE`: pop key, pop obj, push obj[key]. Despacha por tipo (lista/tupla/diccionario) en runtime con mensajes de error específicos (`ErrorDeIndice`, `ErrorDeClave`).
+  - `OP_ASIGNAR_INDICE`: pop value, pop key, pop obj — `obj[key] = value`. Soporta listas y diccionarios.
+- **Compilador con `EXPR_LISTA`/`EXPR_TUPLA`/`EXPR_DICCIONARIO`/`EXPR_CONJUNTO`/`EXPR_INDICE`**: producen los nuevos opcodes. Los literales con más de 255 elementos producen error explícito (limitación del operando byte).
+- **`SENT_ASIGNAR` con destino `EXPR_INDICE`**: el compilador emite el bytecode `obj key valor OP_ASIGNAR_INDICE OP_DESCARTAR`.
+- **`VM_PILA_MAX`** ampliado a 8192, **`VM_FRAMES_MAX`** a 256 para acomodar recursión profunda como `factorial(100)` (64 dígitos vía bytecode).
+- **`OP_ITER_INICIAR` y `OP_ITER_SIGUIENTE`** reservados en el enum pero no implementados todavía — `SENT_PARA` queda aplazado a v0.6.1 (necesita un VAL_ITERADOR ad hoc o desazucar a `mientras` con manejo de slots temporales). El motor tree-walking sigue siendo el camino para programas que usan `para`.
+- **Integración con `cornamusa`** (motor opt-in):
+  - **Flag `--bytecode`** en `main.c` activa el pipeline `lex → parse → compilar → vm_ejecutar`. Sin la flag, el motor sigue siendo tree-walking (default en v0.6.0).
+  - Errores de compilación o de runtime se reportan con `imprimir_error_runtime` (mismo formato MENSAJES.md §2 con caret).
+- **Tests `bc_run_*`**: ejemplos `01_hola_mundo` y `13_factorial_jugable` (recursión que deja `100!` con 158 dígitos vía bytecode) se ejecutan también con `--bytecode` y verifican misma salida que el tree-walking.
+- **`tests/unit/test_bytecode_colecciones.c`** con 9 grupos: literales (lista, tupla, dicc, conjunto), indexación (lista/tupla/dicc + errores), asignación a índice, nativas sobre colecciones via OP_LLAMAR, programas mixtos (función que indexa, dicc acumulador).
+- **`test_bytecode_funciones.c` extendido** con grupo de nativas vía OP_LLAMAR (longitud sobre cadena UTF-8, rango, tipo).
+- **Limitaciones documentadas para v0.6.0**:
+  - `SENT_PARA` (`para X en Y`) **no compila a bytecode**; se ejecuta solo en tree-walking.
+  - **Closures con upvalues** no implementadas (decisión B2 ya las excluía del tree-walking; las añadiremos en v0.6.1+).
+  - Atributos (`obj.attr`), lambda, slicing, f-string interpolada, intentar/atrapar, importar — todos siguen aplazados.
+- **Versión** bump a `0.6.0` en `common.h`, `CMakeLists.txt`, smoke test.
+- **59 tests verde** (24 unit + 35 integración: 12 lex + 8 parse + 13 run tree-walking + 2 bc_run bytecode).
+
+### Añadido (Fase 6 sesión 5)
 - ⏳ Sesión 6: colecciones + transición a tagged i63 + flag `--tree-walking` + tests diferenciales + tag v0.6.0.
 
 ### Añadido (Fase 6 sesión 1)
@@ -103,6 +137,15 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - **Limitación documentada**: `SENT_PARA` queda para S6 (necesita iteración sobre cadena/rango/lista que se conectará con las colecciones en bytecode).
 - **`tests/unit/test_bytecode_control.c`** con 8 grupos: lógica con cortocircuito demostrado, `si`/`sino si`/`sino`, `mientras` con romper/continuar/sino, asignación aumentada (todas las variantes), y programas realistas: factorial(25)=26 dígitos, Fibonacci(30)=832040, 2^64 (20 dígitos), anidamiento `mientras` en `mientras`.
 - **55 tests verde** (22 unit + 33 integración).
+
+### En desarrollo (Fase 6 — Compilador + VM bytecode)
+- ✅ Sesión 1: infraestructura `Chunk` + enum `OpCode` + disassembler.
+- ✅ Sesión 2: refactor del evaluador (helpers reutilizables) + compilador para expresiones + VM stack-based con dispatch loop.
+- ✅ Sesión 3: variables globales (DEFINIR/OBTENER/ASIGNAR), `imprimir(...)` como built-in en bytecode, sentencias básicas (asignación, expresión, pasar, bloque).
+- ✅ Sesión 4: control de flujo en bytecode (`si`/`mientras` con `romper`/`continuar`/`sino`, lógica con cortocircuito, asignación aumentada).
+- ✅ Sesión 5: funciones top-level con recursión + variables locales + llamadas en bytecode.
+- ✅ Sesión 6: nativas en VM via OP_LLAMAR + colecciones (lista/tupla/dicc/conjunto) en bytecode + indexación + flag `--bytecode` + tag v0.6.0.
+- ⏳ Aplazado a v0.6.1: `SENT_PARA`, closures con upvalues, atributos, slicing, lambda, intentar/atrapar.
 
 ### Añadido (Fase 6 sesión 5)
 - **`VAL_FUNCION_BC`** y **`struct FuncionBC`** en `chunk.{h,c}`: función compilada a bytecode con su propio `Chunk`, nombre (heap-duplicated), aridad y refcount. Comparte refcount con el resto de tipos colección. Diferente de `VAL_FUNCION` (que es para tree-walking) — coexisten para no romper el evaluador antiguo.

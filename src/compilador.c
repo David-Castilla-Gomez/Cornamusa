@@ -432,18 +432,77 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return true;
         }
 
+        case EXPR_LISTA: {
+            int n = e->como.secuencia.n_elementos;
+            if (n > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "literal de lista con mas de 255 elementos no soportado en v0.6");
+                return false;
+            }
+            for (int i = 0; i < n; i++) {
+                if (!compilador_compilar_expr(c, e->como.secuencia.elementos[i])) return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA,
+                                (uint8_t)n, e->linea);
+            return true;
+        }
+        case EXPR_TUPLA: {
+            int n = e->como.secuencia.n_elementos;
+            if (n > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "literal de tupla con mas de 255 elementos no soportado en v0.6");
+                return false;
+            }
+            for (int i = 0; i < n; i++) {
+                if (!compilador_compilar_expr(c, e->como.secuencia.elementos[i])) return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_BUILD_TUPLA,
+                                (uint8_t)n, e->linea);
+            return true;
+        }
+        case EXPR_DICCIONARIO: {
+            int n = e->como.diccionario.n_pares;
+            if (n > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "literal de diccionario con mas de 255 pares no soportado en v0.6");
+                return false;
+            }
+            for (int i = 0; i < n; i++) {
+                if (!compilador_compilar_expr(c, e->como.diccionario.claves[i])) return false;
+                if (!compilador_compilar_expr(c, e->como.diccionario.valores[i])) return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_BUILD_DICC,
+                                (uint8_t)n, e->linea);
+            return true;
+        }
+        case EXPR_CONJUNTO: {
+            int n = e->como.secuencia.n_elementos;
+            if (n > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "literal de conjunto con mas de 255 elementos no soportado en v0.6");
+                return false;
+            }
+            for (int i = 0; i < n; i++) {
+                if (!compilador_compilar_expr(c, e->como.secuencia.elementos[i])) return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_BUILD_CONJUNTO,
+                                (uint8_t)n, e->linea);
+            return true;
+        }
+        case EXPR_INDICE: {
+            if (!compilador_compilar_expr(c, e->como.indice.objeto)) return false;
+            if (!compilador_compilar_expr(c, e->como.indice.indice)) return false;
+            chunk_emitir_byte(c->actual->chunk, OP_INDICE, e->linea);
+            return true;
+        }
+
         /* Aplazadas a sesiones siguientes. */
         case EXPR_LITERAL_F_CADENA:
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
-        case EXPR_LISTA:
-        case EXPR_DICCIONARIO:
-        case EXPR_CONJUNTO:
-        case EXPR_TUPLA:
-        case EXPR_INDICE:
         case EXPR_REBANADA:
             error_compilacion(c, e->linea, e->columna,
-                "esta forma de expresion no esta implementada en bytecode v0.6 sesion 4");
+                "esta forma de expresion no esta implementada en bytecode v0.6 sesion 6");
             return false;
     }
 
@@ -472,9 +531,20 @@ static bool compilar_funcion(Compilador *c, const Sent *s);
 
 static bool compilar_asignar(Compilador *c, const Sent *s) {
     Expr *destino = s->como.asignar.destino;
+
+    /* Asignación a índice: `obj[key] = valor`. */
+    if (destino->tipo == EXPR_INDICE) {
+        if (!compilador_compilar_expr(c, destino->como.indice.objeto)) return false;
+        if (!compilador_compilar_expr(c, destino->como.indice.indice)) return false;
+        if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+        chunk_emitir_byte(c->actual->chunk, OP_ASIGNAR_INDICE, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        return true;
+    }
+
     if (destino->tipo != EXPR_IDENT) {
         error_compilacion(c, s->linea, s->columna,
-            "ErrorDeSintaxis: destino de asignacion no soportado en bytecode v0.6 sesion 5");
+            "ErrorDeSintaxis: destino de asignacion no soportado en bytecode v0.6 sesion 6");
         return false;
     }
 
