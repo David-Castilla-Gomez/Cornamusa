@@ -38,3 +38,34 @@ jobs:
           else
             ./build/cornamusa --version
           fi
+
+  # Job de sanitizers (Address + UB) en Linux/Clang. Ejecuta los mismos
+  # tests que el job principal pero compilados con `-fsanitize=address,undefined`.
+  # Captura: use-after-free, double-free, leaks, integer overflow, UB de
+  # punteros desalineados, etc. — el tipo de bug que motivó la corrupción
+  # de heap en el OP_IMPORTAR de v0.9.0 y que es esperable que veamos
+  # más a menudo cuando F10 (inline caching) empiece a hacer rewriting
+  # in-place de bytecode y caches.
+  sanitizers:
+    name: Sanitizers (ASan + UBSan, Linux/Clang Debug)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar (sanitizers)
+        env:
+          CC: clang
+          CFLAGS: "-fsanitize=address,undefined -fno-omit-frame-pointer -fno-sanitize-recover=all"
+          LDFLAGS: "-fsanitize=address,undefined"
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Debug
+
+      - name: Compilar
+        run: cmake --build build -j
+
+      - name: Tests con sanitizers
+        working-directory: build
+        env:
+          ASAN_OPTIONS: "abort_on_error=1:halt_on_error=1:print_stacktrace=1:detect_leaks=1"
+          UBSAN_OPTIONS: "halt_on_error=1:print_stacktrace=1"
+        run: ctest --output-on-failure

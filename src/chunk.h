@@ -7,6 +7,29 @@
 #include "valor.h"
 
 /*
+ * Versión del formato de chunk de bytecode (decisión I7).
+ *
+ * Este número se bumpea cada vez que cambia el layout binario de un
+ * chunk de un modo que rompa la compatibilidad: cambios en el orden
+ * o significado de OpCodes, en el tamaño de operandos, en la
+ * semántica de instrucciones, en la introducción de slots de cache
+ * inline (F10), etc.
+ *
+ * Hoy los chunks NO se serializan a disco — se compilan en memoria
+ * cada vez que se ejecuta un .cor. La constante está aquí como
+ * marcador para herramientas futuras (cache .cornc para arranque
+ * rápido, inspector externo de bytecode, etc.) y para que la decisión
+ * de bumpear sea consciente cuando F10 empiece a alterar el layout.
+ *
+ * Historial:
+ *   1 — v0.6.0 hasta v0.9.2 inclusive. Layout original con opcodes
+ *       sin slots de cache.
+ *   2 — reservado para F10 cuando se introduzcan opcodes
+ *       especializados con cache slots inline (PEP 659 style).
+ */
+#define CORNAMUSA_BYTECODE_VERSION 1
+
+/*
  * Bytecode chunk de Cornamusa (Fase 6).
  *
  * Un `Chunk` es la unidad básica de bytecode emitida por el
