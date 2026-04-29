@@ -152,4 +152,11 @@ void vm_destruir(VM *vm);
  */
 ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out);
 
+/*
+ * GC mark phase (Fase 7 sesión 3): marca todas las raíces de la VM
+ * (pila, globales, frames, open_upvalues) propagando la marca a todo
+ * lo alcanzable. Usable como primitiva del recolector completo en S4.
+ */
+void gc_marcar_raices(VM *vm);
+
 #endif /* CORNAMUSA_VM_H */

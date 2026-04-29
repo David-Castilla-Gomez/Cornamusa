@@ -235,6 +235,188 @@ static void test_todos_los_tipos_rastrean(void) {
     memoria_destruir(&m);
 }
 
+/* ───── Mark phase (Fase 7 sesión 3) ───── */
+
+static void test_marcar_valores_planos(void) {
+    /* Valores planos (entero, decimal, booleano, nulo, cadena de
+       referencia) no contienen objetos heap — gc_marcar_valor es
+       no-op pero no debe romper. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Valor v1 = valor_entero_de_long(42);
+    Valor v2 = valor_decimal(3.14);
+    Valor v3 = valor_booleano(true);
+    Valor v4 = valor_nulo();
+    gc_marcar_valor(&v1);
+    gc_marcar_valor(&v2);
+    gc_marcar_valor(&v3);
+    gc_marcar_valor(&v4);
+    AFIRMAR(m.cabeza == NULL);  /* nada se aloca por estos */
+
+    valor_destruir(&v1);
+    valor_destruir(&v2);
+    valor_destruir(&v3);
+    valor_destruir(&v4);
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_marcar_lista_anidada(void) {
+    /* Lista que contiene una sub-lista: marcar la externa marca la
+       interna recursivamente. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Lista *interna = lista_nueva(0);
+    lista_agregar(interna, valor_entero_de_long(1));
+
+    Lista *externa = lista_nueva(0);
+    lista_agregar(externa, valor_lista(interna));   /* transfiere ref */
+    /* externa ahora retiene a interna via valor_lista (la lista en
+       sí no incrementa refcount; valor_lista solo crea el wrapper). */
+
+    AFIRMAR(externa->obj.marcado == false);
+    AFIRMAR(interna->obj.marcado == false);
+
+    gc_marcar_objeto(&externa->obj);
+
+    AFIRMAR(externa->obj.marcado == true);
+    AFIRMAR(interna->obj.marcado == true);   /* propagado */
+
+    /* Limpieza. */
+    lista_liberar(externa);   /* libera la externa, decrementa la interna */
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_marcar_diccionario(void) {
+    /* Marcar un dicc marca cada clave y cada valor. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Diccionario *d = dicc_nuevo();
+    Lista *contenido = lista_nueva(0);
+    lista_retener(contenido);  /* mantenemos otra ref para verificar tras destruir d */
+    dicc_asignar(d,
+        valor_cadena_duplicar("clave", 5),
+        valor_lista(contenido));
+
+    AFIRMAR(contenido->obj.marcado == false);
+    gc_marcar_objeto(&d->obj);
+    AFIRMAR(d->obj.marcado == true);
+    AFIRMAR(contenido->obj.marcado == true);
+
+    dicc_liberar(d);
+    lista_liberar(contenido);
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_marcar_clase_y_instancia(void) {
+    /* Instancia marca su clase + atributos. Clase marca metodos +
+       superclase. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Clase *padre = clase_nueva("Padre", 5);
+    Clase *hijo = clase_nueva("Hijo", 4);
+    clase_retener(padre);
+    hijo->superclase = padre;
+
+    Instancia *inst = instancia_nueva(hijo);
+    dicc_asignar(inst->atributos,
+        valor_cadena_duplicar("x", 1), valor_entero_de_long(10));
+
+    gc_marcar_objeto(&inst->obj);
+
+    AFIRMAR(inst->obj.marcado == true);
+    AFIRMAR(hijo->obj.marcado == true);
+    AFIRMAR(padre->obj.marcado == true);
+    AFIRMAR(hijo->metodos->obj.marcado == true);
+    AFIRMAR(inst->atributos->obj.marcado == true);
+
+    instancia_liberar(inst);
+    clase_liberar(hijo);    /* hijo libera padre via superclase */
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_marcar_idempotente(void) {
+    /* Marcar dos veces no es problema. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Lista *l = lista_nueva(0);
+    gc_marcar_objeto(&l->obj);
+    gc_marcar_objeto(&l->obj);
+    AFIRMAR(l->obj.marcado == true);
+
+    lista_liberar(l);
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_marcar_ciclo_no_explota(void) {
+    /* Crear un ciclo entre dos diccionarios: a["b"]=b, b["a"]=a.
+       Marcar uno debe terminar (no recursión infinita) y marcar
+       ambos. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    Diccionario *a = dicc_nuevo();
+    Diccionario *b = dicc_nuevo();
+    dicc_retener(a);   /* ciclo: a["b"] retiene b, b["a"] retiene a */
+    dicc_retener(b);
+    dicc_asignar(a, valor_cadena_duplicar("b", 1), valor_diccionario(b));
+    dicc_asignar(b, valor_cadena_duplicar("a", 1), valor_diccionario(a));
+
+    gc_marcar_objeto(&a->obj);
+    AFIRMAR(a->obj.marcado == true);
+    AFIRMAR(b->obj.marcado == true);
+
+    /* Refcount no liberará por el ciclo — memoria_destruir limpia. */
+    dicc_liberar(a);
+    dicc_liberar(b);
+    /* Aún quedan refs por el ciclo: memoria_destruir liberará el
+       crudo restante (con leak interno aceptable en S3 sin sweep). */
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
+static void test_marcar_raices_vm(void) {
+    /* Crear una VM, ejecutar un programa simple, marcar raíces, y
+       verificar que las globales y los objetos vivos quedan
+       marcados. */
+    /* Setup inline sin AST/parser para no incluir todo el pipeline:
+       solo verificamos que las raíces básicas (globales) funcionan. */
+    VM vm;
+    vm_iniciar(&vm);
+
+    /* Añadir un valor heap-rastreado a las globales. */
+    Lista *l = lista_nueva(0);
+    lista_agregar(l, valor_entero_de_long(123));
+    dicc_asignar(vm.globales,
+        valor_cadena_duplicar("mi_lista", 8),
+        valor_lista(l));
+
+    AFIRMAR(l->obj.marcado == false);
+    AFIRMAR(vm.globales->obj.marcado == false);
+
+    gc_marcar_raices(&vm);
+
+    AFIRMAR(vm.globales->obj.marcado == true);
+    AFIRMAR(l->obj.marcado == true);
+
+    vm_destruir(&vm);
+}
+
 int main(void) {
     test_alocar_sin_memoria();
     test_alocar_con_memoria();
@@ -243,6 +425,13 @@ int main(void) {
     test_lista_con_memoria();
     test_vm_instala_memoria();
     test_todos_los_tipos_rastrean();
+    test_marcar_valores_planos();
+    test_marcar_lista_anidada();
+    test_marcar_diccionario();
+    test_marcar_clase_y_instancia();
+    test_marcar_idempotente();
+    test_marcar_ciclo_no_explota();
+    test_marcar_raices_vm();
 
     if (fallos == 0) {
         printf("OK: todos los tests del GC (S1) pasaron\n");

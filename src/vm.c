@@ -152,6 +152,29 @@ void vm_iniciar(VM *vm) {
     if (vm->globales) nativos_registrar_dicc(vm->globales);
 }
 
+void gc_marcar_raices(VM *vm) {
+    if (!vm) return;
+    /* Stack: cada slot vivo. */
+    for (Valor *p = vm->pila; p < vm->tope; p++) {
+        gc_marcar_valor(p);
+    }
+    /* Globales (Diccionario): la propia tabla y todos sus pares. */
+    if (vm->globales) {
+        gc_marcar_objeto(&vm->globales->obj);
+    }
+    /* Frames: cada uno tiene una closure (NULL en top-level). */
+    for (int i = 0; i < vm->n_frames; i++) {
+        Closure *c = vm->frames[i].closure;
+        if (c) gc_marcar_objeto(&c->obj);
+    }
+    /* Open upvalues: linked list. Aunque sus posiciones están en stack
+       y se marcaron arriba, el propio Upvalue es heap-rastreado. */
+    for (Upvalue *u = vm->open_upvalues; u != NULL; u = u->siguiente) {
+        gc_marcar_objeto(&u->obj);
+    }
+    /* HandlerFrame: solo guardan ip + offsets — sin Valores propios. */
+}
+
 void vm_destruir(VM *vm) {
     /* Liberar lo que quede en la pila (caso error). */
     while (vm->tope > vm->pila) {

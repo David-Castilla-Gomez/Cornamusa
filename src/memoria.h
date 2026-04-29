@@ -132,4 +132,50 @@ void *gc_alocar(size_t size, TipoGC tipo);
  */
 void gc_desenlazar(GCObject *obj);
 
+/*
+ * ──────────────────────────────────────────────────────────────────
+ * Mark phase (Fase 7 sesión 3).
+ *
+ * Tri-color simplificado: usa solo dos colores (white/black) en S3
+ * mediante recursión profunda. Estructuras anidadas profundas pueden
+ * agotar el stack del proceso — aceptable para programas Cornamusa
+ * típicos. Una versión iterativa con worklist gris explícita llegará
+ * post-v0.8.0 si surge el problema.
+ *
+ * Estas funciones son primitivas: la VM las invoca desde
+ * `gc_marcar_raices` (en vm.c) para marcar todo lo alcanzable desde
+ * sus raíces (stack, globales, frames, open_upvalues, handlers, etc.).
+ * ──────────────────────────────────────────────────────────────────
+ */
+
+/* Forward decl: valor.h incluye memoria.h, así que aquí no podemos
+   incluirlo. La implementación en memoria.c sí incluye valor.h. */
+struct Valor;
+
+/*
+ * Marca un Valor: si su tipo apunta a un objeto heap-rastreado, marca
+ * recursivamente. Tipos planos (entero, decimal, booleano, cadena
+ * referencia, función AST) se ignoran.
+ *
+ * Idempotente: re-marcar un objeto ya marcado es no-op (corta ciclos).
+ */
+void gc_marcar_valor(const struct Valor *v);
+
+/*
+ * Marca un objeto heap directamente. Si ya estaba marcado, no-op.
+ * Si no, lo marca y propaga la marca a sus hijos según el `tipo` del
+ * GCObject.
+ */
+void gc_marcar_objeto(GCObject *obj);
+
+/*
+ * Desmarca TODOS los objetos rastreados — preparación para el
+ * siguiente ciclo de marcado o cuando solo se necesita inspeccionar
+ * el estado. O(N) en objetos vivos.
+ */
+void gc_desmarcar_todos(Memoria *m);
+
+/* Cuenta objetos marcados (solo para tests/diagnóstico). */
+size_t gc_contar_marcados(const Memoria *m);
+
 #endif /* CORNAMUSA_MEMORIA_H */
