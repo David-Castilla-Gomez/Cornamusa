@@ -399,6 +399,61 @@ void vm_destruir(VM *vm) {
         frame->ip = opcode_addr;                                            \
     } while (0)
 
+/*
+ * F10: macros para las variantes INT_INT de OP_SUMAR/RESTAR/MULTIPLICAR
+ * y OP_MENOR/MENOR_IGUAL/MAYOR/MAYOR_IGUAL.
+ *
+ * - Verifican que ambos operandos en el tope del stack son VAL_ENTERO.
+ * - Si lo son, llaman libtommath directamente y empujan el resultado
+ *   sin pasar por el switch de tipos de evaluador_aplicar_binario.
+ * - Si no, degradan el opcode al base (sin sufijo) y rebobinan ip
+ *   para que la siguiente iteración del loop siga el slow path.
+ *
+ * El macro contiene su propio `break` en el camino de degradación
+ * — sale del do-while-zero. El `break` que sigue a la invocación del
+ * macro en cada case sale del case. En el camino feliz, el do-while
+ * termina natural y el `break` del case sigue.
+ */
+#define BIN_INT_INT_ARITH(BASE_OP, MP_OP)                                  \
+    do {                                                                    \
+        const uint8_t *opcode_addr = frame->ip - 1;                         \
+        if (vm->tope[-1].tipo != VAL_ENTERO ||                              \
+            vm->tope[-2].tipo != VAL_ENTERO) {                              \
+            uint8_t *_codigo = (uint8_t *)frame->chunk->codigo;             \
+            _codigo[(int)(opcode_addr - _codigo)] = (uint8_t)(BASE_OP);     \
+            frame->ip = opcode_addr;                                        \
+            break;                                                          \
+        }                                                                   \
+        Valor _b = sacar(vm);                                               \
+        Valor _a = sacar(vm);                                               \
+        mp_int *_r = evaluador_nuevo_mp();                                  \
+        if (!_r || MP_OP(_a.como.entero, _b.como.entero, _r) != MP_OKAY) {  \
+            evaluador_liberar_mp(_r);                                       \
+            valor_destruir(&_a); valor_destruir(&_b);                       \
+            VM_ERROR("memoria insuficiente");                               \
+            return VM_ERROR_RUNTIME;                                        \
+        }                                                                   \
+        valor_destruir(&_a); valor_destruir(&_b);                           \
+        empujar(vm, evaluador_valor_entero_de_mp(_r));                      \
+    } while (0)
+
+#define BIN_INT_INT_CMP(BASE_OP, COND)                                     \
+    do {                                                                    \
+        const uint8_t *opcode_addr = frame->ip - 1;                         \
+        if (vm->tope[-1].tipo != VAL_ENTERO ||                              \
+            vm->tope[-2].tipo != VAL_ENTERO) {                              \
+            uint8_t *_codigo = (uint8_t *)frame->chunk->codigo;             \
+            _codigo[(int)(opcode_addr - _codigo)] = (uint8_t)(BASE_OP);     \
+            frame->ip = opcode_addr;                                        \
+            break;                                                          \
+        }                                                                   \
+        Valor _b = sacar(vm);                                               \
+        Valor _a = sacar(vm);                                               \
+        int _cmp = mp_cmp(_a.como.entero, _b.como.entero);                  \
+        valor_destruir(&_a); valor_destruir(&_b);                           \
+        empujar(vm, valor_booleano(COND));                                  \
+    } while (0)
+
 /* ──────────────────────────────────────────────────────────────────
  * Helpers de OP_LLAMAR (F10).
  *
@@ -700,7 +755,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             case OP_VERDADERO:   empujar(vm, valor_booleano(true)); break;
             case OP_FALSO:       empujar(vm, valor_booleano(false)); break;
 
-            /* ─── Aritmética y comparaciones binarias ─── */
+            /* ─── Aritmética y comparaciones binarias (slow path) ─── */
             case OP_SUMAR: case OP_RESTAR: case OP_MULTIPLICAR:
             case OP_DIVIDIR: case OP_DIVIDIR_ENTERO: case OP_MODULO:
             case OP_POTENCIA:
@@ -708,7 +763,12 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             case OP_MENOR: case OP_MENOR_IGUAL:
             case OP_MAYOR: case OP_MAYOR_IGUAL:
             case OP_ES: case OP_EN: {
+                const uint8_t *opcode_addr = frame->ip - 1;
                 int linea = linea_actual_frame(frame);
+                /* Capturar tipos antes de sacar (evaluador_aplicar_binario
+                   destruye los operandos). */
+                bool ambos_int = (vm->tope[-1].tipo == VAL_ENTERO
+                                  && vm->tope[-2].tipo == VAL_ENTERO);
                 Valor b = sacar(vm);
                 Valor a = sacar(vm);
                 int tt = opcode_a_token_binario(op);
@@ -719,8 +779,34 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     return VM_ERROR_RUNTIME;
                 }
                 empujar(vm, r);
+                /* F10: si ambos eran enteros y el op tiene variante
+                   INT_INT, promover. */
+                if (ambos_int) {
+                    OpCode promote = (OpCode)op;
+                    switch (op) {
+                        case OP_SUMAR:        promote = OP_SUMAR_INT_INT; break;
+                        case OP_RESTAR:       promote = OP_RESTAR_INT_INT; break;
+                        case OP_MULTIPLICAR:  promote = OP_MULTIPLICAR_INT_INT; break;
+                        case OP_MENOR:        promote = OP_MENOR_INT_INT; break;
+                        case OP_MENOR_IGUAL:  promote = OP_MENOR_IGUAL_INT_INT; break;
+                        case OP_MAYOR:        promote = OP_MAYOR_INT_INT; break;
+                        case OP_MAYOR_IGUAL:  promote = OP_MAYOR_IGUAL_INT_INT; break;
+                        default: break;
+                    }
+                    if ((uint8_t)promote != op) {
+                        uint8_t *codigo = (uint8_t *)frame->chunk->codigo;
+                        codigo[(int)(opcode_addr - codigo)] = (uint8_t)promote;
+                    }
+                }
                 break;
             }
+            case OP_SUMAR_INT_INT:        BIN_INT_INT_ARITH(OP_SUMAR, mp_add); break;
+            case OP_RESTAR_INT_INT:       BIN_INT_INT_ARITH(OP_RESTAR, mp_sub); break;
+            case OP_MULTIPLICAR_INT_INT:  BIN_INT_INT_ARITH(OP_MULTIPLICAR, mp_mul); break;
+            case OP_MENOR_INT_INT:        BIN_INT_INT_CMP(OP_MENOR, _cmp == MP_LT); break;
+            case OP_MENOR_IGUAL_INT_INT:  BIN_INT_INT_CMP(OP_MENOR_IGUAL, _cmp != MP_GT); break;
+            case OP_MAYOR_INT_INT:        BIN_INT_INT_CMP(OP_MAYOR, _cmp == MP_GT); break;
+            case OP_MAYOR_IGUAL_INT_INT:  BIN_INT_INT_CMP(OP_MAYOR_IGUAL, _cmp != MP_LT); break;
 
             /* ─── Unarios ─── */
             case OP_NEGAR: {

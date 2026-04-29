@@ -313,6 +313,99 @@ static void test_llamar_degradacion_polimorfica(void) {
     vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
 }
 
+/* ───── 8. OP_SUMAR/RESTAR/MULTIPLICAR int+int promueven a INT_INT ───── */
+
+static void test_binario_promueve_a_int_int(void) {
+    /* Site monomórfico int+int: tras ejecutar, los opcodes deben estar
+       quickened. */
+    const char *fuente =
+        "a = 1 + 2\n"     /* OP_SUMAR        → OP_SUMAR_INT_INT */
+        "b = 5 - 3\n"     /* OP_RESTAR       → OP_RESTAR_INT_INT */
+        "c = 4 * 6\n";    /* OP_MULTIPLICAR  → OP_MULTIPLICAR_INT_INT */
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    AFIRMAR(buscar_primer_opcode(&chunk, OP_SUMAR_INT_INT) >= 0);
+    AFIRMAR(buscar_primer_opcode(&chunk, OP_RESTAR_INT_INT) >= 0);
+    AFIRMAR(buscar_primer_opcode(&chunk, OP_MULTIPLICAR_INT_INT) >= 0);
+    /* Nota: NO comprobamos que OP_SUMAR/RESTAR/MULTIPLICAR estén ausentes
+       porque buscar_primer_opcode hace búsqueda byte-a-byte y puede dar
+       falsos positivos con operandos numéricos que coincidan con el
+       valor enum del opcode. Verificamos solo presencia de las
+       variantes especializadas. */
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
+/* ───── 9. OP_MENOR int+int promueve, str+str se queda en slow ───── */
+
+static void test_menor_int_int_y_str_str(void) {
+    const char *fuente =
+        "a = 1 < 2\n"             /* int+int → OP_MENOR_INT_INT */
+        "b = \"a\" < \"b\"\n";    /* str+str → se queda en OP_MENOR */
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    /* Hay un OP_MENOR_INT_INT (linea 1) y un OP_MENOR (linea 2). */
+    AFIRMAR(buscar_primer_opcode(&chunk, OP_MENOR_INT_INT) >= 0);
+    AFIRMAR(buscar_primer_opcode(&chunk, OP_MENOR) >= 0);
+
+    /* Resultados correctos. */
+    Valor n_a = valor_cadena_referencia("a", 1);
+    Valor n_b = valor_cadena_referencia("b", 1);
+    Valor va, vb;
+    AFIRMAR(dicc_obtener(vm.globales, &n_a, &va));
+    AFIRMAR(dicc_obtener(vm.globales, &n_b, &vb));
+    AFIRMAR(va.tipo == VAL_BOOLEANO && va.como.booleano == true);
+    AFIRMAR(vb.tipo == VAL_BOOLEANO && vb.como.booleano == true);
+    valor_destruir(&va); valor_destruir(&vb);
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
+/* ───── 10. Site polimórfico SUMAR (int+int luego str+str) degrada ───── */
+
+static void test_binario_degradacion_polimorfica(void) {
+    /* `y` es palabra clave AND — usamos `j` como segundo parámetro. */
+    const char *fuente =
+        "funcion suma(x, j):\n"
+        "    retornar x + j\n"
+        "fin funcion\n"
+        "a = suma(1, 2)\n"
+        "b = suma(\"hi\", \"!\")\n"
+        "c = suma(10, 20)\n";
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    /* Tras las 3 ejecuciones del site:
+       1. int+int   → promueve a SUMAR_INT_INT
+       2. str+str   → miss, degrada a SUMAR (rebobina ip), reejecuta
+                       slow path → SUMAR queda en chunk
+       3. int+int   → promueve a SUMAR_INT_INT
+       Final: el byte del site es SUMAR_INT_INT (la última promoción).
+       Pero comprobamos correccion semántica de los resultados. */
+    Valor n_a = valor_cadena_referencia("a", 1);
+    Valor n_b = valor_cadena_referencia("b", 1);
+    Valor n_c = valor_cadena_referencia("c", 1);
+    Valor va, vb, vc;
+    AFIRMAR(dicc_obtener(vm.globales, &n_a, &va));
+    AFIRMAR(dicc_obtener(vm.globales, &n_b, &vb));
+    AFIRMAR(dicc_obtener(vm.globales, &n_c, &vc));
+    char buf_a[32], buf_b[32], buf_c[32];
+    valor_a_cadena(&va, buf_a, sizeof(buf_a));
+    valor_a_cadena(&vb, buf_b, sizeof(buf_b));
+    valor_a_cadena(&vc, buf_c, sizeof(buf_c));
+    AFIRMAR(strcmp(buf_a, "3") == 0);
+    AFIRMAR(strcmp(buf_b, "hi!") == 0);
+    AFIRMAR(strcmp(buf_c, "30") == 0);
+    valor_destruir(&va); valor_destruir(&vb); valor_destruir(&vc);
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
 int main(void) {
     test_quickening_basico();
     test_hits_multiples_estables();
@@ -321,8 +414,11 @@ int main(void) {
     test_llamar_promueve_a_nativa();
     test_llamar_promueve_a_bc();
     test_llamar_degradacion_polimorfica();
+    test_binario_promueve_a_int_int();
+    test_menor_int_int_y_str_str();
+    test_binario_degradacion_polimorfica();
     if (fallos == 0) {
-        printf("test_bytecode_ic: 7 tests PASS\n");
+        printf("test_bytecode_ic: 10 tests PASS\n");
         return 0;
     }
     fprintf(stderr, "test_bytecode_ic: %d FALLO(s)\n", fallos);

@@ -15,8 +15,11 @@ const char *opcode_nombre(OpCode op) {
         case OP_VERDADERO:       return "OP_VERDADERO";
         case OP_FALSO:           return "OP_FALSO";
         case OP_SUMAR:           return "OP_SUMAR";
+        case OP_SUMAR_INT_INT:   return "OP_SUMAR_INT_INT";
         case OP_RESTAR:          return "OP_RESTAR";
+        case OP_RESTAR_INT_INT:  return "OP_RESTAR_INT_INT";
         case OP_MULTIPLICAR:     return "OP_MULTIPLICAR";
+        case OP_MULTIPLICAR_INT_INT: return "OP_MULTIPLICAR_INT_INT";
         case OP_DIVIDIR:         return "OP_DIVIDIR";
         case OP_DIVIDIR_ENTERO:  return "OP_DIVIDIR_ENTERO";
         case OP_MODULO:          return "OP_MODULO";
@@ -26,9 +29,13 @@ const char *opcode_nombre(OpCode op) {
         case OP_IGUAL:           return "OP_IGUAL";
         case OP_DISTINTO:        return "OP_DISTINTO";
         case OP_MENOR:           return "OP_MENOR";
+        case OP_MENOR_INT_INT:   return "OP_MENOR_INT_INT";
         case OP_MENOR_IGUAL:     return "OP_MENOR_IGUAL";
+        case OP_MENOR_IGUAL_INT_INT: return "OP_MENOR_IGUAL_INT_INT";
         case OP_MAYOR:           return "OP_MAYOR";
+        case OP_MAYOR_INT_INT:   return "OP_MAYOR_INT_INT";
         case OP_MAYOR_IGUAL:     return "OP_MAYOR_IGUAL";
+        case OP_MAYOR_IGUAL_INT_INT: return "OP_MAYOR_IGUAL_INT_INT";
         case OP_ES:              return "OP_ES";
         case OP_EN:              return "OP_EN";
         case OP_DESCARTAR:       return "OP_DESCARTAR";

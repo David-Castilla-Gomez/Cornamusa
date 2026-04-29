@@ -115,8 +115,12 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_FALSO:           return instruccion_simple("OP_FALSO", offset, out);
 
         case OP_SUMAR:           return instruccion_simple("OP_SUMAR", offset, out);
+        case OP_SUMAR_INT_INT:   return instruccion_simple("OP_SUMAR_INT_INT", offset, out);
         case OP_RESTAR:          return instruccion_simple("OP_RESTAR", offset, out);
+        case OP_RESTAR_INT_INT:  return instruccion_simple("OP_RESTAR_INT_INT", offset, out);
         case OP_MULTIPLICAR:     return instruccion_simple("OP_MULTIPLICAR", offset, out);
+        case OP_MULTIPLICAR_INT_INT:
+            return instruccion_simple("OP_MULTIPLICAR_INT_INT", offset, out);
         case OP_DIVIDIR:         return instruccion_simple("OP_DIVIDIR", offset, out);
         case OP_DIVIDIR_ENTERO:  return instruccion_simple("OP_DIVIDIR_ENTERO", offset, out);
         case OP_MODULO:          return instruccion_simple("OP_MODULO", offset, out);
@@ -127,9 +131,15 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_IGUAL:           return instruccion_simple("OP_IGUAL", offset, out);
         case OP_DISTINTO:        return instruccion_simple("OP_DISTINTO", offset, out);
         case OP_MENOR:           return instruccion_simple("OP_MENOR", offset, out);
+        case OP_MENOR_INT_INT:   return instruccion_simple("OP_MENOR_INT_INT", offset, out);
         case OP_MENOR_IGUAL:     return instruccion_simple("OP_MENOR_IGUAL", offset, out);
+        case OP_MENOR_IGUAL_INT_INT:
+            return instruccion_simple("OP_MENOR_IGUAL_INT_INT", offset, out);
         case OP_MAYOR:           return instruccion_simple("OP_MAYOR", offset, out);
+        case OP_MAYOR_INT_INT:   return instruccion_simple("OP_MAYOR_INT_INT", offset, out);
         case OP_MAYOR_IGUAL:     return instruccion_simple("OP_MAYOR_IGUAL", offset, out);
+        case OP_MAYOR_IGUAL_INT_INT:
+            return instruccion_simple("OP_MAYOR_IGUAL_INT_INT", offset, out);
         case OP_ES:              return instruccion_simple("OP_ES", offset, out);
         case OP_EN:              return instruccion_simple("OP_EN", offset, out);
 

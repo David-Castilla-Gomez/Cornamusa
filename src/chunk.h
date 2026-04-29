@@ -66,10 +66,21 @@ typedef enum {
     OP_VERDADERO,       /* empuja verdadero */
     OP_FALSO,           /* empuja falso */
 
-    /* ---- Aritmética ---- */
+    /*
+     * ---- Aritmética y comparaciones binarias ----
+     *
+     * Layout 1 byte (sin operandos). Las variantes especializadas
+     * (sufijo _INT_INT) son fast paths del IC F10 que verifican que
+     * ambos operandos son VAL_ENTERO y llaman libtommath directamente,
+     * saltándose el switch de tipos del slow path. Miss → degradan al
+     * opcode base (sin sufijo) y reejecutan.
+     */
     OP_SUMAR,
+    OP_SUMAR_INT_INT,
     OP_RESTAR,
+    OP_RESTAR_INT_INT,
     OP_MULTIPLICAR,
+    OP_MULTIPLICAR_INT_INT,
     OP_DIVIDIR,         /* true division → decimal */
     OP_DIVIDIR_ENTERO,  /* floor division (//) */
     OP_MODULO,
@@ -80,10 +91,16 @@ typedef enum {
     OP_NO,              /* unario `no x` */
     OP_IGUAL,
     OP_DISTINTO,
+    /* MENOR/MAYOR especializados a INT_INT — útil en `n < 2`,
+       `i < limite`, etc. Comparan mp_int directamente. */
     OP_MENOR,
+    OP_MENOR_INT_INT,
     OP_MENOR_IGUAL,
+    OP_MENOR_IGUAL_INT_INT,
     OP_MAYOR,
+    OP_MAYOR_INT_INT,
     OP_MAYOR_IGUAL,
+    OP_MAYOR_IGUAL_INT_INT,
     OP_ES,           /* identidad */
     OP_EN,           /* membership */
 

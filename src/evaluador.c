@@ -138,6 +138,11 @@ static void liberar_mp(mp_int *m) {
     free(m);
 }
 
+/* Wrappers públicos para los inline caches de F10 (vm.c). */
+mp_int *evaluador_nuevo_mp(void) { return nuevo_mp(); }
+void evaluador_liberar_mp(mp_int *m) { liberar_mp(m); }
+Valor evaluador_valor_entero_de_mp(mp_int *m) { return valor_entero_de_mp(m); }
+
 /* ──────────────────────────────────────────────────────────────────
  * Aritmética entero ⊕ entero
  *

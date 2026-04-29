@@ -120,6 +120,16 @@ Valor evaluador_aplicar_unario(EvalError *err, int op_token,
                                 int linea, int columna);
 
 /*
+ * Helpers de bignum expuestos para los inline caches de F10
+ * (OP_SUMAR_INT_INT, etc.). Antes eran static en evaluador.c — los
+ * exponemos sin cambiar semántica para que la VM bytecode pueda
+ * construir resultados int sin pasar por el dispatch general.
+ */
+mp_int *evaluador_nuevo_mp(void);
+void evaluador_liberar_mp(mp_int *m);
+Valor evaluador_valor_entero_de_mp(mp_int *m);
+
+/*
  * Conveniencia: ejecuta secuencialmente un programa (array de
  * sentencias del parser). Para en el primer error o si una sentencia
  * deja control de flujo no normal (lo que normalmente sería un bug
