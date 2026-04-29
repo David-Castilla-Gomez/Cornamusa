@@ -713,8 +713,15 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "demasiadas constantes para v0.7 (operando byte)");
                 return false;
             }
+            /* OP_OBTENER_ATRIBUTO ocupa 6 bytes desde v0.10 (F10):
+               opcode + name_idx + 4 bytes de cache (clase_hash u16 +
+               slot_idx u16). Quickening lo promueve a
+               OP_OBTENER_ATRIBUTO_INSTANCIA tras el primer acierto en
+               atributo de instancia. */
             chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
                                 (uint8_t)idx, e->linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
             return true;
         }
 
@@ -1299,6 +1306,10 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
                 }
                 chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
                                     (uint8_t)idx_attr, it->linea);
+                /* 4 bytes de cache (v0.10 / F10) — ver nota en
+                   EXPR_ATRIBUTO arriba. */
+                chunk_emitir_byte2(c->actual->chunk, 0, 0, it->linea);
+                chunk_emitir_byte2(c->actual->chunk, 0, 0, it->linea);
 
                 int idx_bind = chunk_agregar_constante(c->actual->chunk,
                     valor_cadena_duplicar(binding->texto, binding->longitud));

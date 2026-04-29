@@ -64,6 +64,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_COMPROBAR_TIPO_EXC: return "OP_COMPROBAR_TIPO_EXC";
         case OP_CLASE:           return "OP_CLASE";
         case OP_OBTENER_ATRIBUTO: return "OP_OBTENER_ATRIBUTO";
+        case OP_OBTENER_ATRIBUTO_INSTANCIA: return "OP_OBTENER_ATRIBUTO_INSTANCIA";
         case OP_ASIGNAR_ATRIBUTO: return "OP_ASIGNAR_ATRIBUTO";
         case OP_METODO:          return "OP_METODO";
         case OP_HEREDAR:         return "OP_HEREDAR";

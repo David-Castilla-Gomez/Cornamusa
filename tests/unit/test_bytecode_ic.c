@@ -406,6 +406,42 @@ static void test_binario_degradacion_polimorfica(void) {
     vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
 }
 
+/* ───── 11. OP_OBTENER_ATRIBUTO promueve a INSTANCIA ───── */
+
+static void test_obtener_atributo_promueve(void) {
+    /* Loop que lee p.x repetidamente — tras la primera iteración el
+       site debe estar quickened a OP_OBTENER_ATRIBUTO_INSTANCIA. */
+    const char *fuente =
+        "clase Punto:\n"
+        "    funcion __iniciar__(yo, cx):\n"
+        "        yo.cx = cx\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "p = Punto(42)\n"
+        "total = 0\n"
+        "para i en rango(3):\n"
+        "    total = total + p.cx\n"
+        "fin para\n";
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    /* El chunk top-level debe contener OP_OBTENER_ATRIBUTO_INSTANCIA
+       tras las 3 iteraciones (la primera promociona). */
+    AFIRMAR(buscar_primer_opcode(&chunk,
+        OP_OBTENER_ATRIBUTO_INSTANCIA) >= 0);
+
+    /* Y total debe ser 42 * 3 = 126. */
+    Valor n_t = valor_cadena_referencia("total", 5);
+    Valor v;
+    AFIRMAR(dicc_obtener(vm.globales, &n_t, &v));
+    char buf[32]; valor_a_cadena(&v, buf, sizeof(buf));
+    AFIRMAR(strcmp(buf, "126") == 0);
+    valor_destruir(&v);
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
 int main(void) {
     test_quickening_basico();
     test_hits_multiples_estables();
@@ -417,8 +453,9 @@ int main(void) {
     test_binario_promueve_a_int_int();
     test_menor_int_int_y_str_str();
     test_binario_degradacion_polimorfica();
+    test_obtener_atributo_promueve();
     if (fallos == 0) {
-        printf("test_bytecode_ic: 10 tests PASS\n");
+        printf("test_bytecode_ic: 11 tests PASS\n");
         return 0;
     }
     fprintf(stderr, "test_bytecode_ic: %d FALLO(s)\n", fallos);

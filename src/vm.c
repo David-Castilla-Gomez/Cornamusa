@@ -1844,8 +1844,67 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 empujar(vm, valor_clase(cl));
                 break;
             }
+            case OP_OBTENER_ATRIBUTO_INSTANCIA: {
+                /*
+                 * Fast path quickened (F10). Layout 6 bytes idéntico al
+                 * slow:
+                 *   [opcode][name_idx][clase_hash u16][slot_idx u16]
+                 *
+                 * Verifica que obj es VAL_INSTANCIA, low16(clase) coincide,
+                 * el slot está ocupado y la clave guardada es la
+                 * esperada. La verificación de clave (cadena memcmp) es
+                 * crítica para correctness: instancias de la misma clase
+                 * pueden tener atributos distintos si fueron mutadas
+                 * dinámicamente.
+                 */
+                const uint8_t *opcode_addr = frame->ip - 1;
+                uint8_t name_idx = LEER_BYTE();
+                uint8_t ch_hi = LEER_BYTE();
+                uint8_t ch_lo = LEER_BYTE();
+                uint16_t cached_clase_hash = ((uint16_t)ch_hi << 8)
+                                              | (uint16_t)ch_lo;
+                uint8_t s_hi = LEER_BYTE();
+                uint8_t s_lo = LEER_BYTE();
+                uint16_t cached_slot = ((uint16_t)s_hi << 8) | (uint16_t)s_lo;
+                Valor *p_obj = vm->tope - 1;
+                if (p_obj->tipo == VAL_INSTANCIA) {
+                    Instancia *inst = p_obj->como.instancia;
+                    uint16_t live_clase_hash =
+                        (uint16_t)((uintptr_t)inst->clase & 0xFFFF);
+                    if (live_clase_hash == cached_clase_hash) {
+                        Diccionario *attrs = inst->atributos;
+                        if (cached_slot < attrs->capacidad
+                            && attrs->entradas[cached_slot].ocupada) {
+                            Valor *expected =
+                                &frame->chunk->constantes[name_idx];
+                            if (valor_iguales(
+                                    &attrs->entradas[cached_slot].clave,
+                                    expected)) {
+                                Valor v = valor_clonar(
+                                    &attrs->entradas[cached_slot].valor);
+                                Valor old = *(--vm->tope);
+                                valor_destruir(&old);
+                                empujar(vm, v);
+                                break;
+                            }
+                        }
+                    }
+                }
+                /* Miss: degradar a OP_OBTENER_ATRIBUTO y rebobinar. */
+                {
+                    uint8_t *codigo = (uint8_t *)frame->chunk->codigo;
+                    codigo[(int)(opcode_addr - codigo)] =
+                        (uint8_t)OP_OBTENER_ATRIBUTO;
+                    frame->ip = opcode_addr;
+                }
+                break;
+            }
             case OP_OBTENER_ATRIBUTO: {
+                const uint8_t *opcode_addr = frame->ip - 1;
                 uint8_t idx = LEER_BYTE();
+                /* Saltar 4 bytes de cache reservados — los rellenamos
+                   abajo si encontramos el atributo en instancia.atributos. */
+                frame->ip += 4;
                 const Valor *nombre = &frame->chunk->constantes[idx];
                 Valor obj = sacar(vm);
                 /* Módulos: lookup en sus atributos. */
@@ -1873,7 +1932,21 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 /* Lookup: primero atributos de instancia (overrides),
                    después métodos de la clase (creando MetodoLigado). */
                 Valor v;
-                if (dicc_obtener(obj.como.instancia->atributos, nombre, &v)) {
+                int slot_idx;
+                if (dicc_obtener_y_slot(obj.como.instancia->atributos,
+                                          nombre, &v, &slot_idx)) {
+                    /* F10: rellenar cache y promover si slot cabe en u16. */
+                    if (slot_idx >= 0 && slot_idx <= UINT16_MAX) {
+                        uint8_t *codigo = (uint8_t *)frame->chunk->codigo;
+                        int op_offset = (int)(opcode_addr - codigo);
+                        uint16_t ch = (uint16_t)((uintptr_t)
+                            obj.como.instancia->clase & 0xFFFF);
+                        codigo[op_offset]     = (uint8_t)OP_OBTENER_ATRIBUTO_INSTANCIA;
+                        codigo[op_offset + 2] = (uint8_t)((ch >> 8) & 0xff);
+                        codigo[op_offset + 3] = (uint8_t)(ch & 0xff);
+                        codigo[op_offset + 4] = (uint8_t)((slot_idx >> 8) & 0xff);
+                        codigo[op_offset + 5] = (uint8_t)(slot_idx & 0xff);
+                    }
                     valor_destruir(&obj);
                     empujar(vm, v);
                     break;

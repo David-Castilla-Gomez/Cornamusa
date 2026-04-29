@@ -170,7 +170,22 @@ typedef enum {
 
     /* ---- Clases / atributos (v0.7.0 Fase 8 sesión 1) ---- */
     OP_CLASE,                   /* [byte name_idx]: crea Clase y empuja VAL_CLASE */
-    OP_OBTENER_ATRIBUTO,        /* [byte name_idx]: pop obj, push obj.attr */
+    /*
+     * OBTENER_ATRIBUTO: layout 6 bytes desde v0.10 (F10).
+     *   [opcode] [name_idx u8] [clase_hash u16 BE] [slot_idx u16 BE]
+     * Slow path maneja MODULO/INSTANCIA-attr/INSTANCIA-method y, si
+     * es un atributo de instancia, rellena el cache y promueve a
+     * OP_OBTENER_ATRIBUTO_INSTANCIA.
+     */
+    OP_OBTENER_ATRIBUTO,
+    /*
+     * Forma quickened: si obj es VAL_INSTANCIA, los 16 bits bajos del
+     * puntero a su clase coinciden con cached_clase_hash, y
+     * atributos[slot_idx] está ocupado y su clave coincide con el
+     * nombre esperado, lee el valor directo. Miss → degrada a
+     * OP_OBTENER_ATRIBUTO y rebobina ip.
+     */
+    OP_OBTENER_ATRIBUTO_INSTANCIA,
     OP_ASIGNAR_ATRIBUTO,        /* [byte name_idx]: pop valor, pop obj, set obj.attr=valor, push nulo */
 
     /* ---- Métodos (v0.7.0 Fase 8 sesión 2) ---- */
