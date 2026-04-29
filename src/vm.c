@@ -257,6 +257,27 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
     /* `gc_habilitado` lo gestiona el wrapper público vm_ejecutar. */
 
     for (;;) {
+        /*
+         * v0.8.1: trigger del GC en frontera de opcode (deferred).
+         * `gc_alocar` set `trigger_pendiente` cuando detecta que el
+         * GC debería correr; aquí, con el stack en estado consistente
+         * entre opcodes, lo ejecutamos. La protección `recolectando`
+         * bloquea recursión si gc_recolectar internamente alocara.
+         */
+        Memoria *mem = &vm->memoria;
+        if (mem->trigger_pendiente && mem->gc_habilitado &&
+            !mem->recolectando) {
+            mem->recolectando = true;
+            gc_recolectar(mem, mem->fn_marcar_raices, mem->contexto_raices);
+            mem->trigger_pendiente = false;
+            mem->recolectando = false;
+            /* Ajustar umbral para el siguiente ciclo (estilo Lua/clox):
+               doble del uso actual con un mínimo razonable. */
+            size_t nuevo_umbral = mem->total_alocado * 2;
+            if (nuevo_umbral < (1024 * 1024)) nuevo_umbral = 1024 * 1024;
+            mem->umbral_gc = nuevo_umbral;
+        }
+
         uint8_t opbyte = *frame->ip++;
         OpCode op = (OpCode)opbyte;
 

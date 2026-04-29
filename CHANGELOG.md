@@ -6,6 +6,55 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.8.1] — 2026-04-29 — GC automático + recolectar() built-in
+
+Activa el trigger automático del recolector que en v0.8.0 quedó
+diferido por el problema de las factories anidadas. Añade
+`recolectar()` como built-in callable desde código Cornamusa.
+**75 tests verde**, **incluido test_bytecode_gc.c bajo `--gc-stress`**.
+
+### Añadido (v0.8.1)
+- **Modelo "deferred-to-opcode-boundary"** en `gc_alocar`: cuando
+  detecta que el GC debería correr (umbral cruzado o `gc_stress`),
+  no ejecuta la recolección inmediatamente — solo marca un flag
+  `Memoria.trigger_pendiente`. El dispatch loop de la VM lo chequea
+  al inicio de cada iteración (cuando el stack está consistente entre
+  opcodes) y ejecuta la recolección en ese punto seguro. Resuelve el
+  problema de las factories anidadas (clase_nueva → dicc_nuevo, etc.)
+  porque cualquier alocación dentro de un opcode termina antes del
+  trigger.
+- **Built-in `recolectar()`**: ejecuta un ciclo de mark-sweep manual
+  desde código Cornamusa. Devuelve el número de objetos heap liberados
+  durante la pasada (entero ≥ 0). Acepta 0 args; aridad incorrecta
+  produce `ErrorDeTipo` claro. Funciona también para limpiar ciclos
+  intencionalmente desde el usuario.
+- **Flag `--gc-stress` ahora funcional**: compilando con
+  `cmake -DCORNAMUSA_GC_STRESS=ON` hace que cada `gc_alocar` marque el
+  flag pendiente, que el siguiente opcode dispatch dispara. Útil para
+  validar que cada alocación es segura y todas las raíces se marcan
+  correctamente.
+- **`gc_marcar_raices(VM*)`** ahora también marca las constantes del
+  chunk de cada frame activo (incluido el frame top-level cuyo closure
+  es NULL). Las constantes incluyen plantillas y cadenas dueñas que
+  deben sobrevivir.
+- **`tests/unit/test_bytecode_gc.c`** con 7 tests end-to-end:
+  `recolectar()` devuelve entero, aridad incorrecta, libera ciclo de
+  diccionarios, libera ciclo de instancias, no toca objetos vivos,
+  carga pesada (50 listas en bucle) bajo gc_stress no explota,
+  métodos en bucle (20 instancias + dispatch) funcionan.
+- **Refactor `vm_ejecutar` → `vm_ejecutar_dispatch` interno + wrapper
+  público**: el wrapper activa `gc_habilitado=true` al entrar y
+  `false` al salir, garantizando que el trigger automático solo opere
+  durante la ejecución (no durante la fase de compilación entre
+  `vm_iniciar` y `vm_ejecutar`).
+- **Versión** bump a `0.8.1`.
+
+### Limitaciones que aún quedan (a resolver en v0.8.2+)
+- `super` multinivel sigue restringido a 1 nivel (limitación de v0.7.1).
+  Resolver requiere `clase_definicion` en Closure que ahora con GC es
+  posible sin leak; el cambio se aplaza a v0.8.2.
+- `__cadena__` y otros dunders runtime aún sin implementar.
+
 ## [0.8.0] — 2026-04-29 — GC mark-sweep tri-color (Fase 7)
 
 Sustituye al refcount como fundamento del modelo de memoria, sin

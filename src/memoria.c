@@ -27,6 +27,7 @@ void memoria_iniciar(Memoria *m) {
     m->contexto_raices = NULL;
     m->recolectando = false;
     m->gc_habilitado = false;
+    m->trigger_pendiente = false;
 }
 
 void gc_set_marcador_raices(Memoria *m, FnMarcarRaices fn, void *contexto) {
@@ -78,23 +79,6 @@ Memoria *gc_actual(void) {
 }
 
 void *gc_alocar(size_t size, TipoGC tipo) {
-    /*
-     * v0.8.0: el trigger automático del recolector queda deshabilitado.
-     * El motivo es que muchas factory functions (clase_nueva, instancia_nueva,
-     * iter_nuevo, etc.) anidan llamadas a `gc_alocar`: tras una primera
-     * alocación, el nuevo objeto está enlazado en la lista de la
-     * memoria pero todavía no es alcanzable desde ninguna raíz; si el
-     * GC triggerara durante una alocación interna posterior, lo
-     * barrería incorrectamente. Resolverlo limpiamente requiere
-     * paréntesis pause/resume en cada factory, o un modelo de trigger
-     * a nivel de opcode-boundary.
-     *
-     * En v0.8.0 el GC se invoca solo manualmente vía `gc_recolectar`.
-     * Refcount sigue siendo el liberador primario; `gc_recolectar`
-     * existe para que el usuario pueda romper ciclos cuando los
-     * sospeche. La automaticidad llega en una versión posterior tras
-     * añadir el modelo de pausing en factories.
-     */
     void *p = malloc(size);
     if (!p) return NULL;
     GCObject *obj = (GCObject *)p;
@@ -108,6 +92,24 @@ void *gc_alocar(size_t size, TipoGC tipo) {
         m->cabeza = obj;
         m->total_alocado += size;
         m->total_objetos += 1;
+
+        /*
+         * v0.8.1: modelo "deferred-to-opcode-boundary". En lugar de
+         * ejecutar gc_recolectar aquí mismo (peligroso en factories
+         * anidadas), marcamos el flag `trigger_pendiente`. El dispatch
+         * loop de la VM lo chequea al inicio de cada iteración —
+         * momento en que el stack está consistente entre opcodes —
+         * y dispara la recolección en ese punto seguro.
+         *
+         * Solo marcamos cuando `gc_habilitado` está true (la VM lo
+         * activa solo durante `vm_ejecutar`); fuera de la ejecución
+         * (compile phase, vm_iniciar, etc.) el flag no acumula nada
+         * porque las raíces no son consistentes.
+         */
+        if (m->gc_habilitado &&
+            (m->gc_stress || m->total_alocado >= m->umbral_gc)) {
+            m->trigger_pendiente = true;
+        }
     }
     return p;
 }

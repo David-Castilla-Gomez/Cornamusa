@@ -6,6 +6,7 @@
 #include <string.h>
 
 #include "evaluador.h"
+#include "memoria.h"
 #include "tommath.h"
 #include "utf8proc.h"
 #include "valor.h"
@@ -645,6 +646,45 @@ static Valor nativa_valores(EvalError *err, int n_args, Valor *args,
     return valor_lista(l);
 }
 
+/*
+ * recolectar() → entero (objetos liberados).
+ *
+ * Fuerza un ciclo de mark-sweep manual. Útil cuando el código sospecha
+ * que ha creado ciclos refcount (ej. dos diccionarios mutuamente
+ * referenciados). El refcount sigue siendo el liberador primario para
+ * objetos sin ciclos; recolectar() limpia los que quedan colgados.
+ *
+ * Acepta 0 args. Devuelve el número de objetos heap liberados durante
+ * la pasada (entero ≥ 0).
+ *
+ * Si no hay GC instalado (ej. en evaluador tree-walking sin VM),
+ * devuelve 0.
+ */
+static Valor nativa_recolectar(EvalError *err, int n_args, Valor *args,
+                                int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: recolectar() no acepta argumentos, recibio %d",
+            n_args);
+    }
+    Memoria *m = gc_actual();
+    if (!m || !m->fn_marcar_raices) {
+        return valor_entero_de_long(0);
+    }
+    /* Protección: si una recolección ya está en marcha (recursión a
+       través de un callback), devolvemos 0 sin reentrar. */
+    if (m->recolectando) {
+        return valor_entero_de_long(0);
+    }
+    m->recolectando = true;
+    size_t liberados = gc_recolectar(m, m->fn_marcar_raices,
+                                       m->contexto_raices);
+    m->trigger_pendiente = false;
+    m->recolectando = false;
+    return valor_entero_de_long((long)liberados);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
@@ -682,6 +722,8 @@ static const EntradaNativa NATIVAS[] = {
     {"ErrorDeIndice",   13, nativa_exc_ErrorDeIndice},
     {"ErrorDeClave",    12, nativa_exc_ErrorDeClave},
     {"ErrorDeNombre",   13, nativa_exc_ErrorDeNombre},
+    /* GC manual (v0.8.1). */
+    {"recolectar",      10, nativa_recolectar},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

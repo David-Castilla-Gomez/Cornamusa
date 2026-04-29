@@ -87,13 +87,23 @@ typedef struct Memoria {
     void *contexto_raices;
     bool recolectando;            /* protege contra recursión infinita */
     /*
-     * Si false, gc_alocar NO dispara recolección automática (aunque
-     * gc_stress esté activo o se cruce umbral). Útil para deshabilitar
-     * el GC durante fases en las que las raíces no son consistentes
-     * (compilación, construcción de globales en vm_iniciar, etc.).
-     * El recolector manual via `gc_recolectar` ignora este flag.
+     * Si false, gc_alocar NO marca el flag `trigger_pendiente`. Útil
+     * para deshabilitar el GC automático durante fases en las que las
+     * raíces no son consistentes (compilación, etc.). El recolector
+     * manual via `gc_recolectar` ignora este flag.
      */
     bool gc_habilitado;
+    /*
+     * Modelo "deferred-to-opcode-boundary" (v0.8.1): cuando gc_alocar
+     * detecta que el GC debería correr (gc_stress o umbral cruzado)
+     * NO ejecuta la recolección inmediatamente — eso sería peligroso
+     * porque dentro de muchas factories el nuevo objeto está en la
+     * lista pero todavía no es alcanzable desde raíces. En su lugar,
+     * marca este flag. El dispatch loop de la VM lo chequea al inicio
+     * de cada iteración (cuando el stack está consistente entre
+     * opcodes) y, si está set, ejecuta la recolección.
+     */
+    bool trigger_pendiente;
 } Memoria;
 
 /* Inicializa la memoria con valores por defecto. No instala globalmente. */
