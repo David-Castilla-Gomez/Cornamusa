@@ -152,6 +152,18 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_ASIGNAR_ATRIBUTO: return instruccion_byte("OP_ASIGNAR_ATRIBUTO", c, offset, out);
         case OP_METODO:          return instruccion_byte("OP_METODO", c, offset, out);
         case OP_HEREDAR:         return instruccion_simple("OP_HEREDAR", offset, out);
+        case OP_SUPER_INVOCAR: {
+            uint8_t name_idx = c->codigo[offset + 1];
+            uint8_t n_args = c->codigo[offset + 2];
+            fprintf(out, "%-20s %4d ", "OP_SUPER_INVOCAR", name_idx);
+            if (name_idx < c->constantes_cuenta) {
+                fputs("'", out);
+                imprimir_constante_repr(&c->constantes[name_idx], out);
+                fputs("' ", out);
+            }
+            fprintf(out, "(%d args)\n", n_args);
+            return offset + 3;
+        }
 
         case OP_IMPRIMIR:        return instruccion_byte("OP_IMPRIMIR", c, offset, out);
         case OP_BUILD_LISTA:     return instruccion_byte("OP_BUILD_LISTA", c, offset, out);

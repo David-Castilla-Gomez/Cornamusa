@@ -62,6 +62,7 @@ static Expr *parsear_f_cadena(Parser *p);
 static Expr *parsear_booleano(Parser *p);
 static Expr *parsear_nulo(Parser *p);
 static Expr *parsear_ident(Parser *p);
+static Expr *parsear_super(Parser *p);
 static Expr *parsear_grupo(Parser *p);
 static Expr *parsear_unario(Parser *p);
 static Expr *parsear_no(Parser *p);
@@ -237,6 +238,30 @@ static Expr *parsear_ident(Parser *p) {
     Token t = p->actual;
     avanzar(p);
     return expr_ident(p->arena, t.inicio, t.longitud, t.linea, t.columna);
+}
+
+/*
+ * `super` solo es válido seguido de `.identificador`. Lo parseamos como
+ * un nodo `EXPR_SUPER` que el compilador maneja especialmente al
+ * detectar que un `EXPR_LLAMADA` tiene como callee un super.
+ *
+ * Al encontrar `super` sin un `.` siguiente lo reportamos como error
+ * de sintaxis con un mensaje claro.
+ */
+static Expr *parsear_super(Parser *p) {
+    Token t_super = p->actual;
+    avanzar(p);  /* consume 'super' */
+    if (!consumir(p, TT_PUNTO,
+            "se esperaba '.' tras 'super' (uso: super.metodo(...))")) return NULL;
+    if (!check(p, TT_IDENT)) {
+        error_en(p, &p->actual,
+            "se esperaba un nombre de método tras 'super.'");
+        return NULL;
+    }
+    Token t_nombre = p->actual;
+    avanzar(p);
+    return expr_super(p->arena, t_nombre.inicio, t_nombre.longitud,
+                       t_super.linea, t_super.columna);
 }
 
 /*
@@ -709,6 +734,9 @@ static void inicializar_reglas(void) {
 
     /* Lambda como expresión. */
     reglas[TT_LAMBDA]      = (ReglaParseo){ parsear_lambda, NULL, PREC_NULA };
+
+    /* `super.metodo` como expresión. */
+    reglas[TT_SUPER]       = (ReglaParseo){ parsear_super, NULL, PREC_NULA };
 
     reglas_inicializadas = true;
 }

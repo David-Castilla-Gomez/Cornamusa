@@ -455,6 +455,36 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "una llamada no puede tener mas de 255 argumentos");
                 return false;
             }
+            /* Caso especial `super.metodo(args)`:
+             *   - empuja `yo` (slot 1 del frame del método).
+             *   - empuja args.
+             *   - emite OP_SUPER_INVOCAR [name_idx] [n_args].
+             * Solo válido dentro de un método (scope de función). */
+            if (callee->tipo == EXPR_SUPER) {
+                if (!c->actual->es_funcion) {
+                    error_compilacion(c, e->linea, e->columna,
+                        "'super' solo puede usarse dentro de un metodo");
+                    return false;
+                }
+                /* OP_OBTENER_LOCAL 1 → empuja `yo` (primer parametro). */
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                    1, callee->linea);
+                for (int i = 0; i < n_args; i++) {
+                    if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                }
+                int idx = chunk_agregar_constante(c->actual->chunk,
+                    valor_cadena_duplicar(callee->como.super.nombre,
+                                            callee->como.super.longitud));
+                if (idx < 0 || idx > 255) {
+                    error_compilacion(c, e->linea, e->columna,
+                        "demasiadas constantes para v0.7 (operando byte)");
+                    return false;
+                }
+                chunk_emitir_byte(c->actual->chunk, OP_SUPER_INVOCAR, e->linea);
+                chunk_emitir_byte(c->actual->chunk, (uint8_t)idx, e->linea);
+                chunk_emitir_byte(c->actual->chunk, (uint8_t)n_args, e->linea);
+                return true;
+            }
             /* Caso especial built-in `imprimir(...)`: emitimos OP_IMPRIMIR
                directamente para evitar tener que registrar `imprimir`
                como global y poder llamarlo desde el top-level. */
@@ -660,6 +690,11 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             }
             return true;
         }
+
+        case EXPR_SUPER:
+            error_compilacion(c, e->linea, e->columna,
+                "'super' debe ir seguido de una llamada a metodo (super.metodo(...))");
+            return false;
 
         case EXPR_ATRIBUTO: {
             if (!compilador_compilar_expr(c, e->como.atributo.objeto)) return false;

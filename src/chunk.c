@@ -52,6 +52,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_ASIGNAR_ATRIBUTO: return "OP_ASIGNAR_ATRIBUTO";
         case OP_METODO:          return "OP_METODO";
         case OP_HEREDAR:         return "OP_HEREDAR";
+        case OP_SUPER_INVOCAR:   return "OP_SUPER_INVOCAR";
         case OP_IMPRIMIR:        return "OP_IMPRIMIR";
         case OP_BUILD_LISTA:     return "OP_BUILD_LISTA";
         case OP_BUILD_TUPLA:     return "OP_BUILD_TUPLA";

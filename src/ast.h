@@ -79,6 +79,9 @@ typedef enum {
     /* Indexación / slicing */
     EXPR_INDICE,                /* obj[k] */
     EXPR_REBANADA,              /* obj[a:b:c] (a, b, c todos opcionales) */
+
+    /* `super.metodo` — solo dentro de un método de una subclase. */
+    EXPR_SUPER,
 } TipoExpr;
 
 struct Expr {
@@ -171,6 +174,15 @@ struct Expr {
             Expr *fin;
             Expr *paso;
         } rebanada;
+
+        /* `super.metodo`: guardamos solo el nombre del método. La
+           "expresión super" en sí misma no tiene un objeto explícito —
+           el receptor `yo` es implícito (slot 1 del frame del método)
+           y la superclase se resuelve en runtime via `yo.clase.superclase`. */
+        struct {
+            const char *nombre;       /* nombre del método tras el punto */
+            int longitud;
+        } super;
     } como;
 };
 
@@ -208,6 +220,7 @@ Expr *expr_tupla(Arena *a, Expr **elementos, int n, int linea, int col);
 Expr *expr_indice(Arena *a, Expr *objeto, Expr *indice, int linea, int col);
 Expr *expr_rebanada(Arena *a, Expr *objeto, Expr *inicio, Expr *fin, Expr *paso,
                     int linea, int col);
+Expr *expr_super(Arena *a, const char *nombre, int len, int linea, int col);
 
 /* ──────────────────────────────────────────────────────────────────
  * Pretty-printer

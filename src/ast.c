@@ -174,6 +174,15 @@ Expr *expr_rebanada(Arena *a, Expr *objeto, Expr *inicio, Expr *fin, Expr *paso,
     return e;
 }
 
+Expr *expr_super(Arena *a, const char *nombre, int len, int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_SUPER, linea, col);
+    if (e) {
+        e->como.super.nombre = nombre;
+        e->como.super.longitud = len;
+    }
+    return e;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Pretty-printer (S-expression style)
  *
@@ -416,6 +425,11 @@ static void expr_a_buffer(const Expr *e, EscrituraBuffer *eb) {
                 expr_a_buffer(e->como.rebanada.paso, eb);
             }
             wb_escribir(eb, ")");
+            break;
+        case EXPR_SUPER:
+            wb_escribir(eb, "(super \"");
+            wb_escribir_lexema(eb, e->como.super.nombre, e->como.super.longitud);
+            wb_escribir(eb, "\")");
             break;
     }
 }

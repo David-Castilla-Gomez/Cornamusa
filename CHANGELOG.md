@@ -6,6 +6,27 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.7.1] — 2026-04-29 — super en bytecode
+
+Cierra el ciclo OOP en bytecode añadiendo `super.metodo(args)` para
+herencia simple. Ejemplos como `examples/20_clases_jugable.cor` ahora
+encadenan constructores hijo/padre. **73 tests verde**.
+
+### Añadido (v0.7.1)
+- **Palabra clave `super`** activa en el parser (el lexer ya tenía `TT_SUPER` desde Fase 2). Solo válida en la forma `super.metodo(args)`.
+- **Nuevo nodo AST `EXPR_SUPER`**: guarda el nombre del método tras el punto. El receptor (`yo`) es implícito (slot 1 del frame del método actual).
+- **`parsear_super`** registrada como prefix-rule en `obtener_regla(TT_SUPER)`. Espera `super.identificador`; si no hay `.` o no hay identificador tras el punto, error de sintaxis claro.
+- **Compilación de `EXPR_LLAMADA(EXPR_SUPER, args)`**: emite `OP_OBTENER_LOCAL 1` (push `yo`) + args + `OP_SUPER_INVOCAR [name_idx] [n_args]`. Validación: solo dentro de un scope de función (método); fuera de un método o sin llamada inmediata, error claro de compilación.
+- **Nuevo opcode `OP_SUPER_INVOCAR [byte name_idx] [byte n_args]`**:
+  - Stack al ejecutar: `[..., yo, arg1, ..., argN]`.
+  - Resuelve `yo.clase.superclase.metodos[name]`, valida aridad incluyendo `yo` (error reporta cifras sin el receptor).
+  - Despacha igual que un bound method: `memmove` args un slot arriba, reemplaza el callee con la closure y pone receptor (clonado) en slot 1.
+  - Errores claros: `'super' solo puede usarse en metodos de instancia`, `la clase '...' no tiene superclase`, `ErrorDeAtributo: la superclase '...' no tiene metodo '...'`.
+- **Limitación documentada**: la búsqueda de super usa `yo.clase.superclase`, no la clase donde el método actual fue definido. Para herencia de un solo nivel (Padre → Hijo) coincide; para varios niveles (Padre → Hijo → Nieto, `super` dentro de un método de Hijo) se requiere almacenar `clase_definicion` en `Closure`, lo que crea un ciclo refcount → llega en v0.8.0 con GC mark-sweep.
+- **Tests nuevos** (en `test_bytecode_clases.c`): `super.metodo()` simple, `super.__iniciar__(args)` en constructor del hijo (con campo extra propio), aridad incorrecta vía super, super sin superclase, método inexistente en superclase, super fuera de método (error compilación), super sin punto (error sintaxis).
+- **Ejemplo `20_clases_jugable.cor`** actualizado: `Perro` ahora tiene su propio `__iniciar__(yo, nombre, edad, raza)` que llama a `super.__iniciar__(nombre, edad)` antes de asignar `yo.raza`.
+- **Versión** bump a `0.7.1`.
+
 ## [0.7.0] — 2026-04-29 — clases, métodos, herencia (Fase 8)
 
 Cornamusa pasa a ser un lenguaje OOP completo: clases definibles por

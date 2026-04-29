@@ -953,6 +953,98 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 }
                 break;
             }
+            case OP_SUPER_INVOCAR: {
+                /*
+                 * Stack: [..., yo, arg1, ..., argN].
+                 * Resuelve `yo.clase.superclase.metodos[name]` y
+                 * lo despacha como un método con `yo` como receptor.
+                 *
+                 * Limitación v0.7.1: la búsqueda usa `yo.clase`, no la
+                 * clase en la que el método actual fue definido. Para
+                 * herencia de un solo nivel coincide; para varios niveles
+                 * (Padre → Hijo → Nieto, super dentro de Hijo) requiere
+                 * almacenar `clase_definicion` en Closure (llega en
+                 * v0.8.0 con GC).
+                 */
+                uint8_t name_idx = LEER_BYTE();
+                uint8_t n_args = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[name_idx];
+
+                Valor *base_nuevo = vm->tope - n_args - 1;
+                Valor yo = *base_nuevo;
+                if (yo.tipo != VAL_INSTANCIA) {
+                    VM_ERROR("'super' solo puede usarse en metodos de instancia");
+                    return VM_ERROR_RUNTIME;
+                }
+                Clase *super = yo.como.instancia->clase->superclase;
+                if (!super) {
+                    VM_ERROR("la clase '%.*s' no tiene superclase",
+                             yo.como.instancia->clase->longitud_nombre,
+                             yo.como.instancia->clase->nombre);
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor met_v;
+                if (!dicc_obtener(super->metodos, nombre, &met_v)) {
+                    VM_ERROR("ErrorDeAtributo: la superclase '%.*s' no tiene metodo '%.*s'",
+                             super->longitud_nombre, super->nombre,
+                             nombre->como.cadena.longitud,
+                             nombre->como.cadena.texto);
+                    return VM_ERROR_RUNTIME;
+                }
+                if (met_v.tipo != VAL_FUNCION_BC) {
+                    valor_destruir(&met_v);
+                    VM_ERROR("estado interno corrupto: super metodo no es closure");
+                    return VM_ERROR_RUNTIME;
+                }
+                Closure *cl = met_v.como.closure;
+                FuncionBC *fn = cl->plantilla;
+                /* Aridad: igual que un bound method, n_args + 1 == aridad. */
+                if (n_args + 1 != fn->aridad) {
+                    valor_destruir(&met_v);
+                    VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                             fn->longitud_nombre, fn->nombre,
+                             fn->aridad - 1, n_args);
+                    return VM_ERROR_RUNTIME;
+                }
+                if (vm->n_frames >= VM_FRAMES_MAX) {
+                    valor_destruir(&met_v);
+                    VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
+                             VM_FRAMES_MAX);
+                    return VM_ERROR_RUNTIME;
+                }
+                /*
+                 * Stack ya tiene la disposición correcta: [yo, arg1, ..., argN].
+                 * Solo necesitamos reemplazar el slot del callee (que era
+                 * `yo`) por la closure y poner el receptor (yo) en slot 1.
+                 *
+                 * Hacemos: push slot, shift; o más simple, igual que
+                 * VAL_METODO_LIGADO: memmove args arriba 1 puesto, escribir
+                 * closure en slot 0 y receptor (clonado) en slot 1.
+                 */
+                if (vm->tope - vm->pila >= VM_PILA_MAX) {
+                    valor_destruir(&met_v);
+                    VM_ERROR("Desbordamiento de pila");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (n_args > 0) {
+                    memmove(base_nuevo + 2, base_nuevo + 1,
+                            sizeof(Valor) * (size_t)n_args);
+                }
+                vm->tope++;
+                Valor receptor_clon = valor_clonar(&yo);
+                Valor old = *base_nuevo;        /* era yo (transferido) */
+                *base_nuevo = met_v;             /* closure */
+                base_nuevo[1] = receptor_clon;
+                valor_destruir(&old);
+
+                frame = &vm->frames[vm->n_frames++];
+                frame->chunk = &fn->chunk;
+                frame->ip = fn->chunk.codigo;
+                frame->base_pila = base_nuevo;
+                frame->closure = cl;
+                frame->es_constructor = false;
+                break;
+            }
             case OP_HEREDAR: {
                 /* Stack: [..., clase, super]. Pop super y enlazar a la
                    clase: copiar todos los métodos heredados en

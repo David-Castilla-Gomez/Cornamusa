@@ -600,6 +600,134 @@ static void test_constructor_y_metodos(void) {
         "z", "13");
 }
 
+/* ───── super (Fase 8 sesión 5 / v0.7.1) ───── */
+
+static void test_super_metodo_simple(void) {
+    /* super.metodo() llama al método del padre. */
+    verificar_var(
+        "clase Padre:\n"
+        "    funcion m(yo):\n"
+        "        retornar 1\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Hijo extiende Padre:\n"
+        "    funcion m(yo):\n"
+        "        retornar super.m() + 10\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "z = Hijo().m()",
+        "z", "11");
+}
+
+static void test_super_constructor(void) {
+    /* super.__iniciar__(args) en __iniciar__ del hijo. */
+    verificar_var(
+        "clase Animal:\n"
+        "    funcion __iniciar__(yo, nombre):\n"
+        "        yo.nombre = nombre\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Perro extiende Animal:\n"
+        "    funcion __iniciar__(yo, nombre, raza):\n"
+        "        super.__iniciar__(nombre)\n"
+        "        yo.raza = raza\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "p = Perro(\"Rex\", \"labrador\")\n"
+        "z = p.nombre",
+        "z", "Rex");
+
+    /* El campo añadido por el hijo también funciona. */
+    verificar_var(
+        "clase Animal:\n"
+        "    funcion __iniciar__(yo, nombre):\n"
+        "        yo.nombre = nombre\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Perro extiende Animal:\n"
+        "    funcion __iniciar__(yo, nombre, raza):\n"
+        "        super.__iniciar__(nombre)\n"
+        "        yo.raza = raza\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "p = Perro(\"Rex\", \"labrador\")\n"
+        "z = p.raza",
+        "z", "labrador");
+}
+
+static void test_super_aridad(void) {
+    /* Aridad incorrecta vía super con mensaje claro. */
+    verificar_error(
+        "clase Padre:\n"
+        "    funcion m(yo, a, b):\n"
+        "        retornar a + b\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "clase Hijo extiende Padre:\n"
+        "    funcion m(yo):\n"
+        "        retornar super.m(1)\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "Hijo().m()",
+        "esperaba 2 argumentos, recibio 1");
+}
+
+static void test_super_sin_padre(void) {
+    /* super sin superclase: error claro. */
+    verificar_error(
+        "clase Solo:\n"
+        "    funcion m(yo):\n"
+        "        retornar super.x()\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "Solo().m()",
+        "no tiene superclase");
+}
+
+static void test_super_metodo_inexistente(void) {
+    /* super.metodo no presente en superclase: error claro. */
+    verificar_error(
+        "clase Padre:\n"
+        "    pasar\n"
+        "fin clase\n"
+        "clase Hijo extiende Padre:\n"
+        "    funcion m(yo):\n"
+        "        retornar super.no_existe()\n"
+        "    fin funcion\n"
+        "fin clase\n"
+        "Hijo().m()",
+        "no tiene metodo 'no_existe'");
+}
+
+static void test_super_fuera_de_metodo(void) {
+    /* super fuera de un método: error de compilación. */
+    const char *err = NULL;
+    const char *res = ejecutar(
+        "x = super.m()",
+        NULL, &err);
+    if (res || !err || !strstr(err, "solo puede usarse")) {
+        fprintf(stderr, "FALLO: super fuera de metodo no dio error claro\n");
+        fprintf(stderr, "  obtuvo: %s\n", err ? err : "<null>");
+        fallos++;
+    }
+}
+
+static void test_super_sin_punto(void) {
+    /* `super` sin `.` siguiente: error de sintaxis. */
+    const char *err = NULL;
+    const char *res = ejecutar(
+        "clase Foo:\n"
+        "    funcion m(yo):\n"
+        "        retornar super\n"
+        "    fin funcion\n"
+        "fin clase\n",
+        NULL, &err);
+    if (res || !err) {
+        fprintf(stderr, "FALLO: 'super' sin '.' no dio error\n");
+        fallos++;
+    }
+}
+
 /* ───── Identidad de instancias ───── */
 
 static void test_identidad(void) {
@@ -647,6 +775,13 @@ int main(void) {
     test_herencia_constructor_heredado();
     test_herencia_polimorfismo();
     test_herencia_metodos_y_override();
+    test_super_metodo_simple();
+    test_super_constructor();
+    test_super_aridad();
+    test_super_sin_padre();
+    test_super_metodo_inexistente();
+    test_super_fuera_de_metodo();
+    test_super_sin_punto();
     test_atributo_funcion();
     test_identidad();
 

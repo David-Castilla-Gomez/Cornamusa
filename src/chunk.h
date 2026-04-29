@@ -105,6 +105,9 @@ typedef enum {
     /* ---- Herencia (v0.7.0 Fase 8 sesión 4) ---- */
     OP_HEREDAR,                 /* pop super (sin operando): copia super.metodos → clase.metodos y enlaza superclase. Stack: [..., clase, super] → [..., clase]. */
 
+    /* ---- super (v0.7.1) ---- */
+    OP_SUPER_INVOCAR,           /* [byte name_idx] [byte n_args]: stack [..., yo, arg1, ..., argN]. Despacha al método name de yo.clase.superclase. */
+
     /* ---- Built-in print (atajo del compilador) ---- */
     OP_IMPRIMIR,
 
