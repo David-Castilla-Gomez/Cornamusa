@@ -408,6 +408,9 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_ITERADOR:
         case VAL_PLANTILLA_BC:
         case VAL_EXCEPCION:
+        case VAL_CLASE:
+        case VAL_INSTANCIA:
+        case VAL_METODO_LIGADO:
             return false;
         case VAL_TUPLA:
             /* Tupla es hashable solo si todos sus elementos lo son. */
@@ -916,6 +919,109 @@ Valor valor_excepcion(Excepcion *e) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Clase / Instancia (Fase 8 v0.7.0)
+ * ────────────────────────────────────────────────────────────────── */
+
+Clase *clase_nueva(const char *nombre, int len_nombre) {
+    Clase *c = (Clase *)malloc(sizeof(Clase));
+    if (!c) return NULL;
+    char *copia = (char *)malloc((size_t)len_nombre + 1);
+    if (!copia) { free(c); return NULL; }
+    if (len_nombre > 0) memcpy(copia, nombre, (size_t)len_nombre);
+    copia[len_nombre] = '\0';
+    Diccionario *met = dicc_nuevo();
+    if (!met) { free(copia); free(c); return NULL; }
+    c->nombre = copia;
+    c->longitud_nombre = len_nombre;
+    c->metodos = met;
+    c->superclase = NULL;
+    c->refcount = 1;
+    return c;
+}
+
+void clase_retener(Clase *c) { if (c) c->refcount++; }
+
+void clase_liberar(Clase *c) {
+    if (!c) return;
+    c->refcount--;
+    if (c->refcount > 0) return;
+    dicc_liberar(c->metodos);
+    if (c->superclase) clase_liberar(c->superclase);
+    free(c->nombre);
+    free(c);
+}
+
+Valor valor_clase(Clase *c) {
+    Valor v;
+    v.tipo = VAL_CLASE;
+    v.dueno_cadena = false;
+    v.como.clase = c;
+    return v;
+}
+
+Instancia *instancia_nueva(Clase *c) {
+    if (!c) return NULL;
+    Instancia *i = (Instancia *)malloc(sizeof(Instancia));
+    if (!i) return NULL;
+    Diccionario *atr = dicc_nuevo();
+    if (!atr) { free(i); return NULL; }
+    clase_retener(c);
+    i->clase = c;
+    i->atributos = atr;
+    i->refcount = 1;
+    return i;
+}
+
+void instancia_retener(Instancia *i) { if (i) i->refcount++; }
+
+void instancia_liberar(Instancia *i) {
+    if (!i) return;
+    i->refcount--;
+    if (i->refcount > 0) return;
+    dicc_liberar(i->atributos);
+    clase_liberar(i->clase);
+    free(i);
+}
+
+Valor valor_instancia(Instancia *i) {
+    Valor v;
+    v.tipo = VAL_INSTANCIA;
+    v.dueno_cadena = false;
+    v.como.instancia = i;
+    return v;
+}
+
+MetodoLigado *metodo_ligado_nuevo(const Valor *receptor, Closure *metodo) {
+    if (!metodo) return NULL;
+    MetodoLigado *m = (MetodoLigado *)malloc(sizeof(MetodoLigado));
+    if (!m) return NULL;
+    m->receptor = valor_clonar(receptor);
+    closure_retener(metodo);
+    m->metodo = metodo;
+    m->refcount = 1;
+    return m;
+}
+
+void metodo_ligado_retener(MetodoLigado *m) { if (m) m->refcount++; }
+
+void metodo_ligado_liberar(MetodoLigado *m) {
+    if (!m) return;
+    m->refcount--;
+    if (m->refcount > 0) return;
+    valor_destruir(&m->receptor);
+    closure_liberar(m->metodo);
+    free(m);
+}
+
+Valor valor_metodo_ligado(MetodoLigado *m) {
+    Valor v;
+    v.tipo = VAL_METODO_LIGADO;
+    v.dueno_cadena = false;
+    v.como.metodo_ligado = m;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
 
@@ -983,6 +1089,18 @@ void valor_destruir(Valor *v) {
         case VAL_EXCEPCION:
             excepcion_liberar(v->como.excepcion);
             v->como.excepcion = NULL;
+            break;
+        case VAL_CLASE:
+            clase_liberar(v->como.clase);
+            v->como.clase = NULL;
+            break;
+        case VAL_INSTANCIA:
+            instancia_liberar(v->como.instancia);
+            v->como.instancia = NULL;
+            break;
+        case VAL_METODO_LIGADO:
+            metodo_ligado_liberar(v->como.metodo_ligado);
+            v->como.metodo_ligado = NULL;
             break;
         default:
             break;
@@ -1077,6 +1195,15 @@ Valor valor_clonar(const Valor *v) {
         case VAL_EXCEPCION:
             excepcion_retener(v->como.excepcion);
             return valor_excepcion(v->como.excepcion);
+        case VAL_CLASE:
+            clase_retener(v->como.clase);
+            return valor_clase(v->como.clase);
+        case VAL_INSTANCIA:
+            instancia_retener(v->como.instancia);
+            return valor_instancia(v->como.instancia);
+        case VAL_METODO_LIGADO:
+            metodo_ligado_retener(v->como.metodo_ligado);
+            return valor_metodo_ligado(v->como.metodo_ligado);
     }
     return valor_nulo();
 }
@@ -1283,6 +1410,25 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                 e->longitud_mensaje, e->mensaje);
             break;
         }
+        case VAL_CLASE: {
+            const Clase *c = v->como.clase;
+            n = snprintf(buffer, (size_t)capacidad, "<clase %.*s>",
+                c->longitud_nombre, c->nombre);
+            break;
+        }
+        case VAL_INSTANCIA: {
+            const Instancia *i = v->como.instancia;
+            n = snprintf(buffer, (size_t)capacidad, "<instancia de %.*s>",
+                i->clase->longitud_nombre, i->clase->nombre);
+            break;
+        }
+        case VAL_METODO_LIGADO: {
+            const MetodoLigado *m = v->como.metodo_ligado;
+            const FuncionBC *fn = m->metodo->plantilla;
+            n = snprintf(buffer, (size_t)capacidad, "<metodo %.*s>",
+                fn->longitud_nombre, fn->nombre);
+            break;
+        }
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -1334,6 +1480,9 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_PLANTILLA_BC: return "plantilla";
         case VAL_ITERADOR:    return "iterador";
         case VAL_EXCEPCION:   return "excepcion";
+        case VAL_CLASE:       return "clase";
+        case VAL_INSTANCIA:   return "instancia";
+        case VAL_METODO_LIGADO: return "funcion";  /* visible como funcion */
     }
     return "desconocido";
 }
@@ -1390,6 +1539,12 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.iterador != NULL;
         case VAL_EXCEPCION:
             return v->como.excepcion != NULL;
+        case VAL_CLASE:
+            return v->como.clase != NULL;
+        case VAL_INSTANCIA:
+            return v->como.instancia != NULL;
+        case VAL_METODO_LIGADO:
+            return v->como.metodo_ligado != NULL;
     }
     return false;
 }
@@ -1510,6 +1665,12 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return a->como.iterador == b->como.iterador;
         case VAL_EXCEPCION:
             return a->como.excepcion == b->como.excepcion;
+        case VAL_CLASE:
+            return a->como.clase == b->como.clase;
+        case VAL_INSTANCIA:
+            return a->como.instancia == b->como.instancia;
+        case VAL_METODO_LIGADO:
+            return a->como.metodo_ligado == b->como.metodo_ligado;
     }
     return false;
 }

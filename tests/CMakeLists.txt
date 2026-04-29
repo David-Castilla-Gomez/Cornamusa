@@ -237,3 +237,14 @@ set_tests_properties(bc_run_19_closures_jugable PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "15"
 )
+
+# v0.7.0: clases con herencia y polimorfismo en bytecode.
+add_test(
+    NAME bc_run_20_clases_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/20_clases_jugable.cor
+)
+set_tests_properties(bc_run_20_clases_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Rex tiene 8 anos y dice: guau"
+)

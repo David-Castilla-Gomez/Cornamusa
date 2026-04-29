@@ -2,6 +2,7 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <string.h>
 
 #include "evaluador.h"   /* evaluador_aplicar_binario / unario */
 #include "lexer.h"       /* TipoToken */
@@ -180,6 +181,7 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
     frame->ip = chunk->codigo;
     frame->base_pila = vm->pila;
     frame->closure = NULL;
+    frame->es_constructor = false;
 
     for (;;) {
         uint8_t opbyte = *frame->ip++;
@@ -268,6 +270,14 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
             case OP_RETORNAR: {
                 /* Pop el resultado del frame actual. */
                 Valor r = sacar(vm);
+                /* Si este frame ejecutó __iniciar__, descartamos el
+                   valor de retorno y devolvemos la instancia (slot 1
+                   = receptor) en su lugar. Coincide con la semántica
+                   Python: el constructor no decide el retorno. */
+                if (frame->es_constructor) {
+                    valor_destruir(&r);
+                    r = valor_clonar(&frame->base_pila[1]);
+                }
                 /* Antes de descartar el frame, cerrar todos los
                    upvalues abiertos que apunten a slots de este frame
                    (su contenido se copia al heap). */
@@ -838,6 +848,154 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 break;
             }
 
+            /* ─── Clases / atributos (Fase 8 v0.7.0) ─── */
+            case OP_CLASE: {
+                /* Crea una Clase con el nombre indicado en la constante. */
+                uint8_t idx = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[idx];
+                if (nombre->tipo != VAL_CADENA) {
+                    VM_ERROR("OP_CLASE sin nombre cadena en constante");
+                    return VM_ERROR_RUNTIME;
+                }
+                Clase *cl = clase_nueva(nombre->como.cadena.texto,
+                                         nombre->como.cadena.longitud);
+                if (!cl) {
+                    VM_ERROR("memoria insuficiente al crear clase");
+                    return VM_ERROR_RUNTIME;
+                }
+                empujar(vm, valor_clase(cl));
+                break;
+            }
+            case OP_OBTENER_ATRIBUTO: {
+                uint8_t idx = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[idx];
+                Valor obj = sacar(vm);
+                if (obj.tipo != VAL_INSTANCIA) {
+                    VM_ERROR("ErrorDeTipo: '%s' no tiene atributos accesibles",
+                             valor_nombre_tipo(&obj));
+                    valor_destruir(&obj);
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Lookup: primero atributos de instancia (overrides),
+                   después métodos de la clase (creando MetodoLigado). */
+                Valor v;
+                if (dicc_obtener(obj.como.instancia->atributos, nombre, &v)) {
+                    valor_destruir(&obj);
+                    empujar(vm, v);
+                    break;
+                }
+                Valor met_v;
+                if (dicc_obtener(obj.como.instancia->clase->metodos,
+                                  nombre, &met_v)) {
+                    if (met_v.tipo != VAL_FUNCION_BC) {
+                        valor_destruir(&met_v); valor_destruir(&obj);
+                        VM_ERROR("estado interno corrupto: metodo no es closure");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    MetodoLigado *bm = metodo_ligado_nuevo(&obj,
+                        met_v.como.closure);
+                    valor_destruir(&met_v);
+                    valor_destruir(&obj);
+                    if (!bm) {
+                        VM_ERROR("memoria insuficiente al ligar metodo");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    empujar(vm, valor_metodo_ligado(bm));
+                    break;
+                }
+                VM_ERROR("ErrorDeAtributo: instancia de '%.*s' no tiene atributo '%.*s'",
+                         obj.como.instancia->clase->longitud_nombre,
+                         obj.como.instancia->clase->nombre,
+                         nombre->como.cadena.longitud,
+                         nombre->como.cadena.texto);
+                valor_destruir(&obj);
+                return VM_ERROR_RUNTIME;
+            }
+            case OP_ASIGNAR_ATRIBUTO: {
+                uint8_t idx = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[idx];
+                /* Stack: [..., obj, valor]. */
+                Valor valor = sacar(vm);
+                Valor obj = sacar(vm);
+                if (obj.tipo != VAL_INSTANCIA) {
+                    VM_ERROR("ErrorDeTipo: '%s' no admite asignacion de atributos",
+                             valor_nombre_tipo(&obj));
+                    valor_destruir(&valor); valor_destruir(&obj);
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor clave_clon = valor_clonar(nombre);
+                if (!dicc_asignar(obj.como.instancia->atributos,
+                                   clave_clon, valor)) {
+                    VM_ERROR("memoria insuficiente al asignar atributo");
+                    valor_destruir(&obj);
+                    return VM_ERROR_RUNTIME;
+                }
+                valor_destruir(&obj);
+                empujar(vm, valor_nulo());  /* la sentencia descarta */
+                break;
+            }
+            case OP_METODO: {
+                /* Stack: [..., clase, closure]. Pop closure y guardarla
+                   en clase.metodos[name]. La clase queda en el tope. */
+                uint8_t idx = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[idx];
+                Valor closure = sacar(vm);
+                if (vm->tope == vm->pila || vm->tope[-1].tipo != VAL_CLASE) {
+                    valor_destruir(&closure);
+                    VM_ERROR("estado interno corrupto: OP_METODO sin clase en stack");
+                    return VM_ERROR_RUNTIME;
+                }
+                Clase *cl = vm->tope[-1].como.clase;
+                Valor clave_clon = valor_clonar(nombre);
+                if (!dicc_asignar(cl->metodos, clave_clon, closure)) {
+                    VM_ERROR("memoria insuficiente al registrar metodo");
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+            case OP_HEREDAR: {
+                /* Stack: [..., clase, super]. Pop super y enlazar a la
+                   clase: copiar todos los métodos heredados en
+                   `clase.metodos` y guardar referencia a super en
+                   `clase.superclase`. La clase queda en el tope. */
+                Valor super_v = sacar(vm);
+                if (vm->tope == vm->pila || vm->tope[-1].tipo != VAL_CLASE) {
+                    valor_destruir(&super_v);
+                    VM_ERROR("estado interno corrupto: OP_HEREDAR sin clase en stack");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (super_v.tipo != VAL_CLASE) {
+                    VM_ERROR("ErrorDeTipo: solo se puede heredar de una clase, no de '%s'",
+                             valor_nombre_tipo(&super_v));
+                    valor_destruir(&super_v);
+                    return VM_ERROR_RUNTIME;
+                }
+                Clase *clase_hija = vm->tope[-1].como.clase;
+                Clase *clase_padre = super_v.como.clase;
+                /* Copiar métodos heredados. Si el cuerpo de la subclase
+                   define luego un método con el mismo nombre, OP_METODO
+                   sobreescribe la entrada (semántica esperada). */
+                const Diccionario *src = clase_padre->metodos;
+                for (int i = 0; i < src->capacidad; i++) {
+                    if (!src->entradas[i].ocupada) continue;
+                    Valor k = valor_clonar(&src->entradas[i].clave);
+                    Valor v = valor_clonar(&src->entradas[i].valor);
+                    if (!dicc_asignar(clase_hija->metodos, k, v)) {
+                        valor_destruir(&super_v);
+                        VM_ERROR("memoria insuficiente al heredar metodos");
+                        return VM_ERROR_RUNTIME;
+                    }
+                }
+                /* Enlazar superclase (transferir refcount de super_v). */
+                if (clase_hija->superclase) {
+                    clase_liberar(clase_hija->superclase);
+                }
+                clase_retener(clase_padre);
+                clase_hija->superclase = clase_padre;
+                valor_destruir(&super_v);
+                break;
+            }
+
             /* ─── Closures (v0.6.2) ─── */
             case OP_CLOSURE: {
                 /*
@@ -944,6 +1102,152 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                     frame->ip = fn->chunk.codigo;
                     frame->base_pila = base_nuevo;
                     frame->closure = cl;
+                    frame->es_constructor = false;
+                    break;
+                }
+
+                if (callee.tipo == VAL_CLASE) {
+                    /*
+                     * Llamar una clase crea una instancia. Si la clase
+                     * tiene `__iniciar__`, lo invocamos como un método
+                     * con la instancia recién creada como receptor.
+                     * El frame del constructor se marca con
+                     * `es_constructor = true` para que su OP_RETORNAR
+                     * descarte el valor retornado y devuelva la
+                     * instancia (Python-like).
+                     */
+                    Clase *cl_class = callee.como.clase;
+                    Instancia *inst = instancia_nueva(cl_class);
+                    if (!inst) {
+                        VM_ERROR("memoria insuficiente al crear instancia");
+                        return VM_ERROR_RUNTIME;
+                    }
+
+                    /* Buscar __iniciar__ en los métodos de la clase. */
+                    Valor clave_init = valor_cadena_referencia("__iniciar__", 11);
+                    Valor met_v;
+                    bool tiene_init = dicc_obtener(cl_class->metodos,
+                                                     &clave_init, &met_v);
+
+                    if (!tiene_init) {
+                        if (n_args != 0) {
+                            instancia_liberar(inst);
+                            VM_ERROR("ErrorDeTipo: %.*s() no acepta argumentos (sin __iniciar__)",
+                                     cl_class->longitud_nombre, cl_class->nombre);
+                            return VM_ERROR_RUNTIME;
+                        }
+                        /* Sin __iniciar__: solo crear instancia y empujar. */
+                        Valor cv = *(--vm->tope);
+                        valor_destruir(&cv);
+                        empujar(vm, valor_instancia(inst));
+                        break;
+                    }
+
+                    /* Tiene __iniciar__: validar aridad incluyendo `yo`. */
+                    if (met_v.tipo != VAL_FUNCION_BC) {
+                        valor_destruir(&met_v);
+                        instancia_liberar(inst);
+                        VM_ERROR("estado interno corrupto: __iniciar__ no es closure");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    Closure *cl = met_v.como.closure;
+                    FuncionBC *fn = cl->plantilla;
+                    if (n_args + 1 != fn->aridad) {
+                        valor_destruir(&met_v);
+                        instancia_liberar(inst);
+                        VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                                 cl_class->longitud_nombre, cl_class->nombre,
+                                 fn->aridad - 1, n_args);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    if (vm->n_frames >= VM_FRAMES_MAX) {
+                        valor_destruir(&met_v);
+                        instancia_liberar(inst);
+                        VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
+                                 VM_FRAMES_MAX);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+                        valor_destruir(&met_v);
+                        instancia_liberar(inst);
+                        VM_ERROR("Desbordamiento de pila");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    /* Insertar la instancia como receptor: shift de
+                       args y reemplazar callee con la closure. */
+                    if (n_args > 0) {
+                        memmove(base_nuevo + 2, base_nuevo + 1,
+                                sizeof(Valor) * (size_t)n_args);
+                    }
+                    vm->tope++;
+                    Valor old = *base_nuevo;
+                    *base_nuevo = met_v;                   /* closure (ya retenido por dicc_obtener) */
+                    base_nuevo[1] = valor_instancia(inst);
+                    valor_destruir(&old);
+
+                    frame = &vm->frames[vm->n_frames++];
+                    frame->chunk = &fn->chunk;
+                    frame->ip = fn->chunk.codigo;
+                    frame->base_pila = base_nuevo;
+                    frame->closure = cl;
+                    frame->es_constructor = true;
+                    break;
+                }
+
+                if (callee.tipo == VAL_METODO_LIGADO) {
+                    /*
+                     * Llamada a un método con receptor ligado:
+                     *   stack antes: [..., bound, arg1, arg2, ..., argN]
+                     *   stack despues: [..., closure, receptor, arg1, ..., argN]
+                     *
+                     * El receptor se inserta como primer parámetro del frame
+                     * (slot 1, ya que slot 0 es el callee). El compilador
+                     * ya garantiza que el primer parámetro es `yo`
+                     * (convención).
+                     */
+                    MetodoLigado *bm = callee.como.metodo_ligado;
+                    Closure *cl = bm->metodo;
+                    FuncionBC *fn = cl->plantilla;
+                    if (n_args + 1 != fn->aridad) {
+                        VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                                 fn->longitud_nombre, fn->nombre,
+                                 fn->aridad - 1, n_args);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    if (vm->n_frames >= VM_FRAMES_MAX) {
+                        VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
+                                 VM_FRAMES_MAX);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+                        VM_ERROR("Desbordamiento de pila");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    /* Hacer hueco para el receptor: mover los n_args
+                       slots un puesto arriba. */
+                    if (n_args > 0) {
+                        memmove(base_nuevo + 2, base_nuevo + 1,
+                                sizeof(Valor) * (size_t)n_args);
+                    }
+                    vm->tope++;
+                    /* Reemplazar el callee (bound method) por la closure
+                       y poner el receptor en slot 1. Necesitamos retener
+                       refs antes de destruir el bound method (que
+                       contiene la única referencia al closure y al
+                       receptor). */
+                    closure_retener(cl);
+                    Valor receptor = valor_clonar(&bm->receptor);
+                    Valor bound_old = *base_nuevo;
+                    *base_nuevo = valor_closure(cl);
+                    base_nuevo[1] = receptor;
+                    valor_destruir(&bound_old);
+
+                    frame = &vm->frames[vm->n_frames++];
+                    frame->chunk = &fn->chunk;
+                    frame->ip = fn->chunk.codigo;
+                    frame->base_pila = base_nuevo;
+                    frame->closure = cl;
+                    frame->es_constructor = false;
                     break;
                 }
 

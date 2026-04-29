@@ -53,6 +53,13 @@ typedef struct CallFrame {
        Usado por OP_GET_UPVALUE / OP_SET_UPVALUE para encontrar los
        upvalues de la función actual. */
     Closure *closure;
+    /* `es_constructor`: true si este frame fue creado por una llamada
+       `Foo(args)` que invoca `__iniciar__`. Al hacer OP_RETORNAR, la VM
+       descarta el valor de retorno y empuja la instancia (slot 1)
+       como resultado de la llamada original a la clase. Coincide con
+       Python: `Foo()` siempre devuelve la instancia, no lo que el
+       constructor retorne (que debe ser nulo/no especificado). */
+    bool es_constructor;
 } CallFrame;
 
 /*

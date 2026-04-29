@@ -55,6 +55,9 @@ typedef enum {
     VAL_PLANTILLA_BC,  /* plantilla de función (en constant pool, sin upvalues) */
     VAL_ITERADOR,      /* iterador interno (uso VM-only para `para`) */
     VAL_EXCEPCION,     /* excepción runtime con clase + mensaje */
+    VAL_CLASE,         /* clase definida por el usuario (Fase 8) */
+    VAL_INSTANCIA,     /* instancia de una clase (Fase 8) */
+    VAL_METODO_LIGADO, /* método con receptor ligado (Fase 8 S2) */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -68,6 +71,9 @@ typedef struct Iterador Iterador;
 typedef struct Closure Closure;
 typedef struct Upvalue Upvalue;
 typedef struct Excepcion Excepcion;
+typedef struct Clase Clase;
+typedef struct Instancia Instancia;
+typedef struct MetodoLigado MetodoLigado;
 
 /*
  * Firma de una función nativa (puntero a función C). Recibe un
@@ -144,6 +150,9 @@ typedef struct Valor {
         FuncionBC *plantilla; /* refcount; plantilla en constant pool */
         Iterador *iterador; /* uso VM-only; vida corta en stack */
         Excepcion *excepcion; /* refcount; excepción runtime */
+        Clase *clase;       /* refcount; clase definida por el usuario */
+        Instancia *instancia; /* refcount; instancia de una clase */
+        MetodoLigado *metodo_ligado; /* refcount; método con receptor */
     } como;
 } Valor;
 
@@ -328,6 +337,81 @@ void excepcion_retener(Excepcion *e);
 void excepcion_liberar(Excepcion *e);
 
 Valor valor_excepcion(Excepcion *e);
+
+/*
+ * Clase definida por el usuario (Fase 8 v0.7.0).
+ *
+ * Una `Clase` se construye en runtime al ejecutar `clase Foo: ... fin clase`.
+ * Tiene un nombre y (a partir de F8 S2) una tabla de métodos. En la
+ * sesión 1 los métodos están vacíos: la clase solo permite crear
+ * instancias con atributos asignables desde fuera (`obj.x = 1`).
+ *
+ * `metodos` es siempre un Diccionario válido (cadena → VAL_FUNCION_BC),
+ * pero en S1 se construye vacío.
+ */
+struct Clase {
+    char *nombre;             /* heap-duplicated; se libera con la struct */
+    int longitud_nombre;
+    Diccionario *metodos;     /* dicc cadena → VAL_FUNCION_BC; poblado por OP_METODO */
+    /* Superclase opcional (Fase 8 S4 v0.7.0). Solo herencia simple en v0.7.0;
+       el parser admite múltiples supers pero el compilador rechaza más de una.
+       Los métodos heredados se copian en `metodos` al ejecutar OP_HEREDAR
+       (no walking de la cadena en cada lookup). */
+    Clase *superclase;        /* refcount; NULL si no hereda */
+    int refcount;
+};
+
+Clase *clase_nueva(const char *nombre, int len_nombre);
+void clase_retener(Clase *c);
+void clase_liberar(Clase *c);
+
+Valor valor_clase(Clase *c);
+
+/*
+ * Instancia de una clase (Fase 8 v0.7.0).
+ *
+ * Mantiene una referencia compartida a su `Clase` (refcount) y un
+ * Diccionario propio de atributos modificables. La identidad de
+ * instancia es por puntero (`a is b` solo si misma struct).
+ *
+ * En esta sesión los atributos se asignan exclusivamente con
+ * `obj.attr = valor` desde código de usuario; no hay constructor
+ * `__iniciar__` todavía.
+ */
+struct Instancia {
+    Clase *clase;             /* referencia compartida (refcount) */
+    Diccionario *atributos;   /* dicc cadena → Valor */
+    int refcount;
+};
+
+Instancia *instancia_nueva(Clase *c);
+void instancia_retener(Instancia *i);
+void instancia_liberar(Instancia *i);
+
+Valor valor_instancia(Instancia *i);
+
+/*
+ * Método ligado: asocia un Closure (el método compilado de la clase)
+ * con un receptor concreto (la instancia sobre la que se invoca). Se
+ * crea cada vez que se accede a `instancia.metodo` (cuando `metodo`
+ * está en `clase.metodos` y no como atributo de instancia).
+ *
+ * Al llamarlo (`OP_LLAMAR` con un `VAL_METODO_LIGADO`), la VM inserta
+ * el receptor como primer argumento del frame, de modo que el primer
+ * parámetro de la función (convencionalmente `yo`) lo recibe sin que
+ * el llamador lo escriba.
+ */
+struct MetodoLigado {
+    Valor receptor;       /* normalmente VAL_INSTANCIA; ownership con refcount */
+    Closure *metodo;      /* refcount compartido con la clase */
+    int refcount;
+};
+
+MetodoLigado *metodo_ligado_nuevo(const Valor *receptor, Closure *metodo);
+void metodo_ligado_retener(MetodoLigado *m);
+void metodo_ligado_liberar(MetodoLigado *m);
+
+Valor valor_metodo_ligado(MetodoLigado *m);
 
 /* ──────────────────────────────────────────────────────────────────
  * Constructores

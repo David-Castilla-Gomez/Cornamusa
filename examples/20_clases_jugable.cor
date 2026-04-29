@@ -1,0 +1,58 @@
+# Clases, métodos, herencia y polimorfismo (Cornamusa v0.7.0).
+#
+# Ejecutar con: cornamusa --bytecode examples/20_clases_jugable.cor
+#
+# Demuestra:
+#   - Constructor `__iniciar__` con args.
+#   - Métodos con `yo` autoinyectado.
+#   - Mutación de atributos via métodos (chaining con `retornar yo`).
+#   - Herencia simple con `extiende`.
+#   - Override de métodos en subclase.
+#   - Polimorfismo: el método correcto se dispatcha según la clase real.
+
+clase Animal:
+    funcion __iniciar__(yo, nombre, edad):
+        yo.nombre = nombre
+        yo.edad = edad
+    fin funcion
+
+    funcion describir(yo):
+        imprimir(yo.nombre, "tiene", yo.edad, "anos y dice:", yo.sonido())
+    fin funcion
+
+    funcion sonido(yo):
+        retornar "(silencio)"
+    fin funcion
+
+    funcion cumplir(yo):
+        yo.edad = yo.edad + 1
+        retornar yo
+    fin funcion
+fin clase
+
+clase Perro extiende Animal:
+    funcion sonido(yo):
+        retornar "guau"
+    fin funcion
+fin clase
+
+clase Gato extiende Animal:
+    funcion sonido(yo):
+        retornar "miau"
+    fin funcion
+fin clase
+
+# Crear y describir cada animal.
+animales = [Perro("Rex", 5), Gato("Misi", 3), Animal("???", 0)]
+
+para a en animales:
+    a.describir()
+fin para
+
+imprimir("---")
+imprimir("Tras 3 anos:")
+
+# Chaining: mutar y describir.
+para a en animales:
+    a.cumplir().cumplir().cumplir().describir()
+fin para

@@ -94,6 +94,17 @@ typedef enum {
     OP_INTENTAR_FIN,            /* pop el handler frame al salir limpio del intentar */
     OP_LANZAR,                  /* pop la excepción del tope, salta al handler */
 
+    /* ---- Clases / atributos (v0.7.0 Fase 8 sesión 1) ---- */
+    OP_CLASE,                   /* [byte name_idx]: crea Clase y empuja VAL_CLASE */
+    OP_OBTENER_ATRIBUTO,        /* [byte name_idx]: pop obj, push obj.attr */
+    OP_ASIGNAR_ATRIBUTO,        /* [byte name_idx]: pop valor, pop obj, set obj.attr=valor, push nulo */
+
+    /* ---- Métodos (v0.7.0 Fase 8 sesión 2) ---- */
+    OP_METODO,                  /* [byte name_idx]: pop closure, set clase.metodos[name] = closure (clase queda en stack) */
+
+    /* ---- Herencia (v0.7.0 Fase 8 sesión 4) ---- */
+    OP_HEREDAR,                 /* pop super (sin operando): copia super.metodos → clase.metodos y enlaza superclase. Stack: [..., clase, super] → [..., clase]. */
+
     /* ---- Built-in print (atajo del compilador) ---- */
     OP_IMPRIMIR,
 

@@ -6,6 +6,49 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.7.0] — 2026-04-29 — clases, métodos, herencia (Fase 8)
+
+Cornamusa pasa a ser un lenguaje OOP completo: clases definibles por
+el usuario con atributos mutables, métodos con `yo` autoinyectado,
+constructor `__iniciar__`, y herencia simple por copia de métodos.
+**71 tests verde**.
+
+### Añadido (v0.7.0)
+- **Tipos nuevos en `valor.{h,c}`**:
+  - **`VAL_CLASE`** + `struct Clase`: nombre heap-duplicado, `metodos` (Diccionario cadena → VAL_FUNCION_BC), `superclase` opcional, refcount. Pretty-printed `<clase Foo>`.
+  - **`VAL_INSTANCIA`** + `struct Instancia`: referencia compartida a su `Clase`, `atributos` (Diccionario propio modificable), refcount. Pretty-printed `<instancia de Foo>`.
+  - **`VAL_METODO_LIGADO`** + `struct MetodoLigado`: receptor (Valor con refcount) + método (Closure con refcount). Construido al acceder a `instancia.metodo` cuando el nombre está en `clase.metodos`. Pretty-printed `<metodo nombre>`. `valor_nombre_tipo` lo reporta como `"funcion"`.
+  - Lifecycle (destruir/clonar/iguales/es_verdadero/es_hashable/nombre_tipo) wired para los tres tipos. Identidad por puntero; ninguno hashable.
+- **5 opcodes nuevos** en bytecode:
+  - **`OP_CLASE [byte name_idx]`**: crea `Clase` con el nombre indicado y la empuja.
+  - **`OP_OBTENER_ATRIBUTO [byte name_idx]`**: lookup de instancia con fallback. Primero busca en `instancia.atributos` (override); si no está, busca en `instancia.clase.metodos` y, si encuentra una closure, crea un `MetodoLigado(instancia, closure)`. `ErrorDeAtributo` si no existe en ninguno; `ErrorDeTipo` si el objeto no es instancia.
+  - **`OP_ASIGNAR_ATRIBUTO [byte name_idx]`**: pop valor, pop instancia, set `atributos[nombre] = valor`, push nulo (la sentencia descarta).
+  - **`OP_METODO [byte name_idx]`**: con stack `[..., clase, closure]`, pop closure y guardarla en `clase.metodos[name]`; clase queda en el tope para más métodos.
+  - **`OP_HEREDAR`** (sin operando): con stack `[..., clase, super]`, pop super, copia `super.metodos → clase.metodos` (los OP_METODO posteriores sobrescriben para implementar override) y enlaza `clase.superclase = super`.
+- **`OP_LLAMAR` despacha sobre tres nuevos tipos de callee**:
+  - **`VAL_CLASE`**: instancia la clase. Si tiene `__iniciar__`, lo invoca como método con la instancia recién creada como receptor; aridad chequeada incluyendo `yo` (el error reporta cifras sin el receptor). Sin `__iniciar__` y `n_args > 0` → error claro. La llamada `Foo(args)` siempre devuelve la instancia, no lo que `__iniciar__` retorne.
+  - **`VAL_METODO_LIGADO`**: inserta el receptor como primer argumento del frame (`memmove` los args un slot arriba, reemplaza el callee con la closure y pone el receptor en slot 1). Aridad chequeada con receptor incluido; el error reporta cifras sin él.
+- **Nuevo flag `CallFrame.es_constructor`**: marca el frame de `__iniciar__` para que `OP_RETORNAR` descarte el valor de retorno y devuelva la instancia (slot 1) en su lugar.
+- **Compilación de `SENT_CLASE`** completa:
+  - Cuerpo admite `SENT_PASAR` y `SENT_FUNCION` (métodos); cualquier otra sentencia produce error claro.
+  - Para cada método: emite la closure vía el nuevo helper `emitir_closure_de_funcion` (refactor de `compilar_funcion`, factor común) + `OP_METODO [name_idx]`.
+  - `extiende Padre` (un solo padre): emite la expresión del padre + `OP_HEREDAR` antes de los métodos. Herencia múltiple rechazada en compilación.
+- **Compilación de `EXPR_ATRIBUTO`** (lectura) y **`obj.attr = valor`** (escritura):
+  - `obj.attr` lectura → `obj` + `OP_OBTENER_ATRIBUTO [idx]`.
+  - `obj.attr = valor` → `obj` + `valor` + `OP_ASIGNAR_ATRIBUTO [idx]` + `OP_DESCARTAR`.
+- **`yo` por convención** (decisión B5+B6): el primer parámetro de un método (idiomáticamente `yo`) recibe la instancia automáticamente al llamarlo via `instancia.metodo(args)`. No es palabra reservada.
+- **Constructor `__iniciar__`** (dunder en castellano, decisión B5+B6) reemplaza el patrón `__init__` de Python.
+- **Métodos encadenables**: `obj.m1().m2().m3()` retornando `yo`.
+- **Herencia simple**: el hijo recibe los métodos del padre (por copia al ejecutar `OP_HEREDAR`); puede sobrescribir en su propio cuerpo. Hereda también `__iniciar__` si no lo redefine. Polimorfismo: cada subclase dispatcha a su propio método al ser invocado.
+- **Limitaciones documentadas v0.7.0** (a cubrir en v0.7.x patches):
+  - Sin `super` (la palabra clave existe en el lexer pero no se usa todavía).
+  - Sin `__cadena__` (usar `imprimir(obj.atributo)` o métodos custom mientras tanto).
+  - Sin operator overloading (otros dunders como `__sumar__`, `__igual__`, etc.).
+  - Sin atributos de clase (solo de instancia).
+  - Solo herencia simple (parser admite múltiples padres pero el compilador rechaza).
+- **`tests/unit/test_bytecode_clases.c`** con 18 grupos cubriendo: definición y `tipo()`, instanciación, atributos (lectura/escritura/sobrescritura/mutación compartida), errores runtime (atributo inexistente / asignación a no-instancia / lectura de no-instancia / llamada con args), métodos (sin args, con args, mutación via `yo`, chaining, aridad incorrecta, sombrea con atributo, tipo correcto), constructor `__iniciar__` (con y sin args, retorno ignorado, aridad incorrecta, combinado con métodos), herencia (métodos heredados, override, constructor heredado, polimorfismo, mezcla override/heredado), errores compilación (herencia múltiple, heredar de no-clase), identidad por `es`.
+- **Versión** bump a `0.7.0`.
+
 ## [0.6.3] — 2026-04-29 — excepciones en bytecode
 
 El motor bytecode ahora maneja `intentar`/`atrapar` y `lanzar`. Cierra

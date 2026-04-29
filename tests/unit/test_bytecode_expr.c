@@ -231,11 +231,10 @@ static void test_errores_compilacion(void) {
        de runtime cuando la variable no está definida. */
     verificar_error("x", "no esta definido");
     verificar_error("x + 1", "no esta definido");
-    /* Lambdas y colecciones sí compilan ahora — verificadas en sus
-       suites específicas. Solo dejamos atributos como pendiente. */
+    /* Lambdas, colecciones y atributos compilan ahora — verificados en
+       sus suites específicas (clases para atributos). */
     verificar("[1, 2]", "[1, 2]");
     verificar("lambda x: x", "<funcion lambda>");
-    verificar_error("a.b", "no esta implementada");
 }
 
 int main(void) {

@@ -147,6 +147,11 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_INTENTAR_INICIAR: return instruccion_u16("OP_INTENTAR_INICIAR", c, offset, +1, out);
         case OP_INTENTAR_FIN:    return instruccion_simple("OP_INTENTAR_FIN", offset, out);
         case OP_LANZAR:          return instruccion_simple("OP_LANZAR", offset, out);
+        case OP_CLASE:           return instruccion_byte("OP_CLASE", c, offset, out);
+        case OP_OBTENER_ATRIBUTO: return instruccion_byte("OP_OBTENER_ATRIBUTO", c, offset, out);
+        case OP_ASIGNAR_ATRIBUTO: return instruccion_byte("OP_ASIGNAR_ATRIBUTO", c, offset, out);
+        case OP_METODO:          return instruccion_byte("OP_METODO", c, offset, out);
+        case OP_HEREDAR:         return instruccion_simple("OP_HEREDAR", offset, out);
 
         case OP_IMPRIMIR:        return instruccion_byte("OP_IMPRIMIR", c, offset, out);
         case OP_BUILD_LISTA:     return instruccion_byte("OP_BUILD_LISTA", c, offset, out);

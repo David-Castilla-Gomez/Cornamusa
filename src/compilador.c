@@ -661,11 +661,25 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return true;
         }
 
+        case EXPR_ATRIBUTO: {
+            if (!compilador_compilar_expr(c, e->como.atributo.objeto)) return false;
+            int idx = chunk_agregar_constante(c->actual->chunk,
+                valor_cadena_duplicar(e->como.atributo.nombre,
+                                        e->como.atributo.longitud));
+            if (idx < 0 || idx > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "demasiadas constantes para v0.7 (operando byte)");
+                return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
+                                (uint8_t)idx, e->linea);
+            return true;
+        }
+
         /* Aplazadas a sesiones siguientes. */
         case EXPR_LITERAL_F_CADENA:
-        case EXPR_ATRIBUTO:
             error_compilacion(c, e->linea, e->columna,
-                "esta forma de expresion no esta implementada en bytecode v0.6.2");
+                "esta forma de expresion no esta implementada en bytecode v0.7");
             return false;
     }
 
@@ -693,6 +707,7 @@ bool compilador_compilar_expr_top(Compilador *c, const Expr *e) {
 static bool compilar_funcion(Compilador *c, const Sent *s);
 static bool compilar_para(Compilador *c, const Sent *s);
 static bool compilar_intentar(Compilador *c, const Sent *s);
+static bool compilar_clase(Compilador *c, const Sent *s);
 
 static bool compilar_asignar(Compilador *c, const Sent *s) {
     Expr *destino = s->como.asignar.destino;
@@ -703,6 +718,24 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
         if (!compilador_compilar_expr(c, destino->como.indice.indice)) return false;
         if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
         chunk_emitir_byte(c->actual->chunk, OP_ASIGNAR_INDICE, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        return true;
+    }
+
+    /* Asignación a atributo: `obj.attr = valor` (Fase 8 v0.7.0). */
+    if (destino->tipo == EXPR_ATRIBUTO) {
+        if (!compilador_compilar_expr(c, destino->como.atributo.objeto)) return false;
+        if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+        int idx = chunk_agregar_constante(c->actual->chunk,
+            valor_cadena_duplicar(destino->como.atributo.nombre,
+                                    destino->como.atributo.longitud));
+        if (idx < 0 || idx > 255) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiadas constantes para v0.7 (operando byte)");
+            return false;
+        }
+        chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_ATRIBUTO,
+                            (uint8_t)idx, s->linea);
         chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
         return true;
     }
@@ -1057,14 +1090,16 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             return true;
         }
 
-        /* Sin soporte aún. */
         case SENT_CLASE:
+            return compilar_clase(c, s);
+
+        /* Sin soporte aún. */
         case SENT_IMPORTAR:
         case SENT_DESDE_IMPORTAR:
         case SENT_GLOBAL:
         case SENT_NOLOCAL:
             error_compilacion(c, s->linea, s->columna,
-                "esta sentencia aun no esta implementada en bytecode v0.6 sesion 5");
+                "esta sentencia aun no esta implementada en bytecode v0.7");
             return false;
     }
     error_compilacion(c, s->linea, s->columna,
@@ -1085,32 +1120,24 @@ bool compilador_compilar_programa(Compilador *c, Sent **sents, int n) {
 }
 
 /*
- * Compila una declaración de función:
- *   funcion nombre(p1, p2, ...): cuerpo fin funcion
+ * Helper compartido por funciones (`SENT_FUNCION`) y métodos de clase
+ * (cuerpo de `SENT_CLASE`): compila el cuerpo de la función como una
+ * `FuncionBC` independiente y emite **OP_CLOSURE** en el chunk actual,
+ * dejando la closure recién creada en el tope del stack.
  *
- * Crea una FuncionBC nueva con su propio chunk, abre un scope hijo
- * con los parámetros como locales en slots 1..aridad, compila el
- * cuerpo en ese scope, emite OP_NULO+OP_RETORNAR si el cuerpo no
- * terminaba ya con `retornar`, y deja la FuncionBC como constante
- * en el chunk padre seguida de OP_DEFINIR_GLOBAL <nombre>.
- *
- * Sin closures: el scope hijo no puede ver locales del padre. Las
- * funciones anidadas tienen acceso solo a sus propios params/locales
- * y a las globales.
+ * NO emite código de binding (DEFINIR_GLOBAL / ASIGNAR_LOCAL / METODO):
+ * eso lo decide el llamador.
  */
-static bool compilar_funcion(Compilador *c, const Sent *s) {
+static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     const char *nombre = s->como.funcion.nombre;
     int len_nombre = s->como.funcion.longitud_nombre;
     int n_params = s->como.funcion.n_parametros;
     Parametro *params = s->como.funcion.parametros;
 
-    /* Aridad mínima (parámetros sin valor por defecto) y máxima
-       (todos los parámetros). En v0.6 S5 NO soportamos defaults — el
-       usuario debe pasar exactamente n_params argumentos. */
     for (int i = 0; i < n_params; i++) {
         if (params[i].valor_defecto != NULL) {
             error_compilacion(c, s->linea, s->columna,
-                "valores por defecto en parametros aun no estan en bytecode v0.6 sesion 5");
+                "valores por defecto en parametros aun no estan en bytecode v0.7");
             return false;
         }
     }
@@ -1121,14 +1148,11 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
         return false;
     }
 
-    /* Abrir scope anidado. */
     ScopeCompilador scope_fn;
     scope_iniciar(&scope_fn, &fn->chunk, true, c->actual);
     scope_fn.funcion = fn;
-    /* Slot 0 = la propia función (callee), nombre por convención. */
     scope_fn.locales[0].nombre = nombre;
     scope_fn.locales[0].longitud_nombre = len_nombre;
-    /* Registrar parámetros como locales en slots 1..n_params. */
     for (int i = 0; i < n_params; i++) {
         if (scope_fn.n_locales >= COMPILADOR_LOCALES_MAX) {
             error_compilacion(c, s->linea, s->columna,
@@ -1138,15 +1162,13 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
         }
         scope_fn.locales[scope_fn.n_locales].nombre = params[i].nombre;
         scope_fn.locales[scope_fn.n_locales].longitud_nombre = params[i].longitud_nombre;
+        scope_fn.locales[scope_fn.n_locales].capturado = false;
         scope_fn.n_locales++;
     }
 
     ScopeCompilador *prev = c->actual;
     c->actual = &scope_fn;
     bool ok = compilador_compilar_sent(c, s->como.funcion.cuerpo);
-    /* Si el cuerpo terminó sin `retornar`, emitimos OP_NULO+OP_RETORNAR
-       implícitos. Esto añade bytes "muertos" si el cuerpo SÍ terminó
-       con `retornar` — pero no se ejecutan. Al estilo clox. */
     chunk_emitir_byte(&fn->chunk, OP_NULO, s->linea);
     chunk_emitir_byte(&fn->chunk, OP_RETORNAR, s->linea);
     c->actual = prev;
@@ -1156,36 +1178,38 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
         return false;
     }
 
-    /*
-     * Emitir en el chunk padre:
-     *   OP_CONST <plantilla>
-     *   ⇒ no, con upvalues no podemos usar OP_CONST porque la plantilla
-     *      necesita ser convertida a Closure en runtime.
-     *   OP_CLOSURE <fn_idx> <upvalue_pairs...>
-     *   OP_DEFINIR_GLOBAL <nombre>
-     */
-    Valor v_plantilla = valor_plantilla(fn);    /* toma posesión del refcount */
+    Valor v_plantilla = valor_plantilla(fn);
     int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);
     if (fn_idx < 0 || fn_idx > 255) {
         error_compilacion(c, s->linea, s->columna,
-            "demasiadas constantes para v0.6 (operando byte)");
+            "demasiadas constantes para v0.7 (operando byte)");
         return false;
     }
     chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
                         (uint8_t)fn_idx, s->linea);
-    /* Emitir metadata de upvalues: por cada upvalue del scope que
-       acabamos de cerrar, emitir [es_local, indice]. */
     for (int i = 0; i < scope_fn.n_upvalues; i++) {
         chunk_emitir_byte(c->actual->chunk,
             scope_fn.upvalues[i].es_local ? 1 : 0, s->linea);
         chunk_emitir_byte(c->actual->chunk,
             scope_fn.upvalues[i].indice, s->linea);
     }
+    return true;
+}
 
-    /* La closure recién creada está en el tope del stack. Si estamos
-       en función la registramos como local (mismo patrón que `x = 5`
-       creando un nuevo local: el valor ya está en el slot final, no
-       emitimos ASIGNAR). En el scope raíz, la asignamos al global. */
+/*
+ * Compila una declaración de función:
+ *   funcion nombre(p1, p2, ...): cuerpo fin funcion
+ *
+ * Construye la closure (vía `emitir_closure_de_funcion`) y la registra
+ * como local (dentro de función) o como global (top-level).
+ */
+static bool compilar_funcion(Compilador *c, const Sent *s) {
+    const char *nombre = s->como.funcion.nombre;
+    int len_nombre = s->como.funcion.longitud_nombre;
+
+    if (!emitir_closure_de_funcion(c, s)) return false;
+
+    /* La closure recién creada está en el tope del stack. */
     if (c->actual->es_funcion) {
         /* Verificar si ya existe un local con ese nombre (redefinir). */
         int existente = buscar_local(c->actual, nombre, len_nombre);
@@ -1401,5 +1425,116 @@ static bool compilar_intentar(Compilador *c, const Sent *s) {
 
     /* Saltar al final. */
     parchear_salto(c, salto_fin, s->linea);
+    return true;
+}
+
+/*
+ * SENT_CLASE en bytecode (Fase 8 v0.7.0).
+ *
+ * Plan de compilación (con métodos S2):
+ *   OP_CLASE [name_idx]              ; clase en stack
+ *   por cada método m en cuerpo:
+ *     emitir_closure_de_funcion(m)   ; closure encima de la clase
+ *     OP_METODO [m_name_idx]         ; pop closure, set clase.metodos[m]
+ *   binding (DEFINIR_GLOBAL / local) ; pop clase y guardarla
+ *
+ * El cuerpo de la clase admite:
+ *   - SENT_PASAR (no-op).
+ *   - SENT_FUNCION (declaración de método).
+ * Otras sentencias se rechazan con error claro.
+ *
+ * Limitaciones de v0.7.0:
+ *   - Sin herencia: `extiende` se rechaza (llega en S4).
+ *   - Sin atributos de clase ni statements arbitrarios en el cuerpo.
+ */
+static bool compilar_clase(Compilador *c, const Sent *s) {
+    if (s->como.clase.n_superclases > 1) {
+        error_compilacion(c, s->linea, s->columna,
+            "herencia multiple aun no esta en bytecode v0.7.0 (solo un padre permitido)");
+        return false;
+    }
+
+    /* Empujar el nombre como constante y emitir OP_CLASE. */
+    int idx_nombre = chunk_agregar_constante(c->actual->chunk,
+        valor_cadena_duplicar(s->como.clase.nombre,
+                                s->como.clase.longitud_nombre));
+    if (idx_nombre < 0 || idx_nombre > 255) {
+        error_compilacion(c, s->linea, s->columna,
+            "demasiadas constantes para v0.7 (operando byte)");
+        return false;
+    }
+    chunk_emitir_byte2(c->actual->chunk, OP_CLASE,
+                        (uint8_t)idx_nombre, s->linea);
+
+    /* Si tiene un padre: compilar la expresión del padre, dejándola
+       en el tope. Después OP_HEREDAR pop super, copia métodos en la
+       clase, deja la clase en el tope para los métodos siguientes. */
+    if (s->como.clase.n_superclases == 1) {
+        if (!compilador_compilar_expr(c, s->como.clase.superclases[0])) return false;
+        chunk_emitir_byte(c->actual->chunk, OP_HEREDAR, s->linea);
+    }
+
+    /* Recorrer el cuerpo emitiendo OP_METODO por cada SENT_FUNCION. */
+    Sent *cuerpo = s->como.clase.cuerpo;
+    Sent **items = NULL;
+    int n_items = 0;
+    if (cuerpo && cuerpo->tipo == SENT_BLOQUE) {
+        items = cuerpo->como.bloque.sentencias;
+        n_items = cuerpo->como.bloque.n_sentencias;
+    } else if (cuerpo) {
+        /* Cuerpo de una sola sentencia (one-liner). */
+        items = &cuerpo;
+        n_items = 1;
+    }
+
+    for (int i = 0; i < n_items; i++) {
+        Sent *body = items[i];
+        if (body->tipo == SENT_PASAR) continue;
+        if (body->tipo != SENT_FUNCION) {
+            error_compilacion(c, body->linea, body->columna,
+                "el cuerpo de una clase solo admite metodos ('funcion ...') o 'pasar' en v0.7.0");
+            return false;
+        }
+        /* Emitir la closure del método. La clase sigue en el stack
+           debajo. Tras OP_CLOSURE el stack es [..., clase, closure]. */
+        if (!emitir_closure_de_funcion(c, body)) return false;
+        /* OP_METODO pops la closure y la guarda en clase.metodos[name];
+           la clase queda en el tope del stack. */
+        int idx_metodo = chunk_agregar_constante(c->actual->chunk,
+            valor_cadena_duplicar(body->como.funcion.nombre,
+                                    body->como.funcion.longitud_nombre));
+        if (idx_metodo < 0 || idx_metodo > 255) {
+            error_compilacion(c, body->linea, body->columna,
+                "demasiadas constantes para v0.7 (operando byte)");
+            return false;
+        }
+        chunk_emitir_byte2(c->actual->chunk, OP_METODO,
+                            (uint8_t)idx_metodo, body->linea);
+    }
+
+    /* Registrar la clase como local o global. */
+    if (c->actual->es_funcion) {
+        int existente = buscar_local(c->actual, s->como.clase.nombre,
+                                        s->como.clase.longitud_nombre);
+        if (existente >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)existente, s->linea);
+        } else {
+            int slot = agregar_local(c, s->como.clase.nombre,
+                                          s->como.clase.longitud_nombre,
+                                          s->linea);
+            if (slot < 0) return false;
+        }
+    } else {
+        int idx_g = agregar_nombre_global(c, s->como.clase.nombre,
+                                              s->como.clase.longitud_nombre);
+        if (idx_g < 0 || idx_g > 255) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiadas constantes para v0.7 (operando byte)");
+            return false;
+        }
+        chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                            (uint8_t)idx_g, s->linea);
+    }
     return true;
 }
