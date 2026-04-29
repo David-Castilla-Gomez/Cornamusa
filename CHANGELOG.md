@@ -6,6 +6,36 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.6.3] — 2026-04-29 — excepciones en bytecode
+
+El motor bytecode ahora maneja `intentar`/`atrapar` y `lanzar`. Cierra
+el motor casi-completo módulo atributos (Fase 8) y módulos.
+
+### Añadido (v0.6.3)
+- **`VAL_EXCEPCION`** y **`struct Excepcion`** en `valor.{h,c}`: tipo runtime con clase + mensaje (cadenas heap-duplicadas) y refcount. Pretty-printer formato `<clase>: <mensaje>`.
+- **Built-ins de construcción de excepciones**:
+  - **`Excepcion(clase, mensaje)`**: constructor genérico.
+  - **`ErrorAritmetico("...")`**, **`ErrorDeTipo("...")`**, **`ErrorDeValor("...")`**, **`ErrorDeIndice("...")`**, **`ErrorDeClave("...")`**, **`ErrorDeNombre("...")`**: atajos con clase prerellenada (1 argumento = mensaje).
+- **3 opcodes nuevos** y `HandlerFrame` stack en VM:
+  - **`OP_INTENTAR_INICIAR [u16 offset_handler]`**: empuja un `HandlerFrame` con el snapshot del estado (n_frames, tope, n_open_upvalues) y la dirección del handler. Hasta 64 handlers anidados (`VM_HANDLERS_MAX`).
+  - **`OP_INTENTAR_FIN`**: pop el handler frame al salir limpio del bloque `intentar`.
+  - **`OP_LANZAR`**: pop la excepción del tope. Si es cadena, se envuelve como `Excepcion("Excepcion", cadena)`. Busca el handler frame top: si no hay → error en VM con clase y mensaje. Si hay → cierra upvalues abiertos por encima del handler, descarta slots del stack hasta el `tope_offset`, hace pop de frames hasta `frame_idx`, y empuja la excepción para que el handler la consuma. Salta a `ip_handler`.
+- **Compilación de `SENT_INTENTAR`**:
+  - Estructura: `INTENTAR_INICIAR offset → cuerpo → INTENTAR_FIN → SALTAR fin → handler: → atrapador → fin:`.
+  - Soporta `atrapar [Tipo] [como alias]:`. El alias se registra como local (mismo patrón que `x = 5` creando un local nuevo: el valor de la excepción ya está en su slot final tras el `OP_LANZAR`).
+  - El tipo, si está presente, se evalúa pero **no se compara** todavía (limitación v0.6.3 — `atrapar Excepcion como e:` atrapa cualquier cosa). Atrapar discriminando por tipo llega en v0.6.4.
+- **Compilación de `SENT_LANZAR`**: compila la expresión + `OP_LANZAR`. `lanzar` desnudo (re-raise) aún no soportado.
+- **Limitaciones documentadas v0.6.3** (todas a cubrir en v0.6.4+):
+  - Solo el primer atrapador de un `intentar` se compila (los demás se aceptan en parser pero se ignoran).
+  - Tipo de excepción (`atrapar ErrorAritmetico:`) no discrimina; el handler atrapa todo.
+  - Cláusula `sino` (rama "sin excepción") aún no compila — error explícito.
+  - Cláusula `finalmente` aún no compila — error explícito.
+  - `lanzar` sin valor (re-raise) aún no compila.
+  - Tree-walking sigue sin implementar excepciones (decisión B2).
+- **`tests/unit/test_bytecode_excepciones.c`** con 9 grupos: construcción de excepciones (genérica + atajos), atrapar simple con alias, mensaje del alias, cuerpo sin excepción no entra al atrapar, excepción dentro de función propaga al llamador, programa `dividir` robusto (con/sin cero), excepciones no atrapadas como error VM, anidamiento de `intentar` (interno atrapa / interno re-lanza al externo), `lanzar` cadena (azúcar a `Excepcion("Excepcion", cadena)`).
+- **Versión** bump a `0.6.3`.
+- **70 tests verde** (27 unit + 43 integración).
+
 ## [0.6.2] — 2026-04-29 — closures + lambdas + slicing en bytecode
 
 El motor bytecode ahora ejecuta el lenguaje completo módulo

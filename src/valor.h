@@ -54,6 +54,7 @@ typedef enum {
     VAL_FUNCION_BC,    /* closure ejecutable (plantilla + upvalues) */
     VAL_PLANTILLA_BC,  /* plantilla de función (en constant pool, sin upvalues) */
     VAL_ITERADOR,      /* iterador interno (uso VM-only para `para`) */
+    VAL_EXCEPCION,     /* excepción runtime con clase + mensaje */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -66,6 +67,7 @@ typedef struct FuncionBC FuncionBC;
 typedef struct Iterador Iterador;
 typedef struct Closure Closure;
 typedef struct Upvalue Upvalue;
+typedef struct Excepcion Excepcion;
 
 /*
  * Firma de una función nativa (puntero a función C). Recibe un
@@ -141,6 +143,7 @@ typedef struct Valor {
         Closure *closure;   /* refcount; función compilada a bytecode con upvalues */
         FuncionBC *plantilla; /* refcount; plantilla en constant pool */
         Iterador *iterador; /* uso VM-only; vida corta en stack */
+        Excepcion *excepcion; /* refcount; excepción runtime */
     } como;
 } Valor;
 
@@ -305,6 +308,26 @@ void iter_destruir(Iterador *it);
 bool iter_siguiente(Iterador *it, Valor *out);
 
 Valor valor_iterador(Iterador *it);
+
+/*
+ * Excepción runtime: clase (cadena) + mensaje (cadena). v0.6.3 usa
+ * un modelo simple de pares cadena→cadena; cuando lleguen las clases
+ * (Fase 8) se reemplazará por instancias de la clase `Excepcion`.
+ */
+struct Excepcion {
+    char *clase;          /* heap-duplicated; se libera con la struct */
+    int longitud_clase;
+    char *mensaje;        /* heap-duplicated */
+    int longitud_mensaje;
+    int refcount;
+};
+
+Excepcion *excepcion_nueva(const char *clase, int len_clase,
+                            const char *mensaje, int len_mensaje);
+void excepcion_retener(Excepcion *e);
+void excepcion_liberar(Excepcion *e);
+
+Valor valor_excepcion(Excepcion *e);
 
 /* ──────────────────────────────────────────────────────────────────
  * Constructores

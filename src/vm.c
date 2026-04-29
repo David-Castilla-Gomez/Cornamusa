@@ -132,6 +132,7 @@ void vm_iniciar(VM *vm) {
     vm->n_frames = 0;
     vm->globales = dicc_nuevo();
     vm->open_upvalues = NULL;
+    vm->n_handlers = 0;
     vm->error.tuvo_error = false;
     vm->error.mensaje[0] = '\0';
     vm->error.linea = 0;
@@ -750,6 +751,90 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 Valor nuevo = sacar(vm);
                 valor_destruir(&frame->base_pila[slot]);
                 frame->base_pila[slot] = nuevo;
+                break;
+            }
+
+            /* ─── Excepciones (v0.6.3) ─── */
+            case OP_INTENTAR_INICIAR: {
+                /* Push un handler con frame_idx, tope_offset, n_open_upvalues
+                   actuales y el ip del handler (calculado del offset). */
+                uint8_t hi = LEER_BYTE();
+                uint8_t lo = LEER_BYTE();
+                uint16_t offset = ((uint16_t)hi << 8) | lo;
+                if (vm->n_handlers >= VM_HANDLERS_MAX) {
+                    VM_ERROR("desbordamiento de pila de handlers (>%d)",
+                             VM_HANDLERS_MAX);
+                    return VM_ERROR_RUNTIME;
+                }
+                HandlerFrame *h = &vm->handlers[vm->n_handlers++];
+                h->frame_idx = vm->n_frames;
+                h->tope_offset = (int)(vm->tope - vm->pila);
+                /* Contar open upvalues (linked list). */
+                int n_uv = 0;
+                for (Upvalue *u = vm->open_upvalues; u != NULL; u = u->siguiente) n_uv++;
+                h->n_open_upvalues = n_uv;
+                h->ip_handler = frame->ip + offset;
+                break;
+            }
+            case OP_INTENTAR_FIN: {
+                /* Salida limpia del intentar: pop el handler. */
+                if (vm->n_handlers == 0) {
+                    VM_ERROR("OP_INTENTAR_FIN sin handler activo");
+                    return VM_ERROR_RUNTIME;
+                }
+                vm->n_handlers--;
+                break;
+            }
+            case OP_LANZAR: {
+                /* Pop la excepción del tope. Convierte cadena a Excepcion
+                   genérica si hace falta. Si no es VAL_EXCEPCION ni
+                   VAL_CADENA → error de tipo. */
+                Valor exc_v = sacar(vm);
+                if (exc_v.tipo == VAL_CADENA) {
+                    Excepcion *e = excepcion_nueva("Excepcion", 9,
+                        exc_v.como.cadena.texto, exc_v.como.cadena.longitud);
+                    valor_destruir(&exc_v);
+                    if (!e) { VM_ERROR("memoria insuficiente"); return VM_ERROR_RUNTIME; }
+                    exc_v = valor_excepcion(e);
+                }
+                if (exc_v.tipo != VAL_EXCEPCION) {
+                    VM_ERROR("ErrorDeTipo: solo se pueden lanzar excepciones, no '%s'",
+                             valor_nombre_tipo(&exc_v));
+                    valor_destruir(&exc_v);
+                    return VM_ERROR_RUNTIME;
+                }
+                if (vm->n_handlers == 0) {
+                    /* Excepción sin atrapar: produce error en el VM
+                       con clase + mensaje. */
+                    const Excepcion *ex = exc_v.como.excepcion;
+                    vm->error.tuvo_error = true;
+                    vm->error.linea = linea_actual_frame(frame);
+                    snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                        "%.*s: %.*s",
+                        ex->longitud_clase, ex->clase,
+                        ex->longitud_mensaje, ex->mensaje);
+                    valor_destruir(&exc_v);
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Pop el handler top y unwind. */
+                HandlerFrame h = vm->handlers[--vm->n_handlers];
+                /* Cerrar upvalues que estén por encima del handler tope. */
+                cerrar_upvalues_hasta(vm, vm->pila + h.tope_offset);
+                /* Descartar slots del stack hasta volver al nivel del
+                   handler. */
+                while (vm->tope > vm->pila + h.tope_offset) {
+                    Valor v = *(--vm->tope);
+                    valor_destruir(&v);
+                }
+                /* Pop frames hasta el del handler. */
+                while (vm->n_frames > h.frame_idx) {
+                    vm->n_frames--;
+                }
+                /* Empujar la excepción para que el handler la consuma. */
+                empujar(vm, exc_v);
+                /* Saltar al handler. */
+                frame = &vm->frames[vm->n_frames - 1];
+                frame->ip = h.ip_handler;
                 break;
             }
 

@@ -532,6 +532,66 @@ static Valor nativa_conjunto(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Excepciones (v0.6.3)
+ *
+ * `Excepcion(clase, mensaje)` construye una excepción con clase y
+ * mensaje arbitrarios. Las clases canónicas (`ErrorAritmetico`, etc.)
+ * son atajos que rellenan automáticamente la clase.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor crear_excepcion(EvalError *err, const char *clase_default,
+                              int n_args, Valor *args,
+                              int linea, int columna) {
+    /* Si solo se pasa un argumento, es el mensaje y la clase se toma
+       de `clase_default`. Si se pasan dos, son (clase, mensaje). */
+    const char *cls = clase_default;
+    int len_cls = (int)strlen(clase_default);
+    const char *msg = "";
+    int len_msg = 0;
+    if (n_args == 1) {
+        if (args[0].tipo != VAL_CADENA) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: %s() espera una cadena con el mensaje",
+                clase_default);
+        }
+        msg = args[0].como.cadena.texto;
+        len_msg = args[0].como.cadena.longitud;
+    } else if (n_args == 2) {
+        if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: Excepcion() espera (clase: cadena, mensaje: cadena)");
+        }
+        cls = args[0].como.cadena.texto;
+        len_cls = args[0].como.cadena.longitud;
+        msg = args[1].como.cadena.texto;
+        len_msg = args[1].como.cadena.longitud;
+    } else {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: %s() acepta 1 o 2 argumentos, recibio %d",
+            clase_default, n_args);
+    }
+    Excepcion *e = excepcion_nueva(cls, len_cls, msg, len_msg);
+    if (!e) return error_nativa(err, linea, columna, "memoria insuficiente");
+    return valor_excepcion(e);
+}
+
+#define DEFINIR_EXC_NATIVA(nombre)                                              \
+    static Valor nativa_exc_##nombre(EvalError *err, int n_args, Valor *args,   \
+                                       int linea, int columna) {                \
+        return crear_excepcion(err, #nombre, n_args, args, linea, columna);     \
+    }
+
+DEFINIR_EXC_NATIVA(Excepcion)
+DEFINIR_EXC_NATIVA(ErrorAritmetico)
+DEFINIR_EXC_NATIVA(ErrorDeTipo)
+DEFINIR_EXC_NATIVA(ErrorDeValor)
+DEFINIR_EXC_NATIVA(ErrorDeIndice)
+DEFINIR_EXC_NATIVA(ErrorDeClave)
+DEFINIR_EXC_NATIVA(ErrorDeNombre)
+
+#undef DEFINIR_EXC_NATIVA
+
+/* ──────────────────────────────────────────────────────────────────
  * Métodos sobre diccionarios
  * ────────────────────────────────────────────────────────────────── */
 
@@ -614,6 +674,14 @@ static const EntradaNativa NATIVAS[] = {
     {"claves",   6, nativa_claves},
     {"valores",  7, nativa_valores},
     {"conjunto", 8, nativa_conjunto},
+    /* Excepciones (v0.6.3). */
+    {"Excepcion",       9,  nativa_exc_Excepcion},
+    {"ErrorAritmetico", 15, nativa_exc_ErrorAritmetico},
+    {"ErrorDeTipo",     11, nativa_exc_ErrorDeTipo},
+    {"ErrorDeValor",    12, nativa_exc_ErrorDeValor},
+    {"ErrorDeIndice",   13, nativa_exc_ErrorDeIndice},
+    {"ErrorDeClave",    12, nativa_exc_ErrorDeClave},
+    {"ErrorDeNombre",   13, nativa_exc_ErrorDeNombre},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

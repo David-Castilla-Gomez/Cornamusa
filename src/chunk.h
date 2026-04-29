@@ -89,6 +89,11 @@ typedef enum {
     OP_ASIGNAR_UPVALUE,         /* [byte slot] */
     OP_CERRAR_UPVALUE,          /* cierra el upvalue del slot top y descarta */
 
+    /* ---- Excepciones (v0.6.3) ---- */
+    OP_INTENTAR_INICIAR,        /* [u16 offset_handler] empuja un handler frame */
+    OP_INTENTAR_FIN,            /* pop el handler frame al salir limpio del intentar */
+    OP_LANZAR,                  /* pop la excepción del tope, salta al handler */
+
     /* ---- Built-in print (atajo del compilador) ---- */
     OP_IMPRIMIR,
 

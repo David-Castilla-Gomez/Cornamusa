@@ -44,6 +44,9 @@ const char *opcode_nombre(OpCode op) {
         case OP_OBTENER_UPVALUE: return "OP_OBTENER_UPVALUE";
         case OP_ASIGNAR_UPVALUE: return "OP_ASIGNAR_UPVALUE";
         case OP_CERRAR_UPVALUE:  return "OP_CERRAR_UPVALUE";
+        case OP_INTENTAR_INICIAR: return "OP_INTENTAR_INICIAR";
+        case OP_INTENTAR_FIN:    return "OP_INTENTAR_FIN";
+        case OP_LANZAR:          return "OP_LANZAR";
         case OP_IMPRIMIR:        return "OP_IMPRIMIR";
         case OP_BUILD_LISTA:     return "OP_BUILD_LISTA";
         case OP_BUILD_TUPLA:     return "OP_BUILD_TUPLA";

@@ -407,6 +407,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_RANGO:
         case VAL_ITERADOR:
         case VAL_PLANTILLA_BC:
+        case VAL_EXCEPCION:
             return false;
         case VAL_TUPLA:
             /* Tupla es hashable solo si todos sus elementos lo son. */
@@ -873,6 +874,48 @@ Valor valor_iterador(Iterador *it) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Excepción
+ * ────────────────────────────────────────────────────────────────── */
+
+Excepcion *excepcion_nueva(const char *clase, int len_clase,
+                            const char *mensaje, int len_mensaje) {
+    Excepcion *e = (Excepcion *)malloc(sizeof(Excepcion));
+    if (!e) return NULL;
+    char *cls = (char *)malloc((size_t)len_clase + 1);
+    char *msg = (char *)malloc((size_t)len_mensaje + 1);
+    if (!cls || !msg) { free(cls); free(msg); free(e); return NULL; }
+    if (len_clase > 0) memcpy(cls, clase, (size_t)len_clase);
+    cls[len_clase] = '\0';
+    if (len_mensaje > 0) memcpy(msg, mensaje, (size_t)len_mensaje);
+    msg[len_mensaje] = '\0';
+    e->clase = cls;
+    e->longitud_clase = len_clase;
+    e->mensaje = msg;
+    e->longitud_mensaje = len_mensaje;
+    e->refcount = 1;
+    return e;
+}
+
+void excepcion_retener(Excepcion *e) { if (e) e->refcount++; }
+
+void excepcion_liberar(Excepcion *e) {
+    if (!e) return;
+    e->refcount--;
+    if (e->refcount > 0) return;
+    free(e->clase);
+    free(e->mensaje);
+    free(e);
+}
+
+Valor valor_excepcion(Excepcion *e) {
+    Valor v;
+    v.tipo = VAL_EXCEPCION;
+    v.dueno_cadena = false;
+    v.como.excepcion = e;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
 
@@ -936,6 +979,10 @@ void valor_destruir(Valor *v) {
         case VAL_ITERADOR:
             iter_destruir(v->como.iterador);
             v->como.iterador = NULL;
+            break;
+        case VAL_EXCEPCION:
+            excepcion_liberar(v->como.excepcion);
+            v->como.excepcion = NULL;
             break;
         default:
             break;
@@ -1027,6 +1074,9 @@ Valor valor_clonar(const Valor *v) {
             /* Iteradores no son clonables (son uso interno de la VM
                con vida corta). Devolvemos nulo si alguien lo intenta. */
             return valor_nulo();
+        case VAL_EXCEPCION:
+            excepcion_retener(v->como.excepcion);
+            return valor_excepcion(v->como.excepcion);
     }
     return valor_nulo();
 }
@@ -1226,6 +1276,13 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
         case VAL_ITERADOR:
             n = snprintf(buffer, (size_t)capacidad, "<iterador>");
             break;
+        case VAL_EXCEPCION: {
+            const Excepcion *e = v->como.excepcion;
+            n = snprintf(buffer, (size_t)capacidad, "%.*s: %.*s",
+                e->longitud_clase, e->clase,
+                e->longitud_mensaje, e->mensaje);
+            break;
+        }
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -1276,6 +1333,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_FUNCION_BC:  return "funcion";
         case VAL_PLANTILLA_BC: return "plantilla";
         case VAL_ITERADOR:    return "iterador";
+        case VAL_EXCEPCION:   return "excepcion";
     }
     return "desconocido";
 }
@@ -1330,6 +1388,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.plantilla != NULL;
         case VAL_ITERADOR:
             return v->como.iterador != NULL;
+        case VAL_EXCEPCION:
+            return v->como.excepcion != NULL;
     }
     return false;
 }
@@ -1448,6 +1508,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return a->como.plantilla == b->como.plantilla;
         case VAL_ITERADOR:
             return a->como.iterador == b->como.iterador;
+        case VAL_EXCEPCION:
+            return a->como.excepcion == b->como.excepcion;
     }
     return false;
 }

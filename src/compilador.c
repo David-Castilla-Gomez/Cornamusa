@@ -692,6 +692,7 @@ bool compilador_compilar_expr_top(Compilador *c, const Expr *e) {
 
 static bool compilar_funcion(Compilador *c, const Sent *s);
 static bool compilar_para(Compilador *c, const Sent *s);
+static bool compilar_intentar(Compilador *c, const Sent *s);
 
 static bool compilar_asignar(Compilador *c, const Sent *s) {
     Expr *destino = s->como.asignar.destino;
@@ -1042,10 +1043,22 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
         case SENT_PARA:
             return compilar_para(c, s);
 
+        case SENT_INTENTAR:
+            return compilar_intentar(c, s);
+
+        case SENT_LANZAR: {
+            if (s->como.lanzar.valor == NULL) {
+                error_compilacion(c, s->linea, s->columna,
+                    "'lanzar' sin valor (re-raise) aun no esta en bytecode v0.6.3");
+                return false;
+            }
+            if (!compilador_compilar_expr(c, s->como.lanzar.valor)) return false;
+            chunk_emitir_byte(c->actual->chunk, OP_LANZAR, s->linea);
+            return true;
+        }
+
         /* Sin soporte aún. */
         case SENT_CLASE:
-        case SENT_INTENTAR:
-        case SENT_LANZAR:
         case SENT_IMPORTAR:
         case SENT_DESDE_IMPORTAR:
         case SENT_GLOBAL:
@@ -1298,5 +1311,95 @@ static bool compilar_para(Compilador *c, const Sent *s) {
     }
 
     cerrar_bucle(c, s->linea);
+    return true;
+}
+
+/*
+ * SENT_INTENTAR en bytecode (v0.6.3):
+ *
+ *   OP_INTENTAR_INICIAR [u16 offset_handler]
+ *   compile cuerpo
+ *   OP_INTENTAR_FIN
+ *   OP_SALTAR [u16 offset_fin]      ; salida limpia: salta el handler
+ * [handler]:
+ *   ; OP_LANZAR ha pushed la excepción al tope.
+ *   compile primer atrapador (declarando alias si lo hay; descartar si no)
+ * [fin]:
+ *
+ * Limitaciones v0.6.3:
+ *   - Solo se compila el primer atrapador (los demás se ignoran).
+ *   - Atrapar con tipo (`atrapar Tipo:`) no se compara — se trata como
+ *     bare (atrapa todo). El tipo se evalúa silenciosamente y se descarta.
+ *   - `sino` y `finalmente` aún no soportados — error explícito.
+ */
+static bool compilar_intentar(Compilador *c, const Sent *s) {
+    if (s->como.intentar.sino != NULL) {
+        error_compilacion(c, s->linea, s->columna,
+            "clausula 'sino' de 'intentar' aun no esta en bytecode v0.6.3");
+        return false;
+    }
+    if (s->como.intentar.finalmente != NULL) {
+        error_compilacion(c, s->linea, s->columna,
+            "clausula 'finalmente' aun no esta en bytecode v0.6.3");
+        return false;
+    }
+    int n_atrapadores = s->como.intentar.n_atrapadores;
+    if (n_atrapadores == 0) {
+        error_compilacion(c, s->linea, s->columna,
+            "'intentar' requiere al menos un 'atrapar' (sin 'finalmente' en v0.6.3)");
+        return false;
+    }
+
+    /* Emitir OP_INTENTAR_INICIAR con offset placeholder. */
+    int salto_handler = emitir_salto(c, OP_INTENTAR_INICIAR, s->linea);
+
+    /* Compilar el cuerpo del intentar. */
+    if (!compilador_compilar_sent(c, s->como.intentar.cuerpo)) return false;
+
+    /* Salida limpia: pop handler y saltar al final. */
+    chunk_emitir_byte(c->actual->chunk, OP_INTENTAR_FIN, s->linea);
+    int salto_fin = emitir_salto(c, OP_SALTAR, s->linea);
+
+    /* Aquí empieza el handler (parchear el OP_INTENTAR_INICIAR). */
+    parchear_salto(c, salto_handler, s->linea);
+
+    /* La excepción ha sido pushed por OP_LANZAR. v0.6.3 solo compila
+       el primer atrapador. */
+    ClausulaAtrapar *atrapador = &s->como.intentar.atrapadores[0];
+
+    if (atrapador->tipo != NULL) {
+        /* Evaluamos el tipo y descartamos (limitación v0.6.3 — no se
+           compara). Para mantener la pila balanceada. */
+        if (!compilador_compilar_expr(c, atrapador->tipo)) return false;
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
+                            atrapador->linea);
+    }
+
+    if (atrapador->alias.texto != NULL) {
+        /* Registrar el alias como local; la excepción ya está en el
+           tope del stack (mismo patrón que SENT_ASIGNAR creando local
+           nuevo). */
+        int existente = buscar_local(c->actual, atrapador->alias.texto,
+                                        atrapador->alias.longitud);
+        if (existente >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)existente, atrapador->linea);
+        } else {
+            int slot = agregar_local(c, atrapador->alias.texto,
+                                          atrapador->alias.longitud,
+                                          atrapador->linea);
+            if (slot < 0) return false;
+        }
+    } else {
+        /* Sin alias: descartamos la excepción. */
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
+                            atrapador->linea);
+    }
+
+    /* Compilar cuerpo del atrapar. */
+    if (!compilador_compilar_sent(c, atrapador->cuerpo)) return false;
+
+    /* Saltar al final. */
+    parchear_salto(c, salto_fin, s->linea);
     return true;
 }

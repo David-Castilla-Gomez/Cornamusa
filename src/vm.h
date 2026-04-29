@@ -32,6 +32,7 @@ typedef enum {
 
 #define VM_PILA_MAX 8192
 #define VM_FRAMES_MAX 256
+#define VM_HANDLERS_MAX 64
 
 /*
  * CallFrame: representa una llamada activa.
@@ -53,6 +54,19 @@ typedef struct CallFrame {
        upvalues de la función actual. */
     Closure *closure;
 } CallFrame;
+
+/*
+ * Handler frame: punto al que saltar cuando una excepción se lanza.
+ * `frame_idx` y `tope_offset` permiten unwind del stack/frames hasta
+ * el estado del `intentar` en cuestión. `ip_handler` apunta al primer
+ * byte del bloque `atrapar` correspondiente.
+ */
+typedef struct HandlerFrame {
+    int frame_idx;          /* n_frames cuando se entró al intentar */
+    int tope_offset;        /* tope - pila cuando se entró */
+    int n_open_upvalues;    /* longitud de open_upvalues al entrar (no usado todavía) */
+    const uint8_t *ip_handler;
+} HandlerFrame;
 
 typedef struct {
     /*
@@ -88,6 +102,16 @@ typedef struct {
      * apunten al rango del frame que termina.
      */
     Upvalue *open_upvalues;
+
+    /*
+     * Pila de handlers de excepción activos. Cada `intentar:` empuja
+     * un handler con `OP_INTENTAR_INICIAR`; al salir limpio, el
+     * `OP_INTENTAR_FIN` lo descarta. Si una excepción se lanza, la VM
+     * busca el handler en el tope, restaura tope/frames a su nivel y
+     * salta al `ip_handler`.
+     */
+    HandlerFrame handlers[VM_HANDLERS_MAX];
+    int n_handlers;
 
     EvalError error;
 } VM;
