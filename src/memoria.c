@@ -154,6 +154,9 @@ void gc_marcar_valor(const Valor *v) {
         case VAL_METODO_LIGADO:
             gc_marcar_objeto(&v->como.metodo_ligado->obj);
             break;
+        case VAL_MODULO:
+            gc_marcar_objeto(&v->como.modulo->obj);
+            break;
         default:
             /* Tipos planos: nada que marcar. */
             break;
@@ -219,6 +222,12 @@ void gc_marcar_objeto(GCObject *obj) {
             if (c->clase_definicion) {
                 gc_marcar_objeto(&c->clase_definicion->obj);
             }
+            /* v0.9.0: globales del scope de definición — para funciones
+               de módulo, evita que el dicc del módulo se barra mientras
+               la función siga viva en el importador. */
+            if (c->globales_definicion) {
+                gc_marcar_objeto(&c->globales_definicion->obj);
+            }
             break;
         }
         case GC_TIPO_UPVALUE: {
@@ -257,6 +266,11 @@ void gc_marcar_objeto(GCObject *obj) {
             const MetodoLigado *m = (const MetodoLigado *)obj;
             gc_marcar_valor(&m->receptor);
             if (m->metodo) gc_marcar_objeto(&m->metodo->obj);
+            break;
+        }
+        case GC_TIPO_MODULO: {
+            const Modulo *m = (const Modulo *)obj;
+            if (m->atributos) gc_marcar_objeto(&m->atributos->obj);
             break;
         }
     }
@@ -454,6 +468,12 @@ static void gc_liberar_objeto(GCObject *o) {
         case GC_TIPO_METODO_LIGADO: {
             MetodoLigado *m = (MetodoLigado *)o;
             liberar_partes_no_gc_valor(&m->receptor);
+            free(m);
+            break;
+        }
+        case GC_TIPO_MODULO: {
+            Modulo *m = (Modulo *)o;
+            free(m->nombre);
             free(m);
             break;
         }

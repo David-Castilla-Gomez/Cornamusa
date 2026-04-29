@@ -1,0 +1,42 @@
+# Cornamusa stdlib: cadenas.cor
+#
+# Operaciones sobre cadenas escritas en Cornamusa puro. Funciones que
+# requieren manipulación de bytes UTF-8 a bajo nivel (mayúsculas
+# correctas con NFC, búsqueda multi-byte, indexación por carácter)
+# llegarán como bindings nativos en versiones futuras: el bytecode
+# todavía no soporta `cadena[i]` en v0.9.0.
+#
+# Uso:
+#   importar cadenas
+#   imprimir(cadenas.repetir("ab", 3))
+
+# Repite una cadena `n` veces.
+funcion repetir(s, n):
+    si n < 0:
+        lanzar ErrorDeValor("repetir requiere n >= 0")
+    fin si
+    resultado = ""
+    para i en rango(n):
+        resultado = resultado + s
+    fin para
+    retornar resultado
+fin funcion
+
+# Devuelve verdadero si la cadena está vacía.
+funcion es_vacia(s):
+    retornar longitud(s) == 0
+fin funcion
+
+# Concatena una lista de cadenas con un separador entre cada par.
+# `partes` es la lista, `sep` la cadena separadora.
+funcion unir(partes, sep):
+    n = longitud(partes)
+    si n == 0:
+        retornar ""
+    fin si
+    resultado = partes[0]
+    para i en rango(1, n):
+        resultado = resultado + sep + partes[i]
+    fin para
+    retornar resultado
+fin funcion

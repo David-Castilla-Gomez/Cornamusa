@@ -61,6 +61,28 @@ typedef struct CallFrame {
        Python: `Foo()` siempre devuelve la instancia, no lo que el
        constructor retorne (que debe ser nulo/no especificado). */
     bool es_constructor;
+
+    /*
+     * Módulos (Fase 9): si este frame fue creado por OP_IMPORTAR, este
+     * campo apunta al `Modulo` en construcción. Al hacer OP_RETORNAR, la
+     * VM captura `vm->globales` (el dicc del módulo) en
+     * `modulo_en_carga->atributos`, restaura el dicc anterior desde
+     * `globales_pre_modulo`, y registra el Modulo como global del
+     * importador. NULL si el frame no es un import.
+     */
+    Modulo *modulo_en_carga;
+    Diccionario *globales_pre_modulo;
+    /* Chunk creado para el módulo — el frame es dueño y debe destruirlo
+       (no lo gestiona el GC porque Chunk no es heap-rastreado). */
+    Chunk *chunk_modulo;
+    /*
+     * Si la closure que disparó este frame tenía `globales_definicion`
+     * != vm->globales, guardamos el dicc anterior aquí y lo restauramos
+     * al hacer OP_RETORNAR. Permite que funciones de un módulo vean
+     * sus propias globales aunque sean invocadas desde el importador.
+     * NULL si la llamada no cambió globales (caso típico).
+     */
+    Diccionario *globales_pre_llamada;
 } CallFrame;
 
 /*
@@ -99,8 +121,18 @@ typedef struct {
      * dueña — el `dicc_liberar` se llama en `vm_destruir`. Persiste
      * entre llamadas a `vm_ejecutar` para que el REPL pueda reutilizar
      * el estado.
+     *
+     * Durante la carga de un módulo (Fase 9), apunta temporalmente al
+     * Diccionario del módulo. El frame del módulo guarda el dicc
+     * principal en `globales_pre_modulo` y lo restaura al retornar.
      */
     Diccionario *globales;
+
+    /*
+     * Cache de módulos cargados (Fase 9): nombre → VAL_MODULO. El primer
+     * `importar X` carga y cachea; subsiguientes solo asignan la global.
+     */
+    Diccionario *cache_modulos;
 
     /*
      * Linked list de upvalues abiertos (que apuntan a slots del stack

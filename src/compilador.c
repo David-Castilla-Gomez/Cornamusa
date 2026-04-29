@@ -1138,13 +1138,41 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
         case SENT_CLASE:
             return compilar_clase(c, s);
 
+        case SENT_IMPORTAR: {
+            /*
+             * v0.9.0: solo soportamos `importar X` simple (1 segmento,
+             * sin `como Y`). Subdirectorios (`importar mat.geometria`)
+             * y aliasing llegan en v0.9.x.
+             */
+            if (s->como.importar.n_segmentos != 1) {
+                error_compilacion(c, s->linea, s->columna,
+                    "modulos con subsegmentos ('mat.geometria') aun no estan en v0.9.0");
+                return false;
+            }
+            if (s->como.importar.alias.texto != NULL) {
+                error_compilacion(c, s->linea, s->columna,
+                    "alias de modulo ('importar X como Y') aun no esta en v0.9.0");
+                return false;
+            }
+            const Nombre *seg = &s->como.importar.segmentos[0];
+            int idx = chunk_agregar_constante(c->actual->chunk,
+                valor_cadena_duplicar(seg->texto, seg->longitud));
+            if (idx < 0 || idx > 255) {
+                error_compilacion(c, s->linea, s->columna,
+                    "demasiadas constantes para v0.9 (operando byte)");
+                return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_IMPORTAR,
+                                (uint8_t)idx, s->linea);
+            return true;
+        }
+
         /* Sin soporte aún. */
-        case SENT_IMPORTAR:
         case SENT_DESDE_IMPORTAR:
         case SENT_GLOBAL:
         case SENT_NOLOCAL:
             error_compilacion(c, s->linea, s->columna,
-                "esta sentencia aun no esta implementada en bytecode v0.7");
+                "esta sentencia aun no esta implementada en bytecode v0.9");
             return false;
     }
     error_compilacion(c, s->linea, s->columna,

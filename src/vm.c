@@ -2,11 +2,16 @@
 
 #include <limits.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
+#include "arena.h"
+#include "ast.h"
+#include "compilador.h"
 #include "evaluador.h"   /* evaluador_aplicar_binario / unario */
 #include "lexer.h"       /* TipoToken */
 #include "nativos.h"     /* nativos_registrar para los built-ins */
+#include "parser.h"
 #include "tommath.h"
 #include "valor.h"
 
@@ -128,6 +133,108 @@ static int opcode_a_token_binario(OpCode op) {
 static void gc_marcar_raices_adapter(void *ctx);
 
 /* ──────────────────────────────────────────────────────────────────
+ * Carga de módulos (Fase 9)
+ *
+ * `cargar_modulo_desde_archivo` busca y compila un archivo .cor por
+ * nombre de módulo. Devuelve un Chunk recién alocado en heap, o NULL
+ * si falla. El cliente toma posesión del Chunk y debe destruirlo +
+ * free cuando termine de usarlo (lo guarda en CallFrame.chunk_modulo).
+ *
+ * Estrategia de búsqueda (en orden):
+ *   1. ./{nombre}.cor (cwd)
+ *   2. stdlib/{nombre}.cor (relativo a cwd)
+ *
+ * Limitaciones v0.9.0:
+ *   - Sin soporte para subdirectorios (`mat.geometria` → archivo
+ *     `mat/geometria.cor`).
+ *   - Sin variable de entorno CORNAMUSA_PATH.
+ *   - Sin error detallado si el archivo existe pero falla parsing —
+ *     el caller recibe NULL y emite un VM_ERROR genérico.
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Lee un archivo entero a un buffer alocado con malloc. Devuelve
+   NULL si no existe o no se puede leer. *len_out recibe la longitud. */
+static char *leer_archivo_completo(const char *path, size_t *len_out) {
+    FILE *f = fopen(path, "rb");
+    if (!f) return NULL;
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return NULL; }
+    long sz = ftell(f);
+    if (sz < 0) { fclose(f); return NULL; }
+    rewind(f);
+    char *buf = (char *)malloc((size_t)sz + 1);
+    if (!buf) { fclose(f); return NULL; }
+    size_t leidos = fread(buf, 1, (size_t)sz, f);
+    fclose(f);
+    if (leidos != (size_t)sz) { free(buf); return NULL; }
+    buf[sz] = '\0';
+    if (len_out) *len_out = (size_t)sz;
+    return buf;
+}
+
+/* Compila el contenido del módulo. Devuelve un Chunk* alocado con malloc o
+   NULL si falla. El caller es dueño del Chunk + de su contenido y debe
+   destruirlo via chunk_destruir + free.
+   `fuente` y `nombre_archivo` deben sobrevivir al menos hasta el fin de
+   parser_parsear_programa (no a la vida del Chunk — las constantes ya
+   se duplicaron). */
+static Chunk *compilar_fuente_a_chunk(const char *fuente,
+                                        const char *nombre_archivo) {
+    Lexer l;
+    lexer_iniciar(&l, fuente, nombre_archivo);
+
+    Arena arena;
+    arena_iniciar(&arena, 16384);
+
+    Parser p;
+    parser_iniciar(&p, &l, &arena, fuente, nombre_archivo);
+
+    int n;
+    Sent **prog = parser_parsear_programa(&p, &n);
+    if (!prog || p.tuvo_error) {
+        arena_destruir(&arena);
+        return NULL;
+    }
+
+    Chunk *ch = (Chunk *)malloc(sizeof(Chunk));
+    if (!ch) { arena_destruir(&arena); return NULL; }
+    chunk_iniciar(ch);
+
+    Compilador c;
+    compilador_iniciar(&c, ch);
+    if (!compilador_compilar_programa(&c, prog, n)) {
+        chunk_destruir(ch);
+        free(ch);
+        arena_destruir(&arena);
+        return NULL;
+    }
+    arena_destruir(&arena);
+    return ch;
+}
+
+/* Busca y carga el módulo `nombre`. Devuelve Chunk* (con malloc'd) o NULL. */
+static Chunk *cargar_modulo_desde_archivo(const char *nombre, int len_nombre) {
+    char path[512];
+    char *fuente = NULL;
+    size_t flen = 0;
+
+    /* Intento 1: ./{nombre}.cor */
+    snprintf(path, sizeof(path), "%.*s.cor", len_nombre, nombre);
+    fuente = leer_archivo_completo(path, &flen);
+
+    /* Intento 2: stdlib/{nombre}.cor */
+    if (!fuente) {
+        snprintf(path, sizeof(path), "stdlib/%.*s.cor", len_nombre, nombre);
+        fuente = leer_archivo_completo(path, &flen);
+    }
+
+    if (!fuente) return NULL;
+
+    Chunk *ch = compilar_fuente_a_chunk(fuente, path);
+    free(fuente);
+    return ch;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * API pública
  * ────────────────────────────────────────────────────────────────── */
 
@@ -158,6 +265,7 @@ void vm_iniciar(VM *vm) {
 #endif
 
     vm->globales = dicc_nuevo();
+    vm->cache_modulos = dicc_nuevo();
     /* Registrar built-ins en globales: imprimir, longitud, tipo, rango,
        agregar, quitar, insertar, invertir, ordenar, claves, valores,
        conjunto. */
@@ -178,6 +286,20 @@ void gc_marcar_raices(VM *vm) {
     /* Globales (Diccionario): la propia tabla y todos sus pares. */
     if (vm->globales) {
         gc_marcar_objeto(&vm->globales->obj);
+    }
+    /* Cache de módulos cargados: idem. */
+    if (vm->cache_modulos) {
+        gc_marcar_objeto(&vm->cache_modulos->obj);
+    }
+    /* Frames pueden tener globales_pre_modulo (durante carga de módulo)
+       y modulo_en_carga — ambos son raíces. */
+    for (int i = 0; i < vm->n_frames; i++) {
+        if (vm->frames[i].globales_pre_modulo) {
+            gc_marcar_objeto(&vm->frames[i].globales_pre_modulo->obj);
+        }
+        if (vm->frames[i].modulo_en_carga) {
+            gc_marcar_objeto(&vm->frames[i].modulo_en_carga->obj);
+        }
     }
     /* Frames: cada uno tiene una closure (NULL en top-level). Marcar
        también los `constantes` del chunk activo: el frame top-level
@@ -213,6 +335,10 @@ void vm_destruir(VM *vm) {
     if (vm->globales) {
         dicc_liberar(vm->globales);
         vm->globales = NULL;
+    }
+    if (vm->cache_modulos) {
+        dicc_liberar(vm->cache_modulos);
+        vm->cache_modulos = NULL;
     }
     /*
      * Fase 7 S1: barrer cualquier objeto que el refcount no haya
@@ -253,6 +379,10 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
     frame->base_pila = vm->pila;
     frame->closure = NULL;
     frame->es_constructor = false;
+    frame->modulo_en_carga = NULL;
+    frame->globales_pre_modulo = NULL;
+    frame->chunk_modulo = NULL;
+    frame->globales_pre_llamada = NULL;
 
     /* `gc_habilitado` lo gestiona el wrapper público vm_ejecutar. */
 
@@ -372,6 +502,47 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     valor_destruir(&r);
                     r = valor_clonar(&frame->base_pila[1]);
                 }
+                /* v0.9.0: si la llamada cambió globales (función de
+                   módulo invocada desde otro scope), restaurar antes
+                   de procesar el módulo en carga. */
+                if (frame->globales_pre_llamada != NULL) {
+                    vm->globales = frame->globales_pre_llamada;
+                }
+                /* Si este frame fue creado por OP_IMPORTAR, finalizar el
+                   módulo: capturar `vm->globales` (el dicc del módulo
+                   poblado durante la ejecución) en `mod->atributos`,
+                   restaurar el dicc principal y registrar el módulo
+                   como global del importador. */
+                if (frame->modulo_en_carga) {
+                    Modulo *mod = frame->modulo_en_carga;
+                    /* Transferir vm->globales al módulo. */
+                    if (mod->atributos) dicc_liberar(mod->atributos);
+                    mod->atributos = vm->globales;
+                    /* Restaurar el dicc principal. */
+                    vm->globales = frame->globales_pre_modulo;
+                    /* Liberar el chunk del módulo (lo necesitábamos
+                       solo para la ejecución; las constantes que
+                       sobreviven están en globales/atributos). */
+                    if (frame->chunk_modulo) {
+                        chunk_destruir(frame->chunk_modulo);
+                        free(frame->chunk_modulo);
+                    }
+                    /* Registrar global `nombre = <modulo>` y cachear. */
+                    Valor clave_global = valor_cadena_duplicar(
+                        mod->nombre, mod->longitud_nombre);
+                    Valor val_global = valor_modulo(mod);
+                    modulo_retener(mod);   /* uno para globales, uno para cache */
+                    Valor val_cache = valor_modulo(mod);
+                    Valor clave_cache = valor_cadena_duplicar(
+                        mod->nombre, mod->longitud_nombre);
+                    dicc_asignar(vm->globales, clave_global, val_global);
+                    dicc_asignar(vm->cache_modulos, clave_cache, val_cache);
+                    /* El valor de retorno (r, típicamente nulo) se
+                       descarta — `importar X` es una sentencia, no
+                       una expresión, y no produce valor. */
+                    valor_destruir(&r);
+                    r = valor_nulo();
+                }
                 /* Antes de descartar el frame, cerrar todos los
                    upvalues abiertos que apunten a slots de este frame
                    (su contenido se copia al heap). */
@@ -393,6 +564,72 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 }
                 empujar(vm, r);
                 frame = &vm->frames[vm->n_frames - 1];
+                break;
+            }
+
+            /* ─── Módulos (Fase 9) ─── */
+            case OP_IMPORTAR: {
+                uint8_t name_idx = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[name_idx];
+                if (nombre->tipo != VAL_CADENA) {
+                    VM_ERROR("estado interno corrupto: nombre de modulo no es cadena");
+                    return VM_ERROR_RUNTIME;
+                }
+                /* 1. Cache hit: solo asignar la global. */
+                Valor cached;
+                if (dicc_obtener(vm->cache_modulos, nombre, &cached)) {
+                    Valor clave = valor_clonar(nombre);
+                    dicc_asignar(vm->globales, clave, cached);
+                    break;
+                }
+                /* 2. Cargar archivo y compilar. */
+                Chunk *ch_mod = cargar_modulo_desde_archivo(
+                    nombre->como.cadena.texto, nombre->como.cadena.longitud);
+                if (!ch_mod) {
+                    VM_ERROR("ErrorDeImportacion: no se pudo cargar el modulo '%.*s' (archivo no encontrado o invalido)",
+                             nombre->como.cadena.longitud, nombre->como.cadena.texto);
+                    return VM_ERROR_RUNTIME;
+                }
+                /* 3. Crear el Modulo + nuevo dicc de globales para él. */
+                Modulo *mod = modulo_nuevo(nombre->como.cadena.texto,
+                                             nombre->como.cadena.longitud);
+                if (!mod) {
+                    chunk_destruir(ch_mod); free(ch_mod);
+                    VM_ERROR("memoria insuficiente al crear modulo");
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Sustituir vm->globales por el dicc del módulo
+                   (poblado por las nativas inicialmente para que el
+                   código del módulo pueda usar `imprimir`, etc.). */
+                Diccionario *globales_modulo = dicc_nuevo();
+                if (!globales_modulo) {
+                    modulo_liberar(mod);
+                    chunk_destruir(ch_mod); free(ch_mod);
+                    VM_ERROR("memoria insuficiente al crear globales del modulo");
+                    return VM_ERROR_RUNTIME;
+                }
+                nativos_registrar_dicc(globales_modulo);
+                /* 4. Push frame del módulo. */
+                if (vm->n_frames >= VM_FRAMES_MAX) {
+                    dicc_liberar(globales_modulo);
+                    modulo_liberar(mod);
+                    chunk_destruir(ch_mod); free(ch_mod);
+                    VM_ERROR("desbordamiento de pila de llamadas");
+                    return VM_ERROR_RUNTIME;
+                }
+                CallFrame *fr_mod = &vm->frames[vm->n_frames++];
+                fr_mod->chunk = ch_mod;
+                fr_mod->ip = ch_mod->codigo;
+                fr_mod->base_pila = vm->tope;
+                fr_mod->closure = NULL;
+                fr_mod->es_constructor = false;
+                fr_mod->modulo_en_carga = mod;
+                fr_mod->globales_pre_modulo = vm->globales;
+                fr_mod->chunk_modulo = ch_mod;
+                fr_mod->globales_pre_llamada = NULL;
+                /* Cambiar a las globales del módulo. */
+                vm->globales = globales_modulo;
+                frame = fr_mod;
                 break;
             }
 
@@ -1011,6 +1248,22 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 uint8_t idx = LEER_BYTE();
                 const Valor *nombre = &frame->chunk->constantes[idx];
                 Valor obj = sacar(vm);
+                /* Módulos: lookup en sus atributos. */
+                if (obj.tipo == VAL_MODULO) {
+                    Valor v;
+                    if (!dicc_obtener(obj.como.modulo->atributos, nombre, &v)) {
+                        VM_ERROR("ErrorDeAtributo: el modulo '%.*s' no tiene atributo '%.*s'",
+                                 obj.como.modulo->longitud_nombre,
+                                 obj.como.modulo->nombre,
+                                 nombre->como.cadena.longitud,
+                                 nombre->como.cadena.texto);
+                        valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    valor_destruir(&obj);
+                    empujar(vm, v);
+                    break;
+                }
                 if (obj.tipo != VAL_INSTANCIA) {
                     VM_ERROR("ErrorDeTipo: '%s' no tiene atributos accesibles",
                              valor_nombre_tipo(&obj));
@@ -1212,6 +1465,16 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 frame->base_pila = base_nuevo;
                 frame->closure = cl;
                 frame->es_constructor = false;
+                frame->modulo_en_carga = NULL;
+                frame->globales_pre_modulo = NULL;
+                frame->chunk_modulo = NULL;
+                if (cl->globales_definicion != NULL
+                    && cl->globales_definicion != vm->globales) {
+                    frame->globales_pre_llamada = vm->globales;
+                    vm->globales = cl->globales_definicion;
+                } else {
+                    frame->globales_pre_llamada = NULL;
+                }
                 break;
             }
             case OP_HEREDAR: {
@@ -1275,6 +1538,18 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 if (!cl) {
                     VM_ERROR("memoria insuficiente al crear closure");
                     return VM_ERROR_RUNTIME;
+                }
+                /* v0.9.0: cierre de globales — la función "captura" el
+                   diccionario de globales del scope de su creación.
+                   Solo lo guardamos si vm->globales != NULL para evitar
+                   ciclos en el caso top-level del programa principal
+                   (que no es un módulo y no necesita preservar nada
+                   distinto al global). En la práctica esto significa
+                   que solo las funciones definidas dentro de un módulo
+                   capturan su dicc. */
+                if (vm->globales) {
+                    dicc_retener(vm->globales);
+                    cl->globales_definicion = vm->globales;
                 }
                 for (int i = 0; i < fn->n_upvalues; i++) {
                     uint8_t es_local = LEER_BYTE();
@@ -1364,6 +1639,23 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     frame->base_pila = base_nuevo;
                     frame->closure = cl;
                     frame->es_constructor = false;
+                    frame->modulo_en_carga = NULL;
+                    frame->globales_pre_modulo = NULL;
+                    frame->chunk_modulo = NULL;
+                    /*
+                     * v0.9.0: si la closure cerró un dicc de globales
+                     * distinto al actual (caso típico: función definida
+                     * en un módulo invocada desde el importador),
+                     * cambiar a sus globales y guardar las actuales
+                     * para restaurar al retornar.
+                     */
+                    if (cl->globales_definicion != NULL
+                        && cl->globales_definicion != vm->globales) {
+                        frame->globales_pre_llamada = vm->globales;
+                        vm->globales = cl->globales_definicion;
+                    } else {
+                        frame->globales_pre_llamada = NULL;
+                    }
                     break;
                 }
 
@@ -1452,6 +1744,16 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     frame->base_pila = base_nuevo;
                     frame->closure = cl;
                     frame->es_constructor = true;
+                    frame->modulo_en_carga = NULL;
+                    frame->globales_pre_modulo = NULL;
+                    frame->chunk_modulo = NULL;
+                    if (cl->globales_definicion != NULL
+                        && cl->globales_definicion != vm->globales) {
+                        frame->globales_pre_llamada = vm->globales;
+                        vm->globales = cl->globales_definicion;
+                    } else {
+                        frame->globales_pre_llamada = NULL;
+                    }
                     break;
                 }
 
@@ -1509,6 +1811,16 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     frame->base_pila = base_nuevo;
                     frame->closure = cl;
                     frame->es_constructor = false;
+                    frame->modulo_en_carga = NULL;
+                    frame->globales_pre_modulo = NULL;
+                    frame->chunk_modulo = NULL;
+                    if (cl->globales_definicion != NULL
+                        && cl->globales_definicion != vm->globales) {
+                        frame->globales_pre_llamada = vm->globales;
+                        vm->globales = cl->globales_definicion;
+                    } else {
+                        frame->globales_pre_llamada = NULL;
+                    }
                     break;
                 }
 

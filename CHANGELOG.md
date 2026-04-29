@@ -6,6 +6,83 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.9.0] — 2026-04-29 — módulos + stdlib mínima (Fase 9)
+
+Cornamusa gana sistema de módulos: `importar matematicas` carga un
+archivo `.cor` y expone sus globales como atributos del módulo.
+Stdlib inicial con `matematicas` y `cadenas`. **78 tests verde**.
+
+### Añadido (v0.9.0)
+- **Tipo `VAL_MODULO`** + `struct Modulo` en `valor.{h,c}`: nombre +
+  diccionario de atributos. Pretty-printed `<modulo X>`. tipo() reporta
+  `"modulo"`. Ni hashable ni iguales por valor (identidad por puntero).
+- **Opcode `OP_IMPORTAR [byte name_idx]`** en bytecode:
+  1. Si el módulo está en cache (`vm->cache_modulos`), solo asigna la
+     global del importador.
+  2. Sino, busca el archivo (`./{nombre}.cor` luego
+     `stdlib/{nombre}.cor`), lex+parse+compile.
+  3. Crea un nuevo `Modulo` y un nuevo `Diccionario` para sus globales,
+     poblado inicialmente con las nativas (imprimir, etc.).
+  4. Empuja un sub-frame con el chunk del módulo y cambia
+     `vm->globales` al dicc del módulo. El frame guarda
+     `globales_pre_modulo` para restaurar al retornar.
+  5. Cuando el frame del módulo termina (OP_RETORNAR detecta
+     `modulo_en_carga`), captura el dicc de globales en
+     `mod->atributos`, restaura el dicc principal y registra el módulo
+     como global del importador + en cache.
+- **`Closure.globales_definicion`**: cada closure captura el dicc de
+  globales del scope donde fue creada. Crítico para módulos: una
+  función definida en un módulo, cuando se invoca desde fuera, sigue
+  viendo las globales del módulo (no las del importador). Sin esto,
+  `mat.cuadrado(5)` daría `ErrorDeNombre` al intentar resolver `n`,
+  `cuadrado`, etc., desde el contexto del importador.
+- **`CallFrame.globales_pre_llamada`**: `OP_LLAMAR` (en sus tres
+  variantes: closure, constructor, bound method) detecta si la closure
+  tiene una `globales_definicion` distinta a la actual; si es así,
+  guarda la actual y cambia. `OP_RETORNAR` restaura.
+- **OP_OBTENER_ATRIBUTO** ahora despacha sobre `VAL_MODULO`: lookup en
+  `modulo.atributos` con `ErrorDeAtributo` si no existe.
+- **Compilación de `SENT_IMPORTAR`**: emite `OP_IMPORTAR [name_idx]`.
+  Limitaciones documentadas: solo `importar X` simple (1 segmento, sin
+  `como`); `importar X.Y` y `importar X como Y` rechazados con error
+  claro (a cubrir en v0.9.x).
+- **`stdlib/matematicas.cor`**: `PI`, `E`, `cuadrado`, `cubo`,
+  `absoluto`, `maximo`, `minimo`, `signo`, `factorial`, `suma_rango`,
+  `es_par`, `es_impar`, `mcd`. Funciones que se llaman entre sí
+  (e.g. `mcd` usa `absoluto`) demuestran el cierre de globales.
+- **`stdlib/cadenas.cor`**: `repetir`, `es_vacia`, `unir`. Operaciones
+  que requieren indexación por carácter (`s[i]`) están aplazadas
+  porque el bytecode no soporta indexación de cadenas en v0.9.0.
+- **Cache global de módulos**: `VM.cache_modulos` evita re-cargar el
+  mismo archivo en imports repetidos del mismo programa.
+- **`tests/unit/test_bytecode_modulos.c`** con 9 tests cubriendo:
+  importar constante, importar función, módulo no existe, atributo
+  inexistente, `tipo()` reporta "modulo", cache (doble import en mismo
+  programa registra una sola vez), subsegmentos rechazados, alias
+  rechazado, aislamiento (las globales del módulo no son visibles sin
+  prefijo).
+- **`examples/21_modulos_jugable.cor`** que importa `matematicas` y
+  `cadenas`, ejercita constantes, funciones simples, funciones que
+  llaman a otras del mismo módulo, y `tipo()` sobre un módulo.
+
+### Correcciones
+- **Bug crítico en OP_IMPORTAR**: el frame del módulo no inicializaba
+  `globales_pre_llamada`, que en OP_RETORNAR es leído como puntero
+  para restaurar globales. Memoria sin inicializar contenía a veces
+  basura no-NULL → vm->globales se sobrescribía con un puntero
+  inválido → crash en heap corruption. Detectado por iteración
+  infinita en `dicc_liberar` durante `vm_destruir`.
+
+### Limitaciones documentadas (a resolver en v0.9.x)
+- Sin subsegmentos en path: `importar mat.geometria` no busca
+  `mat/geometria.cor`. Llega en v0.9.1.
+- Sin alias: `importar mat como m` rechazado. Llega en v0.9.1.
+- Sin `desde X importar Y`: la sentencia se reconoce en parser pero el
+  compilador rechaza con error explícito. Llega en v0.9.1.
+- `cadenas.cor` está limitado por la falta de `s[i]` en bytecode (que
+  funciona en tree-walking pero no en bytecode). Resolver requiere
+  añadir VAL_CADENA al case OP_INDICE.
+
 ## [0.8.3] — 2026-04-29 — excepciones polish
 
 Completa el modelo de excepciones que llevaba postergado desde

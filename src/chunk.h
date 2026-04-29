@@ -112,6 +112,9 @@ typedef enum {
     /* ---- super (v0.7.1) ---- */
     OP_SUPER_INVOCAR,           /* [byte name_idx] [byte n_args]: stack [..., yo, arg1, ..., argN]. Despacha al método name de yo.clase.superclase. */
 
+    /* ---- Módulos (v0.9.0 Fase 9) ---- */
+    OP_IMPORTAR,                /* [byte name_idx]: carga modulo, push frame; al retornar registra global. */
+
     /* ---- Built-in print (atajo del compilador) ---- */
     OP_IMPRIMIR,
 
@@ -280,6 +283,17 @@ struct Closure {
      * automáticamente cuando la clase deja de ser alcanzable.
      */
     Clase *clase_definicion;
+    /*
+     * Diccionario de globales del scope donde el closure fue creado
+     * (v0.9.0). Crítico para módulos: una función definida en un
+     * módulo debe ver las globales de ese módulo cuando la invoca el
+     * importador. Sin este campo, la función vería las globales del
+     * importador y `ErrorDeNombre` para todas sus referencias internas.
+     *
+     * NULL si el closure no pertenece a un módulo (e.g. funciones
+     * top-level del programa principal).
+     */
+    Diccionario *globales_definicion;
 };
 
 Closure *closure_nuevo(FuncionBC *fn);

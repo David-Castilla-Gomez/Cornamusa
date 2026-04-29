@@ -248,3 +248,15 @@ set_tests_properties(bc_run_20_clases_jugable PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "Rex tiene 8 anos y dice: guau"
 )
+
+# v0.9.0: módulos con stdlib.
+add_test(
+    NAME bc_run_21_modulos_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/21_modulos_jugable.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_21_modulos_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "factorial.20. = 2432902008176640000"
+)

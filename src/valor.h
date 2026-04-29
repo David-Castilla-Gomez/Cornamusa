@@ -59,6 +59,7 @@ typedef enum {
     VAL_CLASE,         /* clase definida por el usuario (Fase 8) */
     VAL_INSTANCIA,     /* instancia de una clase (Fase 8) */
     VAL_METODO_LIGADO, /* método con receptor ligado (Fase 8 S2) */
+    VAL_MODULO,        /* módulo cargado via `importar` (Fase 9) */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -75,6 +76,7 @@ typedef struct Excepcion Excepcion;
 typedef struct Clase Clase;
 typedef struct Instancia Instancia;
 typedef struct MetodoLigado MetodoLigado;
+typedef struct Modulo Modulo;
 
 /*
  * Firma de una función nativa (puntero a función C). Recibe un
@@ -154,6 +156,7 @@ typedef struct Valor {
         Clase *clase;       /* refcount; clase definida por el usuario */
         Instancia *instancia; /* refcount; instancia de una clase */
         MetodoLigado *metodo_ligado; /* refcount; método con receptor */
+        Modulo *modulo;     /* refcount; módulo cargado */
     } como;
 } Valor;
 
@@ -422,6 +425,32 @@ void metodo_ligado_retener(MetodoLigado *m);
 void metodo_ligado_liberar(MetodoLigado *m);
 
 Valor valor_metodo_ligado(MetodoLigado *m);
+
+/*
+ * Módulo cargado via `importar` (Fase 9).
+ *
+ * Un módulo encapsula:
+ *   - nombre: cadena heap-duplicada (la usada en la sentencia importar).
+ *   - atributos: Diccionario propio que el módulo construyó al
+ *     ejecutarse (sus globales). Se accede via `modulo.atributo` con
+ *     OP_OBTENER_ATRIBUTO (que despacha sobre VAL_MODULO igual que
+ *     sobre VAL_INSTANCIA, mirando este Diccionario).
+ *
+ * El módulo es propietario de su Diccionario y lo libera al destruirse.
+ */
+struct Modulo {
+    GCObject obj;
+    char *nombre;
+    int longitud_nombre;
+    Diccionario *atributos;
+    int refcount;
+};
+
+Modulo *modulo_nuevo(const char *nombre, int len_nombre);
+void modulo_retener(Modulo *m);
+void modulo_liberar(Modulo *m);
+
+Valor valor_modulo(Modulo *m);
 
 /* ──────────────────────────────────────────────────────────────────
  * Constructores

@@ -1,0 +1,97 @@
+# Cornamusa stdlib: matematicas.cor
+#
+# Constantes y funciones matemáticas básicas, escritas en Cornamusa
+# puro. Para funciones que requieren primitivas C (sin, cos, raiz, etc.)
+# se necesitará una stdlib más rica con bindings nativos en versiones
+# futuras.
+#
+# Uso:
+#   importar matematicas
+#   imprimir(matematicas.PI)
+#   imprimir(matematicas.cuadrado(5))
+
+# Constantes
+PI = 3.141592653589793
+E  = 2.718281828459045
+
+# Operaciones simples
+funcion cuadrado(n):
+    retornar n * n
+fin funcion
+
+funcion cubo(n):
+    retornar n * n * n
+fin funcion
+
+funcion absoluto(n):
+    si n < 0:
+        retornar -n
+    fin si
+    retornar n
+fin funcion
+
+funcion maximo(a, b):
+    si a > b:
+        retornar a
+    fin si
+    retornar b
+fin funcion
+
+funcion minimo(a, b):
+    si a < b:
+        retornar a
+    fin si
+    retornar b
+fin funcion
+
+funcion signo(n):
+    si n > 0:
+        retornar 1
+    fin si
+    si n < 0:
+        retornar -1
+    fin si
+    retornar 0
+fin funcion
+
+# Factorial recursivo (con bignum: factorial(100) funciona).
+funcion factorial(n):
+    si n < 0:
+        lanzar ErrorDeValor("factorial requiere n >= 0")
+    fin si
+    si n == 0:
+        retornar 1
+    fin si
+    retornar n * factorial(n - 1)
+fin funcion
+
+# Suma de los enteros desde inicio hasta fin (excluido).
+funcion suma_rango(a, b):
+    total = 0
+    para i en rango(a, b):
+        total = total + i
+    fin para
+    retornar total
+fin funcion
+
+# Verifica si n es par.
+funcion es_par(n):
+    retornar (n % 2) == 0
+fin funcion
+
+# Verifica si n es impar.
+funcion es_impar(n):
+    retornar (n % 2) != 0
+fin funcion
+
+# Mayor común divisor (algoritmo de Euclides).
+funcion mcd(a, b):
+    a = absoluto(a)
+    b = absoluto(b)
+    mientras b != 0:
+        temp = b
+        b = a % b
+        a = temp
+    fin mientras
+    retornar a
+fin funcion

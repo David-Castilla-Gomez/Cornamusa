@@ -56,6 +56,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_METODO:          return "OP_METODO";
         case OP_HEREDAR:         return "OP_HEREDAR";
         case OP_SUPER_INVOCAR:   return "OP_SUPER_INVOCAR";
+        case OP_IMPORTAR:        return "OP_IMPORTAR";
         case OP_IMPRIMIR:        return "OP_IMPRIMIR";
         case OP_BUILD_LISTA:     return "OP_BUILD_LISTA";
         case OP_BUILD_TUPLA:     return "OP_BUILD_TUPLA";
@@ -240,6 +241,7 @@ Closure *closure_nuevo(FuncionBC *fn) {
     funcion_bc_retener(fn);
     c->refcount = 1;
     c->clase_definicion = NULL;   /* set por OP_METODO si llega a ser método */
+    c->globales_definicion = NULL; /* set por OP_CLOSURE para cerrar globales */
     if (fn->n_upvalues > 0) {
         c->upvalues = (Upvalue **)calloc((size_t)fn->n_upvalues,
                                             sizeof(Upvalue *));
@@ -270,6 +272,9 @@ void closure_liberar(Closure *c) {
     funcion_bc_liberar(c->plantilla);
     if (c->clase_definicion) {
         clase_liberar(c->clase_definicion);
+    }
+    if (c->globales_definicion) {
+        dicc_liberar(c->globales_definicion);
     }
     gc_desenlazar(&c->obj);
     free(c);

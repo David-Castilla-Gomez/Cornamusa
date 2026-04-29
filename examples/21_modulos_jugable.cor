@@ -1,0 +1,43 @@
+# Sistema de módulos en Cornamusa v0.9.0.
+#
+# Ejecutar con: cornamusa --bytecode examples/21_modulos_jugable.cor
+# (ejecutar desde la raíz del proyecto para que stdlib/ esté en cwd).
+#
+# Demuestra:
+#   - `importar X` carga stdlib/X.cor o ./X.cor.
+#   - Acceso a constantes y funciones del módulo: X.K, X.f().
+#   - Funciones del módulo pueden llamarse entre sí (cierre de globales).
+#   - Aislamiento: las globales del módulo no contaminan al importador.
+
+importar matematicas
+importar cadenas
+
+imprimir("== Constantes ==")
+imprimir("PI =", matematicas.PI)
+imprimir("E  =", matematicas.E)
+
+imprimir("")
+imprimir("== Funciones simples ==")
+imprimir("cuadrado(7) =", matematicas.cuadrado(7))
+imprimir("cubo(4)     =", matematicas.cubo(4))
+imprimir("absoluto(-9)=", matematicas.absoluto(-9))
+imprimir("maximo(3,8) =", matematicas.maximo(3, 8))
+imprimir("minimo(3,8) =", matematicas.minimo(3, 8))
+imprimir("signo(-5)   =", matematicas.signo(-5))
+
+imprimir("")
+imprimir("== Funciones que llaman a otras del mismo módulo ==")
+imprimir("mcd(48, 36) =", matematicas.mcd(48, 36))   # llama internamente a absoluto
+imprimir("suma_rango(1, 101) =", matematicas.suma_rango(1, 101))
+imprimir("factorial(20) =", matematicas.factorial(20))
+
+imprimir("")
+imprimir("== Cadenas ==")
+imprimir("'-'*10        =", cadenas.repetir("-", 10))
+imprimir("unir lista    =", cadenas.unir(["uno", "dos", "tres"], ", "))
+imprimir("es_vacia('')  =", cadenas.es_vacia(""))
+imprimir("es_vacia('x') =", cadenas.es_vacia("x"))
+
+imprimir("")
+imprimir("== tipo() de un módulo ==")
+imprimir("tipo(matematicas) =", tipo(matematicas))

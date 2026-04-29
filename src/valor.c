@@ -416,6 +416,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_CLASE:
         case VAL_INSTANCIA:
         case VAL_METODO_LIGADO:
+        case VAL_MODULO:
             return false;
         case VAL_TUPLA:
             /* Tupla es hashable solo si todos sus elementos lo son. */
@@ -1040,6 +1041,46 @@ Valor valor_metodo_ligado(MetodoLigado *m) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Módulo (Fase 9 v0.9.0)
+ * ────────────────────────────────────────────────────────────────── */
+
+Modulo *modulo_nuevo(const char *nombre, int len_nombre) {
+    Modulo *m = (Modulo *)gc_alocar(sizeof(Modulo), GC_TIPO_MODULO);
+    if (!m) return NULL;
+    char *copia = (char *)malloc((size_t)len_nombre + 1);
+    if (!copia) { gc_desenlazar(&m->obj); free(m); return NULL; }
+    if (len_nombre > 0) memcpy(copia, nombre, (size_t)len_nombre);
+    copia[len_nombre] = '\0';
+    Diccionario *atr = dicc_nuevo();
+    if (!atr) { free(copia); gc_desenlazar(&m->obj); free(m); return NULL; }
+    m->nombre = copia;
+    m->longitud_nombre = len_nombre;
+    m->atributos = atr;
+    m->refcount = 1;
+    return m;
+}
+
+void modulo_retener(Modulo *m) { if (m) m->refcount++; }
+
+void modulo_liberar(Modulo *m) {
+    if (!m) return;
+    m->refcount--;
+    if (m->refcount > 0) return;
+    dicc_liberar(m->atributos);
+    free(m->nombre);
+    gc_desenlazar(&m->obj);
+    free(m);
+}
+
+Valor valor_modulo(Modulo *m) {
+    Valor v;
+    v.tipo = VAL_MODULO;
+    v.dueno_cadena = false;
+    v.como.modulo = m;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Destrucción y copia
  * ────────────────────────────────────────────────────────────────── */
 
@@ -1119,6 +1160,10 @@ void valor_destruir(Valor *v) {
         case VAL_METODO_LIGADO:
             metodo_ligado_liberar(v->como.metodo_ligado);
             v->como.metodo_ligado = NULL;
+            break;
+        case VAL_MODULO:
+            modulo_liberar(v->como.modulo);
+            v->como.modulo = NULL;
             break;
         default:
             break;
@@ -1222,6 +1267,9 @@ Valor valor_clonar(const Valor *v) {
         case VAL_METODO_LIGADO:
             metodo_ligado_retener(v->como.metodo_ligado);
             return valor_metodo_ligado(v->como.metodo_ligado);
+        case VAL_MODULO:
+            modulo_retener(v->como.modulo);
+            return valor_modulo(v->como.modulo);
     }
     return valor_nulo();
 }
@@ -1447,6 +1495,12 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                 fn->longitud_nombre, fn->nombre);
             break;
         }
+        case VAL_MODULO: {
+            const Modulo *m = v->como.modulo;
+            n = snprintf(buffer, (size_t)capacidad, "<modulo %.*s>",
+                m->longitud_nombre, m->nombre);
+            break;
+        }
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -1501,6 +1555,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_CLASE:       return "clase";
         case VAL_INSTANCIA:   return "instancia";
         case VAL_METODO_LIGADO: return "funcion";  /* visible como funcion */
+        case VAL_MODULO:        return "modulo";
     }
     return "desconocido";
 }
@@ -1563,6 +1618,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.instancia != NULL;
         case VAL_METODO_LIGADO:
             return v->como.metodo_ligado != NULL;
+        case VAL_MODULO:
+            return v->como.modulo != NULL;
     }
     return false;
 }
@@ -1689,6 +1746,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return a->como.instancia == b->como.instancia;
         case VAL_METODO_LIGADO:
             return a->como.metodo_ligado == b->como.metodo_ligado;
+        case VAL_MODULO:
+            return a->como.modulo == b->como.modulo;
     }
     return false;
 }

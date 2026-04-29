@@ -165,6 +165,7 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
             fprintf(out, "(%d args)\n", n_args);
             return offset + 3;
         }
+        case OP_IMPORTAR:        return instruccion_byte("OP_IMPORTAR", c, offset, out);
 
         case OP_IMPRIMIR:        return instruccion_byte("OP_IMPRIMIR", c, offset, out);
         case OP_BUILD_LISTA:     return instruccion_byte("OP_BUILD_LISTA", c, offset, out);
