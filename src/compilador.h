@@ -52,7 +52,24 @@ typedef struct {
 typedef struct {
     const char *nombre;
     int longitud_nombre;
+    /* `capturado`: true si una función anidada captura este local en
+       un upvalue. El compilador emite OP_CERRAR_UPVALUE al salir del
+       scope para mover el valor del stack al heap. (Reservado para
+       futuro; actualmente confiamos en que OP_RETORNAR cierra todos
+       los upvalues abiertos del frame.) */
+    bool capturado;
 } LocalCompilador;
+
+/*
+ * Upvalue tracked en el compilador: cuando un scope captura una
+ * variable de un padre, se registra aquí con `es_local` (verdadero si
+ * es local del padre directo) e `indice` (slot en el padre o índice
+ * en el upvalue del padre).
+ */
+typedef struct {
+    bool es_local;
+    uint8_t indice;
+} UpvalueCompilador;
 
 /*
  * Scope de compilación: representa una función en construcción (o
@@ -61,6 +78,8 @@ typedef struct {
  * closures todavía: el bytecode emitido no captura locales del
  * padre — sólo lookup de globales).
  */
+#define COMPILADOR_UPVALUES_MAX 256
+
 typedef struct ScopeCompilador {
     Chunk *chunk;             /* chunk donde se emite el código */
     bool es_funcion;          /* false en el scope top-level */
@@ -68,8 +87,16 @@ typedef struct ScopeCompilador {
     LocalCompilador locales[COMPILADOR_LOCALES_MAX];
     int n_locales;            /* slots ocupados (incluye slot 0 = callee) */
 
+    UpvalueCompilador upvalues[COMPILADOR_UPVALUES_MAX];
+    int n_upvalues;
+
     BucleAbierto bucles[COMPILADOR_BUCLES_MAX];
     int n_bucles;
+
+    /* Pointer a la `FuncionBC` que estamos compilando (para llenar la
+       metadata `info_upvalues` a medida que el scope captura). NULL en
+       el scope raíz. */
+    FuncionBC *funcion;
 
     struct ScopeCompilador *padre;
 } ScopeCompilador;

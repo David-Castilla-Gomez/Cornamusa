@@ -1,0 +1,35 @@
+# Closures: funciones que capturan variables del entorno enclosing.
+#
+# Demuestra v0.6.2 del bytecode:
+#   - Closure clasica (contador con estado privado).
+#   - Lambda como factoria de funciones.
+#   - Multiple closures compartiendo o no estado.
+
+funcion crear_contador():
+    n = 0
+    funcion incrementar():
+        n += 1
+        retornar n
+    fin funcion
+    retornar incrementar
+fin funcion
+
+contador_a = crear_contador()
+imprimir(contador_a())
+imprimir(contador_a())
+imprimir(contador_a())
+
+# Cada llamada a crear_contador genera una closure independiente.
+contador_b = crear_contador()
+imprimir(contador_b())
+imprimir(contador_a())  # sigue su cuenta propia
+
+# Lambda como factory.
+funcion crear_multiplicador(factor):
+    retornar lambda x: x * factor
+fin funcion
+
+doblar = crear_multiplicador(2)
+triplicar = crear_multiplicador(3)
+imprimir(doblar(5))
+imprimir(triplicar(5))

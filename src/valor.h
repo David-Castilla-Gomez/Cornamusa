@@ -51,7 +51,8 @@ typedef enum {
     VAL_DICCIONARIO,   /* tabla hash de Valor → Valor con refcount */
     VAL_CONJUNTO,      /* tabla hash de Valor sin valor con refcount */
     VAL_TUPLA,         /* secuencia inmutable de Valor con refcount */
-    VAL_FUNCION_BC,    /* función compilada a bytecode con refcount */
+    VAL_FUNCION_BC,    /* closure ejecutable (plantilla + upvalues) */
+    VAL_PLANTILLA_BC,  /* plantilla de función (en constant pool, sin upvalues) */
     VAL_ITERADOR,      /* iterador interno (uso VM-only para `para`) */
 } TipoValor;
 
@@ -63,6 +64,8 @@ typedef struct Conjunto Conjunto;
 typedef struct Tupla Tupla;
 typedef struct FuncionBC FuncionBC;
 typedef struct Iterador Iterador;
+typedef struct Closure Closure;
+typedef struct Upvalue Upvalue;
 
 /*
  * Firma de una función nativa (puntero a función C). Recibe un
@@ -135,7 +138,8 @@ typedef struct Valor {
         Diccionario *dicc;  /* refcount; ver Diccionario más abajo */
         Conjunto *conjunto; /* refcount */
         Tupla *tupla;       /* refcount, inmutable */
-        FuncionBC *funcion_bc; /* refcount; función compilada a bytecode */
+        Closure *closure;   /* refcount; función compilada a bytecode con upvalues */
+        FuncionBC *plantilla; /* refcount; plantilla en constant pool */
         Iterador *iterador; /* uso VM-only; vida corta en stack */
     } como;
 } Valor;

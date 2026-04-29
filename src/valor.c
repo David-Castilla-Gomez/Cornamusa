@@ -379,8 +379,8 @@ static uint64_t hash_valor(const Valor *v) {
             return fnv1a_64((const uint8_t *)&v->como.nativa.fn,
                             sizeof(v->como.nativa.fn));
         case VAL_FUNCION_BC:
-            return fnv1a_64((const uint8_t *)&v->como.funcion_bc,
-                            sizeof(v->como.funcion_bc));
+            return fnv1a_64((const uint8_t *)&v->como.closure,
+                            sizeof(v->como.closure));
         case VAL_TUPLA: {
             /* Hash combinando los hashes de cada elemento (estilo
                Python `tuplehash`). */
@@ -406,6 +406,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_CONJUNTO:
         case VAL_RANGO:
         case VAL_ITERADOR:
+        case VAL_PLANTILLA_BC:
             return false;
         case VAL_TUPLA:
             /* Tupla es hashable solo si todos sus elementos lo son. */
@@ -925,8 +926,12 @@ void valor_destruir(Valor *v) {
             v->como.tupla = NULL;
             break;
         case VAL_FUNCION_BC:
-            funcion_bc_liberar(v->como.funcion_bc);
-            v->como.funcion_bc = NULL;
+            closure_liberar(v->como.closure);
+            v->como.closure = NULL;
+            break;
+        case VAL_PLANTILLA_BC:
+            funcion_bc_liberar(v->como.plantilla);
+            v->como.plantilla = NULL;
             break;
         case VAL_ITERADOR:
             iter_destruir(v->como.iterador);
@@ -1013,8 +1018,11 @@ Valor valor_clonar(const Valor *v) {
             tupla_retener(v->como.tupla);
             return valor_tupla(v->como.tupla);
         case VAL_FUNCION_BC:
-            funcion_bc_retener(v->como.funcion_bc);
-            return valor_funcion_bc(v->como.funcion_bc);
+            closure_retener(v->como.closure);
+            return valor_closure(v->como.closure);
+        case VAL_PLANTILLA_BC:
+            funcion_bc_retener(v->como.plantilla);
+            return valor_plantilla(v->como.plantilla);
         case VAL_ITERADOR:
             /* Iteradores no son clonables (son uso interno de la VM
                con vida corta). Devolvemos nulo si alguien lo intenta. */
@@ -1203,8 +1211,15 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             break;
         }
         case VAL_FUNCION_BC: {
-            const FuncionBC *f = v->como.funcion_bc;
+            const Closure *cl = v->como.closure;
+            const FuncionBC *f = cl->plantilla;
             n = snprintf(buffer, (size_t)capacidad, "<funcion %.*s>",
+                f->longitud_nombre, f->nombre);
+            break;
+        }
+        case VAL_PLANTILLA_BC: {
+            const FuncionBC *f = v->como.plantilla;
+            n = snprintf(buffer, (size_t)capacidad, "<plantilla %.*s>",
                 f->longitud_nombre, f->nombre);
             break;
         }
@@ -1259,6 +1274,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_CONJUNTO:    return "conjunto";
         case VAL_TUPLA:       return "tupla";
         case VAL_FUNCION_BC:  return "funcion";
+        case VAL_PLANTILLA_BC: return "plantilla";
         case VAL_ITERADOR:    return "iterador";
     }
     return "desconocido";
@@ -1309,7 +1325,9 @@ bool valor_es_verdadero(const Valor *v) {
         case VAL_TUPLA:
             return v->como.tupla && v->como.tupla->cuenta > 0;
         case VAL_FUNCION_BC:
-            return v->como.funcion_bc != NULL;
+            return v->como.closure != NULL;
+        case VAL_PLANTILLA_BC:
+            return v->como.plantilla != NULL;
         case VAL_ITERADOR:
             return v->como.iterador != NULL;
     }
@@ -1425,7 +1443,9 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return true;
         }
         case VAL_FUNCION_BC:
-            return a->como.funcion_bc == b->como.funcion_bc;
+            return a->como.closure == b->como.closure;
+        case VAL_PLANTILLA_BC:
+            return a->como.plantilla == b->como.plantilla;
         case VAL_ITERADOR:
             return a->como.iterador == b->como.iterador;
     }

@@ -40,6 +40,10 @@ const char *opcode_nombre(OpCode op) {
         case OP_DEFINIR_GLOBAL:  return "OP_DEFINIR_GLOBAL";
         case OP_ASIGNAR_GLOBAL:  return "OP_ASIGNAR_GLOBAL";
         case OP_LLAMAR:          return "OP_LLAMAR";
+        case OP_CLOSURE:         return "OP_CLOSURE";
+        case OP_OBTENER_UPVALUE: return "OP_OBTENER_UPVALUE";
+        case OP_ASIGNAR_UPVALUE: return "OP_ASIGNAR_UPVALUE";
+        case OP_CERRAR_UPVALUE:  return "OP_CERRAR_UPVALUE";
         case OP_IMPRIMIR:        return "OP_IMPRIMIR";
         case OP_BUILD_LISTA:     return "OP_BUILD_LISTA";
         case OP_BUILD_TUPLA:     return "OP_BUILD_TUPLA";
@@ -47,6 +51,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_BUILD_CONJUNTO:  return "OP_BUILD_CONJUNTO";
         case OP_INDICE:          return "OP_INDICE";
         case OP_ASIGNAR_INDICE:  return "OP_ASIGNAR_INDICE";
+        case OP_REBANADA:        return "OP_REBANADA";
         case OP_ITER_INICIAR:    return "OP_ITER_INICIAR";
         case OP_ITER_SIGUIENTE:  return "OP_ITER_SIGUIENTE";
         case OP_RETORNAR:        return "OP_RETORNAR";
@@ -166,6 +171,7 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->aridad = aridad;
     chunk_iniciar(&f->chunk);
     f->refcount = 1;
+    f->n_upvalues = 0;
     return f;
 }
 
@@ -180,10 +186,87 @@ void funcion_bc_liberar(FuncionBC *f) {
     free(f);
 }
 
-Valor valor_funcion_bc(FuncionBC *f) {
+/* ──────────────────────────────────────────────────────────────────
+ * Upvalue
+ * ────────────────────────────────────────────────────────────────── */
+
+Upvalue *upvalue_nuevo(Valor *slot) {
+    Upvalue *u = (Upvalue *)malloc(sizeof(Upvalue));
+    if (!u) return NULL;
+    u->posicion = slot;
+    u->cerrado = valor_nulo();
+    u->siguiente = NULL;
+    u->refcount = 1;
+    return u;
+}
+
+void upvalue_retener(Upvalue *u) { if (u) u->refcount++; }
+
+void upvalue_liberar(Upvalue *u) {
+    if (!u) return;
+    u->refcount--;
+    if (u->refcount > 0) return;
+    /* Si está cerrado, `posicion` apunta al campo `cerrado`. Lo
+       destruimos. Si está abierto, no hacemos nada — el slot del
+       stack no es nuestro. */
+    if (u->posicion == &u->cerrado) {
+        valor_destruir(&u->cerrado);
+    }
+    free(u);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Closure
+ * ────────────────────────────────────────────────────────────────── */
+
+Closure *closure_nuevo(FuncionBC *fn) {
+    Closure *c = (Closure *)malloc(sizeof(Closure));
+    if (!c) return NULL;
+    c->plantilla = fn;
+    funcion_bc_retener(fn);
+    c->refcount = 1;
+    if (fn->n_upvalues > 0) {
+        c->upvalues = (Upvalue **)calloc((size_t)fn->n_upvalues,
+                                            sizeof(Upvalue *));
+        if (!c->upvalues) {
+            funcion_bc_liberar(fn);
+            free(c);
+            return NULL;
+        }
+    } else {
+        c->upvalues = NULL;
+    }
+    return c;
+}
+
+void closure_retener(Closure *c) { if (c) c->refcount++; }
+
+void closure_liberar(Closure *c) {
+    if (!c) return;
+    c->refcount--;
+    if (c->refcount > 0) return;
+    if (c->upvalues) {
+        for (int i = 0; i < c->plantilla->n_upvalues; i++) {
+            upvalue_liberar(c->upvalues[i]);
+        }
+        free(c->upvalues);
+    }
+    funcion_bc_liberar(c->plantilla);
+    free(c);
+}
+
+Valor valor_closure(Closure *c) {
     Valor v;
     v.tipo = VAL_FUNCION_BC;
     v.dueno_cadena = false;
-    v.como.funcion_bc = f;
+    v.como.closure = c;
+    return v;
+}
+
+Valor valor_plantilla(FuncionBC *fn) {
+    Valor v;
+    v.tipo = VAL_PLANTILLA_BC;
+    v.dueno_cadena = false;
+    v.como.plantilla = fn;
     return v;
 }

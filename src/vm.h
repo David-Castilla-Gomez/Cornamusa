@@ -47,6 +47,11 @@ typedef struct CallFrame {
     const Chunk *chunk;
     const uint8_t *ip;
     Valor *base_pila;
+    /* `closure`: el Closure activo en este frame; NULL en el frame
+       top-level (que ejecuta un chunk principal sin closure asociado).
+       Usado por OP_GET_UPVALUE / OP_SET_UPVALUE para encontrar los
+       upvalues de la función actual. */
+    Closure *closure;
 } CallFrame;
 
 typedef struct {
@@ -74,6 +79,15 @@ typedef struct {
      * el estado.
      */
     Diccionario *globales;
+
+    /*
+     * Linked list de upvalues abiertos (que apuntan a slots del stack
+     * de algún frame activo). Ordenada por dirección de la posición
+     * descendente (estilo clox cap. 25): los más arriba en la pila van
+     * primero. Cuando un frame retorna, cerramos los upvalues que
+     * apunten al rango del frame que termina.
+     */
+    Upvalue *open_upvalues;
 
     EvalError error;
 } VM;

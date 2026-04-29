@@ -6,6 +6,52 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.6.2] — 2026-04-29 — closures + lambdas + slicing en bytecode
+
+El motor bytecode ahora ejecuta el lenguaje completo módulo
+excepciones, atributos y módulos. **8 de 9 ejemplos jugables
+v0.5 + el nuevo 19_closures corren con `--bytecode`**.
+
+### Añadido (v0.6.2)
+- **`OP_REBANADA`** y compilación de `EXPR_REBANADA`: slicing `lista[a:b:c]` con cualquier campo opcional. Operandos faltantes se emiten como `OP_NULO` (sentinela). VM despacha con la misma semántica que el evaluador tree-walking: defaults dependientes del signo del paso, índices negativos cuentan desde el final, fuera de rango se clampea silenciosamente, paso 0 → `ErrorDeValor`.
+- **Closures con upvalues** (estilo clox cap. 25). Refactor mayor:
+  - **Separación `FuncionBC` (plantilla, en pool) vs `Closure` (instancia, en stack)**:
+    - `FuncionBC` mantiene chunk + nombre + aridad + metadata de upvalues (`info_upvalues[]`).
+    - `Closure` envuelve un `FuncionBC` y añade `Upvalue **upvalues` runtime.
+    - Nuevo `VAL_PLANTILLA_BC` para el constant pool; `VAL_FUNCION_BC` ahora apunta a `Closure`.
+  - **`Upvalue` runtime**: linked-list ordenada por posición decreciente en stack (`vm->open_upvalues`). Refcount para compartir entre múltiples closures que capturan la misma variable.
+  - **`OP_CLOSURE [byte fn_idx] [n_upvalues * (es_local, indice)]`**: lee la plantilla del pool, crea Closure nuevo, conecta cada upvalue a su slot del frame actual (vía `capturar_upvalue`) o a un upvalue existente.
+  - **`OP_OBTENER_UPVALUE [slot]`** y **`OP_ASIGNAR_UPVALUE [slot]`**: lectura/escritura via `frame->closure->upvalues[slot]->posicion`.
+  - **`OP_RETORNAR` cierra upvalues** del frame que termina con `cerrar_upvalues_hasta`. Al cerrar, el valor del slot se **transfiere** (no se duplica) al campo `cerrado` del upvalue, y el slot original se vacía a `nulo` para evitar double-free.
+  - `CallFrame` ahora tiene un puntero `closure` (NULL en frame top-level) que la VM usa para resolver upvalues durante la ejecución.
+- **Compilador con resolución de upvalues recursiva**: `EXPR_IDENT`, `compilar_asignar` y `compilar_asignar_aug` siguen el orden **local → upvalue → global**. La función `resolver_upvalue(scope)` busca la variable en el scope padre directo (como local) y, si no la encuentra, recurre subiendo la cadena de scopes (capturando como "upvalue de upvalue"). El compilador rellena la metadata de upvalues en la `FuncionBC` para que `OP_CLOSURE` la use en runtime.
+- **Funciones anidadas dentro de función ahora se registran como locales** (no como globales como antes en S5). El compilador detecta `c->actual->es_funcion` y emite `OP_DEFINIR_GLOBAL` solo en top-level.
+- **Lambdas (`EXPR_LAMBDA`)** compiladas como funciones anónimas con cuerpo expresión:
+  - Crea `FuncionBC` con nombre `"lambda"`.
+  - Abre scope hijo con parámetros como locales.
+  - Compila el cuerpo como expresión y emite `OP_RETORNAR`.
+  - Emite en el padre `OP_CLOSURE` con metadata de upvalues capturados.
+  - Sin valores por defecto (mismo que `SENT_FUNCION` en bytecode); error explícito si se usan.
+- **Nuevo ejemplo `examples/19_closures_jugable.cor`** que demuestra contadores con estado y lambdas factory. Bytecode-only (decisión B2: el tree-walking no implementa closures).
+- **`tests/unit/test_bytecode_closures.c`** con 7 grupos:
+  - Captura simple de local desde función anidada.
+  - Contador clásico (3 invocaciones).
+  - Closures independientes (factoría produce instancias con estado separado).
+  - Captura de dos niveles arriba (upvalue de upvalue).
+  - Lambda sin captura.
+  - Lambda con captura (factory de multiplicadores).
+  - Slicing varios casos (omisiones, paso negativo, fuera de rango).
+- **`bc_run_*` ampliados**: `16_lista_busqueda` (slicing) y `19_closures_jugable` ahora se ejecutan con `--bytecode` y verifican salida.
+- **Versión** bump a `0.6.2`.
+- **69 tests verde** (26 unit + 43 integración).
+
+### Aplazado a v0.6.3+
+- **Excepciones** (`intentar`/`atrapar`/`finalmente`/`lanzar`).
+- **Atributos** (`obj.attr`) — necesita primero el sistema de objetos (Fase 8).
+- **Módulos** (`importar`).
+- **`global`/`nolocal`** declaraciones explícitas.
+- **Valores por defecto** en parámetros bytecode (sí en tree-walking).
+
 ## [0.6.1] — 2026-04-29 — bytecode con iteración
 
 Bytecode amplía soporte: `SENT_PARA` con iteradores genéricos sobre

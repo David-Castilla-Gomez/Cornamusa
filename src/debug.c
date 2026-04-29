@@ -120,6 +120,30 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_DEFINIR_GLOBAL:  return instruccion_byte("OP_DEFINIR_GLOBAL", c, offset, out);
         case OP_ASIGNAR_GLOBAL:  return instruccion_byte("OP_ASIGNAR_GLOBAL", c, offset, out);
         case OP_LLAMAR:          return instruccion_byte("OP_LLAMAR", c, offset, out);
+        case OP_CLOSURE: {
+            /* Formato: [byte fn_idx] [n_upvalues * (is_local, index)].
+               No sabemos n_upvalues sin leer la FuncionBC del pool, así
+               que solo imprimimos el índice. */
+            uint8_t fn_idx = c->codigo[offset + 1];
+            fprintf(out, "%-20s %4d\n", "OP_CLOSURE", fn_idx);
+            /* Avanzar saltando los pares (is_local, index) — necesitamos
+               n_upvalues. Lo extraemos de la constante. */
+            int after = offset + 2;
+            if (fn_idx < c->constantes_cuenta
+                && c->constantes[fn_idx].tipo == VAL_PLANTILLA_BC) {
+                int n_uv = c->constantes[fn_idx].como.plantilla->n_upvalues;
+                for (int i = 0; i < n_uv; i++) {
+                    fprintf(out, "%04d    |                       %s %4d\n",
+                        after, c->codigo[after] ? "local" : "upval",
+                        c->codigo[after + 1]);
+                    after += 2;
+                }
+            }
+            return after;
+        }
+        case OP_OBTENER_UPVALUE: return instruccion_byte("OP_OBTENER_UPVALUE", c, offset, out);
+        case OP_ASIGNAR_UPVALUE: return instruccion_byte("OP_ASIGNAR_UPVALUE", c, offset, out);
+        case OP_CERRAR_UPVALUE:  return instruccion_simple("OP_CERRAR_UPVALUE", offset, out);
 
         case OP_IMPRIMIR:        return instruccion_byte("OP_IMPRIMIR", c, offset, out);
         case OP_BUILD_LISTA:     return instruccion_byte("OP_BUILD_LISTA", c, offset, out);
@@ -128,6 +152,7 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_BUILD_CONJUNTO:  return instruccion_byte("OP_BUILD_CONJUNTO", c, offset, out);
         case OP_INDICE:          return instruccion_simple("OP_INDICE", offset, out);
         case OP_ASIGNAR_INDICE:  return instruccion_simple("OP_ASIGNAR_INDICE", offset, out);
+        case OP_REBANADA:        return instruccion_simple("OP_REBANADA", offset, out);
         case OP_ITER_INICIAR:    return instruccion_simple("OP_ITER_INICIAR", offset, out);
         case OP_ITER_SIGUIENTE: {
             /* Formato: [byte slot] [u16 offset]. */

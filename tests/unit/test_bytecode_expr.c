@@ -231,11 +231,11 @@ static void test_errores_compilacion(void) {
        de runtime cuando la variable no está definida. */
     verificar_error("x", "no esta definido");
     verificar_error("x + 1", "no esta definido");
-    /* Lambdas, atributos y slicing siguen sin compilar en bytecode. */
-    verificar_error("lambda x: x", "no esta implementada");
-    /* [1, 2] sí compila ahora en S6 → no debe dar error. La verificación
-       positiva está en test_bytecode_colecciones. */
+    /* Lambdas y colecciones sí compilan ahora — verificadas en sus
+       suites específicas. Solo dejamos atributos como pendiente. */
     verificar("[1, 2]", "[1, 2]");
+    verificar("lambda x: x", "<funcion lambda>");
+    verificar_error("a.b", "no esta implementada");
 }
 
 int main(void) {

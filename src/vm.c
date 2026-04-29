@@ -47,6 +47,56 @@ static inline int linea_actual_frame(const CallFrame *frame) {
     return frame->chunk->lineas[offset];
 }
 
+/*
+ * Captura un upvalue para la posición `slot` del stack. Si ya hay un
+ * upvalue abierto apuntando a esa posición, devuelve el existente (un
+ * solo upvalue compartido entre todas las closures que capturan la
+ * misma variable). Si no, crea uno nuevo y lo inserta en la lista
+ * ordenada por posición decreciente.
+ */
+static Upvalue *capturar_upvalue(VM *vm, Valor *slot) {
+    Upvalue *previo = NULL;
+    Upvalue *actual = vm->open_upvalues;
+    /* Lista ordenada por posición DESCENDENTE (más arriba en el stack
+       primero). Avanzamos mientras `actual` esté por encima de `slot`. */
+    while (actual != NULL && actual->posicion > slot) {
+        previo = actual;
+        actual = actual->siguiente;
+    }
+    if (actual != NULL && actual->posicion == slot) {
+        upvalue_retener(actual);
+        return actual;
+    }
+    Upvalue *nuevo = upvalue_nuevo(slot);
+    if (!nuevo) return NULL;
+    nuevo->siguiente = actual;
+    if (previo == NULL) vm->open_upvalues = nuevo;
+    else previo->siguiente = nuevo;
+    upvalue_retener(nuevo);   /* uno para el llamador, uno se queda en lista */
+    return nuevo;
+}
+
+/*
+ * Cierra todos los upvalues abiertos cuya posición esté en o por
+ * encima de `desde` (es decir, dentro de la región del stack que
+ * está a punto de quedar inválida). Cerrar significa: copiar el valor
+ * a `cerrado` y reapuntar `posicion` a esa copia.
+ */
+static void cerrar_upvalues_hasta(VM *vm, Valor *desde) {
+    while (vm->open_upvalues != NULL && vm->open_upvalues->posicion >= desde) {
+        Upvalue *u = vm->open_upvalues;
+        /* Transferir ownership del slot al upvalue: copiamos la
+           struct y dejamos el slot original con `nulo` para que el
+           cleanup posterior del frame no haga doble-free. */
+        u->cerrado = *u->posicion;
+        *u->posicion = valor_nulo();
+        u->posicion = &u->cerrado;
+        vm->open_upvalues = u->siguiente;
+        u->siguiente = NULL;
+        upvalue_liberar(u);
+    }
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Mapeo OpCode → TipoToken para reusar evaluador_aplicar_binario y
  * evaluador_aplicar_unario.
@@ -81,14 +131,14 @@ void vm_iniciar(VM *vm) {
     vm->tope = vm->pila;
     vm->n_frames = 0;
     vm->globales = dicc_nuevo();
+    vm->open_upvalues = NULL;
     vm->error.tuvo_error = false;
     vm->error.mensaje[0] = '\0';
     vm->error.linea = 0;
     vm->error.columna = 0;
     /* Registrar built-ins en globales: imprimir, longitud, tipo, rango,
        agregar, quitar, insertar, invertir, ordenar, claves, valores,
-       conjunto. Funcionan idénticamente al evaluador tree-walking porque
-       las nativas usan EvalError* (no Evaluador*) tras el refactor de S6. */
+       conjunto. */
     if (vm->globales) nativos_registrar_dicc(vm->globales);
 }
 
@@ -128,6 +178,7 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
     frame->chunk = chunk;
     frame->ip = chunk->codigo;
     frame->base_pila = vm->pila;
+    frame->closure = NULL;
 
     for (;;) {
         uint8_t opbyte = *frame->ip++;
@@ -216,10 +267,13 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
             case OP_RETORNAR: {
                 /* Pop el resultado del frame actual. */
                 Valor r = sacar(vm);
+                /* Antes de descartar el frame, cerrar todos los
+                   upvalues abiertos que apunten a slots de este frame
+                   (su contenido se copia al heap). */
+                cerrar_upvalues_hasta(vm, frame->base_pila);
                 /* Pop el CallFrame. */
                 vm->n_frames--;
                 if (vm->n_frames == 0) {
-                    /* Volvemos del top-level: termina la ejecución. */
                     if (resultado_out) {
                         *resultado_out = r;
                     } else {
@@ -227,13 +281,11 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                     }
                     return VM_OK;
                 }
-                /* Liberar todos los slots del frame que termina (callee
-                   + parámetros + locales). El llamador ya no los necesita. */
+                /* Liberar todos los slots del frame que termina. */
                 while (vm->tope > frame->base_pila) {
                     Valor v = *(--vm->tope);
                     valor_destruir(&v);
                 }
-                /* Empujar el resultado y volver al frame anterior. */
                 empujar(vm, r);
                 frame = &vm->frames[vm->n_frames - 1];
                 break;
@@ -491,6 +543,111 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 break;
             }
 
+            /* ─── Slicing ─── */
+            case OP_REBANADA: {
+                /* Stack: [..., obj, inicio, fin, paso]. nulo = default. */
+                Valor paso_v   = sacar(vm);
+                Valor fin_v    = sacar(vm);
+                Valor inicio_v = sacar(vm);
+                Valor obj      = sacar(vm);
+
+                if (obj.tipo != VAL_LISTA) {
+                    VM_ERROR("ErrorDeTipo: '%s' no soporta slicing en bytecode v0.6.2",
+                             valor_nombre_tipo(&obj));
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    return VM_ERROR_RUNTIME;
+                }
+
+                long paso = 1;
+                if (paso_v.tipo != VAL_NULO) {
+                    if (paso_v.tipo != VAL_ENTERO && paso_v.tipo != VAL_BOOLEANO) {
+                        VM_ERROR("ErrorDeTipo: paso de rebanada debe ser entero");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    if (paso_v.tipo == VAL_BOOLEANO) {
+                        paso = paso_v.como.booleano ? 1 : 0;
+                    } else {
+                        paso = (long)mp_get_i64(paso_v.como.entero);
+                    }
+                    if (paso == 0) {
+                        VM_ERROR("ErrorDeValor: el paso de una rebanada no puede ser 0");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        return VM_ERROR_RUNTIME;
+                    }
+                }
+
+                int total = obj.como.lista->cuenta;
+
+                long inicio;
+                if (inicio_v.tipo == VAL_NULO) {
+                    inicio = (paso > 0) ? 0 : total - 1;
+                } else if (inicio_v.tipo == VAL_ENTERO || inicio_v.tipo == VAL_BOOLEANO) {
+                    inicio = (inicio_v.tipo == VAL_BOOLEANO)
+                                ? (inicio_v.como.booleano ? 1 : 0)
+                                : (long)mp_get_i64(inicio_v.como.entero);
+                    if (inicio < 0) inicio += total;
+                } else {
+                    VM_ERROR("ErrorDeTipo: inicio de rebanada debe ser entero");
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    return VM_ERROR_RUNTIME;
+                }
+
+                long fin;
+                if (fin_v.tipo == VAL_NULO) {
+                    fin = (paso > 0) ? total : -1;
+                } else if (fin_v.tipo == VAL_ENTERO || fin_v.tipo == VAL_BOOLEANO) {
+                    fin = (fin_v.tipo == VAL_BOOLEANO)
+                                ? (fin_v.como.booleano ? 1 : 0)
+                                : (long)mp_get_i64(fin_v.como.entero);
+                    if (fin < 0) fin += total;
+                } else {
+                    VM_ERROR("ErrorDeTipo: fin de rebanada debe ser entero");
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    return VM_ERROR_RUNTIME;
+                }
+
+                /* Clamp silencioso (semántica Python). */
+                if (paso > 0) {
+                    if (inicio < 0) inicio = 0;
+                    if (inicio > total) inicio = total;
+                    if (fin < 0) fin = 0;
+                    if (fin > total) fin = total;
+                } else {
+                    if (inicio < 0) inicio = -1;
+                    if (inicio >= total) inicio = total - 1;
+                    if (fin < -1) fin = -1;
+                    if (fin >= total) fin = total - 1;
+                }
+
+                Lista *resultado = lista_nueva(0);
+                if (!resultado) {
+                    VM_ERROR("memoria insuficiente al rebanar");
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    return VM_ERROR_RUNTIME;
+                }
+                Lista *src = obj.como.lista;
+                if (paso > 0) {
+                    for (long i = inicio; i < fin; i += paso) {
+                        lista_agregar(resultado, valor_clonar(&src->elementos[i]));
+                    }
+                } else {
+                    for (long i = inicio; i > fin; i += paso) {
+                        lista_agregar(resultado, valor_clonar(&src->elementos[i]));
+                    }
+                }
+                valor_destruir(&obj); valor_destruir(&inicio_v);
+                valor_destruir(&fin_v); valor_destruir(&paso_v);
+                empujar(vm, valor_lista(resultado));
+                break;
+            }
+
             /* ─── Iteradores ─── */
             case OP_ITER_INICIAR: {
                 /* Pop iterable, push iterador. */
@@ -596,6 +753,63 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 break;
             }
 
+            /* ─── Closures (v0.6.2) ─── */
+            case OP_CLOSURE: {
+                /*
+                 * Lee la plantilla del pool de constantes y crea una
+                 * Closure NUEVA con upvalues conectados al stack.
+                 * Operandos: [byte fn_idx] [n_upvalues * (is_local, index)].
+                 */
+                uint8_t fn_idx = LEER_BYTE();
+                Valor plantilla_v = frame->chunk->constantes[fn_idx];
+                if (plantilla_v.tipo != VAL_PLANTILLA_BC) {
+                    VM_ERROR("OP_CLOSURE sin plantilla en constante");
+                    return VM_ERROR_RUNTIME;
+                }
+                FuncionBC *fn = plantilla_v.como.plantilla;
+                Closure *cl = closure_nuevo(fn);
+                if (!cl) {
+                    VM_ERROR("memoria insuficiente al crear closure");
+                    return VM_ERROR_RUNTIME;
+                }
+                for (int i = 0; i < fn->n_upvalues; i++) {
+                    uint8_t es_local = LEER_BYTE();
+                    uint8_t indice = LEER_BYTE();
+                    Upvalue *uv;
+                    if (es_local) {
+                        uv = capturar_upvalue(vm, &frame->base_pila[indice]);
+                    } else {
+                        /* Captura un upvalue del frame actual (padre
+                           directo de la función creada). */
+                        uv = frame->closure->upvalues[indice];
+                        upvalue_retener(uv);
+                    }
+                    cl->upvalues[i] = uv;
+                }
+                empujar(vm, valor_closure(cl));
+                break;
+            }
+            case OP_OBTENER_UPVALUE: {
+                uint8_t slot = LEER_BYTE();
+                Upvalue *uv = frame->closure->upvalues[slot];
+                empujar(vm, valor_clonar(uv->posicion));
+                break;
+            }
+            case OP_ASIGNAR_UPVALUE: {
+                uint8_t slot = LEER_BYTE();
+                Upvalue *uv = frame->closure->upvalues[slot];
+                Valor nuevo = sacar(vm);
+                valor_destruir(uv->posicion);
+                *uv->posicion = nuevo;
+                break;
+            }
+            case OP_CERRAR_UPVALUE: {
+                cerrar_upvalues_hasta(vm, vm->tope - 1);
+                Valor v = sacar(vm);
+                valor_destruir(&v);
+                break;
+            }
+
             /* ─── Llamadas a función ─── */
             case OP_LLAMAR: {
                 uint8_t n_args = LEER_BYTE();
@@ -627,7 +841,8 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 }
 
                 if (callee.tipo == VAL_FUNCION_BC) {
-                    FuncionBC *fn = callee.como.funcion_bc;
+                    Closure *cl = callee.como.closure;
+                    FuncionBC *fn = cl->plantilla;
                     if (n_args != fn->aridad) {
                         VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
                                  fn->longitud_nombre, fn->nombre,
@@ -639,13 +854,11 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                                  VM_FRAMES_MAX);
                         return VM_ERROR_RUNTIME;
                     }
-                    /* Crear nuevo frame con base_pila apuntando al callee
-                       (que ocupa el slot 0 del frame; los args quedan en
-                       slots 1..n_args). */
                     frame = &vm->frames[vm->n_frames++];
                     frame->chunk = &fn->chunk;
                     frame->ip = fn->chunk.codigo;
                     frame->base_pila = base_nuevo;
+                    frame->closure = cl;
                     break;
                 }
 

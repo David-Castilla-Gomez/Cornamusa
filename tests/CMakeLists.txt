@@ -216,3 +216,24 @@ set_tests_properties(bc_run_18_conj_y_tupla PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "Suma de unicos: 30"
 )
+
+# v0.6.2: closures + lambdas + slicing en bytecode.
+add_test(
+    NAME bc_run_16_lista_busqueda
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/16_lista_busqueda.cor
+)
+set_tests_properties(bc_run_16_lista_busqueda PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Indice del 99: -1"
+)
+
+add_test(
+    NAME bc_run_19_closures_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/19_closures_jugable.cor
+)
+set_tests_properties(bc_run_19_closures_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "15"
+)

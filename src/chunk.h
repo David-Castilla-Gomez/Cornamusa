@@ -83,6 +83,12 @@ typedef enum {
     OP_ASIGNAR_GLOBAL,
     OP_LLAMAR,                  /* CALL [byte n_args] */
 
+    /* ---- Closures (v0.6.2) ---- */
+    OP_CLOSURE,                 /* [byte fn_idx] [n_upvalues * (is_local, index)] */
+    OP_OBTENER_UPVALUE,         /* [byte slot] */
+    OP_ASIGNAR_UPVALUE,         /* [byte slot] */
+    OP_CERRAR_UPVALUE,          /* cierra el upvalue del slot top y descarta */
+
     /* ---- Built-in print (atajo del compilador) ---- */
     OP_IMPRIMIR,
 
@@ -95,6 +101,8 @@ typedef enum {
     /* ---- Indexación (lectura y escritura) ---- */
     OP_INDICE,         /* pop key, pop obj, push obj[key] */
     OP_ASIGNAR_INDICE, /* pop value, pop key, pop obj — sets obj[key] = value */
+    OP_REBANADA,       /* pop paso, fin, inicio, obj — push obj[i:f:p].
+                          Cualquier campo nulo significa "default". */
 
     /* ---- Iteración ---- */
     OP_ITER_INICIAR,   /* pop iterable, push iterador (estado interno) */
@@ -152,36 +160,96 @@ int chunk_agregar_constante(Chunk *c, Valor v);
 void chunk_emitir_constante(Chunk *c, Valor v, int linea);
 
 /*
- * Función compilada a bytecode (Fase 6 sesión 5).
+ * Función compilada a bytecode (plantilla — no incluye upvalues
+ * cerrados, eso lo hace Closure).
  *
- * Una función bytecode tiene su propio `Chunk` con el código de su
- * cuerpo, una aridad fija (cantidad de parámetros) y un nombre con
- * fines de debug. Es propietaria del Chunk (no compartido). Se
- * comparte por refcount entre Valores.
+ * Una `FuncionBC` representa el código de una función: su Chunk
+ * propio, aridad, nombre y la metadata de upvalues (`info_upvalues`
+ * + `n_upvalues`) que el compilador llenó al ver capturas de scope
+ * enclosing. Esta metadata la usa OP_CLOSURE para construir las
+ * Closure instances en runtime.
  *
- * Cornamusa v0.6 no implementa closures todavía: las funciones
- * solo acceden a parámetros, locales propias y globales — no
- * capturan variables de funciones enclosing. Las closures con
- * upvalues están planeadas para Fase 6 sesión 5b o Fase 6 sesión 6.
+ * Las funciones se comparten via refcount entre Closures (cada
+ * Closure referencia una FuncionBC).
  */
+
+/*
+ * Metadata de un upvalue desde el punto de vista del compilador:
+ *   - `es_local`: true si el upvalue captura una variable LOCAL del
+ *     scope padre directo. false si captura un upvalue del padre
+ *     (es decir, una variable más arriba en la cadena).
+ *   - `indice`: si es_local, el slot de la local en el padre.
+ *     Si no, el índice del upvalue en la tabla del padre.
+ */
+typedef struct {
+    bool es_local;
+    uint8_t indice;
+} InfoUpvalue;
+
+#define FN_BC_UPVALUES_MAX 256
+
 struct FuncionBC {
     char *nombre;            /* duplicado en heap; se libera con la función */
     int longitud_nombre;
     int aridad;
     Chunk chunk;
     int refcount;
+    /* Metadata de upvalues para OP_CLOSURE. n_upvalues = 0 para
+       funciones que no capturan nada. */
+    InfoUpvalue info_upvalues[FN_BC_UPVALUES_MAX];
+    int n_upvalues;
 };
 
 /*
  * Crea una FuncionBC con chunk vacío y refcount=1. El cliente
  * compila el cuerpo en `chunk` y luego envuelve la función en un
- * Valor con `valor_funcion_bc`. El nombre se duplica.
+ * Closure con `closure_nuevo` (que añade los upvalues runtime).
+ * El nombre se duplica.
  */
 FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad);
 void funcion_bc_retener(FuncionBC *f);
 void funcion_bc_liberar(FuncionBC *f);
 
+/*
+ * Upvalue: una referencia compartida entre la closure y el slot de
+ * stack original (mientras la función enclosing está activa). Cuando
+ * la enclosing retorna, el upvalue se "cierra": el valor se copia a
+ * `cerrado` y `posicion` apunta a ese campo, no al stack.
+ *
+ * `siguiente`: linked list de upvalues abiertos en la VM, ordenada
+ * por posición decreciente en stack (estilo clox cap. 25).
+ */
+struct Upvalue {
+    Valor *posicion;     /* &stack_slot mientras esté abierto; &cerrado si cerrado */
+    Valor cerrado;
+    Upvalue *siguiente;
+    int refcount;
+};
+
+Upvalue *upvalue_nuevo(Valor *slot);
+void upvalue_retener(Upvalue *u);
+void upvalue_liberar(Upvalue *u);
+
+/*
+ * Closure: instancia ejecutable de una FuncionBC. Cada vez que se
+ * encuentra una `funcion ... fin funcion` en runtime se crea una
+ * Closure nueva con su array de upvalues. Las closures se comparten
+ * por refcount entre Valores.
+ */
+struct Closure {
+    FuncionBC *plantilla;
+    Upvalue **upvalues;       /* array dinámico, longitud = plantilla->n_upvalues */
+    int refcount;
+};
+
+Closure *closure_nuevo(FuncionBC *fn);
+void closure_retener(Closure *c);
+void closure_liberar(Closure *c);
+
 /* Construye un Valor de tipo VAL_FUNCION_BC tomando posesión del refcount. */
-Valor valor_funcion_bc(FuncionBC *f);
+Valor valor_closure(Closure *c);
+
+/* Construye un Valor de tipo VAL_PLANTILLA_BC tomando posesión del refcount. */
+Valor valor_plantilla(FuncionBC *fn);
 
 #endif /* CORNAMUSA_CHUNK_H */

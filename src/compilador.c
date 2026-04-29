@@ -29,11 +29,14 @@ static void scope_iniciar(ScopeCompilador *s, Chunk *chunk, bool es_funcion,
     s->chunk = chunk;
     s->es_funcion = es_funcion;
     s->n_locales = 0;
+    s->n_upvalues = 0;
     s->n_bucles = 0;
+    s->funcion = NULL;
     s->padre = padre;
     if (es_funcion) {
         s->locales[0].nombre = "";
         s->locales[0].longitud_nombre = 0;
+        s->locales[0].capturado = false;
         s->n_locales = 1;
     }
 }
@@ -74,8 +77,75 @@ static int agregar_local(Compilador *c, const char *nombre, int len, int linea) 
     int slot = s->n_locales;
     s->locales[slot].nombre = nombre;
     s->locales[slot].longitud_nombre = len;
+    s->locales[slot].capturado = false;
     s->n_locales++;
     return slot;
+}
+
+/*
+ * Añade un upvalue al scope dado y devuelve su índice. Si ya existe
+ * uno equivalente (mismo es_local + mismo índice), devuelve el
+ * existente para evitar duplicados.
+ */
+static int agregar_upvalue(Compilador *c, ScopeCompilador *s,
+                            bool es_local, uint8_t indice, int linea) {
+    for (int i = 0; i < s->n_upvalues; i++) {
+        if (s->upvalues[i].es_local == es_local
+            && s->upvalues[i].indice == indice) {
+            return i;
+        }
+    }
+    if (s->n_upvalues >= COMPILADOR_UPVALUES_MAX) {
+        c->error.tuvo_error = true;
+        c->error.linea = linea;
+        snprintf(c->error.mensaje, sizeof(c->error.mensaje),
+            "demasiados upvalues en una funcion (>%d)",
+            COMPILADOR_UPVALUES_MAX);
+        return -1;
+    }
+    int idx = s->n_upvalues;
+    s->upvalues[idx].es_local = es_local;
+    s->upvalues[idx].indice = indice;
+    s->n_upvalues++;
+    /* Reflejar en la FuncionBC para que OP_CLOSURE en runtime tenga
+       acceso al conteo. La metadata real se emite inline en el
+       chunk del scope padre. */
+    if (s->funcion) {
+        s->funcion->info_upvalues[idx].es_local = es_local;
+        s->funcion->info_upvalues[idx].indice = indice;
+        s->funcion->n_upvalues = s->n_upvalues;
+    }
+    return idx;
+}
+
+/*
+ * Resuelve un identificador en una cadena de scopes: busca como
+ * upvalue en el scope dado (recursivamente subiendo a padres). Si
+ * encuentra una local en algún ancestro, marca esa local como
+ * `capturado` y registra un upvalue en cada scope intermedio.
+ *
+ * Devuelve el índice del upvalue en `s` si lo encuentra; -1 si no
+ * existe en ningún ancestro.
+ */
+static int resolver_upvalue(Compilador *c, ScopeCompilador *s,
+                             const char *nombre, int len, int linea) {
+    if (s->padre == NULL) return -1;
+
+    /* Buscar como local en el padre directo. */
+    for (int i = s->padre->n_locales - 1; i >= 0; i--) {
+        if (s->padre->locales[i].longitud_nombre == len
+            && memcmp(s->padre->locales[i].nombre, nombre, (size_t)len) == 0) {
+            s->padre->locales[i].capturado = true;
+            return agregar_upvalue(c, s, true, (uint8_t)i, linea);
+        }
+    }
+
+    /* Si no, buscar en upvalue del padre (recursión). */
+    int idx_padre = resolver_upvalue(c, s->padre, nombre, len, linea);
+    if (idx_padre >= 0) {
+        return agregar_upvalue(c, s, false, (uint8_t)idx_padre, linea);
+    }
+    return -1;
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -349,13 +419,21 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         }
 
         case EXPR_IDENT: {
-            /* Prioridad: local del scope actual → global. Sin closures
-               (decisión Fase 6 S5): no se busca en scopes padres. */
+            /* Prioridad: local del scope actual → upvalue (búsqueda
+               recursiva en scopes padres) → global. */
             int slot = buscar_local(c->actual, e->como.ident.nombre,
                                        e->como.ident.longitud);
             if (slot >= 0) {
                 chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                                     (uint8_t)slot, e->linea);
+                return true;
+            }
+            int upv = resolver_upvalue(c, c->actual,
+                                          e->como.ident.nombre,
+                                          e->como.ident.longitud, e->linea);
+            if (upv >= 0) {
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_UPVALUE,
+                                    (uint8_t)upv, e->linea);
                 return true;
             }
             int idx = agregar_nombre_global(c, e->como.ident.nombre,
@@ -498,13 +576,96 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return true;
         }
 
+        case EXPR_REBANADA: {
+            /*
+             * `obj[a:b:c]`: cualquier campo opcional. Para los faltantes
+             * emitimos `OP_NULO` como sentinela (la VM lo interpreta
+             * como "default según el signo del paso"). El orden de
+             * push: objeto, inicio, fin, paso (el OP_REBANADA los
+             * saca en orden inverso).
+             */
+            if (!compilador_compilar_expr(c, e->como.rebanada.objeto)) return false;
+            if (e->como.rebanada.inicio) {
+                if (!compilador_compilar_expr(c, e->como.rebanada.inicio)) return false;
+            } else {
+                chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
+            }
+            if (e->como.rebanada.fin) {
+                if (!compilador_compilar_expr(c, e->como.rebanada.fin)) return false;
+            } else {
+                chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
+            }
+            if (e->como.rebanada.paso) {
+                if (!compilador_compilar_expr(c, e->como.rebanada.paso)) return false;
+            } else {
+                chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
+            }
+            chunk_emitir_byte(c->actual->chunk, OP_REBANADA, e->linea);
+            return true;
+        }
+
+        case EXPR_LAMBDA: {
+            int n_params = e->como.lambda.n_parametros;
+            Parametro *params = e->como.lambda.parametros;
+            for (int i = 0; i < n_params; i++) {
+                if (params[i].valor_defecto != NULL) {
+                    error_compilacion(c, e->linea, e->columna,
+                        "valores por defecto en parametros aun no estan en bytecode v0.6.2");
+                    return false;
+                }
+            }
+
+            FuncionBC *fn = funcion_bc_nueva("lambda", 6, n_params);
+            if (!fn) return error_compilacion(c, e->linea, e->columna,
+                "memoria insuficiente"), false;
+
+            ScopeCompilador scope_lam;
+            scope_iniciar(&scope_lam, &fn->chunk, true, c->actual);
+            scope_lam.funcion = fn;
+            scope_lam.locales[0].nombre = "lambda";
+            scope_lam.locales[0].longitud_nombre = 6;
+            for (int i = 0; i < n_params; i++) {
+                scope_lam.locales[scope_lam.n_locales].nombre = params[i].nombre;
+                scope_lam.locales[scope_lam.n_locales].longitud_nombre =
+                    params[i].longitud_nombre;
+                scope_lam.locales[scope_lam.n_locales].capturado = false;
+                scope_lam.n_locales++;
+            }
+
+            ScopeCompilador *prev = c->actual;
+            c->actual = &scope_lam;
+            bool ok = compilador_compilar_expr(c, e->como.lambda.cuerpo);
+            chunk_emitir_byte(&fn->chunk, OP_RETORNAR, e->linea);
+            c->actual = prev;
+
+            if (!ok) {
+                funcion_bc_liberar(fn);
+                return false;
+            }
+
+            Valor v_plantilla = valor_plantilla(fn);
+            int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);
+            if (fn_idx < 0 || fn_idx > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "demasiadas constantes para v0.6 (operando byte)");
+                return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
+                                (uint8_t)fn_idx, e->linea);
+            for (int i = 0; i < scope_lam.n_upvalues; i++) {
+                chunk_emitir_byte(c->actual->chunk,
+                    scope_lam.upvalues[i].es_local ? 1 : 0, e->linea);
+                chunk_emitir_byte(c->actual->chunk,
+                    scope_lam.upvalues[i].indice, e->linea);
+            }
+            return true;
+        }
+
         /* Aplazadas a sesiones siguientes. */
         case EXPR_LITERAL_F_CADENA:
         case EXPR_ATRIBUTO:
-        case EXPR_LAMBDA:
-        case EXPR_REBANADA:
             error_compilacion(c, e->linea, e->columna,
-                "esta forma de expresion no esta implementada en bytecode v0.6 sesion 6");
+                "esta forma de expresion no esta implementada en bytecode v0.6.2");
             return false;
     }
 
@@ -554,8 +715,7 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
     if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
 
     /*
-     * Dentro de función: la primera asignación a un nombre nuevo lo
-     * convierte en local; las siguientes reasignan ese local.
+     * Dentro de función: prioridad local → upvalue → nuevo local.
      * En el scope raíz (top-level): toda asignación va a globales.
      */
     if (c->actual->es_funcion) {
@@ -564,14 +724,22 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
         if (slot >= 0) {
             chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                 (uint8_t)slot, s->linea);
-        } else {
-            /* Nuevo local: el valor ya está en el slot correcto del
-               stack; solo registramos el nombre. */
-            int nuevo = agregar_local(c, destino->como.ident.nombre,
-                                          destino->como.ident.longitud,
-                                          s->linea);
-            if (nuevo < 0) return false;
+            return true;
         }
+        int upv = resolver_upvalue(c, c->actual,
+                                      destino->como.ident.nombre,
+                                      destino->como.ident.longitud, s->linea);
+        if (upv >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
+                                (uint8_t)upv, s->linea);
+            return true;
+        }
+        /* Nuevo local: el valor ya está en el slot correcto del
+           stack; solo registramos el nombre. */
+        int nuevo = agregar_local(c, destino->como.ident.nombre,
+                                      destino->como.ident.longitud,
+                                      s->linea);
+        if (nuevo < 0) return false;
         return true;
     }
 
@@ -638,17 +806,25 @@ static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
         return false;
     }
 
-    /* Decidir si es local o global. La aug requiere que la variable
-       ya exista — para locales eso significa estar en el mapa; para
-       globales, lo verifica la VM en tiempo de ejecución. */
+    /* Decidir si es local, upvalue o global. */
     int slot_local = c->actual->es_funcion
         ? buscar_local(c->actual, destino->como.ident.nombre,
                           destino->como.ident.longitud)
         : -1;
+    int slot_upv = -1;
+    if (slot_local < 0 && c->actual->es_funcion) {
+        slot_upv = resolver_upvalue(c, c->actual,
+                                       destino->como.ident.nombre,
+                                       destino->como.ident.longitud,
+                                       s->linea);
+    }
 
     if (slot_local >= 0) {
         chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                             (uint8_t)slot_local, s->linea);
+    } else if (slot_upv >= 0) {
+        chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_UPVALUE,
+                            (uint8_t)slot_upv, s->linea);
     } else {
         int idx_get = agregar_nombre_global(c, destino->como.ident.nombre,
                                               destino->como.ident.longitud);
@@ -685,6 +861,9 @@ static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
     if (slot_local >= 0) {
         chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                             (uint8_t)slot_local, s->linea);
+    } else if (slot_upv >= 0) {
+        chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
+                            (uint8_t)slot_upv, s->linea);
     } else {
         int idx_set = agregar_nombre_global(c, destino->como.ident.nombre,
                                               destino->como.ident.longitud);
@@ -932,6 +1111,7 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
     /* Abrir scope anidado. */
     ScopeCompilador scope_fn;
     scope_iniciar(&scope_fn, &fn->chunk, true, c->actual);
+    scope_fn.funcion = fn;
     /* Slot 0 = la propia función (callee), nombre por convención. */
     scope_fn.locales[0].nombre = nombre;
     scope_fn.locales[0].longitud_nombre = len_nombre;
@@ -963,19 +1143,56 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
         return false;
     }
 
-    /* Emitir en el chunk padre: OP_CONST <fn> seguido de
-       OP_DEFINIR_GLOBAL <nombre> (asignación al scope global). */
-    Valor v_fn = valor_funcion_bc(fn);   /* toma posesión del refcount */
-    chunk_emitir_constante(c->actual->chunk, v_fn, s->linea);
-
-    int idx_nombre = agregar_nombre_global(c, nombre, len_nombre);
-    if (idx_nombre < 0 || idx_nombre > 255) {
+    /*
+     * Emitir en el chunk padre:
+     *   OP_CONST <plantilla>
+     *   ⇒ no, con upvalues no podemos usar OP_CONST porque la plantilla
+     *      necesita ser convertida a Closure en runtime.
+     *   OP_CLOSURE <fn_idx> <upvalue_pairs...>
+     *   OP_DEFINIR_GLOBAL <nombre>
+     */
+    Valor v_plantilla = valor_plantilla(fn);    /* toma posesión del refcount */
+    int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);
+    if (fn_idx < 0 || fn_idx > 255) {
         error_compilacion(c, s->linea, s->columna,
             "demasiadas constantes para v0.6 (operando byte)");
         return false;
     }
-    chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
-                        (uint8_t)idx_nombre, s->linea);
+    chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
+                        (uint8_t)fn_idx, s->linea);
+    /* Emitir metadata de upvalues: por cada upvalue del scope que
+       acabamos de cerrar, emitir [es_local, indice]. */
+    for (int i = 0; i < scope_fn.n_upvalues; i++) {
+        chunk_emitir_byte(c->actual->chunk,
+            scope_fn.upvalues[i].es_local ? 1 : 0, s->linea);
+        chunk_emitir_byte(c->actual->chunk,
+            scope_fn.upvalues[i].indice, s->linea);
+    }
+
+    /* La closure recién creada está en el tope del stack. Si estamos
+       en función la registramos como local (mismo patrón que `x = 5`
+       creando un nuevo local: el valor ya está en el slot final, no
+       emitimos ASIGNAR). En el scope raíz, la asignamos al global. */
+    if (c->actual->es_funcion) {
+        /* Verificar si ya existe un local con ese nombre (redefinir). */
+        int existente = buscar_local(c->actual, nombre, len_nombre);
+        if (existente >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)existente, s->linea);
+        } else {
+            int slot = agregar_local(c, nombre, len_nombre, s->linea);
+            if (slot < 0) return false;
+        }
+    } else {
+        int idx_nombre = agregar_nombre_global(c, nombre, len_nombre);
+        if (idx_nombre < 0 || idx_nombre > 255) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiadas constantes para v0.6 (operando byte)");
+            return false;
+        }
+        chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                            (uint8_t)idx_nombre, s->linea);
+    }
     return true;
 }
 
