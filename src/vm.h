@@ -5,6 +5,7 @@
 
 #include "chunk.h"
 #include "evaluador.h"   /* EvalError */
+#include "memoria.h"     /* Memoria (Fase 7 S1) */
 #include "valor.h"
 
 /*
@@ -119,6 +120,13 @@ typedef struct {
      */
     HandlerFrame handlers[VM_HANDLERS_MAX];
     int n_handlers;
+
+    /*
+     * Recolector de basura (Fase 7). En S1 solo rastrea objetos
+     * heap-alocados; el refcount sigue siendo el liberador efectivo.
+     * Sesiones siguientes activan mark+sweep y eliminan refcount.
+     */
+    Memoria memoria;
 
     EvalError error;
 } VM;

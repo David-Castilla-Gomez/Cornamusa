@@ -220,7 +220,10 @@ Valor valor_rango_de_mp(mp_int *inicio, mp_int *fin, mp_int *paso) {
 #define LISTA_CAPACIDAD_MIN 4
 
 Lista *lista_nueva(int capacidad_inicial) {
-    Lista *l = (Lista *)malloc(sizeof(Lista));
+    /* Fase 7 S1: pasamos por gc_alocar para que el GC pueda rastrear.
+       Si no hay Memoria instalada (tests low-level), gc_alocar cae a
+       malloc puro sin rastreo y todo sigue funcionando. */
+    Lista *l = (Lista *)gc_alocar(sizeof(Lista), GC_TIPO_LISTA);
     if (!l) return NULL;
     int cap = capacidad_inicial < LISTA_CAPACIDAD_MIN
             ? LISTA_CAPACIDAD_MIN : capacidad_inicial;
@@ -245,6 +248,8 @@ void lista_liberar(Lista *l) {
         valor_destruir(&l->elementos[i]);
     }
     free(l->elementos);
+    /* Fase 7 S1: desenlazar del rastreo del GC antes de liberar. */
+    gc_desenlazar(&l->obj);
     free(l);
 }
 

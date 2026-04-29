@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#include "memoria.h"
 #include "tommath.h"
 
 /*
@@ -171,6 +172,7 @@ typedef struct Valor {
  * memoria. Es aceptable hasta Fase 7, que añadirá mark-sweep real.
  */
 struct Lista {
+    GCObject obj;           /* Fase 7 S1: header GC; debe ser el primer campo. */
     Valor *elementos;       /* array contiguo de Valores; cada slot dueño */
     int cuenta;
     int capacidad;

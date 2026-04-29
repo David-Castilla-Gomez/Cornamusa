@@ -629,6 +629,7 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
 
         case EXPR_ATRIBUTO:
         case EXPR_LAMBDA:
+        case EXPR_SUPER:
             return error_en(ev, e,
                 "esta forma de expresion aun no esta implementada en v0.5");
     }

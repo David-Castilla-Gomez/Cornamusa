@@ -131,13 +131,21 @@ static int opcode_a_token_binario(OpCode op) {
 void vm_iniciar(VM *vm) {
     vm->tope = vm->pila;
     vm->n_frames = 0;
-    vm->globales = dicc_nuevo();
     vm->open_upvalues = NULL;
     vm->n_handlers = 0;
     vm->error.tuvo_error = false;
     vm->error.mensaje[0] = '\0';
     vm->error.linea = 0;
     vm->error.columna = 0;
+    /*
+     * Fase 7 S1: inicializar el GC e instalarlo como memoria global
+     * antes de crear el diccionario de globales (que ya pasa por
+     * gc_alocar) o registrar nativas.
+     */
+    memoria_iniciar(&vm->memoria);
+    gc_instalar(&vm->memoria);
+
+    vm->globales = dicc_nuevo();
     /* Registrar built-ins en globales: imprimir, longitud, tipo, rango,
        agregar, quitar, insertar, invertir, ordenar, claves, valores,
        conjunto. */
@@ -154,6 +162,14 @@ void vm_destruir(VM *vm) {
         dicc_liberar(vm->globales);
         vm->globales = NULL;
     }
+    /*
+     * Fase 7 S1: barrer cualquier objeto que el refcount no haya
+     * liberado (ciclos), des-instalar la memoria global y destruir.
+     * En S4 con sweep activo, esto se reemplazará por una
+     * recolección final + memoria_destruir.
+     */
+    memoria_destruir(&vm->memoria);
+    gc_desinstalar();
 }
 
 /* Macros locales para el dispatch loop. `frame` es el CallFrame
