@@ -101,7 +101,20 @@ typedef enum {
     /* ---- Funciones y locales (sesión 5) ---- */
     OP_OBTENER_LOCAL,           /* GET_LOCAL [byte slot] */
     OP_ASIGNAR_LOCAL,           /* SET_LOCAL [byte slot] */
-    OP_OBTENER_GLOBAL,          /* GET_GLOBAL [byte name-idx] */
+    /*
+     * GET_GLOBAL: layout 6 bytes desde v0.10 (F10).
+     *   [opcode] [name_idx u8] [cache_ver u16 BE] [cache_slot u16 BE]
+     * Slow path: busca por nombre, rellena cache, reescribe el primer
+     * byte a OP_OBTENER_GLOBAL_CACHE y empuja el valor.
+     */
+    OP_OBTENER_GLOBAL,
+    /*
+     * Forma quickened de OP_OBTENER_GLOBAL. Mismo layout 6 bytes.
+     * Fast path: si los 16 bits bajos de vm->globales->version coinciden
+     * con cache_ver, lee directamente vm->globales->entradas[cache_slot].
+     * Miss → revierte el primer byte a OP_OBTENER_GLOBAL y rebobina ip.
+     */
+    OP_OBTENER_GLOBAL_CACHE,
     OP_DEFINIR_GLOBAL,
     OP_ASIGNAR_GLOBAL,
     OP_LLAMAR,                  /* CALL [byte n_args] */

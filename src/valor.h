@@ -220,6 +220,20 @@ struct Diccionario {
     int cuenta;
     int capacidad;
     int refcount;
+    /*
+     * Contador monotónico que se incrementa en cada cambio
+     * estructural (inserción de clave nueva, borrado, redimensionado).
+     * NO se incrementa al sobreescribir el valor de una clave existente
+     * — deliberado: caches del IC (F10) conservan su validez para
+     * variables que cambian de valor sin cambiar de slot.
+     *
+     * Lo consume el inline cache de OP_OBTENER_GLOBAL_CACHE: el cache
+     * slot guarda los 16 bits bajos de esta versión vista en el último
+     * acierto, y compara en cada hit. Wraparound a 65k mutaciones
+     * causa colisión teórica de versión + key_match tras rehash con
+     * probabilidad ≈1/2^32 — irrelevante.
+     */
+    uint64_t version;
 };
 
 Diccionario *dicc_nuevo(void);
@@ -237,6 +251,16 @@ bool dicc_asignar(Diccionario *d, Valor clave, Valor valor);
 /* Busca por clave. Si existe, copia un clon del valor en `*out` y
    devuelve true. Si no, deja `*out` sin tocar y devuelve false. */
 bool dicc_obtener(const Diccionario *d, const Valor *clave, Valor *out);
+
+/*
+ * Como dicc_obtener pero además devuelve el índice del slot en
+ * `entradas` donde se encontró la clave. Lo usa el inline cache de
+ * `OP_OBTENER_GLOBAL` (F10) para que el siguiente acierto pueda leer
+ * `entradas[slot_idx]` directamente sin re-buscar. El slot_idx es
+ * válido mientras `d->version` no cambie.
+ */
+bool dicc_obtener_y_slot(const Diccionario *d, const Valor *clave,
+                          Valor *out, int *out_slot_idx);
 
 /* Devuelve true si la clave está presente. */
 bool dicc_contiene(const Diccionario *d, const Valor *clave);

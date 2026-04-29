@@ -777,11 +777,59 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 }
                 break;
             }
+            case OP_OBTENER_GLOBAL_CACHE: {
+                /*
+                 * Fast path quickened (F10). Layout 6 bytes:
+                 *   [opcode][name_idx][ver_hi][ver_lo][slot_hi][slot_lo]
+                 *
+                 * Si los 16 bits bajos de vm->globales->version coinciden
+                 * con cache_ver Y el slot sigue ocupado, leemos
+                 * entradas[slot_idx] directamente — sin hashing, sin
+                 * probing, sin clonar la clave. Miss → degradar el
+                 * opcode a OP_OBTENER_GLOBAL y rebobinar ip para que
+                 * la siguiente iteración del loop ejecute el slow path.
+                 */
+                const uint8_t *opcode_addr = frame->ip - 1;
+                uint8_t name_idx = LEER_BYTE();
+                (void)name_idx;  /* solo lo lee el slow path */
+                uint8_t v_hi = LEER_BYTE();
+                uint8_t v_lo = LEER_BYTE();
+                uint16_t cached_ver = ((uint16_t)v_hi << 8) | (uint16_t)v_lo;
+                uint8_t s_hi = LEER_BYTE();
+                uint8_t s_lo = LEER_BYTE();
+                uint16_t cached_slot = ((uint16_t)s_hi << 8) | (uint16_t)s_lo;
+
+                Diccionario *d = vm->globales;
+                if ((uint16_t)d->version == cached_ver
+                    && cached_slot < (uint16_t)d->capacidad
+                    && d->entradas[cached_slot].ocupada) {
+                    empujar(vm, valor_clonar(&d->entradas[cached_slot].valor));
+                    break;
+                }
+
+                /* Miss: degradar el opcode y rebobinar ip. La próxima
+                   iteración leerá OP_OBTENER_GLOBAL y rellenará el cache. */
+                uint8_t *codigo = (uint8_t *)frame->chunk->codigo;
+                int op_offset = (int)(opcode_addr - codigo);
+                codigo[op_offset] = (uint8_t)OP_OBTENER_GLOBAL;
+                frame->ip = opcode_addr;
+                break;
+            }
             case OP_OBTENER_GLOBAL: {
+                /*
+                 * Slow path. Layout 6 bytes idéntico al CACHE — pero
+                 * los 4 bytes de cache se leen como zero la primera vez
+                 * y los rellenamos al final, promoviendo el opcode.
+                 */
+                const uint8_t *opcode_addr = frame->ip - 1;
                 uint8_t idx = LEER_BYTE();
+                /* Saltar los 4 bytes de cache reservados — los rellenamos
+                   abajo si la búsqueda tiene éxito y el slot cabe en u16. */
+                frame->ip += 4;
                 const Valor *nombre = &frame->chunk->constantes[idx];
                 Valor v;
-                if (!dicc_obtener(vm->globales, nombre, &v)) {
+                int slot_idx;
+                if (!dicc_obtener_y_slot(vm->globales, nombre, &v, &slot_idx)) {
                     vm->error.tuvo_error = true;
                     vm->error.linea = linea_actual_frame(frame);
                     snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
@@ -789,6 +837,23 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         nombre->como.cadena.longitud,
                         nombre->como.cadena.texto);
                     return VM_ERROR_RUNTIME;
+                }
+                /*
+                 * Rellenar cache y promover a OP_OBTENER_GLOBAL_CACHE si
+                 * el slot_idx cabe en u16. Capacidades >65535 (= >32k
+                 * globales) son irrealistas pero no rompen — solo nos
+                 * quedamos en slow path para esa entrada.
+                 */
+                if (slot_idx >= 0 && slot_idx <= UINT16_MAX) {
+                    uint8_t *codigo = (uint8_t *)frame->chunk->codigo;
+                    int op_offset = (int)(opcode_addr - codigo);
+                    uint16_t ver = (uint16_t)vm->globales->version;
+                    codigo[op_offset]     = (uint8_t)OP_OBTENER_GLOBAL_CACHE;
+                    /* codigo[op_offset+1] = name_idx — ya está bien. */
+                    codigo[op_offset + 2] = (uint8_t)((ver >> 8) & 0xff);
+                    codigo[op_offset + 3] = (uint8_t)(ver & 0xff);
+                    codigo[op_offset + 4] = (uint8_t)((slot_idx >> 8) & 0xff);
+                    codigo[op_offset + 5] = (uint8_t)(slot_idx & 0xff);
                 }
                 empujar(vm, v);
                 break;

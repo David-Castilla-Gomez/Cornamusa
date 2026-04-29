@@ -1,0 +1,17 @@
+# Benchmark: lookup intensivo de globales.
+# Stresa específicamente OP_OBTENER_GLOBAL — un loop puro que sólo
+# lee 4 globales repetidamente. Sirve para validar la ganancia del
+# inline cache de F10.
+
+a = 1
+b = 2
+c = 3
+d = 4
+
+n = 1000000
+total = 0
+para i en rango(n):
+    total = total + a + b + c + d
+fin para
+
+imprimir("iteraciones:", n, "total:", total)

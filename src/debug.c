@@ -43,6 +43,32 @@ static void imprimir_constante_repr(const Valor *v, FILE *out) {
     fputs(buffer, out);
 }
 
+/*
+ * OP_OBTENER_GLOBAL / OP_OBTENER_GLOBAL_CACHE (F10): 6 bytes.
+ *   [opcode][name_idx][cache_ver_hi][cache_ver_lo][slot_hi][slot_lo]
+ * Mostramos name_idx + el nombre y, si el cache está rellenado
+ * (no todo cero), también la versión y el slot guardados.
+ */
+static int instruccion_obtener_global(const char *nombre, const Chunk *c,
+                                       int offset, FILE *out) {
+    uint8_t name_idx = c->codigo[offset + 1];
+    uint16_t cached_ver = (uint16_t)((c->codigo[offset + 2] << 8)
+                                     | c->codigo[offset + 3]);
+    uint16_t cached_slot = (uint16_t)((c->codigo[offset + 4] << 8)
+                                      | c->codigo[offset + 5]);
+    fprintf(out, "%-24s %4d", nombre, name_idx);
+    if (name_idx < c->constantes_cuenta) {
+        fputs(" '", out);
+        imprimir_constante_repr(&c->constantes[name_idx], out);
+        fputc('\'', out);
+    }
+    if (cached_ver != 0 || cached_slot != 0) {
+        fprintf(out, "  [cache: ver=%u slot=%u]", cached_ver, cached_slot);
+    }
+    fputc('\n', out);
+    return offset + 6;
+}
+
 static int instruccion_const_corta(const Chunk *c, int offset, FILE *out) {
     uint8_t idx = c->codigo[offset + 1];
     fprintf(out, "%-20s %4d '", "OP_CONST", idx);
@@ -116,7 +142,9 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
 
         case OP_OBTENER_LOCAL:   return instruccion_byte("OP_OBTENER_LOCAL", c, offset, out);
         case OP_ASIGNAR_LOCAL:   return instruccion_byte("OP_ASIGNAR_LOCAL", c, offset, out);
-        case OP_OBTENER_GLOBAL:  return instruccion_byte("OP_OBTENER_GLOBAL", c, offset, out);
+        case OP_OBTENER_GLOBAL:  return instruccion_obtener_global("OP_OBTENER_GLOBAL", c, offset, out);
+        case OP_OBTENER_GLOBAL_CACHE:
+            return instruccion_obtener_global("OP_OBTENER_GLOBAL_CACHE", c, offset, out);
         case OP_DEFINIR_GLOBAL:  return instruccion_byte("OP_DEFINIR_GLOBAL", c, offset, out);
         case OP_ASIGNAR_GLOBAL:  return instruccion_byte("OP_ASIGNAR_GLOBAL", c, offset, out);
         case OP_LLAMAR:          return instruccion_byte("OP_LLAMAR", c, offset, out);

@@ -444,7 +444,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "demasiadas constantes para v0.6 (operando byte)");
                 return false;
             }
+            /* OP_OBTENER_GLOBAL ahora ocupa 6 bytes (v0.10 / F10):
+               opcode + name_idx + 4 bytes de cache (zero-init).
+               El runtime los rellena en el primer hit y promueve el
+               opcode a OP_OBTENER_GLOBAL_CACHE para hits subsecuentes. */
             chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL, (uint8_t)idx, e->linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
             return true;
         }
 
@@ -903,8 +909,11 @@ static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
                 "demasiadas constantes para v0.6 (operando byte)");
             return false;
         }
+        /* 6-byte form (v0.10 / F10) — ver nota en EXPR_IDENT arriba. */
         chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
                             (uint8_t)idx_get, s->linea);
+        chunk_emitir_byte2(c->actual->chunk, 0, 0, s->linea);
+        chunk_emitir_byte2(c->actual->chunk, 0, 0, s->linea);
     }
 
     /* expresion derecha. */

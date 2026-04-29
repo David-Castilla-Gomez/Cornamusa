@@ -461,6 +461,9 @@ static bool dicc_redimensionar(Diccionario *d, int nueva_cap) {
     free(d->entradas);
     d->entradas = nuevas;
     d->capacidad = nueva_cap;
+    /* Cualquier cache de slot_idx queda invalidada — todas las
+       posiciones cambiaron por el rehash. */
+    d->version++;
     return true;
 }
 
@@ -473,6 +476,7 @@ Diccionario *dicc_nuevo(void) {
     d->cuenta = 0;
     d->capacidad = DICC_CAPACIDAD_INICIAL;
     d->refcount = 1;
+    d->version = 0;
     return d;
 }
 
@@ -511,9 +515,16 @@ bool dicc_asignar(Diccionario *d, Valor clave, Valor valor) {
     if (slot->ocupada) {
         valor_destruir(&slot->clave);
         valor_destruir(&slot->valor);
+        /* Sobreescritura: NO se incrementa version. El slot_idx
+           cacheado sigue apuntando a la misma posición — solo cambia
+           el valor, que el fast path lee directamente. */
     } else {
         slot->ocupada = true;
         d->cuenta++;
+        /* Inserción nueva: bumpear version invalida slots cacheados.
+           Una nueva clave puede obligar al probing a reubicar lookups
+           previos que colisionan en el mismo bucket. */
+        d->version++;
     }
     slot->clave = clave;
     slot->valor = valor;
@@ -528,6 +539,16 @@ bool dicc_obtener(const Diccionario *d, const Valor *clave, Valor *out) {
     return true;
 }
 
+bool dicc_obtener_y_slot(const Diccionario *d, const Valor *clave,
+                          Valor *out, int *out_slot_idx) {
+    if (!d || !valor_es_hashable(clave)) return false;
+    EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, clave);
+    if (!slot->ocupada) return false;
+    *out = valor_clonar(&slot->valor);
+    *out_slot_idx = (int)(slot - d->entradas);
+    return true;
+}
+
 bool dicc_contiene(const Diccionario *d, const Valor *clave) {
     if (!d || !valor_es_hashable(clave)) return false;
     EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, clave);
@@ -538,6 +559,9 @@ bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out) {
     if (!d || !valor_es_hashable(clave)) return false;
     EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, clave);
     if (!slot->ocupada) return false;
+    /* Borrado invalida slot cacheado de esta clave Y de otras claves
+       que tras la reinserción del cluster cambian de posición. */
+    d->version++;
     /* Probing lineal: al borrar, hay que reinsertar la cadena de
        claves siguientes para mantener la invariante. Implementación
        sencilla: marcar tombstone con clave nulo + ocupada=false +

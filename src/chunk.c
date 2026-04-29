@@ -39,6 +39,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_OBTENER_LOCAL:   return "OP_OBTENER_LOCAL";
         case OP_ASIGNAR_LOCAL:   return "OP_ASIGNAR_LOCAL";
         case OP_OBTENER_GLOBAL:  return "OP_OBTENER_GLOBAL";
+        case OP_OBTENER_GLOBAL_CACHE: return "OP_OBTENER_GLOBAL_CACHE";
         case OP_DEFINIR_GLOBAL:  return "OP_DEFINIR_GLOBAL";
         case OP_ASIGNAR_GLOBAL:  return "OP_ASIGNAR_GLOBAL";
         case OP_LLAMAR:          return "OP_LLAMAR";
