@@ -1,6 +1,7 @@
 #include "vm.h"
 
 #include <limits.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -374,6 +375,260 @@ void vm_destruir(VM *vm) {
         vm->error.linea = linea_actual_frame(frame);                           \
         snprintf(vm->error.mensaje, sizeof(vm->error.mensaje), __VA_ARGS__);   \
     } while (0)
+
+/*
+ * F10: helpers para inline cache de OP_LLAMAR.
+ *
+ * `opcode_addr` apunta al byte del opcode dentro de chunk->codigo. El
+ * cast a (uint8_t *) es necesario porque CallFrame.chunk es const, pero
+ * el campo `codigo` declarado en Chunk es uint8_t* (no const), así que
+ * la escritura no viola el contrato de const.
+ *
+ * DEGRADAR_LLAMAR: reescribe el byte del opcode a OP_LLAMAR y rebobina
+ * frame->ip al byte del opcode. La siguiente iteración del dispatch
+ * leerá OP_LLAMAR y entrará por el slow path.
+ *
+ * PROMOVER_LLAMAR(variante): reescribe el byte del opcode a la variante
+ * especializada indicada. Lo invoca el slow path de OP_LLAMAR tras el
+ * primer éxito.
+ */
+#define DEGRADAR_LLAMAR()                                                  \
+    do {                                                                    \
+        uint8_t *_codigo = (uint8_t *)frame->chunk->codigo;                 \
+        _codigo[(int)(opcode_addr - _codigo)] = (uint8_t)OP_LLAMAR;         \
+        frame->ip = opcode_addr;                                            \
+    } while (0)
+
+/* ──────────────────────────────────────────────────────────────────
+ * Helpers de OP_LLAMAR (F10).
+ *
+ * Cada uno ejecuta el body correspondiente al tipo de callee, con la
+ * pila/frame ya validados por el llamador (slow path o variante
+ * especializada). Devuelven VM_OK en éxito o VM_ERROR_RUNTIME tras
+ * setear vm->error.
+ *
+ * Para BC/CLASE/METODO_LIGADO el helper crea un nuevo CallFrame y
+ * actualiza `*frame_inout` para que el dispatch loop continúe sobre
+ * el frame nuevo.
+ * ────────────────────────────────────────────────────────────────── */
+
+static ResultadoVM ejecutar_llamar_nativa(VM *vm, CallFrame *frame,
+                                            Valor *base_nuevo, uint8_t n_args) {
+    int linea = linea_actual_frame(frame);
+    Valor *args = base_nuevo + 1;
+    Valor r = base_nuevo->como.nativa.fn(&vm->error, n_args, args, linea, 0);
+    if (vm->error.tuvo_error) {
+        valor_destruir(&r);
+        return VM_ERROR_RUNTIME;
+    }
+    for (int i = 0; i < n_args; i++) {
+        Valor v = *(--vm->tope);
+        valor_destruir(&v);
+    }
+    Valor cv = *(--vm->tope);
+    valor_destruir(&cv);
+    empujar(vm, r);
+    return VM_OK;
+}
+
+/* Helper interno para reportar error con printf-style desde un helper. */
+static void llamar_set_error(VM *vm, CallFrame *frame, const char *fmt, ...) {
+    vm->error.tuvo_error = true;
+    vm->error.linea = linea_actual_frame(frame);
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(vm->error.mensaje, sizeof(vm->error.mensaje), fmt, ap);
+    va_end(ap);
+}
+
+static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
+                                       Valor *base_nuevo, uint8_t n_args) {
+    CallFrame *frame = *frame_inout;
+    Closure *cl = base_nuevo->como.closure;
+    FuncionBC *fn = cl->plantilla;
+    if (n_args != fn->aridad) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+            fn->longitud_nombre, fn->nombre, fn->aridad, n_args);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = cl;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (cl->globales_definicion != NULL
+        && cl->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = cl->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
+
+static ResultadoVM ejecutar_llamar_clase(VM *vm, CallFrame **frame_inout,
+                                          Valor *base_nuevo, uint8_t n_args) {
+    CallFrame *frame = *frame_inout;
+    Clase *cl_class = base_nuevo->como.clase;
+    Instancia *inst = instancia_nueva(cl_class);
+    if (!inst) {
+        llamar_set_error(vm, frame, "memoria insuficiente al crear instancia");
+        return VM_ERROR_RUNTIME;
+    }
+    Valor clave_init = valor_cadena_referencia("__iniciar__", 11);
+    Valor met_v;
+    bool tiene_init = dicc_obtener(cl_class->metodos, &clave_init, &met_v);
+
+    if (!tiene_init) {
+        if (n_args != 0) {
+            instancia_liberar(inst);
+            llamar_set_error(vm, frame,
+                "ErrorDeTipo: %.*s() no acepta argumentos (sin __iniciar__)",
+                cl_class->longitud_nombre, cl_class->nombre);
+            return VM_ERROR_RUNTIME;
+        }
+        Valor cv = *(--vm->tope);
+        valor_destruir(&cv);
+        empujar(vm, valor_instancia(inst));
+        return VM_OK;
+    }
+
+    if (met_v.tipo != VAL_FUNCION_BC) {
+        valor_destruir(&met_v);
+        instancia_liberar(inst);
+        llamar_set_error(vm, frame,
+            "estado interno corrupto: __iniciar__ no es closure");
+        return VM_ERROR_RUNTIME;
+    }
+    Closure *cl = met_v.como.closure;
+    FuncionBC *fn = cl->plantilla;
+    if (n_args + 1 != fn->aridad) {
+        valor_destruir(&met_v);
+        instancia_liberar(inst);
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+            cl_class->longitud_nombre, cl_class->nombre,
+            fn->aridad - 1, n_args);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        valor_destruir(&met_v);
+        instancia_liberar(inst);
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+        valor_destruir(&met_v);
+        instancia_liberar(inst);
+        llamar_set_error(vm, frame, "Desbordamiento de pila");
+        return VM_ERROR_RUNTIME;
+    }
+    /* Insertar la instancia como receptor: shift de args y reemplazar
+       callee con la closure. */
+    if (n_args > 0) {
+        memmove(base_nuevo + 2, base_nuevo + 1,
+                sizeof(Valor) * (size_t)n_args);
+    }
+    vm->tope++;
+    Valor old = *base_nuevo;
+    *base_nuevo = met_v;
+    base_nuevo[1] = valor_instancia(inst);
+    valor_destruir(&old);
+
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = cl;
+    nf->es_constructor = true;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (cl->globales_definicion != NULL
+        && cl->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = cl->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
+
+static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout,
+                                                  Valor *base_nuevo,
+                                                  uint8_t n_args) {
+    CallFrame *frame = *frame_inout;
+    MetodoLigado *bm = base_nuevo->como.metodo_ligado;
+    Closure *cl = bm->metodo;
+    FuncionBC *fn = cl->plantilla;
+    if (n_args + 1 != fn->aridad) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+            fn->longitud_nombre, fn->nombre, fn->aridad - 1, n_args);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+        llamar_set_error(vm, frame, "Desbordamiento de pila");
+        return VM_ERROR_RUNTIME;
+    }
+    if (n_args > 0) {
+        memmove(base_nuevo + 2, base_nuevo + 1,
+                sizeof(Valor) * (size_t)n_args);
+    }
+    vm->tope++;
+    closure_retener(cl);
+    Valor receptor = valor_clonar(&bm->receptor);
+    Valor bound_old = *base_nuevo;
+    *base_nuevo = valor_closure(cl);
+    base_nuevo[1] = receptor;
+    valor_destruir(&bound_old);
+
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = cl;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (cl->globales_definicion != NULL
+        && cl->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = cl->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
 
 /* Dispatch interno; la wrapper pública vm_ejecutar gestiona el flag
    gc_habilitado en cualquier path de salida. */
@@ -1852,252 +2107,120 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             }
 
             /* ─── Llamadas a función ─── */
-            case OP_LLAMAR: {
+            /*
+             * F10: variantes especializadas de OP_LLAMAR.
+             *
+             * Cada *_<TIPO> verifica que el callee es del tipo esperado
+             * y, si sí, ejecuta el helper. Si el tipo cambió (sitio
+             * polimórfico, raro), reescribe el opcode a OP_LLAMAR
+             * (slow path) y rebobina ip para reejecución.
+             */
+            case OP_LLAMAR_NATIVA: {
+                const uint8_t *opcode_addr = frame->ip - 1;
                 uint8_t n_args = LEER_BYTE();
-                /* La pila tiene: [..., callee, arg1, ..., argN].
-                   El callee está en `tope - n_args - 1`. */
+                Valor *base_nuevo = vm->tope - n_args - 1;
+                if (base_nuevo->tipo != VAL_NATIVA) {
+                    DEGRADAR_LLAMAR();
+                    break;
+                }
+                if (ejecutar_llamar_nativa(vm, frame, base_nuevo, n_args)
+                    != VM_OK) {
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+            case OP_LLAMAR_BC: {
+                const uint8_t *opcode_addr = frame->ip - 1;
+                uint8_t n_args = LEER_BYTE();
+                Valor *base_nuevo = vm->tope - n_args - 1;
+                if (base_nuevo->tipo != VAL_FUNCION_BC) {
+                    DEGRADAR_LLAMAR();
+                    break;
+                }
+                if (ejecutar_llamar_bc(vm, &frame, base_nuevo, n_args)
+                    != VM_OK) {
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+            case OP_LLAMAR_CLASE: {
+                const uint8_t *opcode_addr = frame->ip - 1;
+                uint8_t n_args = LEER_BYTE();
+                Valor *base_nuevo = vm->tope - n_args - 1;
+                if (base_nuevo->tipo != VAL_CLASE) {
+                    DEGRADAR_LLAMAR();
+                    break;
+                }
+                if (ejecutar_llamar_clase(vm, &frame, base_nuevo, n_args)
+                    != VM_OK) {
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+            case OP_LLAMAR_METODO_LIGADO: {
+                const uint8_t *opcode_addr = frame->ip - 1;
+                uint8_t n_args = LEER_BYTE();
+                Valor *base_nuevo = vm->tope - n_args - 1;
+                if (base_nuevo->tipo != VAL_METODO_LIGADO) {
+                    DEGRADAR_LLAMAR();
+                    break;
+                }
+                if (ejecutar_llamar_metodo_ligado(vm, &frame, base_nuevo,
+                                                    n_args) != VM_OK) {
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+            case OP_LLAMAR: {
+                /*
+                 * Slow path. Despacha por tipo y, tras éxito, promueve
+                 * el opcode a la variante especializada para que los
+                 * próximos hits del mismo site bypaseen este switch.
+                 *
+                 * Capturamos `caller_codigo` ANTES de invocar los
+                 * helpers porque BC/CLASE/METODO_LIGADO empujan un
+                 * frame nuevo y cambian `frame->chunk` por el callee.
+                 * La promoción debe escribirse en el chunk del CALLER.
+                 */
+                const uint8_t *opcode_addr = frame->ip - 1;
+                uint8_t *caller_codigo = (uint8_t *)frame->chunk->codigo;
+                uint8_t n_args = LEER_BYTE();
                 Valor *base_nuevo = vm->tope - n_args - 1;
                 Valor callee = *base_nuevo;
+                OpCode promote = OP_LLAMAR;
 
-                if (callee.tipo == VAL_NATIVA) {
-                    /* Las nativas reciben los args sin tomar posesión;
-                       el llamador los destruye al volver. */
-                    int linea = linea_actual_frame(frame);
-                    Valor *args = base_nuevo + 1;
-                    Valor r = callee.como.nativa.fn(&vm->error, n_args,
-                                                     args, linea, 0);
-                    if (vm->error.tuvo_error) {
-                        valor_destruir(&r);
-                        return VM_ERROR_RUNTIME;
-                    }
-                    /* Limpiar args y callee del stack, empujar resultado. */
-                    for (int i = 0; i < n_args; i++) {
-                        Valor v = *(--vm->tope);
-                        valor_destruir(&v);
-                    }
-                    Valor cv = *(--vm->tope);
-                    valor_destruir(&cv);
-                    empujar(vm, r);
-                    break;
-                }
-
-                if (callee.tipo == VAL_FUNCION_BC) {
-                    Closure *cl = callee.como.closure;
-                    FuncionBC *fn = cl->plantilla;
-                    if (n_args != fn->aridad) {
-                        VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
-                                 fn->longitud_nombre, fn->nombre,
-                                 fn->aridad, n_args);
-                        return VM_ERROR_RUNTIME;
-                    }
-                    if (vm->n_frames >= VM_FRAMES_MAX) {
-                        VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
-                                 VM_FRAMES_MAX);
-                        return VM_ERROR_RUNTIME;
-                    }
-                    frame = &vm->frames[vm->n_frames++];
-                    frame->chunk = &fn->chunk;
-                    frame->ip = fn->chunk.codigo;
-                    frame->base_pila = base_nuevo;
-                    frame->closure = cl;
-                    frame->es_constructor = false;
-                    frame->modulo_en_carga = NULL;
-                    frame->globales_pre_modulo = NULL;
-                    frame->chunk_modulo = NULL;
-                    /*
-                     * v0.9.0: si la closure cerró un dicc de globales
-                     * distinto al actual (caso típico: función definida
-                     * en un módulo invocada desde el importador),
-                     * cambiar a sus globales y guardar las actuales
-                     * para restaurar al retornar.
-                     */
-                    if (cl->globales_definicion != NULL
-                        && cl->globales_definicion != vm->globales) {
-                        frame->globales_pre_llamada = vm->globales;
-                        vm->globales = cl->globales_definicion;
-                    } else {
-                        frame->globales_pre_llamada = NULL;
-                    frame->modulo_binding_name = NULL;
-                    frame->modulo_binding_len = 0;
-                frame->desde_import = false;
-                    }
-                    break;
-                }
-
-                if (callee.tipo == VAL_CLASE) {
-                    /*
-                     * Llamar una clase crea una instancia. Si la clase
-                     * tiene `__iniciar__`, lo invocamos como un método
-                     * con la instancia recién creada como receptor.
-                     * El frame del constructor se marca con
-                     * `es_constructor = true` para que su OP_RETORNAR
-                     * descarte el valor retornado y devuelva la
-                     * instancia (Python-like).
-                     */
-                    Clase *cl_class = callee.como.clase;
-                    Instancia *inst = instancia_nueva(cl_class);
-                    if (!inst) {
-                        VM_ERROR("memoria insuficiente al crear instancia");
-                        return VM_ERROR_RUNTIME;
-                    }
-
-                    /* Buscar __iniciar__ en los métodos de la clase. */
-                    Valor clave_init = valor_cadena_referencia("__iniciar__", 11);
-                    Valor met_v;
-                    bool tiene_init = dicc_obtener(cl_class->metodos,
-                                                     &clave_init, &met_v);
-
-                    if (!tiene_init) {
-                        if (n_args != 0) {
-                            instancia_liberar(inst);
-                            VM_ERROR("ErrorDeTipo: %.*s() no acepta argumentos (sin __iniciar__)",
-                                     cl_class->longitud_nombre, cl_class->nombre);
+                switch (callee.tipo) {
+                    case VAL_NATIVA:
+                        if (ejecutar_llamar_nativa(vm, frame, base_nuevo,
+                                                     n_args) != VM_OK)
                             return VM_ERROR_RUNTIME;
-                        }
-                        /* Sin __iniciar__: solo crear instancia y empujar. */
-                        Valor cv = *(--vm->tope);
-                        valor_destruir(&cv);
-                        empujar(vm, valor_instancia(inst));
+                        promote = OP_LLAMAR_NATIVA;
                         break;
-                    }
-
-                    /* Tiene __iniciar__: validar aridad incluyendo `yo`. */
-                    if (met_v.tipo != VAL_FUNCION_BC) {
-                        valor_destruir(&met_v);
-                        instancia_liberar(inst);
-                        VM_ERROR("estado interno corrupto: __iniciar__ no es closure");
+                    case VAL_FUNCION_BC:
+                        if (ejecutar_llamar_bc(vm, &frame, base_nuevo,
+                                                 n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        promote = OP_LLAMAR_BC;
+                        break;
+                    case VAL_CLASE:
+                        if (ejecutar_llamar_clase(vm, &frame, base_nuevo,
+                                                    n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        promote = OP_LLAMAR_CLASE;
+                        break;
+                    case VAL_METODO_LIGADO:
+                        if (ejecutar_llamar_metodo_ligado(vm, &frame,
+                                base_nuevo, n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        promote = OP_LLAMAR_METODO_LIGADO;
+                        break;
+                    default:
+                        VM_ERROR("ErrorDeTipo: '%s' no es invocable",
+                                 valor_nombre_tipo(&callee));
                         return VM_ERROR_RUNTIME;
-                    }
-                    Closure *cl = met_v.como.closure;
-                    FuncionBC *fn = cl->plantilla;
-                    if (n_args + 1 != fn->aridad) {
-                        valor_destruir(&met_v);
-                        instancia_liberar(inst);
-                        VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
-                                 cl_class->longitud_nombre, cl_class->nombre,
-                                 fn->aridad - 1, n_args);
-                        return VM_ERROR_RUNTIME;
-                    }
-                    if (vm->n_frames >= VM_FRAMES_MAX) {
-                        valor_destruir(&met_v);
-                        instancia_liberar(inst);
-                        VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
-                                 VM_FRAMES_MAX);
-                        return VM_ERROR_RUNTIME;
-                    }
-                    if (vm->tope - vm->pila >= VM_PILA_MAX) {
-                        valor_destruir(&met_v);
-                        instancia_liberar(inst);
-                        VM_ERROR("Desbordamiento de pila");
-                        return VM_ERROR_RUNTIME;
-                    }
-                    /* Insertar la instancia como receptor: shift de
-                       args y reemplazar callee con la closure. */
-                    if (n_args > 0) {
-                        memmove(base_nuevo + 2, base_nuevo + 1,
-                                sizeof(Valor) * (size_t)n_args);
-                    }
-                    vm->tope++;
-                    Valor old = *base_nuevo;
-                    *base_nuevo = met_v;                   /* closure (ya retenido por dicc_obtener) */
-                    base_nuevo[1] = valor_instancia(inst);
-                    valor_destruir(&old);
-
-                    frame = &vm->frames[vm->n_frames++];
-                    frame->chunk = &fn->chunk;
-                    frame->ip = fn->chunk.codigo;
-                    frame->base_pila = base_nuevo;
-                    frame->closure = cl;
-                    frame->es_constructor = true;
-                    frame->modulo_en_carga = NULL;
-                    frame->globales_pre_modulo = NULL;
-                    frame->chunk_modulo = NULL;
-                    if (cl->globales_definicion != NULL
-                        && cl->globales_definicion != vm->globales) {
-                        frame->globales_pre_llamada = vm->globales;
-                        vm->globales = cl->globales_definicion;
-                    } else {
-                        frame->globales_pre_llamada = NULL;
-                    frame->modulo_binding_name = NULL;
-                    frame->modulo_binding_len = 0;
-                frame->desde_import = false;
-                    }
-                    break;
                 }
-
-                if (callee.tipo == VAL_METODO_LIGADO) {
-                    /*
-                     * Llamada a un método con receptor ligado:
-                     *   stack antes: [..., bound, arg1, arg2, ..., argN]
-                     *   stack despues: [..., closure, receptor, arg1, ..., argN]
-                     *
-                     * El receptor se inserta como primer parámetro del frame
-                     * (slot 1, ya que slot 0 es el callee). El compilador
-                     * ya garantiza que el primer parámetro es `yo`
-                     * (convención).
-                     */
-                    MetodoLigado *bm = callee.como.metodo_ligado;
-                    Closure *cl = bm->metodo;
-                    FuncionBC *fn = cl->plantilla;
-                    if (n_args + 1 != fn->aridad) {
-                        VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
-                                 fn->longitud_nombre, fn->nombre,
-                                 fn->aridad - 1, n_args);
-                        return VM_ERROR_RUNTIME;
-                    }
-                    if (vm->n_frames >= VM_FRAMES_MAX) {
-                        VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
-                                 VM_FRAMES_MAX);
-                        return VM_ERROR_RUNTIME;
-                    }
-                    if (vm->tope - vm->pila >= VM_PILA_MAX) {
-                        VM_ERROR("Desbordamiento de pila");
-                        return VM_ERROR_RUNTIME;
-                    }
-                    /* Hacer hueco para el receptor: mover los n_args
-                       slots un puesto arriba. */
-                    if (n_args > 0) {
-                        memmove(base_nuevo + 2, base_nuevo + 1,
-                                sizeof(Valor) * (size_t)n_args);
-                    }
-                    vm->tope++;
-                    /* Reemplazar el callee (bound method) por la closure
-                       y poner el receptor en slot 1. Necesitamos retener
-                       refs antes de destruir el bound method (que
-                       contiene la única referencia al closure y al
-                       receptor). */
-                    closure_retener(cl);
-                    Valor receptor = valor_clonar(&bm->receptor);
-                    Valor bound_old = *base_nuevo;
-                    *base_nuevo = valor_closure(cl);
-                    base_nuevo[1] = receptor;
-                    valor_destruir(&bound_old);
-
-                    frame = &vm->frames[vm->n_frames++];
-                    frame->chunk = &fn->chunk;
-                    frame->ip = fn->chunk.codigo;
-                    frame->base_pila = base_nuevo;
-                    frame->closure = cl;
-                    frame->es_constructor = false;
-                    frame->modulo_en_carga = NULL;
-                    frame->globales_pre_modulo = NULL;
-                    frame->chunk_modulo = NULL;
-                    if (cl->globales_definicion != NULL
-                        && cl->globales_definicion != vm->globales) {
-                        frame->globales_pre_llamada = vm->globales;
-                        vm->globales = cl->globales_definicion;
-                    } else {
-                        frame->globales_pre_llamada = NULL;
-                    frame->modulo_binding_name = NULL;
-                    frame->modulo_binding_len = 0;
-                frame->desde_import = false;
-                    }
-                    break;
-                }
-
-                VM_ERROR("ErrorDeTipo: '%s' no es invocable",
-                         valor_nombre_tipo(&callee));
-                return VM_ERROR_RUNTIME;
+                caller_codigo[(int)(opcode_addr - caller_codigo)] = (uint8_t)promote;
+                break;
             }
         }
     }

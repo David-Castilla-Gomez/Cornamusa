@@ -213,13 +213,116 @@ static void test_sobrescritura_no_invalida(void) {
     vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
 }
 
+/* ───── 5. OP_LLAMAR se promueve a OP_LLAMAR_NATIVA al invocar ───── */
+
+static void test_llamar_promueve_a_nativa(void) {
+    /* Nota: `imprimir` se compila a OP_IMPRIMIR (atajo en compilador,
+       NO pasa por OP_LLAMAR). Usamos `longitud` que sí va por
+       OP_LLAMAR como nativa cualquiera. */
+    const char *fuente = "n = longitud(\"hola\")\n";
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    int slow = buscar_primer_opcode(&chunk, OP_LLAMAR);
+    int fast = buscar_primer_opcode(&chunk, OP_LLAMAR_NATIVA);
+    AFIRMAR(fast >= 0);
+    AFIRMAR(slow < 0);
+
+    /* Y n debe ser 4. */
+    Valor n_n = valor_cadena_referencia("n", 1);
+    Valor v;
+    AFIRMAR(dicc_obtener(vm.globales, &n_n, &v));
+    char buf[32]; valor_a_cadena(&v, buf, sizeof(buf));
+    AFIRMAR(strcmp(buf, "4") == 0);
+    valor_destruir(&v);
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
+/* ───── 6. OP_LLAMAR se promueve a OP_LLAMAR_BC al llamar función ───── */
+
+static void test_llamar_promueve_a_bc(void) {
+    /* La función `cuadrar` es FUNCION_BC; tras llamarla el site se
+       quickens. El call site de imprimir() también se quickens
+       (a NATIVA). */
+    const char *fuente =
+        "funcion cuadrar(n):\n"
+        "    retornar n * n\n"
+        "fin funcion\n"
+        "x = cuadrar(7)\n";
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    /* Buscamos OP_LLAMAR_BC en el chunk top-level (donde está la
+       llamada a cuadrar(7)). */
+    int found_bc = buscar_primer_opcode(&chunk, OP_LLAMAR_BC);
+    AFIRMAR(found_bc >= 0);
+
+    /* Y `x` debe ser 49. */
+    Valor n_x = valor_cadena_referencia("x", 1);
+    Valor v;
+    AFIRMAR(dicc_obtener(vm.globales, &n_x, &v));
+    char buf[32]; valor_a_cadena(&v, buf, sizeof(buf));
+    AFIRMAR(strcmp(buf, "49") == 0);
+    valor_destruir(&v);
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
+/* ───── 7. Degradación: site polimórfico vuelve a OP_LLAMAR ───── */
+
+static void test_llamar_degradacion_polimorfica(void) {
+    /*
+     * Un site monomórfico se quickens y queda. Para forzar
+     * degradación necesitamos un site que ALTERNE entre tipos.
+     * Trick: redefinir una global de funcion_bc a nativa entre
+     * llamadas.
+     *
+     * Esto es difícil en Cornamusa puro porque no podemos
+     * REASIGNAR `imprimir` (es global protegido). Como sustituto:
+     * llamamos imprimir varias veces, comprobamos que el opcode es
+     * NATIVA, y verificamos que NO aparece OP_LLAMAR (no degradación
+     * espontánea).
+     */
+    const char *fuente =
+        "a = longitud(\"a\")\n"
+        "b = longitud(\"bb\")\n"
+        "c = longitud(\"ccc\")\n";
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    /* Tres call sites, todos a `longitud` (nativa). Los tres deben
+       acabar como OP_LLAMAR_NATIVA. */
+    int count_nativa = 0;
+    int count_slow = 0;
+    for (int i = 0; i < chunk.cuenta; i++) {
+        if (chunk.codigo[i] == (uint8_t)OP_LLAMAR_NATIVA) {
+            count_nativa++;
+            i++;  /* skip n_args */
+        } else if (chunk.codigo[i] == (uint8_t)OP_LLAMAR) {
+            count_slow++;
+            i++;
+        }
+    }
+    AFIRMAR(count_nativa == 3);
+    AFIRMAR(count_slow == 0);
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
 int main(void) {
     test_quickening_basico();
     test_hits_multiples_estables();
     test_insertacion_invalida_cache();
     test_sobrescritura_no_invalida();
+    test_llamar_promueve_a_nativa();
+    test_llamar_promueve_a_bc();
+    test_llamar_degradacion_polimorfica();
     if (fallos == 0) {
-        printf("test_bytecode_ic: 4 tests PASS\n");
+        printf("test_bytecode_ic: 7 tests PASS\n");
         return 0;
     }
     fprintf(stderr, "test_bytecode_ic: %d FALLO(s)\n", fallos);

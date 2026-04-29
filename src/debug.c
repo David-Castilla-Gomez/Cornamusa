@@ -148,6 +148,11 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_DEFINIR_GLOBAL:  return instruccion_byte("OP_DEFINIR_GLOBAL", c, offset, out);
         case OP_ASIGNAR_GLOBAL:  return instruccion_byte("OP_ASIGNAR_GLOBAL", c, offset, out);
         case OP_LLAMAR:          return instruccion_byte("OP_LLAMAR", c, offset, out);
+        case OP_LLAMAR_NATIVA:   return instruccion_byte("OP_LLAMAR_NATIVA", c, offset, out);
+        case OP_LLAMAR_BC:       return instruccion_byte("OP_LLAMAR_BC", c, offset, out);
+        case OP_LLAMAR_CLASE:    return instruccion_byte("OP_LLAMAR_CLASE", c, offset, out);
+        case OP_LLAMAR_METODO_LIGADO:
+            return instruccion_byte("OP_LLAMAR_METODO_LIGADO", c, offset, out);
         case OP_CLOSURE: {
             /* Formato: [byte fn_idx] [n_upvalues * (is_local, index)].
                No sabemos n_upvalues sin leer la FuncionBC del pool, así

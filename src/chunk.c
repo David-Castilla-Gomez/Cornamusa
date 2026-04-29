@@ -43,6 +43,10 @@ const char *opcode_nombre(OpCode op) {
         case OP_DEFINIR_GLOBAL:  return "OP_DEFINIR_GLOBAL";
         case OP_ASIGNAR_GLOBAL:  return "OP_ASIGNAR_GLOBAL";
         case OP_LLAMAR:          return "OP_LLAMAR";
+        case OP_LLAMAR_NATIVA:   return "OP_LLAMAR_NATIVA";
+        case OP_LLAMAR_BC:       return "OP_LLAMAR_BC";
+        case OP_LLAMAR_CLASE:    return "OP_LLAMAR_CLASE";
+        case OP_LLAMAR_METODO_LIGADO: return "OP_LLAMAR_METODO_LIGADO";
         case OP_CLOSURE:         return "OP_CLOSURE";
         case OP_OBTENER_UPVALUE: return "OP_OBTENER_UPVALUE";
         case OP_ASIGNAR_UPVALUE: return "OP_ASIGNAR_UPVALUE";

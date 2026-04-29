@@ -117,7 +117,24 @@ typedef enum {
     OP_OBTENER_GLOBAL_CACHE,
     OP_DEFINIR_GLOBAL,
     OP_ASIGNAR_GLOBAL,
-    OP_LLAMAR,                  /* CALL [byte n_args] */
+    /*
+     * CALL [byte n_args]. Mismo layout 2 bytes en TODAS las variantes
+     * (slow + 4 especializadas). El opcode codifica el tipo esperado
+     * del callee — no hay cache slot, el byte ES el cache:
+     *   OP_LLAMAR             — slow path: switch sobre callee.tipo,
+     *                            promueve a la variante correspondiente
+     *                            tras el primer éxito.
+     *   OP_LLAMAR_NATIVA      — fast: si callee es VAL_NATIVA llama
+     *                            directo. Miss → degrada a OP_LLAMAR.
+     *   OP_LLAMAR_BC          — fast para VAL_FUNCION_BC (closure).
+     *   OP_LLAMAR_CLASE       — fast para VAL_CLASE (instanciación).
+     *   OP_LLAMAR_METODO_LIGADO — fast para VAL_METODO_LIGADO.
+     */
+    OP_LLAMAR,
+    OP_LLAMAR_NATIVA,
+    OP_LLAMAR_BC,
+    OP_LLAMAR_CLASE,
+    OP_LLAMAR_METODO_LIGADO,
 
     /* ---- Closures (v0.6.2) ---- */
     OP_CLOSURE,                 /* [byte fn_idx] [n_upvalues * (is_local, index)] */
