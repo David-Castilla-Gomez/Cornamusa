@@ -464,11 +464,11 @@ static bool dicc_redimensionar(Diccionario *d, int nueva_cap) {
 }
 
 Diccionario *dicc_nuevo(void) {
-    Diccionario *d = (Diccionario *)malloc(sizeof(Diccionario));
+    Diccionario *d = (Diccionario *)gc_alocar(sizeof(Diccionario), GC_TIPO_DICCIONARIO);
     if (!d) return NULL;
     d->entradas = (EntradaDicc *)calloc(DICC_CAPACIDAD_INICIAL,
         sizeof(EntradaDicc));
-    if (!d->entradas) { free(d); return NULL; }
+    if (!d->entradas) { gc_desenlazar(&d->obj); free(d); return NULL; }
     d->cuenta = 0;
     d->capacidad = DICC_CAPACIDAD_INICIAL;
     d->refcount = 1;
@@ -490,6 +490,7 @@ void dicc_liberar(Diccionario *d) {
         }
     }
     free(d->entradas);
+    gc_desenlazar(&d->obj);
     free(d);
 }
 
@@ -600,11 +601,11 @@ static bool conj_redimensionar(Conjunto *c, int nueva_cap) {
 }
 
 Conjunto *conj_nuevo(void) {
-    Conjunto *c = (Conjunto *)malloc(sizeof(Conjunto));
+    Conjunto *c = (Conjunto *)gc_alocar(sizeof(Conjunto), GC_TIPO_CONJUNTO);
     if (!c) return NULL;
     c->entradas = (EntradaConjunto *)calloc(DICC_CAPACIDAD_INICIAL,
         sizeof(EntradaConjunto));
-    if (!c->entradas) { free(c); return NULL; }
+    if (!c->entradas) { gc_desenlazar(&c->obj); free(c); return NULL; }
     c->cuenta = 0;
     c->capacidad = DICC_CAPACIDAD_INICIAL;
     c->refcount = 1;
@@ -623,6 +624,7 @@ void conj_liberar(Conjunto *c) {
         }
     }
     free(c->entradas);
+    gc_desenlazar(&c->obj);
     free(c);
 }
 
@@ -690,11 +692,11 @@ Valor valor_conjunto(Conjunto *c) {
  * ────────────────────────────────────────────────────────────────── */
 
 Tupla *tupla_nueva(int cuenta) {
-    Tupla *t = (Tupla *)malloc(sizeof(Tupla));
+    Tupla *t = (Tupla *)gc_alocar(sizeof(Tupla), GC_TIPO_TUPLA);
     if (!t) return NULL;
     if (cuenta > 0) {
         t->elementos = (Valor *)malloc(sizeof(Valor) * (size_t)cuenta);
-        if (!t->elementos) { free(t); return NULL; }
+        if (!t->elementos) { gc_desenlazar(&t->obj); free(t); return NULL; }
     } else {
         t->elementos = NULL;
     }
@@ -713,6 +715,7 @@ void tupla_liberar(Tupla *t) {
         valor_destruir(&t->elementos[i]);
     }
     free(t->elementos);
+    gc_desenlazar(&t->obj);
     free(t);
 }
 
@@ -744,7 +747,7 @@ bool valor_es_iterable(const Valor *v) {
 }
 
 Iterador *iter_nuevo(const Valor *iterable) {
-    Iterador *it = (Iterador *)malloc(sizeof(Iterador));
+    Iterador *it = (Iterador *)gc_alocar(sizeof(Iterador), GC_TIPO_ITERADOR);
     if (!it) return NULL;
     it->iterable = valor_clonar(iterable);  /* refcount o copia según tipo */
     it->cursor = 0;
@@ -754,6 +757,7 @@ Iterador *iter_nuevo(const Valor *iterable) {
 void iter_destruir(Iterador *it) {
     if (!it) return;
     valor_destruir(&it->iterable);
+    gc_desenlazar(&it->obj);
     free(it);
 }
 
@@ -887,11 +891,15 @@ Valor valor_iterador(Iterador *it) {
 
 Excepcion *excepcion_nueva(const char *clase, int len_clase,
                             const char *mensaje, int len_mensaje) {
-    Excepcion *e = (Excepcion *)malloc(sizeof(Excepcion));
+    Excepcion *e = (Excepcion *)gc_alocar(sizeof(Excepcion), GC_TIPO_EXCEPCION);
     if (!e) return NULL;
     char *cls = (char *)malloc((size_t)len_clase + 1);
     char *msg = (char *)malloc((size_t)len_mensaje + 1);
-    if (!cls || !msg) { free(cls); free(msg); free(e); return NULL; }
+    if (!cls || !msg) {
+        free(cls); free(msg);
+        gc_desenlazar(&e->obj); free(e);
+        return NULL;
+    }
     if (len_clase > 0) memcpy(cls, clase, (size_t)len_clase);
     cls[len_clase] = '\0';
     if (len_mensaje > 0) memcpy(msg, mensaje, (size_t)len_mensaje);
@@ -912,6 +920,7 @@ void excepcion_liberar(Excepcion *e) {
     if (e->refcount > 0) return;
     free(e->clase);
     free(e->mensaje);
+    gc_desenlazar(&e->obj);
     free(e);
 }
 
@@ -928,14 +937,14 @@ Valor valor_excepcion(Excepcion *e) {
  * ────────────────────────────────────────────────────────────────── */
 
 Clase *clase_nueva(const char *nombre, int len_nombre) {
-    Clase *c = (Clase *)malloc(sizeof(Clase));
+    Clase *c = (Clase *)gc_alocar(sizeof(Clase), GC_TIPO_CLASE);
     if (!c) return NULL;
     char *copia = (char *)malloc((size_t)len_nombre + 1);
-    if (!copia) { free(c); return NULL; }
+    if (!copia) { gc_desenlazar(&c->obj); free(c); return NULL; }
     if (len_nombre > 0) memcpy(copia, nombre, (size_t)len_nombre);
     copia[len_nombre] = '\0';
     Diccionario *met = dicc_nuevo();
-    if (!met) { free(copia); free(c); return NULL; }
+    if (!met) { free(copia); gc_desenlazar(&c->obj); free(c); return NULL; }
     c->nombre = copia;
     c->longitud_nombre = len_nombre;
     c->metodos = met;
@@ -953,6 +962,7 @@ void clase_liberar(Clase *c) {
     dicc_liberar(c->metodos);
     if (c->superclase) clase_liberar(c->superclase);
     free(c->nombre);
+    gc_desenlazar(&c->obj);
     free(c);
 }
 
@@ -966,10 +976,10 @@ Valor valor_clase(Clase *c) {
 
 Instancia *instancia_nueva(Clase *c) {
     if (!c) return NULL;
-    Instancia *i = (Instancia *)malloc(sizeof(Instancia));
+    Instancia *i = (Instancia *)gc_alocar(sizeof(Instancia), GC_TIPO_INSTANCIA);
     if (!i) return NULL;
     Diccionario *atr = dicc_nuevo();
-    if (!atr) { free(i); return NULL; }
+    if (!atr) { gc_desenlazar(&i->obj); free(i); return NULL; }
     clase_retener(c);
     i->clase = c;
     i->atributos = atr;
@@ -985,6 +995,7 @@ void instancia_liberar(Instancia *i) {
     if (i->refcount > 0) return;
     dicc_liberar(i->atributos);
     clase_liberar(i->clase);
+    gc_desenlazar(&i->obj);
     free(i);
 }
 
@@ -998,7 +1009,8 @@ Valor valor_instancia(Instancia *i) {
 
 MetodoLigado *metodo_ligado_nuevo(const Valor *receptor, Closure *metodo) {
     if (!metodo) return NULL;
-    MetodoLigado *m = (MetodoLigado *)malloc(sizeof(MetodoLigado));
+    MetodoLigado *m = (MetodoLigado *)gc_alocar(sizeof(MetodoLigado),
+                                                  GC_TIPO_METODO_LIGADO);
     if (!m) return NULL;
     m->receptor = valor_clonar(receptor);
     closure_retener(metodo);
@@ -1015,6 +1027,7 @@ void metodo_ligado_liberar(MetodoLigado *m) {
     if (m->refcount > 0) return;
     valor_destruir(&m->receptor);
     closure_liberar(m->metodo);
+    gc_desenlazar(&m->obj);
     free(m);
 }
 

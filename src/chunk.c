@@ -3,6 +3,8 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include "memoria.h"   /* gc_alocar / gc_desenlazar */
+
 #define CAPACIDAD_INICIAL 8
 
 const char *opcode_nombre(OpCode op) {
@@ -169,10 +171,10 @@ void chunk_emitir_constante(Chunk *c, Valor v, int linea) {
  * ────────────────────────────────────────────────────────────────── */
 
 FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
-    FuncionBC *f = (FuncionBC *)malloc(sizeof(FuncionBC));
+    FuncionBC *f = (FuncionBC *)gc_alocar(sizeof(FuncionBC), GC_TIPO_FUNCION_BC);
     if (!f) return NULL;
     char *copia = (char *)malloc((size_t)len_nombre + 1);
-    if (!copia) { free(f); return NULL; }
+    if (!copia) { gc_desenlazar(&f->obj); free(f); return NULL; }
     if (len_nombre > 0) memcpy(copia, nombre, (size_t)len_nombre);
     copia[len_nombre] = '\0';
     f->nombre = copia;
@@ -192,6 +194,7 @@ void funcion_bc_liberar(FuncionBC *f) {
     if (f->refcount > 0) return;
     chunk_destruir(&f->chunk);
     free(f->nombre);
+    gc_desenlazar(&f->obj);
     free(f);
 }
 
@@ -200,7 +203,7 @@ void funcion_bc_liberar(FuncionBC *f) {
  * ────────────────────────────────────────────────────────────────── */
 
 Upvalue *upvalue_nuevo(Valor *slot) {
-    Upvalue *u = (Upvalue *)malloc(sizeof(Upvalue));
+    Upvalue *u = (Upvalue *)gc_alocar(sizeof(Upvalue), GC_TIPO_UPVALUE);
     if (!u) return NULL;
     u->posicion = slot;
     u->cerrado = valor_nulo();
@@ -221,6 +224,7 @@ void upvalue_liberar(Upvalue *u) {
     if (u->posicion == &u->cerrado) {
         valor_destruir(&u->cerrado);
     }
+    gc_desenlazar(&u->obj);
     free(u);
 }
 
@@ -229,7 +233,7 @@ void upvalue_liberar(Upvalue *u) {
  * ────────────────────────────────────────────────────────────────── */
 
 Closure *closure_nuevo(FuncionBC *fn) {
-    Closure *c = (Closure *)malloc(sizeof(Closure));
+    Closure *c = (Closure *)gc_alocar(sizeof(Closure), GC_TIPO_CLOSURE);
     if (!c) return NULL;
     c->plantilla = fn;
     funcion_bc_retener(fn);
@@ -239,6 +243,7 @@ Closure *closure_nuevo(FuncionBC *fn) {
                                             sizeof(Upvalue *));
         if (!c->upvalues) {
             funcion_bc_liberar(fn);
+            gc_desenlazar(&c->obj);
             free(c);
             return NULL;
         }
@@ -261,6 +266,7 @@ void closure_liberar(Closure *c) {
         free(c->upvalues);
     }
     funcion_bc_liberar(c->plantilla);
+    gc_desenlazar(&c->obj);
     free(c);
 }
 

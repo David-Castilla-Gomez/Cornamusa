@@ -208,6 +208,7 @@ typedef struct {
 #define FN_BC_UPVALUES_MAX 256
 
 struct FuncionBC {
+    GCObject obj;            /* Fase 7 S2: header GC; primer campo. */
     char *nombre;            /* duplicado en heap; se libera con la función */
     int longitud_nombre;
     int aridad;
@@ -239,6 +240,7 @@ void funcion_bc_liberar(FuncionBC *f);
  * por posición decreciente en stack (estilo clox cap. 25).
  */
 struct Upvalue {
+    GCObject obj;        /* Fase 7 S2: header GC; primer campo. */
     Valor *posicion;     /* &stack_slot mientras esté abierto; &cerrado si cerrado */
     Valor cerrado;
     Upvalue *siguiente;
@@ -256,6 +258,7 @@ void upvalue_liberar(Upvalue *u);
  * por refcount entre Valores.
  */
 struct Closure {
+    GCObject obj;             /* Fase 7 S2: header GC; primer campo. */
     FuncionBC *plantilla;
     Upvalue **upvalues;       /* array dinámico, longitud = plantilla->n_upvalues */
     int refcount;

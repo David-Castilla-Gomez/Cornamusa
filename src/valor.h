@@ -212,6 +212,7 @@ typedef struct EntradaDicc {
 } EntradaDicc;
 
 struct Diccionario {
+    GCObject obj;           /* Fase 7 S2: header GC; primer campo. */
     EntradaDicc *entradas;
     int cuenta;
     int capacidad;
@@ -251,6 +252,7 @@ typedef struct EntradaConjunto {
 } EntradaConjunto;
 
 struct Conjunto {
+    GCObject obj;           /* Fase 7 S2: header GC; primer campo. */
     EntradaConjunto *entradas;
     int cuenta;
     int capacidad;
@@ -279,6 +281,7 @@ Valor valor_conjunto(Conjunto *c);
  * tupla nueva. Hashable si todos los elementos son hashables.
  */
 struct Tupla {
+    GCObject obj;           /* Fase 7 S2: header GC; primer campo. */
     Valor *elementos;
     int cuenta;
     int refcount;
@@ -305,6 +308,7 @@ Valor valor_tupla(Tupla *t);
  *     o slot interno (diccionario/conjunto).
  */
 struct Iterador {
+    GCObject obj;           /* Fase 7 S2: header GC; primer campo. */
     Valor iterable;
     int cursor;
 };
@@ -326,6 +330,7 @@ Valor valor_iterador(Iterador *it);
  * (Fase 8) se reemplazará por instancias de la clase `Excepcion`.
  */
 struct Excepcion {
+    GCObject obj;           /* Fase 7 S2: header GC; primer campo. */
     char *clase;          /* heap-duplicated; se libera con la struct */
     int longitud_clase;
     char *mensaje;        /* heap-duplicated */
@@ -352,6 +357,7 @@ Valor valor_excepcion(Excepcion *e);
  * pero en S1 se construye vacío.
  */
 struct Clase {
+    GCObject obj;             /* Fase 7 S2: header GC; primer campo. */
     char *nombre;             /* heap-duplicated; se libera con la struct */
     int longitud_nombre;
     Diccionario *metodos;     /* dicc cadena → VAL_FUNCION_BC; poblado por OP_METODO */
@@ -381,6 +387,7 @@ Valor valor_clase(Clase *c);
  * `__iniciar__` todavía.
  */
 struct Instancia {
+    GCObject obj;             /* Fase 7 S2: header GC; primer campo. */
     Clase *clase;             /* referencia compartida (refcount) */
     Diccionario *atributos;   /* dicc cadena → Valor */
     int refcount;
@@ -404,6 +411,7 @@ Valor valor_instancia(Instancia *i);
  * el llamador lo escriba.
  */
 struct MetodoLigado {
+    GCObject obj;         /* Fase 7 S2: header GC; primer campo. */
     Valor receptor;       /* normalmente VAL_INSTANCIA; ownership con refcount */
     Closure *metodo;      /* refcount compartido con la clase */
     int refcount;

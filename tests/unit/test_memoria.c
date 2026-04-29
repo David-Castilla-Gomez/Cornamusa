@@ -157,6 +157,84 @@ static void test_vm_instala_memoria(void) {
     AFIRMAR(gc_actual() == NULL);
 }
 
+static void test_todos_los_tipos_rastrean(void) {
+    /* Sesión 2: cada tipo migrado debe registrar GCObject en la
+       linked list. Verificamos creación + liberación → cabeza vuelve
+       a NULL. */
+    Memoria m;
+    memoria_iniciar(&m);
+    gc_instalar(&m);
+
+    /* Lista. */
+    Lista *l = lista_nueva(0);
+    AFIRMAR(m.cabeza == &l->obj);
+    AFIRMAR(l->obj.tipo == GC_TIPO_LISTA);
+    lista_liberar(l);
+    AFIRMAR(m.cabeza == NULL);
+
+    /* Diccionario. */
+    Diccionario *d = dicc_nuevo();
+    AFIRMAR(m.cabeza == &d->obj);
+    AFIRMAR(d->obj.tipo == GC_TIPO_DICCIONARIO);
+    dicc_liberar(d);
+    AFIRMAR(m.cabeza == NULL);
+
+    /* Conjunto. */
+    Conjunto *cj = conj_nuevo();
+    AFIRMAR(m.cabeza == &cj->obj);
+    AFIRMAR(cj->obj.tipo == GC_TIPO_CONJUNTO);
+    conj_liberar(cj);
+    AFIRMAR(m.cabeza == NULL);
+
+    /* Tupla. */
+    Tupla *t = tupla_nueva(0);
+    AFIRMAR(m.cabeza == &t->obj);
+    AFIRMAR(t->obj.tipo == GC_TIPO_TUPLA);
+    tupla_liberar(t);
+    AFIRMAR(m.cabeza == NULL);
+
+    /* FuncionBC. */
+    FuncionBC *fn = funcion_bc_nueva("test", 4, 0);
+    AFIRMAR(m.cabeza == &fn->obj);
+    AFIRMAR(fn->obj.tipo == GC_TIPO_FUNCION_BC);
+    funcion_bc_liberar(fn);
+    AFIRMAR(m.cabeza == NULL);
+
+    /* Closure encapsula una FuncionBC (retiene). El cliente sigue
+       manteniendo su propia ref a la FuncionBC y debe liberarla. */
+    FuncionBC *fn2 = funcion_bc_nueva("test", 4, 0);
+    Closure *cl = closure_nuevo(fn2);
+    AFIRMAR(m.cabeza == &cl->obj);
+    AFIRMAR(cl->obj.tipo == GC_TIPO_CLOSURE);
+    closure_liberar(cl);
+    funcion_bc_liberar(fn2);
+    AFIRMAR(m.cabeza == NULL);
+
+    /* Excepcion. */
+    Excepcion *ex = excepcion_nueva("Excepcion", 9, "msg", 3);
+    AFIRMAR(m.cabeza == &ex->obj);
+    AFIRMAR(ex->obj.tipo == GC_TIPO_EXCEPCION);
+    excepcion_liberar(ex);
+    AFIRMAR(m.cabeza == NULL);
+
+    /* Clase y Instancia. clase_nueva crea Clase + Diccionario (metodos)
+       internamente, así que la cabeza acaba siendo el Dicc (último
+       alocado). Verificamos solo el tag de cada objeto. */
+    Clase *clase = clase_nueva("Foo", 3);
+    AFIRMAR(clase->obj.tipo == GC_TIPO_CLASE);
+    AFIRMAR(m.total_objetos == 2);   /* Clase + Diccionario interno */
+    Instancia *inst = instancia_nueva(clase);
+    AFIRMAR(inst->obj.tipo == GC_TIPO_INSTANCIA);
+    AFIRMAR(m.total_objetos == 4);   /* + Instancia + su Dicc atributos */
+    instancia_liberar(inst);
+    AFIRMAR(m.total_objetos == 2);
+    clase_liberar(clase);
+    AFIRMAR(m.cabeza == NULL);
+
+    gc_desinstalar();
+    memoria_destruir(&m);
+}
+
 int main(void) {
     test_alocar_sin_memoria();
     test_alocar_con_memoria();
@@ -164,6 +242,7 @@ int main(void) {
     test_lista_sin_memoria();
     test_lista_con_memoria();
     test_vm_instala_memoria();
+    test_todos_los_tipos_rastrean();
 
     if (fallos == 0) {
         printf("OK: todos los tests del GC (S1) pasaron\n");
