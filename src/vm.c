@@ -38,10 +38,10 @@ static inline Valor sacar(VM *vm) {
     return *(--vm->tope);
 }
 
-static inline int linea_actual(const VM *vm) {
-    int offset = (int)(vm->ip - vm->chunk->codigo - 1);  /* `op` ya leído */
+static inline int linea_actual_frame(const CallFrame *frame) {
+    int offset = (int)(frame->ip - frame->chunk->codigo - 1);  /* `op` ya leído */
     if (offset < 0) offset = 0;
-    return vm->chunk->lineas[offset];
+    return frame->chunk->lineas[offset];
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -74,8 +74,7 @@ static int opcode_a_token_binario(OpCode op) {
 
 void vm_iniciar(VM *vm) {
     vm->tope = vm->pila;
-    vm->chunk = NULL;
-    vm->ip = NULL;
+    vm->n_frames = 0;
     vm->globales = dicc_nuevo();
     vm->error.tuvo_error = false;
     vm->error.mensaje[0] = '\0';
@@ -95,23 +94,39 @@ void vm_destruir(VM *vm) {
     }
 }
 
-/* Macro local para el dispatch loop: lee un byte y avanza el ip. */
-#define LEER_BYTE() (*vm->ip++)
+/* Macros locales para el dispatch loop. `frame` es el CallFrame
+ * activo (siempre el último de vm->frames). */
+#define LEER_BYTE() (*frame->ip++)
+
+/* Comodín: poner error en `vm` con la línea del opcode actual. */
+#define VM_ERROR(...)                                                          \
+    do {                                                                       \
+        vm->error.tuvo_error = true;                                           \
+        vm->error.linea = linea_actual_frame(frame);                           \
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje), __VA_ARGS__);   \
+    } while (0)
 
 ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
-    vm->chunk = chunk;
-    vm->ip = chunk->codigo;
     vm->tope = vm->pila;
+    vm->n_frames = 0;
     vm->error.tuvo_error = false;
 
+    /* Crear el frame top-level. base_pila apunta al inicio de la pila;
+       slot 0 lo reservamos como "callee virtual" para mantener la
+       convención (incluso aunque no haya función llamada). */
+    CallFrame *frame = &vm->frames[vm->n_frames++];
+    frame->chunk = chunk;
+    frame->ip = chunk->codigo;
+    frame->base_pila = vm->pila;
+
     for (;;) {
-        uint8_t opbyte = *vm->ip++;
+        uint8_t opbyte = *frame->ip++;
         OpCode op = (OpCode)opbyte;
 
         switch (op) {
             case OP_CONST: {
                 uint8_t idx = LEER_BYTE();
-                empujar(vm, valor_clonar(&chunk->constantes[idx]));
+                empujar(vm, valor_clonar(&frame->chunk->constantes[idx]));
                 break;
             }
             case OP_CONST_LARGO: {
@@ -119,7 +134,7 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 uint32_t b1 = (uint32_t)LEER_BYTE();
                 uint32_t b2 = (uint32_t)LEER_BYTE();
                 uint32_t idx = b0 | (b1 << 8) | (b2 << 16);
-                empujar(vm, valor_clonar(&chunk->constantes[idx]));
+                empujar(vm, valor_clonar(&frame->chunk->constantes[idx]));
                 break;
             }
             case OP_NULO:        empujar(vm, valor_nulo()); break;
@@ -133,7 +148,7 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
             case OP_IGUAL: case OP_DISTINTO:
             case OP_MENOR: case OP_MENOR_IGUAL:
             case OP_MAYOR: case OP_MAYOR_IGUAL: {
-                int linea = linea_actual(vm);
+                int linea = linea_actual_frame(frame);
                 Valor b = sacar(vm);
                 Valor a = sacar(vm);
                 int tt = opcode_a_token_binario(op);
@@ -149,7 +164,7 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
 
             /* ─── Unarios ─── */
             case OP_NEGAR: {
-                int linea = linea_actual(vm);
+                int linea = linea_actual_frame(frame);
                 Valor v = sacar(vm);
                 Valor r = evaluador_aplicar_unario(&vm->error, TT_MENOS, v,
                                                     linea, 0);
@@ -161,7 +176,7 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                 break;
             }
             case OP_NO: {
-                int linea = linea_actual(vm);
+                int linea = linea_actual_frame(frame);
                 Valor v = sacar(vm);
                 Valor r = evaluador_aplicar_unario(&vm->error, TT_NO, v,
                                                     linea, 0);
@@ -180,24 +195,40 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
             }
 
             case OP_RETORNAR: {
+                /* Pop el resultado del frame actual. */
                 Valor r = sacar(vm);
-                if (resultado_out) {
-                    *resultado_out = r;
-                } else {
-                    valor_destruir(&r);
+                /* Pop el CallFrame. */
+                vm->n_frames--;
+                if (vm->n_frames == 0) {
+                    /* Volvemos del top-level: termina la ejecución. */
+                    if (resultado_out) {
+                        *resultado_out = r;
+                    } else {
+                        valor_destruir(&r);
+                    }
+                    return VM_OK;
                 }
-                return VM_OK;
+                /* Liberar todos los slots del frame que termina (callee
+                   + parámetros + locales). El llamador ya no los necesita. */
+                while (vm->tope > frame->base_pila) {
+                    Valor v = *(--vm->tope);
+                    valor_destruir(&v);
+                }
+                /* Empujar el resultado y volver al frame anterior. */
+                empujar(vm, r);
+                frame = &vm->frames[vm->n_frames - 1];
+                break;
             }
 
             /* ─── Globales ─── */
             case OP_DEFINIR_GLOBAL: {
                 /* nombre = constantes[idx] (cadena), valor = tope. */
                 uint8_t idx = LEER_BYTE();
-                Valor nombre = valor_clonar(&vm->chunk->constantes[idx]);
+                Valor nombre = valor_clonar(&frame->chunk->constantes[idx]);
                 Valor valor = sacar(vm);
                 if (!dicc_asignar(vm->globales, nombre, valor)) {
                     vm->error.tuvo_error = true;
-                    vm->error.linea = linea_actual(vm);
+                    vm->error.linea = linea_actual_frame(frame);
                     snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
                         "memoria insuficiente al definir global");
                     return VM_ERROR_RUNTIME;
@@ -206,11 +237,11 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
             }
             case OP_OBTENER_GLOBAL: {
                 uint8_t idx = LEER_BYTE();
-                const Valor *nombre = &vm->chunk->constantes[idx];
+                const Valor *nombre = &frame->chunk->constantes[idx];
                 Valor v;
                 if (!dicc_obtener(vm->globales, nombre, &v)) {
                     vm->error.tuvo_error = true;
-                    vm->error.linea = linea_actual(vm);
+                    vm->error.linea = linea_actual_frame(frame);
                     snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
                         "ErrorDeNombre: nombre '%.*s' no esta definido",
                         nombre->como.cadena.longitud,
@@ -227,10 +258,10 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
                    solo emite OP_DEFINIR_GLOBAL. Esta forma queda para
                    futuras semánticas más estrictas. */
                 uint8_t idx = LEER_BYTE();
-                const Valor *nombre = &vm->chunk->constantes[idx];
+                const Valor *nombre = &frame->chunk->constantes[idx];
                 if (!dicc_contiene(vm->globales, nombre)) {
                     vm->error.tuvo_error = true;
-                    vm->error.linea = linea_actual(vm);
+                    vm->error.linea = linea_actual_frame(frame);
                     snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
                         "ErrorDeNombre: nombre '%.*s' no esta definido",
                         nombre->como.cadena.longitud,
@@ -267,48 +298,79 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
 
             /* ─── Control de flujo ─── */
             case OP_SALTAR: {
-                /* Operando de 2 bytes big-endian: salto hacia adelante. */
                 uint8_t hi = LEER_BYTE();
                 uint8_t lo = LEER_BYTE();
                 uint16_t offset = ((uint16_t)hi << 8) | lo;
-                vm->ip += offset;
+                frame->ip += offset;
                 break;
             }
             case OP_SALTAR_SI_FALSO: {
-                /*
-                 * PEEK del tope (no pop): si el valor es falso, salta;
-                 * si es verdadero, sigue ejecutando con el valor todavía
-                 * en stack. El compilador emite OP_DESCARTAR donde haga
-                 * falta (estilo clox cap. 23).
-                 */
                 uint8_t hi = LEER_BYTE();
                 uint8_t lo = LEER_BYTE();
                 uint16_t offset = ((uint16_t)hi << 8) | lo;
                 const Valor *tope = vm->tope - 1;
-                if (!valor_es_verdadero(tope)) vm->ip += offset;
+                if (!valor_es_verdadero(tope)) frame->ip += offset;
                 break;
             }
             case OP_BUCLE: {
-                /* Salto hacia atrás: ip -= offset. Usado por mientras/para. */
                 uint8_t hi = LEER_BYTE();
                 uint8_t lo = LEER_BYTE();
                 uint16_t offset = ((uint16_t)hi << 8) | lo;
-                vm->ip -= offset;
+                frame->ip -= offset;
                 break;
             }
 
-            /* Opcodes reservados para sesiones siguientes. */
-            case OP_OBTENER_LOCAL:
-            case OP_ASIGNAR_LOCAL:
-            case OP_LLAMAR:
-                vm->error.tuvo_error = true;
-                vm->error.linea = linea_actual(vm);
-                snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                    "OpCode %s no implementado en esta version",
-                    opcode_nombre(op));
-                return VM_ERROR_RUNTIME;
+            /* ─── Locales: acceso a slots del frame actual ─── */
+            case OP_OBTENER_LOCAL: {
+                uint8_t slot = LEER_BYTE();
+                empujar(vm, valor_clonar(&frame->base_pila[slot]));
+                break;
+            }
+            case OP_ASIGNAR_LOCAL: {
+                uint8_t slot = LEER_BYTE();
+                /* Pop el valor del tope, lo asignamos al slot. */
+                Valor nuevo = sacar(vm);
+                valor_destruir(&frame->base_pila[slot]);
+                frame->base_pila[slot] = nuevo;
+                break;
+            }
+
+            /* ─── Llamadas a función ─── */
+            case OP_LLAMAR: {
+                uint8_t n_args = LEER_BYTE();
+                /* La pila tiene: [..., callee, arg1, ..., argN].
+                   El callee está en `tope - n_args - 1`. */
+                Valor *base_nuevo = vm->tope - n_args - 1;
+                Valor callee = *base_nuevo;
+                if (callee.tipo != VAL_FUNCION_BC) {
+                    VM_ERROR("ErrorDeTipo: '%s' no es invocable en bytecode v0.6",
+                             valor_nombre_tipo(&callee));
+                    return VM_ERROR_RUNTIME;
+                }
+                FuncionBC *fn = callee.como.funcion_bc;
+                if (n_args != fn->aridad) {
+                    VM_ERROR("ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                             fn->longitud_nombre, fn->nombre,
+                             fn->aridad, n_args);
+                    return VM_ERROR_RUNTIME;
+                }
+                if (vm->n_frames >= VM_FRAMES_MAX) {
+                    VM_ERROR("desbordamiento de pila de llamadas (>%d frames)",
+                             VM_FRAMES_MAX);
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Crear nuevo frame con base_pila apuntando al callee
+                   (que ocupa el slot 0 del frame; los args quedan en
+                   slots 1..n_args). */
+                frame = &vm->frames[vm->n_frames++];
+                frame->chunk = &fn->chunk;
+                frame->ip = fn->chunk.codigo;
+                frame->base_pila = base_nuevo;
+                break;
+            }
         }
     }
 }
 
 #undef LEER_BYTE
+#undef VM_ERROR

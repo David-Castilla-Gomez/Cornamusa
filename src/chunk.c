@@ -138,3 +138,41 @@ void chunk_emitir_constante(Chunk *c, Valor v, int linea) {
         chunk_emitir_byte(c, (uint8_t)((idx >> 16) & 0xff), linea);
     }
 }
+
+/* ──────────────────────────────────────────────────────────────────
+ * FuncionBC
+ * ────────────────────────────────────────────────────────────────── */
+
+FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
+    FuncionBC *f = (FuncionBC *)malloc(sizeof(FuncionBC));
+    if (!f) return NULL;
+    char *copia = (char *)malloc((size_t)len_nombre + 1);
+    if (!copia) { free(f); return NULL; }
+    if (len_nombre > 0) memcpy(copia, nombre, (size_t)len_nombre);
+    copia[len_nombre] = '\0';
+    f->nombre = copia;
+    f->longitud_nombre = len_nombre;
+    f->aridad = aridad;
+    chunk_iniciar(&f->chunk);
+    f->refcount = 1;
+    return f;
+}
+
+void funcion_bc_retener(FuncionBC *f) { if (f) f->refcount++; }
+
+void funcion_bc_liberar(FuncionBC *f) {
+    if (!f) return;
+    f->refcount--;
+    if (f->refcount > 0) return;
+    chunk_destruir(&f->chunk);
+    free(f->nombre);
+    free(f);
+}
+
+Valor valor_funcion_bc(FuncionBC *f) {
+    Valor v;
+    v.tipo = VAL_FUNCION_BC;
+    v.dueno_cadena = false;
+    v.como.funcion_bc = f;
+    return v;
+}

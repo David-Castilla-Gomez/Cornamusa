@@ -31,13 +31,6 @@
 /*
  * Estado de un bucle abierto en compilación. Mantiene la información
  * necesaria para que `romper` y `continuar` emitan saltos correctos.
- *
- * `inicio_continuar`: offset al que `continuar` debe saltar
- * (típicamente la condición del bucle, para reevaluarla).
- *
- * `parches_romper`: array de offsets de instrucciones `OP_SALTAR` que
- * `romper` ha emitido y que hay que parchear cuando conozcamos la
- * dirección final tras el bucle.
  */
 typedef struct {
     int inicio_continuar;
@@ -47,13 +40,49 @@ typedef struct {
 } BucleAbierto;
 
 #define COMPILADOR_BUCLES_MAX 16
+#define COMPILADOR_LOCALES_MAX 256
 
+/*
+ * Una variable local en el scope actual de compilación. El slot se
+ * deriva del orden de declaración: el slot 0 es la propia función
+ * (callee), 1..aridad son los parámetros, slots posteriores son
+ * locales declaradas dinámicamente al primero asignarse dentro del
+ * cuerpo.
+ */
 typedef struct {
-    Chunk *chunk;
-    EvalError error;
+    const char *nombre;
+    int longitud_nombre;
+} LocalCompilador;
+
+/*
+ * Scope de compilación: representa una función en construcción (o
+ * el cuerpo principal del programa). Permite anidamiento mediante
+ * `padre` para compilar funciones definidas dentro de otras (sin
+ * closures todavía: el bytecode emitido no captura locales del
+ * padre — sólo lookup de globales).
+ */
+typedef struct ScopeCompilador {
+    Chunk *chunk;             /* chunk donde se emite el código */
+    bool es_funcion;          /* false en el scope top-level */
+
+    LocalCompilador locales[COMPILADOR_LOCALES_MAX];
+    int n_locales;            /* slots ocupados (incluye slot 0 = callee) */
 
     BucleAbierto bucles[COMPILADOR_BUCLES_MAX];
     int n_bucles;
+
+    struct ScopeCompilador *padre;
+} ScopeCompilador;
+
+typedef struct {
+    /*
+     * El scope raíz se almacena directamente en el Compilador (más
+     * cómodo que heap). Los scopes de función anidada se enlazan con
+     * `padre` y viven en stack del compilador.
+     */
+    ScopeCompilador raiz;
+    ScopeCompilador *actual;
+    EvalError error;
 } Compilador;
 
 void compilador_iniciar(Compilador *c, Chunk *chunk);

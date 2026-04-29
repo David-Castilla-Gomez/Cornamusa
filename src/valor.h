@@ -43,13 +43,14 @@ typedef enum {
     VAL_ENTERO,        /* bignum boxed (mp_int *) */
     VAL_DECIMAL,       /* double IEEE 754 */
     VAL_CADENA,        /* texto UTF-8, ref al buffer fuente o heap */
-    VAL_FUNCION,       /* función definida por el usuario */
+    VAL_FUNCION,       /* función definida por el usuario (tree-walking) */
     VAL_NATIVA,        /* función nativa (built-in en C) */
     VAL_RANGO,         /* iterable rango(inicio, fin, paso) */
     VAL_LISTA,         /* array dinámico de Valor con refcount */
     VAL_DICCIONARIO,   /* tabla hash de Valor → Valor con refcount */
     VAL_CONJUNTO,      /* tabla hash de Valor sin valor con refcount */
     VAL_TUPLA,         /* secuencia inmutable de Valor con refcount */
+    VAL_FUNCION_BC,    /* función compilada a bytecode con refcount */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -58,6 +59,7 @@ typedef struct Lista Lista;
 typedef struct Diccionario Diccionario;
 typedef struct Conjunto Conjunto;
 typedef struct Tupla Tupla;
+typedef struct FuncionBC FuncionBC;
 
 /*
  * Firma de una función nativa (puntero a función C). Definida con
@@ -125,6 +127,7 @@ typedef struct Valor {
         Diccionario *dicc;  /* refcount; ver Diccionario más abajo */
         Conjunto *conjunto; /* refcount */
         Tupla *tupla;       /* refcount, inmutable */
+        FuncionBC *funcion_bc; /* refcount; función compilada a bytecode */
     } como;
 } Valor;
 

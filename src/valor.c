@@ -4,6 +4,7 @@
 #include <string.h>
 #include <math.h>
 
+#include "chunk.h"   /* FuncionBC: definición completa para refcount */
 #include "tommath.h"
 
 /* ──────────────────────────────────────────────────────────────────
@@ -376,6 +377,9 @@ static uint64_t hash_valor(const Valor *v) {
         case VAL_NATIVA:
             return fnv1a_64((const uint8_t *)&v->como.nativa.fn,
                             sizeof(v->como.nativa.fn));
+        case VAL_FUNCION_BC:
+            return fnv1a_64((const uint8_t *)&v->como.funcion_bc,
+                            sizeof(v->como.funcion_bc));
         case VAL_TUPLA: {
             /* Hash combinando los hashes de cada elemento (estilo
                Python `tuplehash`). */
@@ -761,6 +765,10 @@ void valor_destruir(Valor *v) {
             tupla_liberar(v->como.tupla);
             v->como.tupla = NULL;
             break;
+        case VAL_FUNCION_BC:
+            funcion_bc_liberar(v->como.funcion_bc);
+            v->como.funcion_bc = NULL;
+            break;
         default:
             break;
     }
@@ -841,6 +849,9 @@ Valor valor_clonar(const Valor *v) {
         case VAL_TUPLA:
             tupla_retener(v->como.tupla);
             return valor_tupla(v->como.tupla);
+        case VAL_FUNCION_BC:
+            funcion_bc_retener(v->como.funcion_bc);
+            return valor_funcion_bc(v->como.funcion_bc);
     }
     return valor_nulo();
 }
@@ -1024,6 +1035,12 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             n = escritos < capacidad ? escritos : capacidad - 1;
             break;
         }
+        case VAL_FUNCION_BC: {
+            const FuncionBC *f = v->como.funcion_bc;
+            n = snprintf(buffer, (size_t)capacidad, "<funcion %.*s>",
+                f->longitud_nombre, f->nombre);
+            break;
+        }
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -1071,6 +1088,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_DICCIONARIO: return "diccionario";
         case VAL_CONJUNTO:    return "conjunto";
         case VAL_TUPLA:       return "tupla";
+        case VAL_FUNCION_BC:  return "funcion";
     }
     return "desconocido";
 }
@@ -1119,6 +1137,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.conjunto && v->como.conjunto->cuenta > 0;
         case VAL_TUPLA:
             return v->como.tupla && v->como.tupla->cuenta > 0;
+        case VAL_FUNCION_BC:
+            return v->como.funcion_bc != NULL;
     }
     return false;
 }
@@ -1231,6 +1251,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             }
             return true;
         }
+        case VAL_FUNCION_BC:
+            return a->como.funcion_bc == b->como.funcion_bc;
     }
     return false;
 }

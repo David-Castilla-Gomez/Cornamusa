@@ -11,7 +11,7 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - ✅ Sesión 2: refactor del evaluador (helpers reutilizables) + compilador para expresiones + VM stack-based con dispatch loop.
 - ✅ Sesión 3: variables globales (DEFINIR/OBTENER/ASIGNAR), `imprimir(...)` como built-in en bytecode, sentencias básicas (asignación, expresión, pasar, bloque).
 - ✅ Sesión 4: control de flujo en bytecode (`si`/`mientras` con `romper`/`continuar`/`sino`, lógica con cortocircuito, asignación aumentada).
-- ⏳ Sesión 5: funciones top-level, locales, closures con upvalues.
+- ✅ Sesión 5: funciones top-level con recursión + variables locales + llamadas en bytecode (sin closures todavía — aplazadas a S5b/S6).
 - ⏳ Sesión 6: colecciones + transición a tagged i63 + flag `--tree-walking` + tests diferenciales + tag v0.6.0.
 
 ### Añadido (Fase 6 sesión 1)
@@ -103,6 +103,30 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 - **Limitación documentada**: `SENT_PARA` queda para S6 (necesita iteración sobre cadena/rango/lista que se conectará con las colecciones en bytecode).
 - **`tests/unit/test_bytecode_control.c`** con 8 grupos: lógica con cortocircuito demostrado, `si`/`sino si`/`sino`, `mientras` con romper/continuar/sino, asignación aumentada (todas las variantes), y programas realistas: factorial(25)=26 dígitos, Fibonacci(30)=832040, 2^64 (20 dígitos), anidamiento `mientras` en `mientras`.
 - **55 tests verde** (22 unit + 33 integración).
+
+### Añadido (Fase 6 sesión 5)
+- **`VAL_FUNCION_BC`** y **`struct FuncionBC`** en `chunk.{h,c}`: función compilada a bytecode con su propio `Chunk`, nombre (heap-duplicated), aridad y refcount. Comparte refcount con el resto de tipos colección. Diferente de `VAL_FUNCION` (que es para tree-walking) — coexisten para no romper el evaluador antiguo.
+- **CallFrame stack en la VM**: refactor de la VM para soportar llamadas anidadas. Cada `CallFrame` contiene chunk activo, ip y `base_pila`. Stack de hasta 64 frames; pila de Valores ampliada a 1024 slots para acomodar varias llamadas. El frame[0] es el del chunk top-level.
+- **`OP_LLAMAR [n_args]`** en la VM: lee el callee del slot `tope - n - 1`, valida que es `VAL_FUNCION_BC`, valida la aridad, crea un nuevo `CallFrame` con `base_pila = tope - n - 1`. Slot 0 del frame contiene el callee, slots 1..n los args, slots posteriores las locales.
+- **`OP_RETORNAR` multi-frame**: pop el resultado, libera todos los slots del frame que termina (callee + args + locales) limpiamente, push el resultado en el frame anterior, decrementa `n_frames`. Si era el frame top-level, devuelve el resultado al cliente.
+- **`OP_OBTENER_LOCAL [slot]`** y **`OP_ASIGNAR_LOCAL [slot]`**: acceso/escritura a `frame->base_pila[slot]`. Locales viven en el stack del frame; al retornar se liberan junto con el frame.
+- **`ScopeCompilador`** en el compilador: representa una función en construcción. Mantiene el chunk de la función, la lista de locales (slot 0 = callee, slots 1..aridad = parámetros, posteriores = locales declaradas dinámicamente), y el stack de bucles abiertos para `romper`/`continuar` dentro de la función.
+- **Lookup de identificadores con prioridad local → global**: `EXPR_IDENT` busca primero en `c->actual->locales`; si no encuentra, emite `OP_OBTENER_GLOBAL`.
+- **Asignación con dispatch local/global**:
+  - En el scope raíz (top-level): siempre globales.
+  - Dentro de función: primera asignación a un nombre nuevo lo crea como **local** (sin emitir bytecode adicional — el valor ya quedó en el slot del stack); reasignaciones emiten `OP_ASIGNAR_LOCAL`. Mismo modelo para `+=`, `-=`, etc.
+- **`SENT_FUNCION`** compilada con scope anidado:
+  - `funcion_bc_nueva(nombre, aridad)` con chunk vacío.
+  - Scope hijo con slot 0 = callee, slots 1..n = parámetros como locales.
+  - Compila el cuerpo en el chunk hijo.
+  - Emite `OP_NULO + OP_RETORNAR` implícitos al final (si el cuerpo no terminaba con `retornar`, esto cubre el caso `funcion f(): pasar fin funcion` → devuelve nulo).
+  - Vuelve al scope padre y emite `OP_CONST <fn>` + `OP_DEFINIR_GLOBAL <nombre>`.
+  - Limitación documentada: parámetros con valor por defecto NO soportados todavía en bytecode (sí en tree-walking) — error explícito.
+- **`SENT_RETORNAR`**: compila el valor opcional + `OP_RETORNAR`. Error si está fuera de función.
+- **`EXPR_LLAMADA` general**: callee + args + `OP_LLAMAR [n]`. El caso especial `imprimir(...)` sigue emitiendo `OP_IMPRIMIR` directamente (corto-circuitado solo cuando no hay un local llamado `imprimir` que sombrear).
+- **Sin closures todavía**: una función definida dentro de otra NO captura las locales de la enclosing — solo accede a sus propias locales y a globales. Las closures con upvalues están planeadas para una sesión adicional o F6 S6.
+- **`tests/unit/test_bytecode_funciones.c`** con 8 grupos: función básica con args, recursión (factorial 10/20, fib 10), variables locales (declaración + reasignación + sombrear global con local), aridad mal con mensaje específico, retornar con/sin valor + dentro de bucle + fuera de función, no invocable, locales aisladas (no filtran a globales), y factorial(50) bignum (64 dígitos) recursivo end-to-end por bytecode.
+- **56 tests verde** (23 unit + 33 integración).
 
 Cierre de Fase 5: tree-walking interpreter con todas las colecciones
 básicas. **Último release con tree-walking activo** según decisión

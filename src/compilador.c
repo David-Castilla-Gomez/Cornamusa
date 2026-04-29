@@ -21,13 +21,61 @@ static void error_compilacion(Compilador *c, int linea, int columna,
     va_end(ap);
 }
 
+/* Inicializa un scope (raíz o de función anidada). Para scopes de
+   función, el slot 0 se reserva para el callee (convención compartida
+   con la VM en OP_LLAMAR). */
+static void scope_iniciar(ScopeCompilador *s, Chunk *chunk, bool es_funcion,
+                           ScopeCompilador *padre) {
+    s->chunk = chunk;
+    s->es_funcion = es_funcion;
+    s->n_locales = 0;
+    s->n_bucles = 0;
+    s->padre = padre;
+    if (es_funcion) {
+        s->locales[0].nombre = "";
+        s->locales[0].longitud_nombre = 0;
+        s->n_locales = 1;
+    }
+}
+
 void compilador_iniciar(Compilador *c, Chunk *chunk) {
-    c->chunk = chunk;
+    scope_iniciar(&c->raiz, chunk, false, NULL);
+    c->actual = &c->raiz;
     c->error.tuvo_error = false;
     c->error.mensaje[0] = '\0';
     c->error.linea = 0;
     c->error.columna = 0;
-    c->n_bucles = 0;
+}
+
+/* Busca un local por nombre en el scope actual. Devuelve el slot
+   (>=0) si existe, -1 si no. */
+static int buscar_local(const ScopeCompilador *s, const char *nombre, int len) {
+    for (int i = s->n_locales - 1; i >= 0; i--) {
+        if (s->locales[i].longitud_nombre == len
+            && memcmp(s->locales[i].nombre, nombre, (size_t)len) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+/* Añade un local en el scope actual y devuelve su slot. Reporta error
+   si excede COMPILADOR_LOCALES_MAX. */
+static int agregar_local(Compilador *c, const char *nombre, int len, int linea) {
+    ScopeCompilador *s = c->actual;
+    if (s->n_locales >= COMPILADOR_LOCALES_MAX) {
+        c->error.tuvo_error = true;
+        c->error.linea = linea;
+        snprintf(c->error.mensaje, sizeof(c->error.mensaje),
+            "demasiadas variables locales en una funcion (>%d)",
+            COMPILADOR_LOCALES_MAX);
+        return -1;
+    }
+    int slot = s->n_locales;
+    s->locales[slot].nombre = nombre;
+    s->locales[slot].longitud_nombre = len;
+    s->n_locales++;
+    return slot;
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -46,14 +94,14 @@ void compilador_iniciar(Compilador *c, Chunk *chunk) {
  * ────────────────────────────────────────────────────────────────── */
 
 static int emitir_salto(Compilador *c, OpCode op, int linea) {
-    chunk_emitir_byte(c->chunk, (uint8_t)op, linea);
-    chunk_emitir_byte(c->chunk, 0xff, linea);
-    chunk_emitir_byte(c->chunk, 0xff, linea);
-    return c->chunk->cuenta - 2;   /* offset del primer byte del placeholder */
+    chunk_emitir_byte(c->actual->chunk, (uint8_t)op, linea);
+    chunk_emitir_byte(c->actual->chunk, 0xff, linea);
+    chunk_emitir_byte(c->actual->chunk, 0xff, linea);
+    return c->actual->chunk->cuenta - 2;   /* offset del primer byte del placeholder */
 }
 
 static void parchear_salto(Compilador *c, int offset_placeholder, int linea) {
-    int salto = c->chunk->cuenta - offset_placeholder - 2;
+    int salto = c->actual->chunk->cuenta - offset_placeholder - 2;
     if (salto > UINT16_MAX) {
         c->error.tuvo_error = true;
         c->error.linea = linea;
@@ -61,13 +109,13 @@ static void parchear_salto(Compilador *c, int offset_placeholder, int linea) {
             "salto demasiado grande para u16 (>%u bytes)", UINT16_MAX);
         return;
     }
-    c->chunk->codigo[offset_placeholder]     = (uint8_t)((salto >> 8) & 0xff);
-    c->chunk->codigo[offset_placeholder + 1] = (uint8_t)(salto & 0xff);
+    c->actual->chunk->codigo[offset_placeholder]     = (uint8_t)((salto >> 8) & 0xff);
+    c->actual->chunk->codigo[offset_placeholder + 1] = (uint8_t)(salto & 0xff);
 }
 
 static void emitir_bucle(Compilador *c, int inicio, int linea) {
-    chunk_emitir_byte(c->chunk, OP_BUCLE, linea);
-    int offset = c->chunk->cuenta - inicio + 2;   /* +2 por el operando */
+    chunk_emitir_byte(c->actual->chunk, OP_BUCLE, linea);
+    int offset = c->actual->chunk->cuenta - inicio + 2;   /* +2 por el operando */
     if (offset > UINT16_MAX) {
         c->error.tuvo_error = true;
         c->error.linea = linea;
@@ -75,8 +123,8 @@ static void emitir_bucle(Compilador *c, int inicio, int linea) {
             "bucle demasiado grande para u16 (>%u bytes)", UINT16_MAX);
         return;
     }
-    chunk_emitir_byte(c->chunk, (uint8_t)((offset >> 8) & 0xff), linea);
-    chunk_emitir_byte(c->chunk, (uint8_t)(offset & 0xff), linea);
+    chunk_emitir_byte(c->actual->chunk, (uint8_t)((offset >> 8) & 0xff), linea);
+    chunk_emitir_byte(c->actual->chunk, (uint8_t)(offset & 0xff), linea);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -84,19 +132,19 @@ static void emitir_bucle(Compilador *c, int inicio, int linea) {
  * ────────────────────────────────────────────────────────────────── */
 
 static BucleAbierto *bucle_actual(Compilador *c) {
-    if (c->n_bucles == 0) return NULL;
-    return &c->bucles[c->n_bucles - 1];
+    if (c->actual->n_bucles == 0) return NULL;
+    return &c->actual->bucles[c->actual->n_bucles - 1];
 }
 
 static bool empujar_bucle(Compilador *c, int inicio_continuar, int linea) {
-    if (c->n_bucles >= COMPILADOR_BUCLES_MAX) {
+    if (c->actual->n_bucles >= COMPILADOR_BUCLES_MAX) {
         c->error.tuvo_error = true;
         c->error.linea = linea;
         snprintf(c->error.mensaje, sizeof(c->error.mensaje),
             "anidamiento de bucles excede %d niveles", COMPILADOR_BUCLES_MAX);
         return false;
     }
-    BucleAbierto *b = &c->bucles[c->n_bucles++];
+    BucleAbierto *b = &c->actual->bucles[c->actual->n_bucles++];
     b->inicio_continuar = inicio_continuar;
     b->parches_romper = NULL;
     b->n_parches = 0;
@@ -138,7 +186,7 @@ static void cerrar_bucle(Compilador *c, int linea) {
         parchear_salto(c, b->parches_romper[i], linea);
     }
     free(b->parches_romper);
-    c->n_bucles--;
+    c->actual->n_bucles--;
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -225,7 +273,7 @@ static Valor cadena_desde_lexema(const char *lex, int len) {
  */
 static int agregar_nombre_global(Compilador *c, const char *texto, int len) {
     Valor name = valor_cadena_duplicar(texto, len);
-    int idx = chunk_agregar_constante(c->chunk, name);
+    int idx = chunk_agregar_constante(c->actual->chunk, name);
     return idx;
 }
 
@@ -234,11 +282,11 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
 
     switch (e->tipo) {
         case EXPR_LITERAL_NULO:
-            chunk_emitir_byte(c->chunk, OP_NULO, e->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
             return true;
 
         case EXPR_LITERAL_BOOLEANO:
-            chunk_emitir_byte(c->chunk,
+            chunk_emitir_byte(c->actual->chunk,
                 e->como.booleano.valor ? OP_VERDADERO : OP_FALSO,
                 e->linea);
             return true;
@@ -246,19 +294,19 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         case EXPR_LITERAL_ENTERO: {
             Valor v = valor_entero_de_lexema(e->como.literal.lexema,
                                                e->como.literal.longitud);
-            chunk_emitir_constante(c->chunk, v, e->linea);
+            chunk_emitir_constante(c->actual->chunk, v, e->linea);
             return true;
         }
         case EXPR_LITERAL_DECIMAL: {
             Valor v = valor_decimal_de_lexema(e->como.literal.lexema,
                                                 e->como.literal.longitud);
-            chunk_emitir_constante(c->chunk, v, e->linea);
+            chunk_emitir_constante(c->actual->chunk, v, e->linea);
             return true;
         }
         case EXPR_LITERAL_CADENA: {
             Valor v = cadena_desde_lexema(e->como.literal.lexema,
                                             e->como.literal.longitud);
-            chunk_emitir_constante(c->chunk, v, e->linea);
+            chunk_emitir_constante(c->actual->chunk, v, e->linea);
             return true;
         }
 
@@ -274,7 +322,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "operador binario no soportado en bytecode v0.6 sesion 2");
                 return false;
             }
-            chunk_emitir_byte(c->chunk, (uint8_t)op, e->linea);
+            chunk_emitir_byte(c->actual->chunk, (uint8_t)op, e->linea);
             return true;
         }
 
@@ -282,10 +330,10 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             if (!compilador_compilar_expr(c, e->como.unario.operando)) return false;
             switch (e->como.unario.op) {
                 case TT_MENOS:
-                    chunk_emitir_byte(c->chunk, OP_NEGAR, e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_NEGAR, e->linea);
                     return true;
                 case TT_NO:
-                    chunk_emitir_byte(c->chunk, OP_NO, e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_NO, e->linea);
                     return true;
                 case TT_MAS:
                     /* +x es identidad numérica; no emitimos nada — el
@@ -299,6 +347,15 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         }
 
         case EXPR_IDENT: {
+            /* Prioridad: local del scope actual → global. Sin closures
+               (decisión Fase 6 S5): no se busca en scopes padres. */
+            int slot = buscar_local(c->actual, e->como.ident.nombre,
+                                       e->como.ident.longitud);
+            if (slot >= 0) {
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                    (uint8_t)slot, e->linea);
+                return true;
+            }
             int idx = agregar_nombre_global(c, e->como.ident.nombre,
                                               e->como.ident.longitud);
             if (idx < 0 || idx > 255) {
@@ -306,36 +363,43 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "demasiadas constantes para v0.6 (operando byte)");
                 return false;
             }
-            chunk_emitir_byte2(c->chunk, OP_OBTENER_GLOBAL, (uint8_t)idx, e->linea);
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL, (uint8_t)idx, e->linea);
             return true;
         }
 
         case EXPR_LLAMADA: {
-            /*
-             * En v0.6 sesión 3 solo se compila el caso especial
-             * `imprimir(args...)` (built-in). Otras llamadas necesitan
-             * OP_LLAMAR + frames, que llegan en S5.
-             */
             const Expr *callee = e->como.llamada.callee;
+            int n_args = e->como.llamada.n_args;
+            if (n_args > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "una llamada no puede tener mas de 255 argumentos");
+                return false;
+            }
+            /* Caso especial built-in `imprimir(...)`: emitimos OP_IMPRIMIR
+               directamente para evitar tener que registrar `imprimir`
+               como global y poder llamarlo desde el top-level. */
             bool es_imprimir =
                 callee->tipo == EXPR_IDENT
                 && callee->como.ident.longitud == 8
                 && memcmp(callee->como.ident.nombre, "imprimir", 8) == 0;
-            if (!es_imprimir) {
-                error_compilacion(c, e->linea, e->columna,
-                    "llamadas a funciones definidas por el usuario aun no estan en bytecode v0.6 sesion 3");
-                return false;
+            if (es_imprimir
+                && buscar_local(c->actual, "imprimir", 8) < 0) {
+                for (int i = 0; i < n_args; i++) {
+                    if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_IMPRIMIR,
+                                   (uint8_t)n_args, e->linea);
+                return true;
             }
-            if (e->como.llamada.n_args > 255) {
-                error_compilacion(c, e->linea, e->columna,
-                    "imprimir() no puede tener mas de 255 argumentos");
-                return false;
-            }
-            for (int i = 0; i < e->como.llamada.n_args; i++) {
+            /* Caso general: empuja callee, después args, y emite
+               OP_LLAMAR [n]. La VM se encarga del frame y de validar
+               aridad. */
+            if (!compilador_compilar_expr(c, callee)) return false;
+            for (int i = 0; i < n_args; i++) {
                 if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
             }
-            chunk_emitir_byte2(c->chunk, OP_IMPRIMIR,
-                               (uint8_t)e->como.llamada.n_args, e->linea);
+            chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR,
+                               (uint8_t)n_args, e->linea);
             return true;
         }
 
@@ -353,7 +417,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             if (!compilador_compilar_expr(c, e->como.logica.izq)) return false;
             if (e->como.logica.es_y) {
                 int salto_falso = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
-                chunk_emitir_byte(c->chunk, OP_DESCARTAR, e->linea);
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
                 if (!compilador_compilar_expr(c, e->como.logica.der)) return false;
                 parchear_salto(c, salto_falso, e->linea);
             } else {
@@ -361,7 +425,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 int salto_falso = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
                 int salto_fin   = emitir_salto(c, OP_SALTAR, e->linea);
                 parchear_salto(c, salto_falso, e->linea);
-                chunk_emitir_byte(c->chunk, OP_DESCARTAR, e->linea);
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
                 if (!compilador_compilar_expr(c, e->como.logica.der)) return false;
                 parchear_salto(c, salto_fin, e->linea);
             }
@@ -390,7 +454,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
 
 bool compilador_compilar_expr_top(Compilador *c, const Expr *e) {
     if (!compilador_compilar_expr(c, e)) return false;
-    chunk_emitir_byte(c->chunk, OP_RETORNAR, e->linea);
+    chunk_emitir_byte(c->actual->chunk, OP_RETORNAR, e->linea);
     return true;
 }
 
@@ -404,14 +468,40 @@ bool compilador_compilar_expr_top(Compilador *c, const Expr *e) {
  * y `retornar` en S5.
  * ────────────────────────────────────────────────────────────────── */
 
+static bool compilar_funcion(Compilador *c, const Sent *s);
+
 static bool compilar_asignar(Compilador *c, const Sent *s) {
     Expr *destino = s->como.asignar.destino;
     if (destino->tipo != EXPR_IDENT) {
         error_compilacion(c, s->linea, s->columna,
-            "ErrorDeSintaxis: destino de asignacion no soportado en bytecode v0.6 sesion 3");
+            "ErrorDeSintaxis: destino de asignacion no soportado en bytecode v0.6 sesion 5");
         return false;
     }
+
     if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+
+    /*
+     * Dentro de función: la primera asignación a un nombre nuevo lo
+     * convierte en local; las siguientes reasignan ese local.
+     * En el scope raíz (top-level): toda asignación va a globales.
+     */
+    if (c->actual->es_funcion) {
+        int slot = buscar_local(c->actual, destino->como.ident.nombre,
+                                   destino->como.ident.longitud);
+        if (slot >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)slot, s->linea);
+        } else {
+            /* Nuevo local: el valor ya está en el slot correcto del
+               stack; solo registramos el nombre. */
+            int nuevo = agregar_local(c, destino->como.ident.nombre,
+                                          destino->como.ident.longitud,
+                                          s->linea);
+            if (nuevo < 0) return false;
+        }
+        return true;
+    }
+
     int idx = agregar_nombre_global(c, destino->como.ident.nombre,
                                       destino->como.ident.longitud);
     if (idx < 0 || idx > 255) {
@@ -419,7 +509,7 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
             "demasiadas constantes para v0.6 (operando byte)");
         return false;
     }
-    chunk_emitir_byte2(c->chunk, OP_DEFINIR_GLOBAL, (uint8_t)idx, s->linea);
+    chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL, (uint8_t)idx, s->linea);
     return true;
 }
 
@@ -436,57 +526,64 @@ static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
         return false;
     }
 
-    /* OP_OBTENER_GLOBAL del nombre actual. */
-    int idx_get = agregar_nombre_global(c, destino->como.ident.nombre,
-                                          destino->como.ident.longitud);
-    if (idx_get < 0 || idx_get > 255) {
-        error_compilacion(c, s->linea, s->columna,
-            "demasiadas constantes para v0.6 (operando byte)");
-        return false;
+    /* Decidir si es local o global. La aug requiere que la variable
+       ya exista — para locales eso significa estar en el mapa; para
+       globales, lo verifica la VM en tiempo de ejecución. */
+    int slot_local = c->actual->es_funcion
+        ? buscar_local(c->actual, destino->como.ident.nombre,
+                          destino->como.ident.longitud)
+        : -1;
+
+    if (slot_local >= 0) {
+        chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                            (uint8_t)slot_local, s->linea);
+    } else {
+        int idx_get = agregar_nombre_global(c, destino->como.ident.nombre,
+                                              destino->como.ident.longitud);
+        if (idx_get < 0 || idx_get > 255) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiadas constantes para v0.6 (operando byte)");
+            return false;
+        }
+        chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
+                            (uint8_t)idx_get, s->linea);
     }
-    chunk_emitir_byte2(c->chunk, OP_OBTENER_GLOBAL, (uint8_t)idx_get, s->linea);
 
     /* expresion derecha. */
     if (!compilador_compilar_expr(c, s->como.asignar_aug.valor)) return false;
 
     /* Mapear el token aumentado a OpCode binario. */
     TipoToken op_aug = s->como.asignar_aug.op;
-    TipoToken op_bin;
+    int op_byte = -1;
     switch (op_aug) {
-        case TT_ASIGNAR_MAS:         op_bin = TT_MAS;             break;
-        case TT_ASIGNAR_MENOS:       op_bin = TT_MENOS;           break;
-        case TT_ASIGNAR_ASTERISCO:   op_bin = TT_ASTERISCO;       break;
-        case TT_ASIGNAR_BARRA:       op_bin = TT_BARRA;           break;
-        case TT_ASIGNAR_DOBLE_BARRA: op_bin = TT_DOBLE_BARRA;     break;
-        case TT_ASIGNAR_PORCENTAJE:  op_bin = TT_PORCENTAJE;      break;
-        case TT_ASIGNAR_DOBLE_ASTER: op_bin = TT_DOBLE_ASTERISCO; break;
+        case TT_ASIGNAR_MAS:         op_byte = OP_SUMAR; break;
+        case TT_ASIGNAR_MENOS:       op_byte = OP_RESTAR; break;
+        case TT_ASIGNAR_ASTERISCO:   op_byte = OP_MULTIPLICAR; break;
+        case TT_ASIGNAR_BARRA:       op_byte = OP_DIVIDIR; break;
+        case TT_ASIGNAR_DOBLE_BARRA: op_byte = OP_DIVIDIR_ENTERO; break;
+        case TT_ASIGNAR_PORCENTAJE:  op_byte = OP_MODULO; break;
+        case TT_ASIGNAR_DOBLE_ASTER: op_byte = OP_POTENCIA; break;
         default:
             error_compilacion(c, s->linea, s->columna,
                 "operador de asignacion aumentada desconocido");
             return false;
     }
-    int op_byte = -1;
-    switch (op_bin) {
-        case TT_MAS:             op_byte = OP_SUMAR; break;
-        case TT_MENOS:           op_byte = OP_RESTAR; break;
-        case TT_ASTERISCO:       op_byte = OP_MULTIPLICAR; break;
-        case TT_BARRA:           op_byte = OP_DIVIDIR; break;
-        case TT_DOBLE_BARRA:     op_byte = OP_DIVIDIR_ENTERO; break;
-        case TT_PORCENTAJE:      op_byte = OP_MODULO; break;
-        case TT_DOBLE_ASTERISCO: op_byte = OP_POTENCIA; break;
-        default: break;
-    }
-    chunk_emitir_byte(c->chunk, (uint8_t)op_byte, s->linea);
+    chunk_emitir_byte(c->actual->chunk, (uint8_t)op_byte, s->linea);
 
-    /* Re-asignar al global. */
-    int idx_set = agregar_nombre_global(c, destino->como.ident.nombre,
-                                          destino->como.ident.longitud);
-    if (idx_set < 0 || idx_set > 255) {
-        error_compilacion(c, s->linea, s->columna,
-            "demasiadas constantes para v0.6 (operando byte)");
-        return false;
+    if (slot_local >= 0) {
+        chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                            (uint8_t)slot_local, s->linea);
+    } else {
+        int idx_set = agregar_nombre_global(c, destino->como.ident.nombre,
+                                              destino->como.ident.longitud);
+        if (idx_set < 0 || idx_set > 255) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiadas constantes para v0.6 (operando byte)");
+            return false;
+        }
+        chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                            (uint8_t)idx_set, s->linea);
     }
-    chunk_emitir_byte2(c->chunk, OP_DEFINIR_GLOBAL, (uint8_t)idx_set, s->linea);
     return true;
 }
 
@@ -516,7 +613,7 @@ static bool compilar_si(Compilador *c, const Sent *s) {
         if (r->condicion != NULL) {
             if (!compilador_compilar_expr(c, r->condicion)) return false;
             int salto_else = emitir_salto(c, OP_SALTAR_SI_FALSO, r->linea);
-            chunk_emitir_byte(c->chunk, OP_DESCARTAR, r->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, r->linea);
             if (!compilador_compilar_sent(c, r->cuerpo)) return false;
             /* Salto al final de toda la cadena (parchear al cerrar). */
             if (n_saltos_fin >= 64) {
@@ -526,7 +623,7 @@ static bool compilar_si(Compilador *c, const Sent *s) {
             }
             saltos_fin[n_saltos_fin++] = emitir_salto(c, OP_SALTAR, r->linea);
             parchear_salto(c, salto_else, r->linea);
-            chunk_emitir_byte(c->chunk, OP_DESCARTAR, r->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, r->linea);
         } else {
             /* Rama `sino` final. */
             if (!compilador_compilar_sent(c, r->cuerpo)) return false;
@@ -553,10 +650,10 @@ static bool compilar_si(Compilador *c, const Sent *s) {
  *   compile sino?              ; si la cláusula sino existe
  */
 static bool compilar_mientras(Compilador *c, const Sent *s) {
-    int inicio_cond = c->chunk->cuenta;
+    int inicio_cond = c->actual->chunk->cuenta;
     if (!compilador_compilar_expr(c, s->como.mientras.condicion)) return false;
     int salto_salir = emitir_salto(c, OP_SALTAR_SI_FALSO, s->linea);
-    chunk_emitir_byte(c->chunk, OP_DESCARTAR, s->linea);
+    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
 
     if (!empujar_bucle(c, inicio_cond, s->linea)) return false;
     if (!compilador_compilar_sent(c, s->como.mientras.cuerpo)) return false;
@@ -564,7 +661,7 @@ static bool compilar_mientras(Compilador *c, const Sent *s) {
 
     /* salir: */
     parchear_salto(c, salto_salir, s->linea);
-    chunk_emitir_byte(c->chunk, OP_DESCARTAR, s->linea);
+    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
 
     /* Cláusula sino: ejecutada si terminamos por condición falsa.
      * Emitimos directamente después del descart. Los `romper` ya
@@ -588,7 +685,7 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
 
         case SENT_EXPR:
             if (!compilador_compilar_expr(c, s->como.expr.expr)) return false;
-            chunk_emitir_byte(c->chunk, OP_DESCARTAR, s->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
             return true;
 
         case SENT_ASIGNAR:
@@ -633,10 +730,26 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             return true;
         }
 
-        /* Sin soporte aún. */
-        case SENT_RETORNAR:
-        case SENT_PARA:
         case SENT_FUNCION:
+            return compilar_funcion(c, s);
+
+        case SENT_RETORNAR: {
+            if (!c->actual->es_funcion) {
+                error_compilacion(c, s->linea, s->columna,
+                    "'retornar' fuera de una funcion");
+                return false;
+            }
+            if (s->como.retornar.valor != NULL) {
+                if (!compilador_compilar_expr(c, s->como.retornar.valor)) return false;
+            } else {
+                chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
+            }
+            chunk_emitir_byte(c->actual->chunk, OP_RETORNAR, s->linea);
+            return true;
+        }
+
+        /* Sin soporte aún. */
+        case SENT_PARA:
         case SENT_CLASE:
         case SENT_INTENTAR:
         case SENT_LANZAR:
@@ -645,7 +758,7 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
         case SENT_GLOBAL:
         case SENT_NOLOCAL:
             error_compilacion(c, s->linea, s->columna,
-                "esta sentencia aun no esta implementada en bytecode v0.6 sesion 4");
+                "esta sentencia aun no esta implementada en bytecode v0.6 sesion 5");
             return false;
     }
     error_compilacion(c, s->linea, s->columna,
@@ -658,11 +771,96 @@ bool compilador_compilar_programa(Compilador *c, Sent **sents, int n) {
         if (!compilador_compilar_sent(c, sents[i])) return false;
     }
     /* OP_RETORNAR final con nulo: la VM termina y el cliente recibe
-       nulo como "valor del programa" (las sentencias no producen
-       valor; lo importante es el side-effect de las asignaciones a
-       globales). */
+       nulo como "valor del programa". */
     int linea_final = (n > 0) ? sents[n - 1]->linea : 1;
-    chunk_emitir_byte(c->chunk, OP_NULO, linea_final);
-    chunk_emitir_byte(c->chunk, OP_RETORNAR, linea_final);
+    chunk_emitir_byte(c->actual->chunk, OP_NULO, linea_final);
+    chunk_emitir_byte(c->actual->chunk, OP_RETORNAR, linea_final);
+    return true;
+}
+
+/*
+ * Compila una declaración de función:
+ *   funcion nombre(p1, p2, ...): cuerpo fin funcion
+ *
+ * Crea una FuncionBC nueva con su propio chunk, abre un scope hijo
+ * con los parámetros como locales en slots 1..aridad, compila el
+ * cuerpo en ese scope, emite OP_NULO+OP_RETORNAR si el cuerpo no
+ * terminaba ya con `retornar`, y deja la FuncionBC como constante
+ * en el chunk padre seguida de OP_DEFINIR_GLOBAL <nombre>.
+ *
+ * Sin closures: el scope hijo no puede ver locales del padre. Las
+ * funciones anidadas tienen acceso solo a sus propios params/locales
+ * y a las globales.
+ */
+static bool compilar_funcion(Compilador *c, const Sent *s) {
+    const char *nombre = s->como.funcion.nombre;
+    int len_nombre = s->como.funcion.longitud_nombre;
+    int n_params = s->como.funcion.n_parametros;
+    Parametro *params = s->como.funcion.parametros;
+
+    /* Aridad mínima (parámetros sin valor por defecto) y máxima
+       (todos los parámetros). En v0.6 S5 NO soportamos defaults — el
+       usuario debe pasar exactamente n_params argumentos. */
+    for (int i = 0; i < n_params; i++) {
+        if (params[i].valor_defecto != NULL) {
+            error_compilacion(c, s->linea, s->columna,
+                "valores por defecto en parametros aun no estan en bytecode v0.6 sesion 5");
+            return false;
+        }
+    }
+
+    FuncionBC *fn = funcion_bc_nueva(nombre, len_nombre, n_params);
+    if (!fn) {
+        error_compilacion(c, s->linea, s->columna, "memoria insuficiente");
+        return false;
+    }
+
+    /* Abrir scope anidado. */
+    ScopeCompilador scope_fn;
+    scope_iniciar(&scope_fn, &fn->chunk, true, c->actual);
+    /* Slot 0 = la propia función (callee), nombre por convención. */
+    scope_fn.locales[0].nombre = nombre;
+    scope_fn.locales[0].longitud_nombre = len_nombre;
+    /* Registrar parámetros como locales en slots 1..n_params. */
+    for (int i = 0; i < n_params; i++) {
+        if (scope_fn.n_locales >= COMPILADOR_LOCALES_MAX) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiados parametros");
+            funcion_bc_liberar(fn);
+            return false;
+        }
+        scope_fn.locales[scope_fn.n_locales].nombre = params[i].nombre;
+        scope_fn.locales[scope_fn.n_locales].longitud_nombre = params[i].longitud_nombre;
+        scope_fn.n_locales++;
+    }
+
+    ScopeCompilador *prev = c->actual;
+    c->actual = &scope_fn;
+    bool ok = compilador_compilar_sent(c, s->como.funcion.cuerpo);
+    /* Si el cuerpo terminó sin `retornar`, emitimos OP_NULO+OP_RETORNAR
+       implícitos. Esto añade bytes "muertos" si el cuerpo SÍ terminó
+       con `retornar` — pero no se ejecutan. Al estilo clox. */
+    chunk_emitir_byte(&fn->chunk, OP_NULO, s->linea);
+    chunk_emitir_byte(&fn->chunk, OP_RETORNAR, s->linea);
+    c->actual = prev;
+
+    if (!ok) {
+        funcion_bc_liberar(fn);
+        return false;
+    }
+
+    /* Emitir en el chunk padre: OP_CONST <fn> seguido de
+       OP_DEFINIR_GLOBAL <nombre> (asignación al scope global). */
+    Valor v_fn = valor_funcion_bc(fn);   /* toma posesión del refcount */
+    chunk_emitir_constante(c->actual->chunk, v_fn, s->linea);
+
+    int idx_nombre = agregar_nombre_global(c, nombre, len_nombre);
+    if (idx_nombre < 0 || idx_nombre > 255) {
+        error_compilacion(c, s->linea, s->columna,
+            "demasiadas constantes para v0.6 (operando byte)");
+        return false;
+    }
+    chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                        (uint8_t)idx_nombre, s->linea);
     return true;
 }

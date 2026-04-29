@@ -30,22 +30,42 @@ typedef enum {
     VM_ERROR_RUNTIME,
 } ResultadoVM;
 
-#define VM_PILA_MAX 256
+#define VM_PILA_MAX 1024
+#define VM_FRAMES_MAX 64
+
+/*
+ * CallFrame: representa una llamada activa.
+ *   - `chunk`: el chunk del que se está ejecutando (top-level del
+ *     programa, o el chunk de una función).
+ *   - `ip`: puntero al byte siguiente a ejecutar dentro de ese chunk.
+ *   - `base_pila`: primer slot del frame en la pila global. Slot 0
+ *     contiene el Valor callable (o nulo para el frame top-level);
+ *     slots 1..aridad contienen los parámetros; slots posteriores se
+ *     usan para variables locales de la función.
+ */
+typedef struct CallFrame {
+    const Chunk *chunk;
+    const uint8_t *ip;
+    Valor *base_pila;
+} CallFrame;
 
 typedef struct {
     /*
-     * Pila de valores. Cada slot es DUEÑO de su Valor — al hacer pop
-     * se transfiere ownership al cliente, sin copiar. Capacidad fija
-     * por ahora (256); cuando lleguen llamadas con frames se hará
-     * dinámica.
+     * Pila de valores compartida por todos los frames. Cada slot es
+     * DUEÑO de su Valor. Capacidad ampliada respecto a S2 (256 →
+     * 1024) para acomodar varias llamadas anidadas. Sigue siendo
+     * fija; en F7+ se podrá hacer dinámica.
      */
     Valor pila[VM_PILA_MAX];
     Valor *tope;            /* apunta al primer slot LIBRE */
 
-    /* Chunk activo + instruction pointer. La VM no posee el chunk —
-       el cliente lo crea, lo pasa, y lo destruye después. */
-    const Chunk *chunk;
-    const uint8_t *ip;
+    /*
+     * Stack de call frames. El frame[0] es el del chunk top-level
+     * (el cuerpo del programa o de la línea del REPL); los demás se
+     * crean al ejecutar OP_LLAMAR y se quitan al ejecutar OP_RETORNAR.
+     */
+    CallFrame frames[VM_FRAMES_MAX];
+    int n_frames;
 
     /*
      * Variables globales: Diccionario de cadena → Valor. La VM es

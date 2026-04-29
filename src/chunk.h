@@ -133,4 +133,37 @@ int chunk_agregar_constante(Chunk *c, Valor v);
  */
 void chunk_emitir_constante(Chunk *c, Valor v, int linea);
 
+/*
+ * Función compilada a bytecode (Fase 6 sesión 5).
+ *
+ * Una función bytecode tiene su propio `Chunk` con el código de su
+ * cuerpo, una aridad fija (cantidad de parámetros) y un nombre con
+ * fines de debug. Es propietaria del Chunk (no compartido). Se
+ * comparte por refcount entre Valores.
+ *
+ * Cornamusa v0.6 no implementa closures todavía: las funciones
+ * solo acceden a parámetros, locales propias y globales — no
+ * capturan variables de funciones enclosing. Las closures con
+ * upvalues están planeadas para Fase 6 sesión 5b o Fase 6 sesión 6.
+ */
+struct FuncionBC {
+    char *nombre;            /* duplicado en heap; se libera con la función */
+    int longitud_nombre;
+    int aridad;
+    Chunk chunk;
+    int refcount;
+};
+
+/*
+ * Crea una FuncionBC con chunk vacío y refcount=1. El cliente
+ * compila el cuerpo en `chunk` y luego envuelve la función en un
+ * Valor con `valor_funcion_bc`. El nombre se duplica.
+ */
+FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad);
+void funcion_bc_retener(FuncionBC *f);
+void funcion_bc_liberar(FuncionBC *f);
+
+/* Construye un Valor de tipo VAL_FUNCION_BC tomando posesión del refcount. */
+Valor valor_funcion_bc(FuncionBC *f);
+
 #endif /* CORNAMUSA_CHUNK_H */
