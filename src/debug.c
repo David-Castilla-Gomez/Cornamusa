@@ -165,7 +165,15 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
             fprintf(out, "(%d args)\n", n_args);
             return offset + 3;
         }
-        case OP_IMPORTAR:        return instruccion_byte("OP_IMPORTAR", c, offset, out);
+        case OP_IMPORTAR: {
+            /* [byte modulo_idx] [byte binding_idx] */
+            uint8_t mod_idx = c->codigo[offset + 1];
+            uint8_t bind_idx = c->codigo[offset + 2];
+            fprintf(out, "%-20s %4d %4d\n", "OP_IMPORTAR", mod_idx, bind_idx);
+            return offset + 3;
+        }
+        case OP_IMPORTAR_PARA_DESDE: return instruccion_byte("OP_IMPORTAR_PARA_DESDE", c, offset, out);
+        case OP_DUP:             return instruccion_simple("OP_DUP", offset, out);
 
         case OP_IMPRIMIR:        return instruccion_byte("OP_IMPRIMIR", c, offset, out);
         case OP_BUILD_LISTA:     return instruccion_byte("OP_BUILD_LISTA", c, offset, out);

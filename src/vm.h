@@ -76,6 +76,23 @@ typedef struct CallFrame {
        (no lo gestiona el GC porque Chunk no es heap-rastreado). */
     Chunk *chunk_modulo;
     /*
+     * Nombre con el que el módulo será registrado como global del
+     * importador (v0.9.1). Para `importar X` es igual al nombre del
+     * módulo. Para `importar X como Y` es `Y`. Heap-duplicated; el
+     * frame es dueño y se libera al finalizar el módulo en OP_RETORNAR.
+     * NULL si no es un frame de importación.
+     */
+    char *modulo_binding_name;
+    int modulo_binding_len;
+    /*
+     * v0.9.1: si true, este frame es de OP_IMPORTAR_PARA_DESDE — al
+     * finalizar (OP_RETORNAR detecta modulo_en_carga), NO se registra
+     * el módulo como global; se empuja al tope del stack como "valor
+     * de retorno" del importar para que el código siguiente lea
+     * atributos via OP_OBTENER_ATRIBUTO.
+     */
+    bool desde_import;
+    /*
      * Si la closure que disparó este frame tenía `globales_definicion`
      * != vm->globales, guardamos el dicc anterior aquí y lo restauramos
      * al hacer OP_RETORNAR. Permite que funciones de un módulo vean

@@ -6,6 +6,58 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.9.1] — 2026-04-29 — módulos completos + indexación de cadenas
+
+Cierra la deuda funcional de v0.9.0: módulos con subsegmentos, alias,
+y `desde X importar Y`. Indexación de cadenas `s[i]` ahora funciona
+en bytecode con UTF-8. Stdlib `cadenas.cor` ampliada con funciones que
+requieren indexación. **79 tests verde**.
+
+### Añadido (v0.9.1)
+- **`importar X.Y` (subsegmentos)**: `cargar_modulo_desde_archivo`
+  traduce `.` a `/` antes del lookup. `importar mat.geometria` busca
+  `./mat/geometria.cor` luego `stdlib/mat/geometria.cor`.
+- **`importar X como Y` (alias)**: el módulo se carga y se cachea por
+  su nombre real, pero se registra como global del importador bajo el
+  alias.
+- **`OP_IMPORTAR` ahora toma 2 operandos** (`module_idx`, `binding_idx`)
+  para soportar alias/subsegmentos: `module_idx` es el nombre real del
+  módulo (cache key), `binding_idx` es el nombre de la global (alias o
+  último segmento).
+- **`CallFrame.modulo_binding_name`** + `modulo_binding_len`:
+  buffer heap-duplicated con el nombre del binding global, liberado en
+  `OP_RETORNAR` tras registrar la global.
+- **`desde X importar Y, Z` (selective import)**: nuevo opcode
+  `OP_IMPORTAR_PARA_DESDE [name_idx]` que carga el módulo y lo deja
+  en el tope del stack (sin registrar global). Para cada item, el
+  compilador emite `OP_DUP`, `OP_OBTENER_ATRIBUTO [item_idx]`,
+  `OP_DEFINIR_GLOBAL [binding_idx]`. Final `OP_DESCARTAR` retira el
+  módulo. Nuevo flag `CallFrame.desde_import` para que `OP_RETORNAR`
+  finalice el módulo poniéndolo en stack en vez de bindeándolo.
+- **`OP_DUP`**: duplica el valor en el tope del stack (clone). Nuevo.
+- **`OP_INDICE` ahora soporta `VAL_CADENA`**: indexación UTF-8 con
+  `utf8proc_iterate`. Devuelve cadena de 1 carácter. Soporta índices
+  negativos (cuentan desde el final). `ErrorDeIndice` si fuera de
+  rango. `ErrorDeTipo` si índice no es entero.
+- **`stdlib/cadenas.cor` ampliada**: funciones nuevas `caracter(s, i)`,
+  `empieza_con(s, prefijo)`, `termina_con(s, sufijo)`, `contar(s, sub)`.
+  Antes estaban deshabilitadas porque requerían `s[i]`.
+- **9 tests nuevos** en `test_bytecode_modulos.c`: alias simple, alias
+  no expone nombre original, subsegmentos compilan, `desde X importar`
+  simple/multiple/alias, `desde` no expone módulo, función importada
+  via desde, indexación cadena básica/negativa/UTF-8/fuera-de-rango.
+- **Ejemplo `examples/22_modulos_avanzado.cor`** demostrando alias,
+  desde-importar, y `s[i]` con UTF-8.
+
+### Limitaciones documentadas en v0.9.1
+- **Nuevos locales declarados dentro de cuerpos de bucles** (en función)
+  no funcionan correctamente: el slot se desfasa entre iteraciones.
+  Workaround: declarar el local antes del bucle. La función `contar`
+  en `cadenas.cor` aplica este workaround. Resolver requiere un
+  preamble de OP_NULOs en el chunk de la función + emit explícito de
+  OP_ASIGNAR_LOCAL para todos los nuevos locales — refactor mediano,
+  aplazado a v0.9.2 o v0.9.3.
+
 ## [0.9.0] — 2026-04-29 — módulos + stdlib mínima (Fase 9)
 
 Cornamusa gana sistema de módulos: `importar matematicas` carga un

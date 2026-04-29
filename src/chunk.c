@@ -57,6 +57,8 @@ const char *opcode_nombre(OpCode op) {
         case OP_HEREDAR:         return "OP_HEREDAR";
         case OP_SUPER_INVOCAR:   return "OP_SUPER_INVOCAR";
         case OP_IMPORTAR:        return "OP_IMPORTAR";
+        case OP_IMPORTAR_PARA_DESDE: return "OP_IMPORTAR_PARA_DESDE";
+        case OP_DUP:             return "OP_DUP";
         case OP_IMPRIMIR:        return "OP_IMPRIMIR";
         case OP_BUILD_LISTA:     return "OP_BUILD_LISTA";
         case OP_BUILD_TUPLA:     return "OP_BUILD_TUPLA";

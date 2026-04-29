@@ -1,0 +1,41 @@
+# Cornamusa v0.9.1: módulos completos con `desde X importar Y` y alias.
+#
+# Ejecutar con: cornamusa --bytecode examples/22_modulos_avanzado.cor
+# (desde la raíz del proyecto, para que stdlib/ esté en cwd).
+#
+# Demuestra:
+#   - `importar X como Y` (alias).
+#   - `desde X importar Y, Z` (selective import).
+#   - `desde X importar Y como Z` (selective + alias).
+#   - `s[i]` en bytecode (indexación de cadenas con UTF-8).
+#   - Funciones de cadenas.cor que usan indexación.
+
+importar matematicas como m
+desde matematicas importar PI, factorial como fact
+desde cadenas importar repetir, empieza_con, contar, caracter
+
+imprimir("== Alias ==")
+imprimir("m.E =", m.E)
+imprimir("PI =", PI)
+imprimir("fact(8) =", fact(8))
+
+imprimir("")
+imprimir("== Indexación de cadenas ==")
+saludo = "¡Hola, mundo!"
+imprimir("saludo[0] =", saludo[0])
+imprimir("saludo[1] =", saludo[1])      # H
+imprimir("saludo[-1] =", saludo[-1])    # !
+imprimir("longitud =", longitud(saludo))
+
+imprimir("")
+imprimir("== Caracteres UTF-8 ==")
+nombres = "ñoño niño"
+imprimir("nombres[0] =", nombres[0])    # ñ
+imprimir("nombres[3] =", nombres[3])    # o
+
+imprimir("")
+imprimir("== cadenas.cor ==")
+imprimir("repetir =", repetir("=", 20))
+imprimir("empieza_con('hola.cor', 'hola') =", empieza_con("hola.cor", "hola"))
+imprimir("contar('aaabaa', 'aa') =", contar("aaabaa", "aa"))
+imprimir("caracter('Cornamusa', 4) =", caracter("Cornamusa", 4))

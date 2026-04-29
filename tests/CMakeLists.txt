@@ -260,3 +260,15 @@ set_tests_properties(bc_run_21_modulos_jugable PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "factorial.20. = 2432902008176640000"
 )
+
+# v0.9.1: módulos con `desde X importar Y`, alias, indexación s[i].
+add_test(
+    NAME bc_run_22_modulos_avanzado
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/22_modulos_avanzado.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_22_modulos_avanzado PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fact.8. = 40320"
+)

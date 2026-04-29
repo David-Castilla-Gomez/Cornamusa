@@ -1,10 +1,10 @@
 # Cornamusa stdlib: cadenas.cor
 #
-# Operaciones sobre cadenas escritas en Cornamusa puro. Funciones que
-# requieren manipulación de bytes UTF-8 a bajo nivel (mayúsculas
-# correctas con NFC, búsqueda multi-byte, indexación por carácter)
-# llegarán como bindings nativos en versiones futuras: el bytecode
-# todavía no soporta `cadena[i]` en v0.9.0.
+# Operaciones sobre cadenas escritas en Cornamusa puro. Las funciones
+# que requieren primitivas C avanzadas (mayúsculas correctas con NFC,
+# normalización Unicode) llegarán como bindings nativos en versiones
+# futuras. La indexación `s[i]` por carácter UTF-8 ya funciona desde
+# v0.9.1.
 #
 # Uso:
 #   importar cadenas
@@ -39,4 +39,75 @@ funcion unir(partes, sep):
         resultado = resultado + sep + partes[i]
     fin para
     retornar resultado
+fin funcion
+
+# Devuelve el carácter (cadena de 1) en la posición indicada.
+# Indices negativos cuentan desde el final.
+funcion caracter(s, i):
+    retornar s[i]
+fin funcion
+
+# Verifica si `s` empieza con `prefijo`.
+funcion empieza_con(s, prefijo):
+    np = longitud(prefijo)
+    ns = longitud(s)
+    si np > ns:
+        retornar falso
+    fin si
+    para i en rango(np):
+        si s[i] != prefijo[i]:
+            retornar falso
+        fin si
+    fin para
+    retornar verdadero
+fin funcion
+
+# Verifica si `s` termina con `sufijo`.
+funcion termina_con(s, sufijo):
+    nf = longitud(sufijo)
+    ns = longitud(s)
+    si nf > ns:
+        retornar falso
+    fin si
+    base = ns - nf
+    para i en rango(nf):
+        si s[base + i] != sufijo[i]:
+            retornar falso
+        fin si
+    fin para
+    retornar verdadero
+fin funcion
+
+# Cuenta las apariciones (no solapadas) de `sub` en `s`.
+#
+# Nota técnica v0.9.1: declaramos `coincide` antes del bucle `mientras`
+# en lugar de dentro de su cuerpo. El bytecode de v0.9.x tiene una
+# limitación con nuevos locales declarados dentro de cuerpos de bucles
+# en función — el slot se desfasa entre iteraciones. La refactorización
+# (declarar antes, reasignar dentro) evita el problema. Llega un fix
+# completo del compilador en una versión posterior.
+funcion contar(s, sub):
+    si longitud(sub) == 0:
+        retornar 0
+    fin si
+    cuenta = 0
+    ns = longitud(s)
+    nb = longitud(sub)
+    i = 0
+    coincide = falso
+    mientras i <= ns - nb:
+        coincide = verdadero
+        para j en rango(nb):
+            si s[i + j] != sub[j]:
+                coincide = falso
+            fin si
+        fin para
+        si coincide:
+            cuenta = cuenta + 1
+            i = i + nb
+        sino:
+            i = i + 1
+        fin si
+    fin mientras
+    retornar cuenta
 fin funcion

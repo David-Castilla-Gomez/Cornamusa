@@ -13,6 +13,7 @@
 #include "nativos.h"     /* nativos_registrar para los built-ins */
 #include "parser.h"
 #include "tommath.h"
+#include "utf8proc.h"
 #include "valor.h"
 
 /* ──────────────────────────────────────────────────────────────────
@@ -211,19 +212,31 @@ static Chunk *compilar_fuente_a_chunk(const char *fuente,
     return ch;
 }
 
-/* Busca y carga el módulo `nombre`. Devuelve Chunk* (con malloc'd) o NULL. */
+/* Busca y carga el módulo `nombre`. Devuelve Chunk* (con malloc'd) o NULL.
+ * Si el nombre contiene `.` (subsegmentos, v0.9.1), se traducen a `/` antes
+ * del lookup: `mat.geometria` → busca `./mat/geometria.cor` y
+ * `stdlib/mat/geometria.cor`. */
 static Chunk *cargar_modulo_desde_archivo(const char *nombre, int len_nombre) {
     char path[512];
     char *fuente = NULL;
     size_t flen = 0;
 
-    /* Intento 1: ./{nombre}.cor */
-    snprintf(path, sizeof(path), "%.*s.cor", len_nombre, nombre);
+    /* Construir el path traduciendo `.` a `/`. */
+    char nombre_path[256];
+    int copy_len = len_nombre < (int)sizeof(nombre_path) - 1
+                 ? len_nombre : (int)sizeof(nombre_path) - 1;
+    for (int i = 0; i < copy_len; i++) {
+        nombre_path[i] = (nombre[i] == '.') ? '/' : nombre[i];
+    }
+    nombre_path[copy_len] = '\0';
+
+    /* Intento 1: ./{nombre_path}.cor */
+    snprintf(path, sizeof(path), "%s.cor", nombre_path);
     fuente = leer_archivo_completo(path, &flen);
 
-    /* Intento 2: stdlib/{nombre}.cor */
+    /* Intento 2: stdlib/{nombre_path}.cor */
     if (!fuente) {
-        snprintf(path, sizeof(path), "stdlib/%.*s.cor", len_nombre, nombre);
+        snprintf(path, sizeof(path), "stdlib/%s.cor", nombre_path);
         fuente = leer_archivo_completo(path, &flen);
     }
 
@@ -383,6 +396,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
     frame->globales_pre_modulo = NULL;
     frame->chunk_modulo = NULL;
     frame->globales_pre_llamada = NULL;
+                    frame->modulo_binding_name = NULL;
+                    frame->modulo_binding_len = 0;
+                frame->desde_import = false;
 
     /* `gc_habilitado` lo gestiona el wrapper público vm_ejecutar. */
 
@@ -520,28 +536,45 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     mod->atributos = vm->globales;
                     /* Restaurar el dicc principal. */
                     vm->globales = frame->globales_pre_modulo;
-                    /* Liberar el chunk del módulo (lo necesitábamos
-                       solo para la ejecución; las constantes que
-                       sobreviven están en globales/atributos). */
+                    /* Liberar el chunk del módulo. */
                     if (frame->chunk_modulo) {
                         chunk_destruir(frame->chunk_modulo);
                         free(frame->chunk_modulo);
                     }
-                    /* Registrar global `nombre = <modulo>` y cachear. */
-                    Valor clave_global = valor_cadena_duplicar(
-                        mod->nombre, mod->longitud_nombre);
-                    Valor val_global = valor_modulo(mod);
-                    modulo_retener(mod);   /* uno para globales, uno para cache */
+                    /* Cachear siempre por nombre real. */
                     Valor val_cache = valor_modulo(mod);
+                    modulo_retener(mod);
                     Valor clave_cache = valor_cadena_duplicar(
                         mod->nombre, mod->longitud_nombre);
-                    dicc_asignar(vm->globales, clave_global, val_global);
                     dicc_asignar(vm->cache_modulos, clave_cache, val_cache);
-                    /* El valor de retorno (r, típicamente nulo) se
-                       descarta — `importar X` es una sentencia, no
-                       una expresión, y no produce valor. */
-                    valor_destruir(&r);
-                    r = valor_nulo();
+
+                    if (frame->desde_import) {
+                        /* v0.9.1: `desde X importar Y, Z` — push módulo
+                           al stack como "valor de retorno" para que el
+                           código siguiente lea atributos. */
+                        valor_destruir(&r);
+                        r = valor_modulo(mod);
+                        /* mod ya tiene refcount=2 (cache + esto); ok. */
+                    } else {
+                        /* `importar X [como Y]` — registrar binding global. */
+                        const char *binding_name = frame->modulo_binding_name
+                            ? frame->modulo_binding_name : mod->nombre;
+                        int binding_len = frame->modulo_binding_name
+                            ? frame->modulo_binding_len : mod->longitud_nombre;
+                        Valor clave_global = valor_cadena_duplicar(
+                            binding_name, binding_len);
+                        Valor val_global = valor_modulo(mod);
+                        /* mod ya tiene refcount=2 (cache + 1 implícita); usamos
+                           la implícita para esta global, no añadimos retain. */
+                        dicc_asignar(vm->globales, clave_global, val_global);
+                        valor_destruir(&r);
+                        r = valor_nulo();
+                    }
+                    /* Liberar el binding_name buffer del frame. */
+                    if (frame->modulo_binding_name) {
+                        free(frame->modulo_binding_name);
+                        frame->modulo_binding_name = NULL;
+                    }
                 }
                 /* Antes de descartar el frame, cerrar todos los
                    upvalues abiertos que apunten a slots de este frame
@@ -569,16 +602,26 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
 
             /* ─── Módulos (Fase 9) ─── */
             case OP_IMPORTAR: {
+                /* v0.9.1: dos operandos.
+                 *   name_idx     → cadena con el nombre real del módulo
+                 *                  (puede tener `.` para subsegmentos).
+                 *   binding_idx  → cadena con el nombre de la global del
+                 *                  importador (alias o último segmento).
+                 * Para `importar X` ambos son `X`.
+                 * Para `importar X como Y` son [X, Y].
+                 * Para `importar X.Y como Z` son [X.Y, Z]. */
                 uint8_t name_idx = LEER_BYTE();
+                uint8_t binding_idx = LEER_BYTE();
                 const Valor *nombre = &frame->chunk->constantes[name_idx];
-                if (nombre->tipo != VAL_CADENA) {
-                    VM_ERROR("estado interno corrupto: nombre de modulo no es cadena");
+                const Valor *binding = &frame->chunk->constantes[binding_idx];
+                if (nombre->tipo != VAL_CADENA || binding->tipo != VAL_CADENA) {
+                    VM_ERROR("estado interno corrupto: operandos de OP_IMPORTAR no son cadenas");
                     return VM_ERROR_RUNTIME;
                 }
-                /* 1. Cache hit: solo asignar la global. */
+                /* 1. Cache hit: solo asignar la global con el binding. */
                 Valor cached;
                 if (dicc_obtener(vm->cache_modulos, nombre, &cached)) {
-                    Valor clave = valor_clonar(nombre);
+                    Valor clave = valor_clonar(binding);
                     dicc_asignar(vm->globales, clave, cached);
                     break;
                 }
@@ -627,9 +670,95 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 fr_mod->globales_pre_modulo = vm->globales;
                 fr_mod->chunk_modulo = ch_mod;
                 fr_mod->globales_pre_llamada = NULL;
+                /* Guardar el nombre de binding (heap-dup) para usarlo
+                   al finalizar el módulo en OP_RETORNAR. */
+                int blen = binding->como.cadena.longitud;
+                fr_mod->modulo_binding_name = (char *)malloc((size_t)blen + 1);
+                if (fr_mod->modulo_binding_name) {
+                    memcpy(fr_mod->modulo_binding_name,
+                           binding->como.cadena.texto, (size_t)blen);
+                    fr_mod->modulo_binding_name[blen] = '\0';
+                }
+                fr_mod->modulo_binding_len = blen;
+                fr_mod->desde_import = false;
                 /* Cambiar a las globales del módulo. */
                 vm->globales = globales_modulo;
                 frame = fr_mod;
+                break;
+            }
+
+            case OP_IMPORTAR_PARA_DESDE: {
+                /* Como OP_IMPORTAR pero al finalizar deja el módulo en
+                   el tope del stack en lugar de registrarlo como global.
+                   Usado por `desde X importar Y, Z` para extraer
+                   atributos sin contaminar el namespace del importador
+                   con el nombre del módulo. */
+                uint8_t name_idx = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[name_idx];
+                if (nombre->tipo != VAL_CADENA) {
+                    VM_ERROR("estado interno corrupto: nombre de modulo no es cadena");
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Cache hit: solo empujar la copia. */
+                Valor cached;
+                if (dicc_obtener(vm->cache_modulos, nombre, &cached)) {
+                    empujar(vm, cached);
+                    break;
+                }
+                /* Cache miss: cargar archivo y compilar. */
+                Chunk *ch_mod = cargar_modulo_desde_archivo(
+                    nombre->como.cadena.texto, nombre->como.cadena.longitud);
+                if (!ch_mod) {
+                    VM_ERROR("ErrorDeImportacion: no se pudo cargar el modulo '%.*s' (archivo no encontrado o invalido)",
+                             nombre->como.cadena.longitud, nombre->como.cadena.texto);
+                    return VM_ERROR_RUNTIME;
+                }
+                Modulo *mod = modulo_nuevo(nombre->como.cadena.texto,
+                                             nombre->como.cadena.longitud);
+                if (!mod) {
+                    chunk_destruir(ch_mod); free(ch_mod);
+                    VM_ERROR("memoria insuficiente al crear modulo");
+                    return VM_ERROR_RUNTIME;
+                }
+                Diccionario *globales_modulo = dicc_nuevo();
+                if (!globales_modulo) {
+                    modulo_liberar(mod);
+                    chunk_destruir(ch_mod); free(ch_mod);
+                    VM_ERROR("memoria insuficiente al crear globales del modulo");
+                    return VM_ERROR_RUNTIME;
+                }
+                nativos_registrar_dicc(globales_modulo);
+                if (vm->n_frames >= VM_FRAMES_MAX) {
+                    dicc_liberar(globales_modulo);
+                    modulo_liberar(mod);
+                    chunk_destruir(ch_mod); free(ch_mod);
+                    VM_ERROR("desbordamiento de pila de llamadas");
+                    return VM_ERROR_RUNTIME;
+                }
+                CallFrame *fr_mod = &vm->frames[vm->n_frames++];
+                fr_mod->chunk = ch_mod;
+                fr_mod->ip = ch_mod->codigo;
+                fr_mod->base_pila = vm->tope;
+                fr_mod->closure = NULL;
+                fr_mod->es_constructor = false;
+                fr_mod->modulo_en_carga = mod;
+                fr_mod->globales_pre_modulo = vm->globales;
+                fr_mod->chunk_modulo = ch_mod;
+                fr_mod->globales_pre_llamada = NULL;
+                fr_mod->modulo_binding_name = NULL;
+                fr_mod->modulo_binding_len = 0;
+                fr_mod->desde_import = true;   /* clave: pushea al stack al finalizar */
+                vm->globales = globales_modulo;
+                frame = fr_mod;
+                break;
+            }
+
+            case OP_DUP: {
+                if (vm->tope == vm->pila) {
+                    VM_ERROR("OP_DUP sobre stack vacio");
+                    return VM_ERROR_RUNTIME;
+                }
+                empujar(vm, valor_clonar(&vm->tope[-1]));
                 break;
             }
 
@@ -831,6 +960,71 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         valor_destruir(&key); valor_destruir(&obj);
                         return VM_ERROR_RUNTIME;
                     }
+                } else if (obj.tipo == VAL_CADENA) {
+                    /* v0.9.1: indexación UTF-8 sobre cadenas.
+                       Devuelve una cadena de 1 carácter. Índices
+                       negativos cuentan desde el final.  */
+                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                        VM_ERROR("ErrorDeTipo: indice de cadena debe ser entero, no '%s'",
+                                 valor_nombre_tipo(&key));
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    long i;
+                    if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
+                    else if (mp_count_bits(key.como.entero) > 62) i = LONG_MAX;
+                    else i = (long)mp_get_i64(key.como.entero);
+
+                    int len_bytes = obj.como.cadena.longitud;
+                    const char *texto = obj.como.cadena.texto;
+
+                    /* Si i < 0, contar el número total de caracteres
+                       para resolverlo a positivo. */
+                    if (i < 0) {
+                        int n_chars = 0;
+                        int p = 0;
+                        while (p < len_bytes) {
+                            utf8proc_int32_t cp;
+                            utf8proc_ssize_t cons = utf8proc_iterate(
+                                (const utf8proc_uint8_t *)(texto + p),
+                                len_bytes - p, &cp);
+                            if (cons <= 0) break;
+                            p += (int)cons; n_chars++;
+                        }
+                        i += n_chars;
+                    }
+                    if (i < 0) {
+                        VM_ERROR("ErrorDeIndice: indice fuera de rango para cadena");
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+
+                    /* Avanzar i caracteres. */
+                    int p = 0;
+                    long count = 0;
+                    while (p < len_bytes && count < i) {
+                        utf8proc_int32_t cp;
+                        utf8proc_ssize_t cons = utf8proc_iterate(
+                            (const utf8proc_uint8_t *)(texto + p),
+                            len_bytes - p, &cp);
+                        if (cons <= 0) break;
+                        p += (int)cons; count++;
+                    }
+                    if (count < i || p >= len_bytes) {
+                        VM_ERROR("ErrorDeIndice: indice %ld fuera de rango (cadena)", i);
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    utf8proc_int32_t cp;
+                    utf8proc_ssize_t cons = utf8proc_iterate(
+                        (const utf8proc_uint8_t *)(texto + p),
+                        len_bytes - p, &cp);
+                    if (cons <= 0) {
+                        VM_ERROR("cadena UTF-8 invalida");
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    r = valor_cadena_duplicar(texto + p, (int)cons);
                 } else {
                     VM_ERROR("ErrorDeTipo: '%s' no es indexable",
                              valor_nombre_tipo(&obj));
@@ -1474,6 +1668,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     vm->globales = cl->globales_definicion;
                 } else {
                     frame->globales_pre_llamada = NULL;
+                    frame->modulo_binding_name = NULL;
+                    frame->modulo_binding_len = 0;
+                frame->desde_import = false;
                 }
                 break;
             }
@@ -1655,6 +1852,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         vm->globales = cl->globales_definicion;
                     } else {
                         frame->globales_pre_llamada = NULL;
+                    frame->modulo_binding_name = NULL;
+                    frame->modulo_binding_len = 0;
+                frame->desde_import = false;
                     }
                     break;
                 }
@@ -1753,6 +1953,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         vm->globales = cl->globales_definicion;
                     } else {
                         frame->globales_pre_llamada = NULL;
+                    frame->modulo_binding_name = NULL;
+                    frame->modulo_binding_len = 0;
+                frame->desde_import = false;
                     }
                     break;
                 }
@@ -1820,6 +2023,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         vm->globales = cl->globales_definicion;
                     } else {
                         frame->globales_pre_llamada = NULL;
+                    frame->modulo_binding_name = NULL;
+                    frame->modulo_binding_len = 0;
+                frame->desde_import = false;
                     }
                     break;
                 }

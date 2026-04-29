@@ -113,7 +113,9 @@ typedef enum {
     OP_SUPER_INVOCAR,           /* [byte name_idx] [byte n_args]: stack [..., yo, arg1, ..., argN]. Despacha al método name de yo.clase.superclase. */
 
     /* ---- Módulos (v0.9.0 Fase 9) ---- */
-    OP_IMPORTAR,                /* [byte name_idx]: carga modulo, push frame; al retornar registra global. */
+    OP_IMPORTAR,                /* [byte module_idx] [byte binding_idx]: carga modulo, push frame; al retornar registra global con binding_idx. */
+    OP_IMPORTAR_PARA_DESDE,     /* [byte module_idx]: como OP_IMPORTAR pero al retornar deja el modulo en el tope del stack (sin binding global). Usado por `desde X importar Y, Z` (v0.9.1). */
+    OP_DUP,                     /* duplica el valor en el tope del stack (v0.9.1). */
 
     /* ---- Built-in print (atajo del compilador) ---- */
     OP_IMPRIMIR,

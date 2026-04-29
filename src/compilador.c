@@ -805,7 +805,7 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
             return true;
         }
         /* Nuevo local: el valor ya está en el slot correcto del
-           stack; solo registramos el nombre. */
+           stack; solo registramos el nombre. (OLD convention) */
         int nuevo = agregar_local(c, destino->como.ident.nombre,
                                       destino->como.ident.longitud,
                                       s->linea);
@@ -1140,35 +1140,170 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
 
         case SENT_IMPORTAR: {
             /*
-             * v0.9.0: solo soportamos `importar X` simple (1 segmento,
-             * sin `como Y`). Subdirectorios (`importar mat.geometria`)
-             * y aliasing llegan en v0.9.x.
+             * v0.9.1: soporta subsegmentos (`mat.geometria`) y alias
+             * (`importar X como Y`). El nombre del módulo se construye
+             * uniendo segmentos con `.`. Si no hay alias, el nombre
+             * para el binding global es el último segmento (no la
+             * cadena completa, para coherencia con `mat.geometria`
+             * accediéndose como `geometria.foo`). Con alias, el alias.
              */
-            if (s->como.importar.n_segmentos != 1) {
+            int n_seg = s->como.importar.n_segmentos;
+            if (n_seg < 1) {
                 error_compilacion(c, s->linea, s->columna,
-                    "modulos con subsegmentos ('mat.geometria') aun no estan en v0.9.0");
+                    "importar requiere al menos un segmento");
                 return false;
             }
+
+            /* Construir el nombre del módulo: seg1.seg2.segN */
+            int total_len = 0;
+            for (int i = 0; i < n_seg; i++) {
+                total_len += s->como.importar.segmentos[i].longitud;
+                if (i > 0) total_len += 1;   /* `.` separador */
+            }
+            char *nombre_modulo = (char *)malloc((size_t)total_len + 1);
+            if (!nombre_modulo) {
+                error_compilacion(c, s->linea, s->columna, "memoria insuficiente");
+                return false;
+            }
+            int pos = 0;
+            for (int i = 0; i < n_seg; i++) {
+                if (i > 0) nombre_modulo[pos++] = '.';
+                memcpy(nombre_modulo + pos,
+                       s->como.importar.segmentos[i].texto,
+                       (size_t)s->como.importar.segmentos[i].longitud);
+                pos += s->como.importar.segmentos[i].longitud;
+            }
+            nombre_modulo[total_len] = '\0';
+
+            /* Determinar el binding name: alias si existe, sino el
+               último segmento. */
+            const char *binding_text;
+            int binding_len;
             if (s->como.importar.alias.texto != NULL) {
-                error_compilacion(c, s->linea, s->columna,
-                    "alias de modulo ('importar X como Y') aun no esta en v0.9.0");
-                return false;
+                binding_text = s->como.importar.alias.texto;
+                binding_len = s->como.importar.alias.longitud;
+            } else {
+                const Nombre *ultimo = &s->como.importar.segmentos[n_seg - 1];
+                binding_text = ultimo->texto;
+                binding_len = ultimo->longitud;
             }
-            const Nombre *seg = &s->como.importar.segmentos[0];
-            int idx = chunk_agregar_constante(c->actual->chunk,
-                valor_cadena_duplicar(seg->texto, seg->longitud));
-            if (idx < 0 || idx > 255) {
+
+            /* Constantes: nombre_modulo y binding_name. */
+            int idx_modulo = chunk_agregar_constante(c->actual->chunk,
+                valor_cadena_duplicar(nombre_modulo, total_len));
+            free(nombre_modulo);
+            int idx_binding = chunk_agregar_constante(c->actual->chunk,
+                valor_cadena_duplicar(binding_text, binding_len));
+            if (idx_modulo < 0 || idx_modulo > 255
+                || idx_binding < 0 || idx_binding > 255) {
                 error_compilacion(c, s->linea, s->columna,
                     "demasiadas constantes para v0.9 (operando byte)");
                 return false;
             }
-            chunk_emitir_byte2(c->actual->chunk, OP_IMPORTAR,
-                                (uint8_t)idx, s->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_IMPORTAR, s->linea);
+            chunk_emitir_byte(c->actual->chunk, (uint8_t)idx_modulo, s->linea);
+            chunk_emitir_byte(c->actual->chunk, (uint8_t)idx_binding, s->linea);
+            return true;
+        }
+
+        case SENT_DESDE_IMPORTAR: {
+            /*
+             * v0.9.1: `desde X importar Y, Z` — carga el módulo (en
+             * cache si no estaba), extrae `X.Y` y `X.Z`, y los registra
+             * como globales del importador (con alias si los items lo
+             * llevan). El nombre del módulo NO queda como global.
+             *
+             * Estrategia bytecode:
+             *   OP_IMPORTAR_PARA_DESDE [name_idx]      ; pushea mod a stack
+             *   por cada item:
+             *     OP_DUP                                ; clona mod
+             *     OP_OBTENER_ATRIBUTO [item_name_idx]   ; mod, attr → attr
+             *     OP_DEFINIR_GLOBAL [binding_idx]       ; pop attr a global
+             *   OP_DESCARTAR                            ; quita el último mod
+             *
+             * `desde X importar *` no soportado en v0.9.1.
+             */
+            if (s->como.desde_importar.importa_todo) {
+                error_compilacion(c, s->linea, s->columna,
+                    "'desde X importar *' no esta soportado en v0.9.1");
+                return false;
+            }
+            int n_seg = s->como.desde_importar.n_segmentos_modulo;
+            int n_items = s->como.desde_importar.n_items;
+            if (n_seg < 1 || n_items < 1) {
+                error_compilacion(c, s->linea, s->columna,
+                    "'desde X importar Y' requiere al menos un segmento y un item");
+                return false;
+            }
+
+            /* Construir nombre del módulo: seg1.seg2.segN */
+            int total_len = 0;
+            for (int i = 0; i < n_seg; i++) {
+                total_len += s->como.desde_importar.segmentos_modulo[i].longitud;
+                if (i > 0) total_len += 1;
+            }
+            char *nombre_modulo = (char *)malloc((size_t)total_len + 1);
+            if (!nombre_modulo) {
+                error_compilacion(c, s->linea, s->columna, "memoria insuficiente");
+                return false;
+            }
+            int pos = 0;
+            for (int i = 0; i < n_seg; i++) {
+                if (i > 0) nombre_modulo[pos++] = '.';
+                memcpy(nombre_modulo + pos,
+                       s->como.desde_importar.segmentos_modulo[i].texto,
+                       (size_t)s->como.desde_importar.segmentos_modulo[i].longitud);
+                pos += s->como.desde_importar.segmentos_modulo[i].longitud;
+            }
+            nombre_modulo[total_len] = '\0';
+
+            int idx_modulo = chunk_agregar_constante(c->actual->chunk,
+                valor_cadena_duplicar(nombre_modulo, total_len));
+            free(nombre_modulo);
+            if (idx_modulo < 0 || idx_modulo > 255) {
+                error_compilacion(c, s->linea, s->columna,
+                    "demasiadas constantes para v0.9 (operando byte)");
+                return false;
+            }
+
+            chunk_emitir_byte2(c->actual->chunk, OP_IMPORTAR_PARA_DESDE,
+                                (uint8_t)idx_modulo, s->linea);
+
+            for (int i = 0; i < n_items; i++) {
+                const ItemImportado *it = &s->como.desde_importar.items[i];
+                const Nombre *attr = &it->nombre;
+                const Nombre *binding = it->alias.texto != NULL
+                    ? &it->alias : &it->nombre;
+
+                chunk_emitir_byte(c->actual->chunk, OP_DUP, it->linea);
+
+                int idx_attr = chunk_agregar_constante(c->actual->chunk,
+                    valor_cadena_duplicar(attr->texto, attr->longitud));
+                if (idx_attr < 0 || idx_attr > 255) {
+                    error_compilacion(c, it->linea, it->columna,
+                        "demasiadas constantes");
+                    return false;
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
+                                    (uint8_t)idx_attr, it->linea);
+
+                int idx_bind = chunk_agregar_constante(c->actual->chunk,
+                    valor_cadena_duplicar(binding->texto, binding->longitud));
+                if (idx_bind < 0 || idx_bind > 255) {
+                    error_compilacion(c, it->linea, it->columna,
+                        "demasiadas constantes");
+                    return false;
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                                    (uint8_t)idx_bind, it->linea);
+            }
+
+            /* Quitar el módulo restante del stack. */
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
             return true;
         }
 
         /* Sin soporte aún. */
-        case SENT_DESDE_IMPORTAR:
         case SENT_GLOBAL:
         case SENT_NOLOCAL:
             error_compilacion(c, s->linea, s->columna,
@@ -1292,6 +1427,7 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
         } else {
             int slot = agregar_local(c, nombre, len_nombre, s->linea);
             if (slot < 0) return false;
+            /* OLD convention para nuevo local. */
         }
     } else {
         int idx_nombre = agregar_nombre_global(c, nombre, len_nombre);
@@ -1348,6 +1484,10 @@ static bool compilar_para(Compilador *c, const Sent *s) {
     static const char NOMBRE_ITER_OCULTO[] = "$iter";
     int iter_slot = agregar_local(c, NOMBRE_ITER_OCULTO, 5, s->linea);
     if (iter_slot < 0) return false;
+    /* OLD convention: el iter ya está en el tope tras OP_ITER_INICIAR
+       y queda en su slot por la convención "tope = n_locales". Esta
+       convención sigue funcionando para locales transitorias cuya vida
+       cabe dentro de un solo path lineal. */
 
     /*
      * Si el objetivo es local (estamos en función o se trata como
@@ -1596,6 +1736,9 @@ static bool compilar_intentar(Compilador *c, const Sent *s) {
                                           atr->linea);
             if (slot < 0) return false;
             alias_slot = slot;
+            /* OLD convention: la excepción está en el tope cuando se
+               agregar_local. Cada atrapador resetea n_locales al
+               handler-entry, así que el slot es consistente. */
             /* Push al stack de atrapadores activos para `lanzar` re-raise. */
             if (c->n_atrapadores_activos >= COMPILADOR_ATRAPADORES_MAX) {
                 error_compilacion(c, atr->linea, atr->columna,
@@ -1753,6 +1896,7 @@ static bool compilar_clase(Compilador *c, const Sent *s) {
                                           s->como.clase.longitud_nombre,
                                           s->linea);
             if (slot < 0) return false;
+            /* OLD convention para nuevo local. */
         }
     } else {
         int idx_g = agregar_nombre_global(c, s->como.clase.nombre,
