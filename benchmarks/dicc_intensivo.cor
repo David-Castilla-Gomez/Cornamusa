@@ -1,0 +1,17 @@
+# Benchmark: uso intensivo de diccionarios.
+# Mide hash + inserción/lectura, central para programas que llevan
+# tablas de cuentas, frecuencias, etc.
+
+n = 50000
+d = {}
+para i en rango(n):
+    d[i] = i * i
+fin para
+
+# Lectura aleatoria-ish.
+total = 0
+para i en rango(n):
+    total = total + d[i]
+fin para
+
+imprimir("entradas:", n, "suma:", total)

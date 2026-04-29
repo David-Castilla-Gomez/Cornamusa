@@ -272,3 +272,47 @@ set_tests_properties(bc_run_22_modulos_avanzado PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "fact.8. = 40320"
 )
+
+# v0.9.2: módulo `sistema` (argv) y built-in `salir`.
+add_test(
+    NAME bc_run_23_sistema_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/23_sistema_jugable.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_23_sistema_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "sin argumentos extra"
+)
+
+# ───── Tests diferenciales tree-walking vs bytecode (v0.9.2) ─────
+# Para cada ejemplo compatible con ambos motores, ejecutamos ambos y
+# verificamos que produzcan EXACTAMENTE la misma salida. Es la red de
+# seguridad ante regresiones semánticas en cualquiera de los dos
+# pipelines (lex→parse→eval vs lex→parse→compile→VM).
+# Solo incluimos ejemplos que ambos motores ejecutan a fin (rc=0).
+# Algunos ejemplos (03, 05, 06, 10) usan f-strings o desempaquetado de
+# tuplas que ningún motor soporta todavía — fallan idénticamente al
+# parsear, pero el test diferencial chequea ejecución end-to-end, no
+# parseo (el parser es compartido y se cubre en tests/unit/test_parser_*).
+set(EJEMPLOS_DIFERENCIALES
+    01_hola_mundo
+    02_fizzbuzz
+    13_factorial_jugable
+    14_contar_vocales
+    15_fizzbuzz_jugable
+    16_lista_busqueda
+    17_dicc_frecuencia
+    18_conj_y_tupla
+)
+foreach(ej ${EJEMPLOS_DIFERENCIALES})
+    add_test(
+        NAME diff_${ej}
+        COMMAND ${CMAKE_COMMAND}
+                -DCORNAMUSA_BIN=$<TARGET_FILE:cornamusa>
+                -DARCHIVO_COR=${CMAKE_SOURCE_DIR}/examples/${ej}.cor
+                -DWORKDIR=${CMAKE_SOURCE_DIR}
+                -P ${CMAKE_SOURCE_DIR}/tests/integracion/diff_motores.cmake
+    )
+    set_tests_properties(diff_${ej} PROPERTIES LABELS "diferencial")
+endforeach()

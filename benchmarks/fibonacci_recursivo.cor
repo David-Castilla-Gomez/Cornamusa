@@ -1,0 +1,13 @@
+# Benchmark: Fibonacci recursivo, O(2^n).
+# Mide overhead de llamadas a función + ramificación.
+# n=30 — ajustar si tarda mucho/poco en tu máquina.
+
+funcion fib(n):
+    si n < 2:
+        retornar n
+    fin si
+    retornar fib(n - 1) + fib(n - 2)
+fin funcion
+
+resultado = fib(30)
+imprimir("fib(30) =", resultado)

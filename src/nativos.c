@@ -686,6 +686,69 @@ static Valor nativa_recolectar(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Nativos de sistema (v0.9.2)
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Argv del proceso, set desde main.c via nativos_set_argv. */
+static int g_argc_user = 0;
+static char **g_argv_user = NULL;
+
+void nativos_set_argv(int argc, char **argv) {
+    g_argc_user = argc;
+    g_argv_user = argv;
+}
+
+/*
+ * obtener_argv() → lista de cadenas con los argumentos del programa.
+ * El primer elemento es el nombre del archivo .cor ejecutado (si lo hay)
+ * y los siguientes son cualquier argumento adicional pasado tras él.
+ */
+static Valor nativa_obtener_argv(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: obtener_argv() no acepta argumentos, recibio %d",
+            n_args);
+    }
+    Lista *l = lista_nueva(g_argc_user);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < g_argc_user; i++) {
+        const char *s = g_argv_user[i] ? g_argv_user[i] : "";
+        lista_agregar(l, valor_cadena_duplicar(s, (int)strlen(s)));
+    }
+    return valor_lista(l);
+}
+
+/*
+ * salir(codigo) → no retorna. Termina el proceso con el código indicado.
+ * Si codigo no es entero/booleano, error de tipo.
+ */
+static Valor nativa_salir(EvalError *err, int n_args, Valor *args,
+                           int linea, int columna) {
+    int codigo = 0;
+    if (n_args > 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: salir() acepta como máximo 1 argumento, recibio %d",
+            n_args);
+    }
+    if (n_args == 1) {
+        const Valor *v = &args[0];
+        if (v->tipo == VAL_BOOLEANO) {
+            codigo = v->como.booleano ? 1 : 0;
+        } else if (v->tipo == VAL_ENTERO) {
+            codigo = (int)mp_get_i64(v->como.entero);
+        } else {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: salir() requiere un entero, no '%s'",
+                valor_nombre_tipo(v));
+        }
+    }
+    exit(codigo);
+    return valor_nulo();   /* unreachable */
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
@@ -724,6 +787,9 @@ static const EntradaNativa NATIVAS[] = {
     {"ErrorDeNombre",   13, nativa_exc_ErrorDeNombre},
     /* GC manual (v0.8.1). */
     {"recolectar",      10, nativa_recolectar},
+    /* Sistema (v0.9.2). */
+    {"obtener_argv",    12, nativa_obtener_argv},
+    {"salir",            5, nativa_salir},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

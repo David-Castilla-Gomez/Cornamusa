@@ -1,0 +1,19 @@
+# Cornamusa v0.9.2 — uso del módulo `sistema`.
+#
+# Imprime los argumentos del programa y termina con código 0.
+# Probar con:
+#   ./build/cornamusa --bytecode examples/23_sistema_jugable.cor uno dos tres
+
+importar sistema
+
+imprimir("Argumentos del programa (", longitud(sistema.argv), "):")
+para arg en sistema.argv:
+    imprimir("  -", arg)
+fin para
+
+# Sin argumentos extra, dejamos un mensaje y salimos limpio.
+si longitud(sistema.argv) <= 1:
+    imprimir("(sin argumentos extra)")
+fin si
+
+salir(0)

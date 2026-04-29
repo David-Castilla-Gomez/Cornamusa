@@ -1,0 +1,33 @@
+# Benchmark: OOP intensivo (instanciación + lookup de método + atributo).
+# Crea muchas instancias y llama métodos sobre ellas.
+# Nota: `y` es la palabra clave AND, así que usamos `coordy` como atributo.
+
+clase Punto:
+    funcion __iniciar__(yo, cx, cy):
+        yo.coordx = cx
+        yo.coordy = cy
+    fin funcion
+
+    funcion mover(yo, dx, dy):
+        yo.coordx = yo.coordx + dx
+        yo.coordy = yo.coordy + dy
+    fin funcion
+
+    funcion magnitud_cuadrado(yo):
+        retornar yo.coordx * yo.coordx + yo.coordy * yo.coordy
+    fin funcion
+fin clase
+
+n = 5000
+puntos = []
+para i en rango(n):
+    agregar(puntos, Punto(i, i))
+fin para
+
+total = 0
+para p en puntos:
+    p.mover(1, -1)
+    total = total + p.magnitud_cuadrado()
+fin para
+
+imprimir("puntos:", n, "suma magnitud^2:", total)

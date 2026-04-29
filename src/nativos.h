@@ -34,4 +34,12 @@
 void nativos_registrar(Entorno *globales);
 void nativos_registrar_dicc(Diccionario *globales);
 
+/*
+ * Configura los argumentos del proceso visibles desde Cornamusa via
+ * `obtener_argv()` (y por tanto `sistema.argv`). Se llama desde main.c
+ * antes de ejecutar el programa, pasándole los args ya filtrados (sin
+ * el ejecutable ni los flags consumidos).
+ */
+void nativos_set_argv(int argc, char **argv);
+
 #endif /* CORNAMUSA_NATIVOS_H */

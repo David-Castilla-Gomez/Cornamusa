@@ -1,0 +1,22 @@
+# Cornamusa stdlib: sistema.cor
+#
+# Acceso a metadatos del proceso: por ahora la lista de argumentos.
+# Para terminar la ejecución usa el built-in global `salir(codigo)`,
+# que está disponible en cualquier programa sin necesidad de importar
+# este módulo.
+#
+# Uso:
+#   importar sistema
+#   para arg en sistema.argv:
+#       imprimir(arg)
+#   fin para
+#   si longitud(sistema.argv) < 2:
+#       imprimir("Uso: programa <archivo>")
+#       salir(1)
+#   fin si
+
+# Lista de argumentos pasados al intérprete tras la flag `--bytecode`
+# (o tras el ejecutable, en el caso del tree-walking).
+# argv[0] es la ruta del archivo .cor en ejecución (cuando lo hay);
+# argv[1..] son los argumentos adicionales. Vacío en el REPL.
+argv = obtener_argv()

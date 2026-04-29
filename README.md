@@ -3,55 +3,91 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-0.1.0-orange.svg)](CHANGELOG.md)
-[![Estado](https://img.shields.io/badge/estado-en%20desarrollo-yellow.svg)](CHANGELOG.md)
-
-<!-- TODO al publicar el repo: añadir badge de CI con la URL real de GitHub Actions -->
-
+[![Versión](https://img.shields.io/badge/versión-0.9.2-blue.svg)](CHANGELOG.md)
+[![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
 
 ```cornamusa
-funcion saludar(nombre):
-    si nombre == "": retornar "¡Hola, desconocido!"
-    retornar f"¡Hola, {nombre}!"
-fin funcion
+clase Persona:
+    funcion __iniciar__(yo, nombre, edad):
+        yo.nombre = nombre
+        yo.edad = edad
+    fin funcion
 
-para persona en ["Ana", "Luis", "María"]:
-    imprimir(saludar(persona))
+    funcion saludar(yo):
+        retornar "Hola, soy " + yo.nombre
+    fin funcion
+fin clase
+
+importar matematicas como mat
+desde cadenas importar repetir
+
+para persona en [Persona("Ana", 30), Persona("Luis", 25)]:
+    imprimir(persona.saludar())
 fin para
+
+imprimir(repetir("=", 20))
+imprimir("PI =", mat.PI)
+imprimir("100! =", mat.factorial(100))
 ```
 
-## Características (objetivo v1.0)
+## Características (en v0.9.2)
 
-- **Sintaxis castellana natural**: `si`/`sino`, `mientras`, `para X en Y`, `función`, `clase`, `intentar`/`atrapar`, `verdadero`/`falso`/`nulo`, etc.
-- **Tipado dinámico** con tipos enriquecidos: enteros, decimales, cadenas Unicode, listas, diccionarios, conjuntos, tuplas.
-- **Bloques explícitos** con `:` al abrir y `fin <etiqueta>` al cerrar (estilo PSeInt/Latino). Indentación recomendada pero no obligatoria.
-- **Soporte UTF-8 completo** en código fuente e identificadores: `función contar_niños(años)` es un identificador válido.
-- **Clases y herencia simple** con `yo` como referencia a la instancia (equivalente a `self`).
-- **Manejo de excepciones** estructurado.
-- **Sistema de módulos** y biblioteca estándar mínima.
-- **VM bytecode** stack-based con GC generacional e *inline caching* especializado al estilo PEP 659 (a partir de v0.6).
+- ✅ **Sintaxis castellana natural**: `si`/`sino`, `mientras`, `para X en Y`, `funcion`, `clase`, `intentar`/`atrapar`/`finalmente`, `verdadero`/`falso`/`nulo`.
+- ✅ **Tipado dinámico** con tipos completos: enteros bignum, decimales f64, cadenas UTF-8, listas, diccionarios, conjuntos, tuplas.
+- ✅ **Bloques explícitos** con `:` al abrir y `fin <etiqueta>` al cerrar. Indentación recomendada pero no obligatoria.
+- ✅ **UTF-8 completo** en código e identificadores con normalización NFC obligatoria.
+- ✅ **Clases con herencia** y `super` multinivel; `yo` como referencia a la instancia.
+- ✅ **Excepciones** completas: `atrapar Tipo como e`, `sino`, `finalmente`, `lanzar` con re-raise.
+- ✅ **Closures con upvalues**, lambdas, slicing de listas.
+- ✅ **GC mark-sweep** automático con `recolectar()` para forzarlo manualmente.
+- ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
+- ✅ **Stdlib mínima**: `matematicas` (PI, E, factorial, mcd, ...), `cadenas` (repetir, contar, empieza_con, ...) y `sistema` (`argv`, `salir`).
+- ✅ **Tests diferenciales** tree-walking vs bytecode + **benchmarks baseline** en [`benchmarks/`](benchmarks/).
+- ⏳ **Optimizaciones** (inline caching, GC generacional): planeadas para v0.10/v1.0.
+
+## Cómo probar (5 minutos)
+
+```bash
+git clone https://github.com/David-Castilla-Gomez/Cornamusa.git
+cd Cornamusa
+cmake -B build && cmake --build build
+./build/cornamusa --bytecode examples/22_modulos_avanzado.cor
+```
+
+Otros ejemplos jugables:
+
+```bash
+./build/cornamusa --bytecode examples/13_factorial_jugable.cor   # bignum
+./build/cornamusa --bytecode examples/15_fizzbuzz_jugable.cor    # control de flujo
+./build/cornamusa --bytecode examples/19_closures_jugable.cor    # closures
+./build/cornamusa --bytecode examples/20_clases_jugable.cor      # OOP + herencia
+./build/cornamusa --bytecode examples/21_modulos_jugable.cor     # módulos
+./build/cornamusa --bytecode examples/23_sistema_jugable.cor a b  # sistema.argv
+```
 
 ## Estado del proyecto
 
-> **v0.1.0 — Andamiaje.** Esta es la primera fase del desarrollo; el lenguaje aún no ejecuta programas. Se está construyendo el lexer (v0.2). Consulta [CHANGELOG.md](CHANGELOG.md) para ver el progreso.
+**v0.9.2 publicada.** El lenguaje es funcional para programas reales: OOP completo, GC, excepciones, módulos, stdlib mínima (`matematicas`, `cadenas`, `sistema`), tests diferenciales y benchmarks baseline. Falta optimización de rendimiento (Fase 10) y release final v1.0 con docs completos.
 
-Hoja de ruta resumida (12 fases hasta v1.0):
+Hoja de ruta resumida:
 
-| Versión | Hito | Features añadidas |
+| Versión | Hito | Estado |
 |---|---|---|
-| v0.1 | ✅ Andamiaje + CI | build system, REPL trivial |
-| v0.2 | Lexer UTF-8 | tokenización con keywords castellanas, NFC |
-| v0.3 | Parser + AST | AST compartido para los dos backends |
-| v0.4 | Intérprete tree-walking — **primer release jugable** | aritmética, control de flujo, funciones top-level |
-| v0.5 | Estructuras de datos | listas, diccionarios — tree-walking se congela aquí |
-| v0.6 | Compilador + VM bytecode | motor de producción + closures |
-| v0.7 | GC mark-sweep | recolección automática |
-| v0.8 | Clases y herencia | OO completo |
-| v0.9 | Excepciones, módulos, stdlib | bibliotecas mínimas |
-| v0.10 | *Inline caching* especializado | optimización tipo PEP 659 |
-| v1.0 | GC generacional + sitio web | producción |
+| v0.1 | Andamiaje + CI | ✅ |
+| v0.2 | Lexer UTF-8 con NFC | ✅ |
+| v0.3 | Parser + AST compartido | ✅ |
+| v0.4 | Tree-walking (primer release jugable) | ✅ |
+| v0.5 | Estructuras de datos (tree-walking congelado aquí) | ✅ |
+| v0.6 | Compilador + VM bytecode + closures + excepciones | ✅ |
+| **v0.7** | **Clases y herencia** | ✅ |
+| **v0.8** | **GC mark-sweep + super multinivel + excepciones polish** | ✅ |
+| **v0.9** | **Módulos + stdlib** | ✅ |
+| v0.10 | *Inline caching* especializado tipo PEP 659 | ⏳ |
+| v1.0 | GC generacional + docs completos + sitio web | ⏳ |
+
+> Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
 
 **Arquitectura:** AST compartido entre dos motores. El intérprete tree-walking sirve como primer release jugable (v0.4-v0.5) y como referencia ejecutable congelada para regresión desde v0.6. La VM bytecode es el motor de producción y el destino de todas las optimizaciones. Detalle en [decisiones/B2-tree-walking-vs-bytecode.md](decisiones/B2-tree-walking-vs-bytecode.md).
 
@@ -75,14 +111,16 @@ cmake --build build -j
 
 ## Ejemplos
 
-Mira el directorio [`examples/`](examples/) para programas de muestra:
+23 programas en [`examples/`](examples/), agrupados por feature:
 
-- [`01_hola_mundo.cor`](examples/01_hola_mundo.cor)
-- [`02_fizzbuzz.cor`](examples/02_fizzbuzz.cor)
-- [`03_fibonacci.cor`](examples/03_fibonacci.cor)
-- [`07_clases_herencia.cor`](examples/07_clases_herencia.cor)
-- [`10_quicksort.cor`](examples/10_quicksort.cor)
-- ...
+**Básicos** (todos corren en tree-walking y bytecode):
+- [`01_hola_mundo.cor`](examples/01_hola_mundo.cor) · [`02_fizzbuzz.cor`](examples/02_fizzbuzz.cor) · [`13_factorial_jugable.cor`](examples/13_factorial_jugable.cor) · [`15_fizzbuzz_jugable.cor`](examples/15_fizzbuzz_jugable.cor)
+
+**Estructuras de datos**:
+- [`05_listas.cor`](examples/05_listas.cor) · [`06_diccionarios.cor`](examples/06_diccionarios.cor) · [`16_lista_busqueda.cor`](examples/16_lista_busqueda.cor) · [`17_dicc_frecuencia.cor`](examples/17_dicc_frecuencia.cor) · [`18_conj_y_tupla.cor`](examples/18_conj_y_tupla.cor)
+
+**Bytecode-only** (closures, OOP, módulos, sistema):
+- [`19_closures_jugable.cor`](examples/19_closures_jugable.cor) · [`20_clases_jugable.cor`](examples/20_clases_jugable.cor) · [`21_modulos_jugable.cor`](examples/21_modulos_jugable.cor) · [`22_modulos_avanzado.cor`](examples/22_modulos_avanzado.cor) · [`23_sistema_jugable.cor`](examples/23_sistema_jugable.cor)
 
 ## Documentación
 

@@ -1,0 +1,15 @@
+# Benchmark: factorial con bignum (libtommath).
+# Mide aritmética de enteros de precisión arbitraria.
+# 1000! tiene 2568 dígitos en decimal.
+
+funcion factorial(n):
+    r = 1
+    para i en rango(2, n + 1):
+        r = r * i
+    fin para
+    retornar r
+fin funcion
+
+resultado = factorial(1000)
+imprimir("factorial(1000) calculado")
+imprimir("factorial(20) =", factorial(20))

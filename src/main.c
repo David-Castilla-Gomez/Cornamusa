@@ -512,6 +512,7 @@ int main(int argc, char **argv) {
     bool volcar_tokens = false;
     bool volcar_ast = false;
     bool usar_bytecode = false;
+    int idx_archivo = -1;
 
     for (int i = 1; i < argc; i++) {
         const char *arg = argv[i];
@@ -543,6 +544,16 @@ int main(int argc, char **argv) {
             return 64;
         }
         archivo = arg;
+        idx_archivo = i;
+        break;  /* lo que venga tras el .cor es argv del programa */
+    }
+
+    /* Argv visible desde Cornamusa: argv[0] = archivo .cor, resto son
+       argumentos pasados tras él. Si no hay archivo, queda vacío. */
+    if (idx_archivo >= 0) {
+        nativos_set_argv(argc - idx_archivo, &argv[idx_archivo]);
+    } else {
+        nativos_set_argv(0, NULL);
     }
 
     if (archivo != NULL) {

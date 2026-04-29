@@ -1203,6 +1203,10 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             chunk_emitir_byte(c->actual->chunk, OP_IMPORTAR, s->linea);
             chunk_emitir_byte(c->actual->chunk, (uint8_t)idx_modulo, s->linea);
             chunk_emitir_byte(c->actual->chunk, (uint8_t)idx_binding, s->linea);
+            /* OP_RETORNAR del frame del módulo empuja `nulo` al stack
+               del importador. Como `importar` es una sentencia (no
+               expresión), descartamos ese nulo aquí. */
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
             return true;
         }
 

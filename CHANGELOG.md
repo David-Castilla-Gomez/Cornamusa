@@ -6,6 +6,63 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.9.2] — 2026-04-29 — pulido pre-v1.0: stdlib `sistema`, tests diferenciales, benchmarks
+
+Pasada de madurez antes de decidir entre F10 (inline caching) y F11 (v1.0
+final). **Sin nueva semántica de lenguaje** — solo herramientas alrededor
+del intérprete que faltaban para que un usuario externo pueda llegar al
+repo y orientarse. **90 tests verde**.
+
+### Añadido (v0.9.2)
+- **Stdlib `sistema`**: nuevo módulo en `stdlib/sistema.cor` que expone
+  `sistema.argv` (lista de argumentos del programa) construida sobre el
+  built-in nativo `obtener_argv()`.
+- **Built-in `salir(codigo)`**: termina el proceso con el código
+  indicado (entero o booleano). Disponible globalmente sin importar
+  nada. Implementado como nueva nativa en `src/nativos.c`.
+- **`nativos_set_argv(argc, argv)`**: hook que `main.c` llama tras
+  parsear los flags, pasando los argumentos del programa (a partir
+  del `.cor` ejecutado) para que `obtener_argv()` los devuelva.
+- **Tests diferenciales tree-walking vs bytecode** (`tests/integracion/diff_motores.cmake`):
+  para los 8 ejemplos compatibles con ambos motores, ejecutamos cada
+  uno con `cornamusa` y `cornamusa --bytecode`, capturamos stdout en
+  ficheros, y comparamos byte a byte con `cmake -E compare_files`.
+  Red de seguridad ante regresiones semánticas.
+- **Benchmarks baseline** en `benchmarks/`: 4 micro-benchmarks
+  (fibonacci recursivo, dicc intensivo, OO intensivo, factorial
+  bignum) + scripts `run.sh` y `run.ps1` para medir tiempos. Numbers
+  baseline documentados en `benchmarks/README.md` para futura
+  comparación con F10.
+- **Ejemplo `examples/23_sistema_jugable.cor`** demostrando
+  `sistema.argv` y `salir(0)`.
+- **README al día**: badge actualizado a v0.9.2, características
+  reflejan la realidad (clases, GC, módulos, stdlib, tests
+  diferenciales, benchmarks), roadmap actualizado.
+
+### Corregido (v0.9.2)
+- **`OP_DESCARTAR` tras `OP_IMPORTAR`**: el frame del módulo retornaba
+  `nulo` al stack del importador, dejando un valor sobrante. Causaba
+  errores `OP_ITER_SIGUIENTE sin iterador en slot 0` cuando el código
+  posterior usaba slots por posición. El compilador ahora descarta el
+  valor explícitamente. (Bug presente desde v0.9.0 / refinado en v0.9.1
+  pero el fix no entró en el commit del tag v0.9.1.)
+
+### Notas (v0.9.2)
+- 12 ejemplos podrían en teoría correr en ambos motores, pero 4
+  (`03_fibonacci`, `05_listas`, `06_diccionarios`, `10_quicksort`)
+  usan f-strings o desempaquetado de tuplas que ningún motor soporta
+  todavía — fallan idénticamente al parsear, así que no aportan al
+  diferencial. Los 8 restantes cubren básicos, control de flujo,
+  listas, dicc, conjuntos, tuplas.
+- `sistema.argv` solo se expone via `obtener_argv()` (no como variable
+  fija), porque las globals del módulo se evalúan UNA vez al cargar
+  el módulo. Si en el futuro se quiere argv reactivo, habrá que
+  exponer `sistema.argv` como propiedad.
+- `salir()` llama a `exit()` directamente, sin oportunidad de unwind
+  ni `finalmente`. Es el comportamiento de Python `sys.exit()` con
+  `os._exit()`, no con `SystemExit`. Si se necesitara un cierre
+  ordenado en el futuro, habría que lanzar una excepción especial.
+
 ## [0.9.1] — 2026-04-29 — módulos completos + indexación de cadenas
 
 Cierra la deuda funcional de v0.9.0: módulos con subsegmentos, alias,
