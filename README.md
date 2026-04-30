@@ -125,11 +125,19 @@ cmake --build build -j
 **Bytecode-only** (closures, OOP, módulos, sistema):
 - [`19_closures_jugable.cor`](examples/19_closures_jugable.cor) · [`20_clases_jugable.cor`](examples/20_clases_jugable.cor) · [`21_modulos_jugable.cor`](examples/21_modulos_jugable.cor) · [`22_modulos_avanzado.cor`](examples/22_modulos_avanzado.cor) · [`23_sistema_jugable.cor`](examples/23_sistema_jugable.cor)
 
+**Avanzados** (programas no triviales):
+- [`24_notas_clase.cor`](examples/24_notas_clase.cor) — análisis de notas con dicc, listas, ordenamiento, mediana
+- [`25_biblioteca_oop.cor`](examples/25_biblioteca_oop.cor) — simulación de biblioteca con OOP, herencia, polimorfismo
+
 ## Documentación
 
-- **[ESPEC.md](ESPEC.md)** — Especificación formal del lenguaje (gramática PEG, keywords, semántica).
-- **[CHANGELOG.md](CHANGELOG.md)** — Historial de cambios.
-- **[CONTRIBUTING.md](CONTRIBUTING.md)** — Cómo contribuir.
+- **[Sitio web](https://david-castilla-gomez.github.io/Cornamusa/)** — tutorial paso a paso + referencia rápida (mdBook desplegado a GitHub Pages).
+- **[Tutorial](docs/tutorial.md)** — aprende Cornamusa desde cero, con código ejecutable.
+- **[Referencia rápida](docs/referencia.md)** — cheatsheet de sintaxis, built-ins, stdlib, errores.
+- **[ESPEC.md](ESPEC.md)** — especificación formal del lenguaje (gramática EBNF, semántica).
+- **[Decisiones (ADRs)](decisiones/)** — `B1` a `B10`, razonamiento detrás de las decisiones de diseño.
+- **[CHANGELOG.md](CHANGELOG.md)** — historial de cambios.
+- **[CONTRIBUTING.md](CONTRIBUTING.md)** — cómo contribuir.
 
 ## Inspiración
 

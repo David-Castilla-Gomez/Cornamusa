@@ -1,0 +1,29 @@
+# Configuración de mdBook para el sitio web de Cornamusa.
+# Ver https://rust-lang.github.io/mdBook/format/configuration/index.html
+
+[book]
+title = "Cornamusa"
+description = "Lenguaje de programación dinámico, interpretado y en castellano"
+authors = ["David Castilla Gómez"]
+language = "es"
+src = "docs"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "navy"
+git-repository-url = "https://github.com/David-Castilla-Gomez/Cornamusa"
+git-repository-icon = "fa-github"
+edit-url-template = "https://github.com/David-Castilla-Gomez/Cornamusa/edit/main/{path}"
+site-url = "/Cornamusa/"
+
+[output.html.fold]
+enable = true
+level = 1
+
+# Notas de implementación (`docs/papers/`) y archivos no listados en
+# SUMMARY.md son ignorados por mdBook por defecto, así que no se
+# renderizan en el sitio público. Permanecen en el repositorio como
+# referencia para el desarrollo.
+
+[build]
+create-missing = false

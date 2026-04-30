@@ -1,0 +1,60 @@
+name: Sitio web (mdBook → GitHub Pages)
+
+# Construye el libro de Cornamusa con mdBook y lo despliega a GitHub
+# Pages cada vez que cambian docs/ o book.toml en main.
+#
+# Setup necesario UNA VEZ en GitHub:
+#   Settings > Pages > Source: GitHub Actions
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/**'
+      - 'book.toml'
+      - '.github/workflows/book.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Solo una corrida a la vez; cancelar las anteriores en cola.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Instalar mdBook
+        uses: peaceiris/actions-mdbook@v2
+        with:
+          mdbook-version: 'latest'
+
+      - name: Construir libro
+        run: mdbook build
+
+      - name: Configurar Pages
+        uses: actions/configure-pages@v4
+
+      - name: Subir artefacto
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./book
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Desplegar a GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
