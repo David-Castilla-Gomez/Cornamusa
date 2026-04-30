@@ -6,6 +6,66 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.11.6] — 2026-04-30 — FIX: stack growth en mientras con nuevo local
+
+Bug latente derivado del fix de v0.11.5 detectado al validar
+`examples/25_biblioteca_oop.cor` durante la sesión 5 del plan v1.0.
+Síntoma: "OP_ITER_SIGUIENTE sin iterador en slot N" tras 2+
+iteraciones de un `mientras` que asignaba un nuevo local en su cuerpo.
+
+### Bug
+
+```cornamusa
+funcion main():
+    rondas = 3
+    suma = 0
+    mientras rondas > 0:
+        n = rondas + 10        # nuevo local 'n' en cada iter
+        suma = suma + n
+        rondas = rondas - 1
+    fin mientras
+fin funcion
+main()
+```
+
+Antes de v0.11.6: tras la 2ª iteración, error de runtime sobre el
+stack desincronizado.
+
+### Causa raíz
+
+El fix de v0.11.5 emitía OP_NULO + push valor + OP_ASIGNAR_LOCAL
+para nuevos locales, lo que crece el stack +1 por iteración. Para
+`para` no había problema porque SENT_PARA pre-reserva el slot de su
+variable de iteración fuera del cuerpo. Para `mientras` no había
+pre-reserva — cada iteración acumulaba un OP_NULO sin consumir.
+
+### Fix
+
+Nueva función `pre_reservar_locales(c, sent, linea)` en
+`src/compilador.c` que recorre el AST del cuerpo (recursivo por
+SENT_BLOQUE y SENT_SI; no desciende en SENT_FUNCION/SENT_CLASE/
+sub-bucles) buscando SENT_ASIGNAR a IDENT no-local existente. Por
+cada uno emite OP_NULO + `agregar_local` UNA vez antes del cuerpo.
+
+Llamada desde `compilar_mientras` y `compilar_para` antes de
+compilar el cuerpo. Las asignaciones dentro del cuerpo ahora
+encuentran "local existente" y emiten plain OP_ASIGNAR_LOCAL —
+stack neutro por iteración.
+
+### Tests
+
+- Nuevo `test_regresion_mientras_con_nuevo_local`: ejercita el
+  patrón exacto. 96 tests verde.
+- `examples/25_biblioteca_oop.cor` restaurado con el algoritmo de
+  selección iterativa (top-3 más prestados) que descubrió el bug,
+  ahora funciona.
+
+### Lección
+
+Patrón repetido de v0.11.5: bug en un fix anterior detectado al
+validar contra programas reales (no micro-tests). El test suite
+ahora incluye un caso por cada bug histórico de scoping local.
+
 ## [0.11.5] — 2026-04-30 — FIX CRÍTICO: nuevo local en bucle dentro de función
 
 Bug serio de correctness en el bytecode VM, descubierto al validar el

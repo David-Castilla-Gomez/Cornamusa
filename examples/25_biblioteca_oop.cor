@@ -174,12 +174,39 @@ clase Biblioteca:
         fin para
         imprimir("Items prestados ahora:", prestados)
 
-        # Listar items por veces prestadas (sin ordenar, en orden de
-        # catálogo — un ranking riguroso requeriría sort por clave que
-        # llegará en v1.x).
-        imprimir("Préstamos por título:")
+        # Top 3 más prestados (selección iterativa: O(n²), suficiente
+        # para catálogos pequeños). Demuestra `mientras` + `para`
+        # anidados con asignación a nuevos locales — patrón que antes
+        # de v0.11.6 causaba "OP_ITER_SIGUIENTE sin iterador en slot N".
+        copias = []
         para item en yo.catalogo:
-            imprimir("  ", item.titulo, "-", item.veces_prestado, "veces")
+            agregar(copias, item)
+        fin para
+        ranking = []
+        mientras longitud(copias) > 0:
+            mejor = copias[0]
+            para it en copias:
+                si it.veces_prestado > mejor.veces_prestado:
+                    mejor = it
+                fin si
+            fin para
+            agregar(ranking, mejor)
+            nuevas = []
+            para it en copias:
+                si it es no mejor:
+                    agregar(nuevas, it)
+                fin si
+            fin para
+            copias = nuevas
+        fin mientras
+
+        imprimir("Top más prestados:")
+        contador = 0
+        para it en ranking:
+            si contador < 3:
+                imprimir("  ", it.titulo, "-", it.veces_prestado, "veces")
+                contador = contador + 1
+            fin si
         fin para
     fin funcion
 fin clase

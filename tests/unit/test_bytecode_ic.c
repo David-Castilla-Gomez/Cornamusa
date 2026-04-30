@@ -447,6 +447,50 @@ static void test_obtener_atributo_promueve(void) {
     vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
 }
 
+/* ───── Regresión v0.11.6: stack growth en mientras con nuevo local ─────
+ *
+ * Bug detectado al validar `examples/25_biblioteca_oop.cor` durante
+ * sesión 5 del plan v1.0. La fix de v0.11.5 (OP_NULO + agregar_local +
+ * push + OP_ASIGNAR_LOCAL) crecía el stack +1 por cada nueva
+ * asignación. Para `para` esto era OK porque SENT_PARA reserva el
+ * slot del objetivo fuera del cuerpo. Para `mientras` no había
+ * pre-reserva → cada iteración del while empujaba un OP_NULO extra.
+ *
+ * Tras 2+ iteraciones del while con un nuevo local en el cuerpo, el
+ * stack se desincronizaba: "OP_ITER_SIGUIENTE sin iterador en slot N".
+ *
+ * Fix v0.11.6: pre_reservar_locales(c, cuerpo) recursa el AST por
+ * SENT_BLOQUE y SENT_SI buscando SENT_ASIGNAR a IDENT no-local;
+ * por cada uno emite OP_NULO + agregar_local UNA vez ANTES del
+ * bucle. La asignación dentro del cuerpo ahora encuentra "local
+ * existente" y emite plain OP_ASIGNAR_LOCAL.
+ */
+
+static void test_regresion_mientras_con_nuevo_local(void) {
+    const char *fuente =
+        "funcion ejecutar():\n"
+        "    rondas = 3\n"
+        "    suma = 0\n"
+        "    mientras rondas > 0:\n"
+        "        n = rondas + 10\n"     /* nuevo local en mientras */
+        "        suma = suma + n\n"
+        "        rondas = rondas - 1\n"
+        "    fin mientras\n"
+        "    retornar suma\n"
+        "fin funcion\n"
+        "resultado = ejecutar()\n";    /* esperado: 13 + 12 + 11 = 36 */
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+    Valor n = valor_cadena_referencia("resultado", 9);
+    Valor v;
+    AFIRMAR(dicc_obtener(vm.globales, &n, &v));
+    char buf[32]; valor_a_cadena(&v, buf, sizeof(buf));
+    AFIRMAR(strcmp(buf, "36") == 0);
+    valor_destruir(&v);
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
 /* ───── Regresión v0.11.5: nuevo local en bucle dentro de función ─────
  *
  * Bug detectado al validar el tutorial v1.0 (sesión 3): la "OLD
@@ -489,6 +533,7 @@ static void test_regresion_local_nuevo_en_bucle(void) {
 
 int main(void) {
     test_regresion_local_nuevo_en_bucle();
+    test_regresion_mientras_con_nuevo_local();
     test_quickening_basico();
     test_hits_multiples_estables();
     test_insertacion_invalida_cache();

@@ -1141,7 +1141,70 @@ static bool compilar_si(Compilador *c, const Sent *s) {
  *   OP_DESCARTAR              ; cond (falsy)
  *   compile sino?              ; si la cláusula sino existe
  */
+/*
+ * Pre-reserva los slots de los nuevos locales que `s` y sus
+ * sub-bloques introducen, emitiendo OP_NULO + agregar_local UNA vez
+ * antes del bucle. Esto evita el bug v0.11.5b donde dentro de un
+ * `mientras`, cada iteración del cuerpo emitía OP_NULO + ASIGNAR
+ * para un "nuevo local", haciendo crecer el stack sin límite.
+ *
+ * Recurre por SENT_BLOQUE y SENT_SI (mismo scope). NO recurre en
+ * SENT_FUNCION/SENT_CLASE (scope nuevo). NO recurre en SENT_MIENTRAS/
+ * SENT_PARA/SENT_INTENTAR anidados — esos compilarán su propia
+ * pre-reserva cuando sea su turno.
+ */
+static bool pre_reservar_locales(Compilador *c, const Sent *s, int linea_default) {
+    if (s == NULL || c->error.tuvo_error) return true;
+    switch (s->tipo) {
+        case SENT_BLOQUE: {
+            for (int i = 0; i < s->como.bloque.n_sentencias; i++) {
+                if (!pre_reservar_locales(c, s->como.bloque.sentencias[i],
+                                            linea_default))
+                    return false;
+            }
+            return true;
+        }
+        case SENT_SI: {
+            for (int i = 0; i < s->como.si.n_ramas; i++) {
+                if (!pre_reservar_locales(c, s->como.si.ramas[i].cuerpo,
+                                            linea_default))
+                    return false;
+            }
+            return true;
+        }
+        case SENT_ASIGNAR: {
+            const Expr *destino = s->como.asignar.destino;
+            if (destino == NULL || destino->tipo != EXPR_IDENT) return true;
+            const char *nombre = destino->como.ident.nombre;
+            int len = destino->como.ident.longitud;
+            if (!c->actual->es_funcion) return true;  /* en top-level usa globales */
+            int existente = buscar_local(c->actual, nombre, len);
+            if (existente >= 0) return true;  /* ya reservado */
+            /* Reservar slot. */
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, linea_default);
+            int slot = agregar_local(c, nombre, len, linea_default);
+            if (slot < 0) return false;
+            return true;
+        }
+        default:
+            /* SENT_MIENTRAS/SENT_PARA/SENT_INTENTAR/SENT_FUNCION/
+               SENT_CLASE/etc. no descienden — manejan sus propios
+               locales cuando se compilen. */
+            return true;
+    }
+}
+
 static bool compilar_mientras(Compilador *c, const Sent *s) {
+    /* v0.11.5b fix: pre-reservar slots de nuevos locales del cuerpo
+       (incluyendo recursión por SENT_BLOQUE y SENT_SI) antes del
+       bucle. Sin esto, el cuerpo emitiría OP_NULO+ASIGNAR cada
+       iteración haciendo crecer el stack sin límite. */
+    int n_locales_entrada = c->actual->n_locales;
+    if (c->actual->es_funcion) {
+        if (!pre_reservar_locales(c, s->como.mientras.cuerpo, s->linea))
+            return false;
+    }
+    (void)n_locales_entrada;  /* reservado por si hay que restaurar */
     int inicio_cond = c->actual->chunk->cuenta;
     if (!compilador_compilar_expr(c, s->como.mientras.condicion)) return false;
     int salto_salir = emitir_salto(c, OP_SALTAR_SI_FALSO, s->linea);
@@ -1679,6 +1742,15 @@ static bool compilar_para(Compilador *c, const Sent *s) {
     }
 
     if (!empujar_bucle(c, inicio_loop, s->linea)) return false;
+
+    /* v0.11.5b fix: pre-reservar slots para nuevos locales del cuerpo
+       del `para`. Sin esto, asignar a un nuevo local en el cuerpo del
+       `para` haría crecer el stack en cada iteración (mismo bug que en
+       `mientras`). */
+    if (c->actual->es_funcion) {
+        if (!pre_reservar_locales(c, s->como.para.cuerpo, s->linea))
+            return false;
+    }
 
     if (!compilador_compilar_sent(c, s->como.para.cuerpo)) return false;
 
