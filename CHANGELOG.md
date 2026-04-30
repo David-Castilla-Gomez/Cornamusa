@@ -6,6 +6,58 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.11.2] — 2026-04-30 — fast-path int64 en iterador de `rango`
+
+Tech-debt #5 de la revisión post-release de v0.11.1 cerrado. Programas
+con loops grandes (`para i en rango(N)`) eran cuello porque el
+iterador alocaba un `mp_int` nuevo cada paso aunque inicio/fin/paso
+cupieran en SMALL.
+
+### Mejoras (v0.11.2)
+
+- **Camino rápido int64 en `iter_siguiente` para `VAL_RANGO`**: si
+  inicio, fin y paso caben en `int64_t` (chequeado vía `mp_count_bits
+  < 64` por valor), calculamos `inicio + cursor*paso` directamente
+  con aritmética nativa. Detección de overflow vía
+  `__builtin_mul_overflow`/`add_overflow` en GCC/Clang; en MSVC
+  fallback con cota `int31` para cursor y paso.
+- En overflow o si algún componente del rango excede `int64`, fallback
+  al path bignum existente. Sin pérdida funcional.
+- El resultado pasa por `valor_entero_de_i64` que produce SMALL
+  cuando cabe, BIG si no.
+
+### Corregido (v0.11.2)
+
+- **Leak preexistente**: en `iter_siguiente` para `VAL_RANGO`, si
+  `mp_init(resultado)` succeeds y `mp_copy(...)` falla, antes se
+  llamaba `free(resultado)` sin `mp_clear` — perdía los `digits`
+  alocados por `mp_init`. Ahora hace `mp_clear + free` correctamente.
+  Reportado por la revisión post-release como tech-debt 5b.
+
+### Rendimiento (v0.11.2)
+
+Comparación contra v0.11.1 (mediana de 3 corridas):
+
+| Benchmark             | v0.11.1  | v0.11.2  | Mejora |
+|-----------------------|----------|----------|--------|
+| globales_lookup       | 391 ms   | **218 ms** | **1.79x** |
+| dicc_intensivo        | 59 ms    | **50 ms**  | 1.18x |
+| fibonacci_recursivo   | 222 ms   | 235 ms   | (~igual; no usa rango) |
+| bignum_factorial      | 17 ms    | 27 ms    | (variabilidad) |
+| oo_intensivo          | 24 ms    | 32 ms    | (variabilidad) |
+
+**Comparación acumulada vs v0.10.0 baseline**:
+
+| Benchmark             | v0.10  | v0.11.2 | Total |
+|-----------------------|--------|---------|-------|
+| globales_lookup       | 993 ms | 218 ms  | **4.55x** |
+| dicc_intensivo        | 121 ms | 50 ms   | 2.42x |
+| fibonacci_recursivo   | 1.33 s | 235 ms  | 5.66x |
+
+Geomedia consolidada: ~3.0x sobre v0.10.
+
+92 tests verde.
+
 ## [0.11.1] — 2026-04-30 — fixes post-release (revisión crítica)
 
 Code review crítica independiente del refactor B9 detectó tres

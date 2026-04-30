@@ -934,8 +934,58 @@ bool iter_siguiente(Iterador *it, Valor *out) {
             return false;
         }
         case VAL_RANGO: {
-            /* Calcular `inicio + cursor*paso` y comparar con fin
-               según el signo del paso. */
+            /*
+             * Camino rápido int64 (v0.11.2): si inicio, fin y paso
+             * caben todos en int64, calculamos `inicio + cursor*paso`
+             * directamente sin alocar mp_int. Cubre el caso típico
+             * `para i en rango(N)` con N moderado, donde cada paso
+             * antes hacía 4 mp_init + 1 malloc + 5 mp_clear.
+             *
+             * Detecta overflow durante mult/add con __builtin_*_overflow
+             * (GCC/Clang); en MSVC fallback con cota int31 (suficiente
+             * para rangos típicos hasta unos 10^9 elementos). Si overflow
+             * o si alguno no cabe en int64, cae al path bignum.
+             */
+            int64_t inicio_i64 = 0, fin_i64 = 0, paso_i64 = 0;
+            bool fits_inicio = mp_count_bits(iter->como.rango.inicio) < 64;
+            bool fits_fin    = mp_count_bits(iter->como.rango.fin) < 64;
+            bool fits_paso   = mp_count_bits(iter->como.rango.paso) < 64;
+            if (fits_inicio && fits_fin && fits_paso) {
+                inicio_i64 = mp_get_i64(iter->como.rango.inicio);
+                fin_i64    = mp_get_i64(iter->como.rango.fin);
+                paso_i64   = mp_get_i64(iter->como.rango.paso);
+                int64_t delta_i64, actual_i64;
+#if defined(__GNUC__) || defined(__clang__)
+                if (__builtin_mul_overflow((int64_t)it->cursor, paso_i64, &delta_i64)
+                    || __builtin_add_overflow(inicio_i64, delta_i64, &actual_i64)) {
+                    goto rango_bignum;
+                }
+#else
+                /* MSVC fallback: si ambos cursor y paso caben en int31,
+                   la mult cabe en int62 sin overflow. */
+                if (it->cursor > INT32_MAX
+                    || paso_i64 < INT32_MIN || paso_i64 > INT32_MAX
+                    || inicio_i64 < CORNAMUSA_SMALL_INT_MIN
+                    || inicio_i64 > CORNAMUSA_SMALL_INT_MAX) {
+                    goto rango_bignum;
+                }
+                delta_i64 = (int64_t)it->cursor * paso_i64;
+                actual_i64 = inicio_i64 + delta_i64;
+#endif
+                bool paso_neg = paso_i64 < 0;
+                bool sigue = paso_neg ? (actual_i64 > fin_i64)
+                                       : (actual_i64 < fin_i64);
+                if (!sigue) {
+                    *out = valor_nulo();
+                    return false;
+                }
+                *out = valor_entero_de_i64(actual_i64);
+                it->cursor++;
+                return true;
+            }
+        rango_bignum:
+            ; /* Etiqueta — el path bignum sigue abajo. */
+            /* Path bignum: calcular `inicio + cursor*paso`. */
             mp_int actual;
             if (mp_init(&actual) != MP_OKAY) {
                 *out = valor_nulo();
@@ -970,13 +1020,12 @@ bool iter_siguiente(Iterador *it, Valor *out) {
             mp_int *resultado = (mp_int *)malloc(sizeof(mp_int));
             if (!resultado || mp_init(resultado) != MP_OKAY
                            || mp_copy(&actual, resultado) != MP_OKAY) {
-                free(resultado);
+                if (resultado) { mp_clear(resultado); free(resultado); }
                 mp_clear(&actual);
                 *out = valor_nulo();
                 return false;
             }
             mp_clear(&actual);
-            /* v0.11 (B9): iteradores de rango suelen producir SMALL. */
             *out = valor_entero_de_mp_normalizado(resultado);
             it->cursor++;
             return true;
