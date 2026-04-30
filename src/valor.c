@@ -177,10 +177,15 @@ mp_int *valor_entero_a_mp_int(const Valor *v, bool *propio) {
 }
 
 Valor valor_entero_de_i64(int64_t n) {
-    /* SESIÓN 1: siempre BIG. La activación de SMALL se hace en
-       sesión 3 cambiando esta función. Mantener el contrato de
-       posesión consistente (callers reciben un Valor que requieren
-       destruir con valor_destruir). */
+    /* SESIÓN 3 (B9): activación de SMALL. Si n cabe en el rango SMALL,
+       devolvemos VAL_ENTERO_SMALL inline sin alocar. Si no, BIG. */
+    if (n >= CORNAMUSA_SMALL_INT_MIN && n <= CORNAMUSA_SMALL_INT_MAX) {
+        Valor v;
+        v.tipo = VAL_ENTERO_SMALL;
+        v.dueno_cadena = false;
+        v.como.entero_small = n;
+        return v;
+    }
     mp_int *m = nuevo_mp_int();
     if (m == NULL) return valor_nulo();
     mp_set_i64(m, n);
@@ -192,9 +197,23 @@ Valor valor_entero_de_i64(int64_t n) {
 }
 
 Valor valor_entero_de_mp_normalizado(mp_int *m) {
-    /* SESIÓN 1: nunca normaliza, siempre envuelve como BIG. La
-       normalización a SMALL se activa en sesión 3. */
+    /* SESIÓN 3 (B9): normalizar a SMALL si el valor cabe. Toma posesión
+       de m y lo libera si demote ocurre. */
     if (!m) return valor_nulo();
+    /* Si cabe en 63 bits (signo + magnitud), demote. mp_count_bits
+       cuenta la magnitud en bits. */
+    if (mp_count_bits(m) <= 62) {
+        int64_t n = mp_get_i64(m);
+        if (n >= CORNAMUSA_SMALL_INT_MIN && n <= CORNAMUSA_SMALL_INT_MAX) {
+            mp_clear(m);
+            free(m);
+            Valor v;
+            v.tipo = VAL_ENTERO_SMALL;
+            v.dueno_cadena = false;
+            v.como.entero_small = n;
+            return v;
+        }
+    }
     Valor v;
     v.tipo = VAL_ENTERO;
     v.dueno_cadena = false;

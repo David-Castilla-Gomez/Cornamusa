@@ -79,8 +79,9 @@ bool evaluador_tiene_error(const Evaluador *ev) {
  * Helpers numéricos
  * ────────────────────────────────────────────────────────────────── */
 
-/* Convierte un VAL_ENTERO o VAL_BOOLEANO a double. Asume tipo válido. */
+/* Convierte un VAL_ENTERO/_SMALL/BOOLEANO/DECIMAL a double. */
 static double valor_a_doble(const Valor *v) {
+    if (v->tipo == VAL_ENTERO_SMALL) return (double)v->como.entero_small;
     if (v->tipo == VAL_ENTERO) return mp_get_double(v->como.entero);
     if (v->tipo == VAL_BOOLEANO) return v->como.booleano ? 1.0 : 0.0;
     if (v->tipo == VAL_DECIMAL) return v->como.decimal;
@@ -102,6 +103,14 @@ static mp_int *como_mp_int(const Valor *v, bool *propio_out) {
     *propio_out = false;
     if (v->tipo == VAL_ENTERO) {
         return v->como.entero;
+    }
+    if (v->tipo == VAL_ENTERO_SMALL) {
+        mp_int *m = (mp_int *)malloc(sizeof(mp_int));
+        if (!m) return NULL;
+        if (mp_init(m) != MP_OKAY) { free(m); return NULL; }
+        mp_set_i64(m, v->como.entero_small);
+        *propio_out = true;
+        return m;
     }
     if (v->tipo == VAL_BOOLEANO) {
         mp_int *m = (mp_int *)malloc(sizeof(mp_int));
@@ -389,15 +398,15 @@ static Orden comparar_valores(const Valor *a, const Valor *b) {
     }
 
     /* Numéricos (incluyendo booleano). */
-    bool an_num = (a->tipo == VAL_ENTERO || a->tipo == VAL_DECIMAL
+    bool an_num = (valor_es_entero(a) || a->tipo == VAL_DECIMAL
                    || a->tipo == VAL_BOOLEANO);
-    bool bn_num = (b->tipo == VAL_ENTERO || b->tipo == VAL_DECIMAL
+    bool bn_num = (valor_es_entero(b) || b->tipo == VAL_DECIMAL
                    || b->tipo == VAL_BOOLEANO);
     if (!an_num || !bn_num) return ORD_INCOMP;
 
     /* Si ambos son enteros (o booleanos), comparar como bignum. */
-    bool a_entero = (a->tipo == VAL_ENTERO || a->tipo == VAL_BOOLEANO);
-    bool b_entero = (b->tipo == VAL_ENTERO || b->tipo == VAL_BOOLEANO);
+    bool a_entero = (valor_es_entero(a) || a->tipo == VAL_BOOLEANO);
+    bool b_entero = (valor_es_entero(b) || b->tipo == VAL_BOOLEANO);
     if (a_entero && b_entero) {
         bool propio_a, propio_b;
         mp_int *ma = como_mp_int(a, &propio_a);
@@ -646,7 +655,7 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
  * ────────────────────────────────────────────────────────────────── */
 
 static bool es_numerico(const Valor *v) {
-    return v->tipo == VAL_ENTERO || v->tipo == VAL_DECIMAL
+    return valor_es_entero(v) || v->tipo == VAL_DECIMAL
         || v->tipo == VAL_BOOLEANO;
 }
 
@@ -715,8 +724,8 @@ static Valor aplicar_binario_pos(EvalError *err, TipoToken op,
         return resultado;
     }
     if (op == TT_ASTERISCO
-        && ((a.tipo == VAL_CADENA && (b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO))
-         || (b.tipo == VAL_CADENA && (a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)))) {
+        && ((a.tipo == VAL_CADENA && (valor_es_entero(&b) || b.tipo == VAL_BOOLEANO))
+         || (b.tipo == VAL_CADENA && (valor_es_entero(&a) || a.tipo == VAL_BOOLEANO)))) {
         const Valor *cad = (a.tipo == VAL_CADENA) ? &a : &b;
         const Valor *otr = (a.tipo == VAL_CADENA) ? &b : &a;
         bool propio;
@@ -752,8 +761,8 @@ static Valor aplicar_binario_pos(EvalError *err, TipoToken op,
 
     /* Repetición de lista. */
     if (op == TT_ASTERISCO
-        && ((a.tipo == VAL_LISTA && (b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO))
-         || (b.tipo == VAL_LISTA && (a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)))) {
+        && ((a.tipo == VAL_LISTA && (valor_es_entero(&b) || b.tipo == VAL_BOOLEANO))
+         || (b.tipo == VAL_LISTA && (valor_es_entero(&a) || a.tipo == VAL_BOOLEANO)))) {
         const Valor *vlst = (a.tipo == VAL_LISTA) ? &a : &b;
         const Valor *vnum = (a.tipo == VAL_LISTA) ? &b : &a;
         bool propio;
@@ -793,8 +802,8 @@ static Valor aplicar_binario_pos(EvalError *err, TipoToken op,
 
     /* Bitwise. */
     if (es_bitwise(op)) {
-        if (!(a.tipo == VAL_ENTERO || a.tipo == VAL_BOOLEANO)
-         || !(b.tipo == VAL_ENTERO || b.tipo == VAL_BOOLEANO)) {
+        if (!(valor_es_entero(&a) || a.tipo == VAL_BOOLEANO)
+         || !(valor_es_entero(&b) || b.tipo == VAL_BOOLEANO)) {
             resultado = error_pos(err, linea, columna,
                 "ErrorDeTipo: operador bitwise requiere enteros, no '%s' y '%s'",
                 valor_nombre_tipo(&a), valor_nombre_tipo(&b));
@@ -912,7 +921,7 @@ static Valor aplicar_unario_pos(EvalError *err, TipoToken op,
             };
 
         case TT_MAS:
-            if (v.tipo == VAL_ENTERO || v.tipo == VAL_DECIMAL) return v;
+            if (valor_es_entero(&v) || v.tipo == VAL_DECIMAL) return v;
             if (v.tipo == VAL_BOOLEANO) {
                 bool b = v.como.booleano;
                 valor_destruir(&v);
@@ -928,6 +937,21 @@ static Valor aplicar_unario_pos(EvalError *err, TipoToken op,
                 valor_destruir(&v);
                 return valor_decimal(d);
             }
+            if (v.tipo == VAL_ENTERO_SMALL) {
+                int64_t n = v.como.entero_small;
+                /* -SMALL_INT_MIN no cabe en SMALL — promote a BIG. */
+                if (n == CORNAMUSA_SMALL_INT_MIN) {
+                    mp_int *r = nuevo_mp();
+                    if (!r) return error_pos(err, linea, columna, "memoria insuficiente");
+                    mp_set_i64(r, n);
+                    if (mp_neg(r, r) != MP_OKAY) {
+                        liberar_mp(r);
+                        return error_pos(err, linea, columna, "fallo en negacion entera");
+                    }
+                    return valor_entero_de_mp_normalizado(r);
+                }
+                return valor_entero_de_i64(-n);
+            }
             if (v.tipo == VAL_ENTERO) {
                 mp_int *r = nuevo_mp();
                 if (!r) {
@@ -939,7 +963,7 @@ static Valor aplicar_unario_pos(EvalError *err, TipoToken op,
                     return error_pos(err, linea, columna, "fallo en negacion entera");
                 }
                 valor_destruir(&v);
-                return valor_entero_de_mp(r);
+                return valor_entero_de_mp_normalizado(r);
             }
             if (v.tipo == VAL_BOOLEANO) {
                 long n = v.como.booleano ? -1 : 0;
@@ -952,7 +976,7 @@ static Valor aplicar_unario_pos(EvalError *err, TipoToken op,
         }
 
         case TT_TILDE_BIT: {
-            if (v.tipo == VAL_ENTERO || v.tipo == VAL_BOOLEANO) {
+            if (valor_es_entero(&v) || v.tipo == VAL_BOOLEANO) {
                 bool propio;
                 mp_int *m = como_mp_int(&v, &propio);
                 if (!m) {
@@ -1088,14 +1112,11 @@ static void ejec_bloque(Evaluador *ev, const Sent *s) {
  * OK; false si tipo incorrecto o fuera de rango.
  */
 static bool indice_normalizar(const Valor *idx, int total, long *out) {
-    long i;
-    if (idx->tipo == VAL_BOOLEANO) { i = idx->como.booleano ? 1 : 0; }
-    else if (idx->tipo == VAL_ENTERO) {
-        if (mp_count_bits(idx->como.entero) > 62) return false;
-        i = (long)mp_get_i64(idx->como.entero);
-    } else {
-        return false;
-    }
+    int64_t i64;
+    if (idx->tipo == VAL_BOOLEANO) { i64 = idx->como.booleano ? 1 : 0; }
+    else if (!valor_entero_a_i64(idx, &i64)) return false;
+    long i = (long)i64;
+    if ((int64_t)i != i64) return false;  /* no cabe en long */
     if (i < 0) i += total;
     if (i < 0 || i >= total) return false;
     *out = i;
@@ -1867,11 +1888,11 @@ static Valor eval_lista(Evaluador *ev, const Expr *e) {
  */
 static bool indice_a_long(const Valor *v, long *out) {
     if (v->tipo == VAL_BOOLEANO) { *out = v->como.booleano ? 1 : 0; return true; }
-    if (v->tipo != VAL_ENTERO) return false;
-    if (mp_count_bits(v->como.entero) > 62) return false;
-    /* mp_get_i64 devuelve unsigned cast — usamos el formato correcto. */
-    int64_t signed_v = mp_get_i64(v->como.entero);
-    *out = (long)signed_v;
+    int64_t i64;
+    if (!valor_entero_a_i64(v, &i64)) return false;
+    long l = (long)i64;
+    if ((int64_t)l != i64) return false;  /* no cabe en long */
+    *out = l;
     return true;
 }
 
@@ -1885,7 +1906,7 @@ static Valor eval_indice(Evaluador *ev, const Expr *e) {
     }
 
     if (obj.tipo == VAL_LISTA) {
-        if (idx.tipo != VAL_ENTERO && idx.tipo != VAL_BOOLEANO) {
+        if (!valor_es_entero(&idx) && idx.tipo != VAL_BOOLEANO) {
             Valor err = error_en(ev, e,
                 "ErrorDeTipo: indice de lista debe ser entero, no '%s'",
                 valor_nombre_tipo(&idx));
@@ -1933,7 +1954,7 @@ static Valor eval_indice(Evaluador *ev, const Expr *e) {
     }
 
     if (obj.tipo == VAL_TUPLA) {
-        if (idx.tipo != VAL_ENTERO && idx.tipo != VAL_BOOLEANO) {
+        if (!valor_es_entero(&idx) && idx.tipo != VAL_BOOLEANO) {
             Valor err = error_en(ev, e,
                 "ErrorDeTipo: indice de tupla debe ser entero, no '%s'",
                 valor_nombre_tipo(&idx));
@@ -1994,7 +2015,7 @@ static Valor eval_rebanada(Evaluador *ev, const Expr *e) {
         if (ev->error.tuvo_error) {
             valor_destruir(&pv); valor_destruir(&obj); return valor_nulo();
         }
-        if (pv.tipo != VAL_ENTERO && pv.tipo != VAL_BOOLEANO) {
+        if (!valor_es_entero(&pv) && pv.tipo != VAL_BOOLEANO) {
             Valor err = error_en(ev, e,
                 "ErrorDeTipo: paso de rebanada debe ser entero, no '%s'",
                 valor_nombre_tipo(&pv));
@@ -2003,12 +2024,13 @@ static Valor eval_rebanada(Evaluador *ev, const Expr *e) {
         if (pv.tipo == VAL_BOOLEANO) {
             paso = pv.como.booleano ? 1 : 0;
         } else {
-            if (mp_count_bits(pv.como.entero) > 62) {
+            int64_t i64;
+            if (!valor_entero_a_i64(&pv, &i64)) {
                 valor_destruir(&pv); valor_destruir(&obj);
                 return error_en(ev, e,
                     "ErrorDeValor: paso de rebanada demasiado grande");
             }
-            paso = (long)mp_get_i64(pv.como.entero);
+            paso = (long)i64;
         }
         valor_destruir(&pv);
         if (paso == 0) {
@@ -2030,12 +2052,14 @@ static Valor eval_rebanada(Evaluador *ev, const Expr *e) {
             valor_destruir(&iv); valor_destruir(&obj); return valor_nulo();
         }
         if (iv.tipo == VAL_BOOLEANO) inicio = iv.como.booleano ? 1 : 0;
-        else if (iv.tipo == VAL_ENTERO && mp_count_bits(iv.como.entero) <= 62) {
-            inicio = (long)mp_get_i64(iv.como.entero);
-        } else {
-            valor_destruir(&iv); valor_destruir(&obj);
-            return error_en(ev, e,
-                "ErrorDeTipo: inicio de rebanada debe ser entero");
+        else {
+            int64_t i64;
+            if (!valor_entero_a_i64(&iv, &i64)) {
+                valor_destruir(&iv); valor_destruir(&obj);
+                return error_en(ev, e,
+                    "ErrorDeTipo: inicio de rebanada debe ser entero");
+            }
+            inicio = (long)i64;
         }
         valor_destruir(&iv);
         if (inicio < 0) inicio += total;
@@ -2049,12 +2073,14 @@ static Valor eval_rebanada(Evaluador *ev, const Expr *e) {
             valor_destruir(&fv); valor_destruir(&obj); return valor_nulo();
         }
         if (fv.tipo == VAL_BOOLEANO) fin = fv.como.booleano ? 1 : 0;
-        else if (fv.tipo == VAL_ENTERO && mp_count_bits(fv.como.entero) <= 62) {
-            fin = (long)mp_get_i64(fv.como.entero);
-        } else {
-            valor_destruir(&fv); valor_destruir(&obj);
-            return error_en(ev, e,
-                "ErrorDeTipo: fin de rebanada debe ser entero");
+        else {
+            int64_t i64;
+            if (!valor_entero_a_i64(&fv, &i64)) {
+                valor_destruir(&fv); valor_destruir(&obj);
+                return error_en(ev, e,
+                    "ErrorDeTipo: fin de rebanada debe ser entero");
+            }
+            fin = (long)i64;
         }
         valor_destruir(&fv);
         if (fin < 0) fin += total;

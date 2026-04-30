@@ -414,6 +414,13 @@ void vm_destruir(VM *vm) {
  * macro en cada case sale del case. En el camino feliz, el do-while
  * termina natural y el `break` del case sigue.
  */
+/*
+ * TODO sesión 5 (B9): este macro degrada al slow path si CUALQUIER
+ * operando es VAL_ENTERO_SMALL en lugar de VAL_ENTERO. Es correcto
+ * (el slow path maneja SMALL bien) pero pierde el speedup del IC
+ * para enteros pequeños. Sesión 5 añade un path SMALL+SMALL inline
+ * que evita mp_int por completo.
+ */
 #define BIN_INT_INT_ARITH(BASE_OP, MP_OP)                                  \
     do {                                                                    \
         const uint8_t *opcode_addr = frame->ip - 1;                         \
@@ -437,6 +444,7 @@ void vm_destruir(VM *vm) {
         empujar(vm, evaluador_valor_entero_de_mp(_r));                      \
     } while (0)
 
+/* Idem: ver TODO sesión 5 sobre BIN_INT_INT_ARITH. */
 #define BIN_INT_INT_CMP(BASE_OP, COND)                                     \
     do {                                                                    \
         const uint8_t *opcode_addr = frame->ip - 1;                         \
@@ -767,8 +775,8 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 int linea = linea_actual_frame(frame);
                 /* Capturar tipos antes de sacar (evaluador_aplicar_binario
                    destruye los operandos). */
-                bool ambos_int = (vm->tope[-1].tipo == VAL_ENTERO
-                                  && vm->tope[-2].tipo == VAL_ENTERO);
+                bool ambos_int = (valor_es_entero(&vm->tope[-1])
+                                  && valor_es_entero(&vm->tope[-2]));
                 Valor b = sacar(vm);
                 Valor a = sacar(vm);
                 int tt = opcode_a_token_binario(op);
@@ -1314,7 +1322,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 Valor r = valor_nulo();
                 /* Lista, tupla, diccionario, cadena. */
                 if (obj.tipo == VAL_LISTA) {
-                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                    if (!valor_es_entero(&key) && key.tipo != VAL_BOOLEANO) {
                         VM_ERROR("ErrorDeTipo: indice de lista debe ser entero, no '%s'",
                                  valor_nombre_tipo(&key));
                         valor_destruir(&key); valor_destruir(&obj);
@@ -1323,8 +1331,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     Lista *l = obj.como.lista;
                     long i;
                     if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
-                    else if (mp_count_bits(key.como.entero) > 62) i = LONG_MAX;
-                    else i = (long)mp_get_i64(key.como.entero);
+                    else {
+                        int64_t i64;
+                        if (!valor_entero_a_i64(&key, &i64)) i = LONG_MAX;
+                        else { i = (long)i64; if ((int64_t)i != i64) i = LONG_MAX; }
+                    }
                     if (i < 0) i += l->cuenta;
                     if (i < 0 || i >= l->cuenta) {
                         VM_ERROR("ErrorDeIndice: indice %ld fuera de rango (lista de %d)",
@@ -1334,7 +1345,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     }
                     r = valor_clonar(&l->elementos[i]);
                 } else if (obj.tipo == VAL_TUPLA) {
-                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                    if (!valor_es_entero(&key) && key.tipo != VAL_BOOLEANO) {
                         VM_ERROR("ErrorDeTipo: indice de tupla debe ser entero");
                         valor_destruir(&key); valor_destruir(&obj);
                         return VM_ERROR_RUNTIME;
@@ -1342,8 +1353,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     Tupla *t = obj.como.tupla;
                     long i;
                     if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
-                    else if (mp_count_bits(key.como.entero) > 62) i = LONG_MAX;
-                    else i = (long)mp_get_i64(key.como.entero);
+                    else {
+                        int64_t i64;
+                        if (!valor_entero_a_i64(&key, &i64)) i = LONG_MAX;
+                        else { i = (long)i64; if ((int64_t)i != i64) i = LONG_MAX; }
+                    }
                     if (i < 0) i += t->cuenta;
                     if (i < 0 || i >= t->cuenta) {
                         VM_ERROR("ErrorDeIndice: indice fuera de rango (tupla de %d)",
@@ -1370,7 +1384,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     /* v0.9.1: indexación UTF-8 sobre cadenas.
                        Devuelve una cadena de 1 carácter. Índices
                        negativos cuentan desde el final.  */
-                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                    if (!valor_es_entero(&key) && key.tipo != VAL_BOOLEANO) {
                         VM_ERROR("ErrorDeTipo: indice de cadena debe ser entero, no '%s'",
                                  valor_nombre_tipo(&key));
                         valor_destruir(&key); valor_destruir(&obj);
@@ -1378,8 +1392,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     }
                     long i;
                     if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
-                    else if (mp_count_bits(key.como.entero) > 62) i = LONG_MAX;
-                    else i = (long)mp_get_i64(key.como.entero);
+                    else {
+                        int64_t i64;
+                        if (!valor_entero_a_i64(&key, &i64)) i = LONG_MAX;
+                        else { i = (long)i64; if ((int64_t)i != i64) i = LONG_MAX; }
+                    }
 
                     int len_bytes = obj.como.cadena.longitud;
                     const char *texto = obj.como.cadena.texto;
@@ -1447,7 +1464,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 Valor key = sacar(vm);
                 Valor obj = sacar(vm);
                 if (obj.tipo == VAL_LISTA) {
-                    if (key.tipo != VAL_ENTERO && key.tipo != VAL_BOOLEANO) {
+                    if (!valor_es_entero(&key) && key.tipo != VAL_BOOLEANO) {
                         VM_ERROR("ErrorDeTipo: indice de lista debe ser entero");
                         valor_destruir(&valor); valor_destruir(&key); valor_destruir(&obj);
                         return VM_ERROR_RUNTIME;
@@ -1455,7 +1472,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     Lista *l = obj.como.lista;
                     long i;
                     if (key.tipo == VAL_BOOLEANO) i = key.como.booleano ? 1 : 0;
-                    else i = (long)mp_get_i64(key.como.entero);
+                    else {
+                        int64_t i64;
+                        if (!valor_entero_a_i64(&key, &i64)) i = LONG_MAX;
+                        else { i = (long)i64; if ((int64_t)i != i64) i = LONG_MAX; }
+                    }
                     if (i < 0) i += l->cuenta;
                     if (i < 0 || i >= l->cuenta) {
                         VM_ERROR("ErrorDeIndice: indice fuera de rango (lista de %d)",
@@ -1503,7 +1524,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
 
                 long paso = 1;
                 if (paso_v.tipo != VAL_NULO) {
-                    if (paso_v.tipo != VAL_ENTERO && paso_v.tipo != VAL_BOOLEANO) {
+                    if (!valor_es_entero(&paso_v) && paso_v.tipo != VAL_BOOLEANO) {
                         VM_ERROR("ErrorDeTipo: paso de rebanada debe ser entero");
                         valor_destruir(&obj); valor_destruir(&inicio_v);
                         valor_destruir(&fin_v); valor_destruir(&paso_v);
@@ -1512,7 +1533,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     if (paso_v.tipo == VAL_BOOLEANO) {
                         paso = paso_v.como.booleano ? 1 : 0;
                     } else {
-                        paso = (long)mp_get_i64(paso_v.como.entero);
+                        int64_t i64 = 0;
+                        (void)valor_entero_a_i64(&paso_v, &i64);
+                        paso = (long)i64;
                     }
                     if (paso == 0) {
                         VM_ERROR("ErrorDeValor: el paso de una rebanada no puede ser 0");
@@ -1527,10 +1550,14 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 long inicio;
                 if (inicio_v.tipo == VAL_NULO) {
                     inicio = (paso > 0) ? 0 : total - 1;
-                } else if (inicio_v.tipo == VAL_ENTERO || inicio_v.tipo == VAL_BOOLEANO) {
-                    inicio = (inicio_v.tipo == VAL_BOOLEANO)
-                                ? (inicio_v.como.booleano ? 1 : 0)
-                                : (long)mp_get_i64(inicio_v.como.entero);
+                } else if (valor_es_entero(&inicio_v) || inicio_v.tipo == VAL_BOOLEANO) {
+                    if (inicio_v.tipo == VAL_BOOLEANO) {
+                        inicio = inicio_v.como.booleano ? 1 : 0;
+                    } else {
+                        int64_t i64 = 0;
+                        (void)valor_entero_a_i64(&inicio_v, &i64);
+                        inicio = (long)i64;
+                    }
                     if (inicio < 0) inicio += total;
                 } else {
                     VM_ERROR("ErrorDeTipo: inicio de rebanada debe ser entero");
@@ -1542,10 +1569,14 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 long fin;
                 if (fin_v.tipo == VAL_NULO) {
                     fin = (paso > 0) ? total : -1;
-                } else if (fin_v.tipo == VAL_ENTERO || fin_v.tipo == VAL_BOOLEANO) {
-                    fin = (fin_v.tipo == VAL_BOOLEANO)
-                                ? (fin_v.como.booleano ? 1 : 0)
-                                : (long)mp_get_i64(fin_v.como.entero);
+                } else if (valor_es_entero(&fin_v) || fin_v.tipo == VAL_BOOLEANO) {
+                    if (fin_v.tipo == VAL_BOOLEANO) {
+                        fin = fin_v.como.booleano ? 1 : 0;
+                    } else {
+                        int64_t i64 = 0;
+                        (void)valor_entero_a_i64(&fin_v, &i64);
+                        fin = (long)i64;
+                    }
                     if (fin < 0) fin += total;
                 } else {
                     VM_ERROR("ErrorDeTipo: fin de rebanada debe ser entero");

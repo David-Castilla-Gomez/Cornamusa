@@ -105,7 +105,7 @@ static void test_agregar_constante(void) {
     AFIRMAR(i2 == 1);
     AFIRMAR(i3 == 2);
     AFIRMAR(c.constantes_cuenta == 3);
-    AFIRMAR(c.constantes[0].tipo == VAL_ENTERO);
+    AFIRMAR(valor_es_entero(&c.constantes[0]));
     AFIRMAR(c.constantes[1].tipo == VAL_DECIMAL);
     AFIRMAR(c.constantes[2].tipo == VAL_CADENA);
     /* destruir libera mp_int y la cadena duplicada — sin leaks. */

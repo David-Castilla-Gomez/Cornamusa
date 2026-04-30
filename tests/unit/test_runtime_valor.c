@@ -77,7 +77,7 @@ static void test_valor_decimal_entero_visual(void) {
 
 static void test_valor_entero_pequeno(void) {
     Valor v = valor_entero_de_lexema("42", 2);
-    AFIRMAR(v.tipo == VAL_ENTERO);
+    AFIRMAR(valor_es_entero(&v));  /* SMALL o BIG, ambos válidos */
     AFIRMAR_CADENA(&v, "42");
     valor_destruir(&v);
 }
@@ -129,18 +129,22 @@ static void test_valor_entero_grande(void) {
 static void test_bignum_factorial_100(void) {
     /* Calcular 100! usando la API de libtommath para verificar que
        enteros grandes funcionan correctamente.
-       100! = 9332621544394415268169923885626670049071596826438162146859296389521759999322991560894146397615651828625369792082722375825118521091686400000000000000000000000 */
+       100! = 9332621544394415268169923885626670049071596826438162146859296389521759999322991560894146397615651828625369792082722375825118521091686400000000000000000000000
+       v0.11: usa los helpers porque los factores 2..62 son SMALL. */
     Valor v = valor_entero_de_long(1);
     for (long i = 2; i <= 100; i++) {
         Valor factor = valor_entero_de_long(i);
+        bool propio_v, propio_f;
+        mp_int *mv = valor_entero_a_mp_int(&v, &propio_v);
+        mp_int *mf = valor_entero_a_mp_int(&factor, &propio_f);
         mp_int *temp = (mp_int *)malloc(sizeof(mp_int));
         mp_init(temp);
-        mp_mul(v.como.entero, factor.como.entero, temp);
+        mp_mul(mv, mf, temp);
+        if (propio_v) { mp_clear(mv); free(mv); }
+        if (propio_f) { mp_clear(mf); free(mf); }
         valor_destruir(&v);
         valor_destruir(&factor);
-        v.tipo = VAL_ENTERO;
-        v.como.entero = temp;
-        v.dueno_cadena = false;
+        v = valor_entero_de_mp_normalizado(temp);
     }
     /* Verificar que tiene 158 dígitos (100! tiene 158). */
     char buffer[1024];
@@ -231,15 +235,18 @@ static void test_igualdad_cadenas(void) {
 /* ───── Clonación ───── */
 
 static void test_clonar_entero_es_independiente(void) {
-    /* Clonar un entero crea uno nuevo; modificar uno no debe afectar
-       el otro. Verificamos comparando direcciones de los mp_int. */
+    /* v0.11: clonar un SMALL es copia trivial de la unión. Para BIG
+       sí hay alocación separada. La invariante observable es que
+       destruir uno no afecta al otro. */
     Valor a = valor_entero_de_long(42);
     Valor b = valor_clonar(&a);
-    AFIRMAR(a.como.entero != b.como.entero);  /* diferentes alocaciones */
+    if (a.tipo == VAL_ENTERO && b.tipo == VAL_ENTERO) {
+        AFIRMAR(a.como.entero != b.como.entero);  /* BIG: diferentes mp_int */
+    }
     AFIRMAR(valor_iguales(&a, &b));
     valor_destruir(&a);
     /* Tras destruir a, b debe seguir siendo válido. */
-    AFIRMAR(b.tipo == VAL_ENTERO);
+    AFIRMAR(valor_es_entero(&b));
     char buf[64];
     valor_a_cadena(&b, buf, sizeof(buf));
     AFIRMAR(strcmp(buf, "42") == 0);
@@ -256,7 +263,7 @@ static void test_entorno_definir_y_obtener(void) {
 
     Valor recuperado;
     AFIRMAR(entorno_obtener(&e, "x", 1, &recuperado));
-    AFIRMAR(recuperado.tipo == VAL_ENTERO);
+    AFIRMAR(valor_es_entero(&recuperado));
     char buf[64];
     valor_a_cadena(&recuperado, buf, sizeof(buf));
     AFIRMAR(strcmp(buf, "42") == 0);

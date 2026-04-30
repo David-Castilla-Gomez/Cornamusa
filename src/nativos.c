@@ -180,6 +180,10 @@ static bool extraer_entero(const Valor *v, mp_int *out) {
     if (v->tipo == VAL_ENTERO) {
         return mp_copy(v->como.entero, out) == MP_OKAY;
     }
+    if (v->tipo == VAL_ENTERO_SMALL) {
+        mp_set_i64(out, v->como.entero_small);
+        return true;
+    }
     if (v->tipo == VAL_BOOLEANO) {
         mp_set_l(out, v->como.booleano ? 1 : 0);
         return true;
@@ -195,7 +199,7 @@ static Valor nativa_rango(EvalError *err, int n_args, Valor *args,
             n_args);
     }
     for (int i = 0; i < n_args; i++) {
-        if (args[i].tipo != VAL_ENTERO && args[i].tipo != VAL_BOOLEANO) {
+        if (!valor_es_entero(&args[i]) && args[i].tipo != VAL_BOOLEANO) {
             return error_nativa(err, linea, columna,
                 "ErrorDeTipo: rango() solo acepta enteros, recibio '%s'",
                 valor_nombre_tipo(&args[i]));
@@ -256,11 +260,11 @@ fail:
 static bool indice_a_long_natural(const Valor *v, long *out, int total) {
     long i;
     if (v->tipo == VAL_BOOLEANO) i = v->como.booleano ? 1 : 0;
-    else if (v->tipo == VAL_ENTERO) {
-        if (mp_count_bits(v->como.entero) > 62) return false;
-        i = (long)mp_get_i64(v->como.entero);
-    } else {
-        return false;
+    else {
+        int64_t i64;
+        if (!valor_entero_a_i64(v, &i64)) return false;
+        i = (long)i64;
+        if ((int64_t)i != i64) return false;
     }
     if (i < 0) i += total;
     if (i < 0 || i >= total) return false;
@@ -361,12 +365,17 @@ static Valor nativa_insertar(EvalError *err, int n_args, Valor *args,
        a [0, cuenta] tras normalizar). */
     long i;
     if (args[1].tipo == VAL_BOOLEANO) i = args[1].como.booleano ? 1 : 0;
-    else if (args[1].tipo == VAL_ENTERO
-             && mp_count_bits(args[1].como.entero) <= 62) {
-        i = (long)mp_get_i64(args[1].como.entero);
-    } else {
-        return error_nativa(err, linea, columna,
-            "ErrorDeTipo: indice de insertar() debe ser entero");
+    else {
+        int64_t i64;
+        if (!valor_entero_a_i64(&args[1], &i64)) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: indice de insertar() debe ser entero");
+        }
+        i = (long)i64;
+        if ((int64_t)i != i64) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: indice de insertar() demasiado grande");
+        }
     }
     if (i < 0) i += l->cuenta;
     if (i < 0) i = 0;
@@ -420,20 +429,36 @@ static int comparador_ordenar(const void *pa, const void *pb) {
     const Valor *b = (const Valor *)pb;
 
     /* Numéricos (entero/decimal/booleano) se comparan matemáticamente. */
-    bool an = a->tipo == VAL_ENTERO || a->tipo == VAL_DECIMAL || a->tipo == VAL_BOOLEANO;
-    bool bn = b->tipo == VAL_ENTERO || b->tipo == VAL_DECIMAL || b->tipo == VAL_BOOLEANO;
+    bool an = valor_es_entero(a) || a->tipo == VAL_DECIMAL || a->tipo == VAL_BOOLEANO;
+    bool bn = valor_es_entero(b) || b->tipo == VAL_DECIMAL || b->tipo == VAL_BOOLEANO;
     if (an && bn) {
-        bool a_ent = a->tipo == VAL_ENTERO || a->tipo == VAL_BOOLEANO;
-        bool b_ent = b->tipo == VAL_ENTERO || b->tipo == VAL_BOOLEANO;
+        bool a_ent = valor_es_entero(a) || a->tipo == VAL_BOOLEANO;
+        bool b_ent = valor_es_entero(b) || b->tipo == VAL_BOOLEANO;
         if (a_ent && b_ent) {
+            /* Camino rápido: ambos caben en i64. Frecuente porque los
+               SMALL siempre caben, los BOOLEANOs caben, y la mayoría
+               de BIGs en programas normales también. */
+            int64_t ai = 0, bi = 0;
+            bool a_fits = (a->tipo == VAL_BOOLEANO)
+                          ? (ai = a->como.booleano ? 1 : 0, true)
+                          : valor_entero_a_i64(a, &ai);
+            bool b_fits = (b->tipo == VAL_BOOLEANO)
+                          ? (bi = b->como.booleano ? 1 : 0, true)
+                          : valor_entero_a_i64(b, &bi);
+            if (a_fits && b_fits) {
+                if (ai < bi) return -1;
+                if (ai > bi) return 1;
+                return 0;
+            }
             mp_int ma, mb;
             if (mp_init_multi(&ma, &mb, NULL) != MP_OKAY) return 0;
-            mp_err r1 = MP_OKAY, r2 = MP_OKAY;
+            mp_err _r;
             if (a->tipo == VAL_BOOLEANO) mp_set_l(&ma, a->como.booleano ? 1 : 0);
-            else r1 = mp_copy(a->como.entero, &ma);
+            else if (a->tipo == VAL_ENTERO_SMALL) mp_set_i64(&ma, a->como.entero_small);
+            else { _r = mp_copy(a->como.entero, &ma); (void)_r; }
             if (b->tipo == VAL_BOOLEANO) mp_set_l(&mb, b->como.booleano ? 1 : 0);
-            else r2 = mp_copy(b->como.entero, &mb);
-            (void)r1; (void)r2;
+            else if (b->tipo == VAL_ENTERO_SMALL) mp_set_i64(&mb, b->como.entero_small);
+            else { _r = mp_copy(b->como.entero, &mb); (void)_r; }
             int c = mp_cmp(&ma, &mb);
             mp_clear_multi(&ma, &mb, NULL);
             if (c == MP_LT) return -1;
@@ -442,9 +467,11 @@ static int comparador_ordenar(const void *pa, const void *pb) {
         }
         double da = a->tipo == VAL_DECIMAL ? a->como.decimal
                   : a->tipo == VAL_BOOLEANO ? (a->como.booleano ? 1.0 : 0.0)
+                  : a->tipo == VAL_ENTERO_SMALL ? (double)a->como.entero_small
                   : mp_get_double(a->como.entero);
         double db = b->tipo == VAL_DECIMAL ? b->como.decimal
                   : b->tipo == VAL_BOOLEANO ? (b->como.booleano ? 1.0 : 0.0)
+                  : b->tipo == VAL_ENTERO_SMALL ? (double)b->como.entero_small
                   : mp_get_double(b->como.entero);
         if (da < db) return -1;
         if (da > db) return 1;
@@ -736,12 +763,14 @@ static Valor nativa_salir(EvalError *err, int n_args, Valor *args,
         const Valor *v = &args[0];
         if (v->tipo == VAL_BOOLEANO) {
             codigo = v->como.booleano ? 1 : 0;
-        } else if (v->tipo == VAL_ENTERO) {
-            codigo = (int)mp_get_i64(v->como.entero);
         } else {
-            return error_nativa(err, linea, columna,
-                "ErrorDeTipo: salir() requiere un entero, no '%s'",
-                valor_nombre_tipo(v));
+            int64_t i64;
+            if (!valor_entero_a_i64(v, &i64)) {
+                return error_nativa(err, linea, columna,
+                    "ErrorDeTipo: salir() requiere un entero, no '%s'",
+                    valor_nombre_tipo(v));
+            }
+            codigo = (int)i64;
         }
     }
     exit(codigo);
