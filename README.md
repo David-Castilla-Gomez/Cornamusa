@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-0.10.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-0.11.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -32,7 +32,7 @@ imprimir("PI =", mat.PI)
 imprimir("100! =", mat.factorial(100))
 ```
 
-## Características (en v0.10.0)
+## Características (en v0.11.0)
 
 - ✅ **Sintaxis castellana natural**: `si`/`sino`, `mientras`, `para X en Y`, `funcion`, `clase`, `intentar`/`atrapar`/`finalmente`, `verdadero`/`falso`/`nulo`.
 - ✅ **Tipado dinámico** con tipos completos: enteros bignum, decimales f64, cadenas UTF-8, listas, diccionarios, conjuntos, tuplas.
@@ -45,7 +45,8 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
 - ✅ **Stdlib mínima**: `matematicas` (PI, E, factorial, mcd, ...), `cadenas` (repetir, contar, empieza_con, ...) y `sistema` (`argv`, `salir`).
 - ✅ **Tests diferenciales** tree-walking vs bytecode + **benchmarks** en [`benchmarks/`](benchmarks/).
-- ✅ **Inline caching** estilo PEP 659 con quickening por reescritura de opcode (decisión [B8](decisiones/B8-inline-caching.md)). Especializaciones: `OP_OBTENER_GLOBAL_CACHE`, `OP_LLAMAR_{NATIVA,BC,CLASE,METODO_LIGADO}`, `OP_*_INT_INT` (suma/resta/mult + comparaciones), `OP_OBTENER_ATRIBUTO_INSTANCIA` (shape cache). ~1.3x mediana sobre v0.9.2 (1.83x en bignum, 1.35x en OOP).
+- ✅ **Inline caching** estilo PEP 659 con quickening por reescritura de opcode (decisión [B8](decisiones/B8-inline-caching.md)). Especializaciones: `OP_OBTENER_GLOBAL_CACHE`, `OP_LLAMAR_{NATIVA,BC,CLASE,METODO_LIGADO}`, `OP_*_INT_INT` (suma/resta/mult + comparaciones), `OP_OBTENER_ATRIBUTO_INSTANCIA` (shape cache).
+- ✅ **Small-int tagging** (decisión [B9](decisiones/B9-small-int-tagging.md)): enteros que caben en 63 bits viven inline en `Valor` sin alocar `mp_int`. Operaciones SMALL+SMALL inline con detección de overflow vía `__builtin_*_overflow`. Aritmética bignum (libtommath) sigue disponible transparentemente para enteros grandes. ~2.7x geomedia sobre v0.10 (6x en `fibonacci_recursivo`).
 - ⏳ **GC generacional + sitio web + docs completos**: planeados para v1.0.
 
 ## Cómo probar (5 minutos)
@@ -70,7 +71,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v0.10.0 publicada.** El lenguaje es funcional para programas reales con rendimiento mejorado por inline caching: OOP completo, GC, excepciones, módulos, stdlib mínima (`matematicas`, `cadenas`, `sistema`), tests diferenciales, benchmarks. Falta release final v1.0 con GC generacional, sitio web y docs completos.
+**v0.11.0 publicada.** El lenguaje es funcional para programas reales con rendimiento mejorado por inline caching y small-int tagging: OOP completo, GC, excepciones, módulos, stdlib mínima (`matematicas`, `cadenas`, `sistema`), tests diferenciales, benchmarks. Falta release final v1.0 con GC generacional, sitio web y docs completos.
 
 Hoja de ruta resumida:
 
@@ -86,6 +87,7 @@ Hoja de ruta resumida:
 | **v0.8** | **GC mark-sweep + super multinivel + excepciones polish** | ✅ |
 | **v0.9** | **Módulos + stdlib** | ✅ |
 | **v0.10** | **Inline caching especializado tipo PEP 659** | ✅ |
+| **v0.11** | **Small-int tagging (i63 inline en `Valor`)** | ✅ |
 | v1.0 | GC generacional + docs completos + sitio web | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

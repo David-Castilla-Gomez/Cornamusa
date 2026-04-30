@@ -6,6 +6,159 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.11.0] — 2026-04-30 — Small-int tagging (Fase 11.1)
+
+Segunda fase de optimización de rendimiento, basada en la decisión
+[B9](decisiones/B9-small-int-tagging.md). Enteros que caben en 63 bits
+ahora viven inline en la unión `Valor.como.entero_small` (`int64_t`),
+sin alocar `mp_int` ni invocar `mp_init`/`mp_clear`. La aritmética
+SMALL+SMALL es directa en `int64_t` con detección de overflow.
+
+Resultado: **~2.7x geomedia sobre v0.10**, **~6x en programas
+recursivos numéricos**.
+
+### Cambios principales (v0.11.0)
+
+**Representación de Valor**:
+- Nuevo tag `VAL_ENTERO_SMALL` en `TipoValor`. La unión `Valor.como`
+  gana un campo `int64_t entero_small` junto al `mp_int *entero`
+  existente.
+- Rango: `CORNAMUSA_SMALL_INT_MAX = 2^62 - 1`, `_MIN = -2^62`.
+  Reservamos 1 bit de margen respecto a `int64_t` para que la suma
+  de dos SMALL caben sin UB en C — necesario para el camino rápido
+  sin `__builtin_add_overflow` (MSVC fallback).
+- `VAL_ENTERO` (BIG) sigue siendo `mp_int *` para enteros grandes.
+  Las operaciones que producen ints normalizan: si el resultado cabe
+  en SMALL se devuelve como tal; si no, BIG.
+
+**API canónica** (en [src/valor.h](src/valor.h)):
+- `valor_es_entero(v)`: predicado que sustituye `v->tipo == VAL_ENTERO`.
+- `valor_entero_a_i64(v, *out)`: extrae como `int64_t` si cabe.
+- `valor_entero_a_mp_int(v, *propio)`: extrae como `mp_int *`,
+  alocando un temporal si es SMALL (flag *propio para liberar).
+- `valor_entero_de_i64(n)`: constructor canónico — SMALL si cabe,
+  BIG si no.
+- `valor_entero_de_mp_normalizado(m)`: constructor desde mp_int* con
+  demote automático a SMALL si el valor cabe.
+
+**Aritmética SMALL+SMALL** (en [src/evaluador.c](src/evaluador.c)):
+- Helper `evaluador_small_op_small` con dispatcher para `+`, `-`,
+  `*`, `//`, `%`. Usa `__builtin_*_overflow` (GCC/Clang) o detección
+  manual (MSVC).
+- Casos especiales manejados:
+  - Overflow → reportado como no-aplicable, fallback al path BIG.
+  - `SMALL_MIN / -1` (UB en C, `INT_MIN/-1`) → no-aplicable.
+  - División por cero → error explícito.
+  - Módulo Python-style (signo del divisor): `-7 % 3 = 2`.
+- `entero_op_entero` (path BIG existente) ahora normaliza el resultado
+  con `valor_entero_de_mp_normalizado` — `100000 - 99999 = 1` se
+  devuelve como SMALL, no como BIG.
+- `comparar_valores`: camino rápido `int64_t` inline si ambos
+  operandos caben en `i64`, fallback a `mp_cmp` si alguno es BIG
+  fuera de rango.
+
+**IC bytecode con SMALL** (en [src/vm.c](src/vm.c)):
+- Macros `BIN_INT_INT_ARITH` y `BIN_INT_INT_CMP` reescritas con tres
+  caminos: SMALL+SMALL inline, BIG+BIG via `mp_*`, mezcla degrada al
+  slow path.
+- El camino SMALL+SMALL invoca `evaluador_small_op_small`. Si
+  overflow, fallback a `mp_int` temporales que normalizan resultado.
+- Los literales numéricos del parser (`valor_entero_de_lexema`) se
+  pasan por `valor_entero_de_mp_normalizado` — los literales
+  pequeños son SMALL desde el principio.
+
+**Migración masiva** (sesión 3): 72 sitios que comprobaban
+`v.tipo == VAL_ENTERO` migrados a `valor_es_entero(&v)`. 22 sitios
+adicionales que leían `v.como.entero` directo migrados a usar los
+helpers (`valor_entero_a_i64` o `valor_entero_a_mp_int` con cleanup
+de temporal). Cubren `valor_a_doble`, indexación, rebanada,
+construcción de rango, comparador de ordenamiento, repetición de
+cadena, unario `-` y `~`, etc.
+
+### Tests (v0.11.0)
+
+- **12 tests boundaries nuevos** en [tests/unit/test_small_int.c](tests/unit/test_small_int.c):
+  - Constructor en frontera (SMALL_MIN/MAX caben; ±1 promueven a BIG).
+  - `valor_entero_de_mp_normalizado` demote correcto.
+  - Igualdad cross-tag: `SMALL(5) == BIG(5) == 5.0 == True`.
+  - Hash equivalente: `dicc[SMALL(5)]` y `dicc[BIG(5)]` acceden al
+    mismo slot — invariante crítica.
+  - Overflow promueve correctamente a BIG (suma, resta, mult).
+  - `SMALL_MIN / -1` reportado como no-aplicable.
+  - División por cero, módulo Python-style.
+  - Clone preserva tipo. Helpers de extracción funcionan para ambos
+    tags.
+- 92 tests verde en total (91 previos + el nuevo `test_small_int`).
+- Tests existentes actualizados donde asumían representación
+  pre-v0.11 (`test_runtime_valor`, `test_chunk_disasm`,
+  `test_runtime_evaluador`).
+
+### Rendimiento (v0.11.0)
+
+Mediana de 5 corridas, binario v0.10.0 desde su tag vs binario v0.11.0
+HEAD, ambos en CMake Release:
+
+| Benchmark             | v0.10.0  | v0.11.0  | Mejora |
+|-----------------------|----------|----------|--------|
+| bignum_factorial      | 29 ms    | 17 ms    | **1.71x** |
+| dicc_intensivo        | 121 ms   | 59 ms    | **2.05x** |
+| fibonacci_recursivo   | 1.33 s   | 222 ms   | **5.98x** |
+| globales_lookup       | 993 ms   | 391 ms   | **2.54x** |
+| oo_intensivo          | 44 ms    | 24 ms    | **1.83x** |
+
+**Geomedia ≈ 2.7x.**
+
+`fibonacci_recursivo` excede el plan B9 (3-5x prometido). El cuello
+ya no es allocación de `mp_int` — son las llamadas recursivas y el
+dispatch general (que F10 ya optimizó hasta lo razonable).
+
+`bignum_factorial` mejora menos en absoluto porque su loop interno
+hace `r * i` con `r` que crece hasta 1000 dígitos (BIG persistente):
+el ahorro está en `i` (SMALL) y en evitar alocaciones temporales,
+pero `mp_mul` sigue dominando.
+
+### Decisión arquitectónica (v0.11.0)
+
+Opción **B** del documento [B9](decisiones/B9-small-int-tagging.md):
+nuevo tag explícito en `TipoValor`, no tagged pointer.
+
+Razones documentadas:
+- Type-safety: el compilador C grita en cada switch que falte
+  adaptarse (gracias a `-Wswitch`). El sistema de tipos hace de
+  checklist.
+- Auditable: cada acceso a `como.entero` queda visible en grep, y
+  cualquier sitio que lea SMALL como `mp_int *` se manifiesta como
+  segfault o test failure inmediato (no corrupción silenciosa).
+- Migración progresiva: la API de helpers permitió migrar el código
+  base en pasos pequeños, con tests verde después de cada commit.
+
+Opción A (tagged pointer en bit 0 del `mp_int *`) rechazada por
+riesgo de bugs silenciosos. Opción C (NaN-boxing) aplazada a un
+hipotético v2.0 si se demuestra necesaria.
+
+### Notas (v0.11.0)
+
+- API pública (.cor scripts) sin cambios. El usuario no nota
+  diferencia salvo en velocidad — programas que antes corrían
+  correctamente siguen corriendo correctamente con los mismos
+  resultados.
+- Los tests diferenciales tree-walking vs bytecode (8 ejemplos)
+  fueron la red de seguridad principal del refactor: cualquier
+  divergencia entre paths SMALL y BIG se manifestaría como test
+  rojo. Permanecieron verde durante todo el ciclo.
+- ASan + UBSan en CI (job `sanitizers`) garantizó que las
+  conversiones SMALL ↔ BIG no introdujeran heap corruption ni UB
+  detectables.
+
+### Pendiente para futuro (post-v0.11)
+
+- **Threaded code dispatch** (computed gotos): ~10-15% global en
+  GCC/Clang; MSVC requiere doble path. Considerar como v0.12.
+- **Constant folding en compilador**: `1 + 2` se computa en
+  compile-time. Pequeño pero gratis.
+- **GC generacional + tier-2 IC + tracing**: trabajo mayor para
+  v1.x.
+
 ## [0.10.0] — 2026-04-30 — Inline caching especializado tipo PEP 659 (Fase 10)
 
 Primera fase de optimización de rendimiento. Cuatro tandas de
