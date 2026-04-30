@@ -343,7 +343,7 @@ static void test_identificadores(void) {
     evaluador_iniciar(&ev, &globales);
     Valor v = evaluador_evaluar_expr(&ev, e);
     AFIRMAR(!ev.error.tuvo_error);
-    AFIRMAR(v.tipo == VAL_ENTERO);
+    AFIRMAR(valor_es_entero(&v));
 
     char buf[64];
     valor_a_cadena(&v, buf, sizeof(buf));

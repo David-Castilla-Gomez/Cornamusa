@@ -159,6 +159,94 @@ Valor evaluador_valor_entero_de_mp(mp_int *m) { return valor_entero_de_mp(m); }
  * pone el error en el evaluador y devuelve nulo.
  * ────────────────────────────────────────────────────────────────── */
 
+/*
+ * v0.11 (B9): camino rápido SMALL+SMALL.
+ *
+ * Si ambos operandos son VAL_ENTERO_SMALL, ejecuta la operación con
+ * int64_t en stack sin tocar libtommath. Si el resultado cabe en SMALL,
+ * se devuelve inline. Si no (overflow detectado), `*aplicable = false`
+ * y el llamador cae al path BIG.
+ *
+ * Operaciones cubiertas: +, -, *, //, %.  Para potencia/bitwise/despl
+ * el llamador siempre va al path BIG (raras de aplicar a small int en
+ * programas normales).
+ *
+ * Nota: usamos __builtin_*_overflow cuando está disponible (GCC/Clang).
+ * Para MSVC fallback con check explícito vía rango.
+ */
+static Valor small_op_small(EvalError *err, TipoToken op,
+                              int64_t a, int64_t b,
+                              int linea, int columna,
+                              bool *aplicable) {
+    *aplicable = true;
+    int64_t r;
+    switch (op) {
+#if defined(__GNUC__) || defined(__clang__)
+        case TT_MAS:
+            if (__builtin_add_overflow(a, b, &r)) goto overflow_a_big;
+            return valor_entero_de_i64(r);
+        case TT_MENOS:
+            if (__builtin_sub_overflow(a, b, &r)) goto overflow_a_big;
+            return valor_entero_de_i64(r);
+        case TT_ASTERISCO:
+            if (__builtin_mul_overflow(a, b, &r)) goto overflow_a_big;
+            return valor_entero_de_i64(r);
+#else
+        case TT_MAS: {
+            /* Margen 2^62: a+b cabe en int64_t sin UB, pero puede no
+               caber en SMALL. valor_entero_de_i64 promueve si hace falta. */
+            r = a + b;
+            return valor_entero_de_i64(r);
+        }
+        case TT_MENOS: {
+            r = a - b;
+            return valor_entero_de_i64(r);
+        }
+        case TT_ASTERISCO: {
+            /* Detección manual para MSVC: si ambos caben en 31 bits, la
+               multiplicación cabe en 62 bits. Si no, pasar al path BIG. */
+            if (a >= INT32_MIN && a <= INT32_MAX
+                && b >= INT32_MIN && b <= INT32_MAX) {
+                r = a * b;
+                return valor_entero_de_i64(r);
+            }
+            goto overflow_a_big;
+        }
+#endif
+        case TT_DOBLE_BARRA: {  /* división entera floor */
+            if (b == 0) {
+                return error_pos(err, linea, columna,
+                    "ErrorAritmetico: division por cero");
+            }
+            /* Caso UB en C: SMALL_MIN / -1 desbordaria. Promote a BIG. */
+            if (a == CORNAMUSA_SMALL_INT_MIN && b == -1) goto overflow_a_big;
+            int64_t q = a / b;
+            int64_t rem = a - q * b;
+            /* Floor division: si signos difieren y hay resto, restar 1. */
+            if (rem != 0 && ((a < 0) != (b < 0))) q -= 1;
+            return valor_entero_de_i64(q);
+        }
+        case TT_PORCENTAJE: {  /* módulo (Python-style: signo del divisor) */
+            if (b == 0) {
+                return error_pos(err, linea, columna,
+                    "ErrorAritmetico: modulo por cero");
+            }
+            if (a == CORNAMUSA_SMALL_INT_MIN && b == -1) {
+                return valor_entero_de_i64(0);
+            }
+            int64_t rem = a % b;
+            if (rem != 0 && ((rem < 0) != (b < 0))) rem += b;
+            return valor_entero_de_i64(rem);
+        }
+        default:
+            *aplicable = false;
+            return valor_nulo();
+    }
+overflow_a_big:
+    *aplicable = false;
+    return valor_nulo();
+}
+
 static Valor entero_op_entero(EvalError *err, TipoToken op,
                               mp_int *a, mp_int *b,
                               int linea, int columna) {
@@ -277,7 +365,8 @@ static Valor entero_op_entero(EvalError *err, TipoToken op,
         liberar_mp(r);
         return error_pos(err, linea, columna, "fallo en operacion entera");
     }
-    return valor_entero_de_mp(r);
+    /* v0.11 (B9): si el resultado cabe en SMALL, demote inline. */
+    return valor_entero_de_mp_normalizado(r);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -408,6 +497,21 @@ static Orden comparar_valores(const Valor *a, const Valor *b) {
     bool a_entero = (valor_es_entero(a) || a->tipo == VAL_BOOLEANO);
     bool b_entero = (valor_es_entero(b) || b->tipo == VAL_BOOLEANO);
     if (a_entero && b_entero) {
+        /* v0.11 (B9): camino rápido — si ambos caben en i64 (incluyendo
+           SMALL y BOOLEANO), comparar inline sin alocar mp_int. */
+        int64_t ai = 0, bi = 0;
+        bool a_fits = (a->tipo == VAL_BOOLEANO)
+                      ? (ai = a->como.booleano ? 1 : 0, true)
+                      : valor_entero_a_i64(a, &ai);
+        bool b_fits = (b->tipo == VAL_BOOLEANO)
+                      ? (bi = b->como.booleano ? 1 : 0, true)
+                      : valor_entero_a_i64(b, &bi);
+        if (a_fits && b_fits) {
+            if (ai < bi) return ORD_LT;
+            if (ai > bi) return ORD_GT;
+            return ORD_EQ;
+        }
+        /* Al menos uno es BIG fuera de i64 — fallback bignum. */
         bool propio_a, propio_b;
         mp_int *ma = como_mp_int(a, &propio_a);
         mp_int *mb = como_mp_int(b, &propio_b);
@@ -856,6 +960,19 @@ static Valor aplicar_binario_pos(EvalError *err, TipoToken op,
             resultado = decimal_op_decimal(err, op, ad, bd, linea, columna);
             valor_destruir(&a); valor_destruir(&b);
             return resultado;
+        }
+
+        /* v0.11 (B9): camino rápido SMALL+SMALL sin tocar libtommath. */
+        if (a.tipo == VAL_ENTERO_SMALL && b.tipo == VAL_ENTERO_SMALL) {
+            bool aplicable;
+            resultado = small_op_small(err, op,
+                a.como.entero_small, b.como.entero_small,
+                linea, columna, &aplicable);
+            if (aplicable) {
+                valor_destruir(&a); valor_destruir(&b);
+                return resultado;
+            }
+            /* Overflow o op no especializada: caer al path BIG. */
         }
 
         bool pa, pb;

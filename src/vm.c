@@ -774,9 +774,14 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 const uint8_t *opcode_addr = frame->ip - 1;
                 int linea = linea_actual_frame(frame);
                 /* Capturar tipos antes de sacar (evaluador_aplicar_binario
-                   destruye los operandos). */
-                bool ambos_int = (valor_es_entero(&vm->tope[-1])
-                                  && valor_es_entero(&vm->tope[-2]));
+                   destruye los operandos).
+                   v0.11 (B9 sesión 4): promover a *_INT_INT solo si AMBOS
+                   son VAL_ENTERO (BIG). Si son SMALL evitamos el ping-pong
+                   con la variante INT_INT actual que aún rechaza SMALL.
+                   Sesión 5 hará que INT_INT acepte SMALL — entonces este
+                   chequeo volverá a `valor_es_entero`. */
+                bool ambos_int = (vm->tope[-1].tipo == VAL_ENTERO
+                                  && vm->tope[-2].tipo == VAL_ENTERO);
                 Valor b = sacar(vm);
                 Valor a = sacar(vm);
                 int tt = opcode_a_token_binario(op);
