@@ -42,7 +42,23 @@ struct EvalError;
 typedef enum {
     VAL_NULO,
     VAL_BOOLEANO,
-    VAL_ENTERO,        /* bignum boxed (mp_int *) */
+    /*
+     * Enteros — DOS representaciones desde v0.11 (decisión B9):
+     *
+     *   VAL_ENTERO_SMALL: int64_t inline en `como.entero_small`. Para
+     *     enteros que caben en [-2^62, 2^62). Sin allocación.
+     *   VAL_ENTERO:       mp_int * en `como.entero`. Para enteros más
+     *     grandes (o resultados intermedios que se demoten cuando
+     *     pasen por una operación que los normalice).
+     *
+     * NUNCA se accede a `como.entero` sin haber verificado primero que
+     * `v.tipo == VAL_ENTERO`. Para "es algún entero" usar el helper
+     * `valor_es_entero(&v)`. Para extraer el valor numérico usar
+     * `valor_entero_a_i64` o `valor_entero_a_mp_int`. Acceso directo
+     * está restringido a valor.c y a hot paths del IC en vm.c.
+     */
+    VAL_ENTERO,
+    VAL_ENTERO_SMALL,
     VAL_DECIMAL,       /* double IEEE 754 */
     VAL_CADENA,        /* texto UTF-8, ref al buffer fuente o heap */
     VAL_FUNCION,       /* función definida por el usuario (tree-walking) */
@@ -105,7 +121,8 @@ typedef struct Valor {
     bool dueno_cadena;
     union {
         bool booleano;
-        mp_int *entero;            /* malloc'd; liberado en valor_destruir */
+        mp_int *entero;            /* VAL_ENTERO: malloc'd; liberado en valor_destruir */
+        int64_t entero_small;      /* VAL_ENTERO_SMALL: inline (B9, v0.11) */
         double decimal;
         struct {
             const char *texto;     /* UTF-8, NO terminado en \0 necesariamente */
@@ -494,8 +511,64 @@ Valor valor_entero_de_lexema(const char *lexema, int longitud);
 /*
  * Construye un VAL_ENTERO desde un long signed simple. Útil para
  * inicializar contadores, índices y constantes en runtime.
+ *
+ * v0.11: delega en `valor_entero_de_i64` y por tanto puede devolver
+ * VAL_ENTERO_SMALL si `v` cabe en el rango SMALL.
  */
 Valor valor_entero_de_long(long v);
+
+/* ──────────────────────────────────────────────────────────────────
+ * Small-int tagging (decisión B9, v0.11).
+ *
+ * API canónica para construir, inspeccionar y consumir enteros de
+ * Cornamusa. Cualquier código FUERA de valor.c y de los hot paths del
+ * IC en vm.c debe usar estos helpers; el acceso directo a
+ * `v.como.entero` o `v.como.entero_small` está restringido.
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Rango de SMALL. Reservamos 1 bit de margen respecto a int64_t para
+ * que la suma `a + b` con ambos en rango SMALL nunca cause UB en C
+ * (cabe en int64_t sin overflow). Tras la suma se comprueba si el
+ * resultado cabe de nuevo en SMALL; si no, se promueve a BIG.
+ */
+#define CORNAMUSA_SMALL_INT_MAX  ((int64_t)0x3FFFFFFFFFFFFFFFLL)  /* 2^62 - 1 */
+#define CORNAMUSA_SMALL_INT_MIN  (-CORNAMUSA_SMALL_INT_MAX - 1)   /* -2^62 */
+
+/* True si v es VAL_ENTERO o VAL_ENTERO_SMALL. Sustituye el patrón
+   `v->tipo == VAL_ENTERO` que era válido en v0.10 pero no v0.11. */
+static inline bool valor_es_entero(const Valor *v) {
+    return v->tipo == VAL_ENTERO || v->tipo == VAL_ENTERO_SMALL;
+}
+
+/* Si v es entero (SMALL o BIG) y el valor cabe en int64_t, escribe
+   en *out y devuelve true. False si no es entero o el BIG no cabe.
+   No toma posesión, no muta v. */
+bool valor_entero_a_i64(const Valor *v, int64_t *out);
+
+/* Devuelve un mp_int* válido apuntando al valor numérico de v.
+ *
+ *   - Si v es VAL_ENTERO (BIG): devuelve v->como.entero, *propio = false.
+ *     El cliente NO debe liberarlo.
+ *   - Si v es VAL_ENTERO_SMALL: aloca un mp_int temporal con el valor,
+ *     *propio = true. El cliente DEBE liberar con `evaluador_liberar_mp`
+ *     tras usarlo.
+ *
+ * Devuelve NULL si v no es entero o si la alocación temporal falla. */
+mp_int *valor_entero_a_mp_int(const Valor *v, bool *propio);
+
+/* Constructor canónico desde int64_t. Si n cabe en [SMALL_INT_MIN,
+   SMALL_INT_MAX] devuelve VAL_ENTERO_SMALL inline. Si no, aloca un
+   mp_int y devuelve VAL_ENTERO. */
+Valor valor_entero_de_i64(int64_t n);
+
+/* Constructor desde mp_int *, tomando posesión. Si el valor cabe en
+   SMALL, libera el mp_int y devuelve VAL_ENTERO_SMALL. Si no, lo
+   envuelve directamente en VAL_ENTERO. Útil tras una operación
+   bignum cuyo resultado puede normalizar a SMALL.
+   El llamador NUNCA debe usar `m` tras esta llamada (puede haber sido
+   liberado). */
+Valor valor_entero_de_mp_normalizado(mp_int *m);
 
 /*
  * Construye un VAL_DECIMAL desde un literal Cornamusa

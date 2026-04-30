@@ -123,9 +123,78 @@ Valor valor_entero_de_lexema(const char *lexema, int longitud) {
 }
 
 Valor valor_entero_de_long(long n) {
+    /* Delega en valor_entero_de_i64 para que pase por la política de
+       SMALL/BIG (B9, v0.11). En v0.11 sesión 1 todavía siempre devuelve
+       BIG; las sesiones siguientes activan SMALL. */
+    return valor_entero_de_i64((int64_t)n);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Small-int tagging — helpers públicos (B9, v0.11 sesión 1).
+ *
+ * En esta sesión la generación de SMALL está DESACTIVADA:
+ * `valor_entero_de_i64` siempre devuelve VAL_ENTERO (BIG), igual que
+ * la implementación pre-v0.11. La API queda lista para que las
+ * sesiones siguientes (3+) cambien la política sin tocar callers.
+ * ────────────────────────────────────────────────────────────────── */
+
+bool valor_entero_a_i64(const Valor *v, int64_t *out) {
+    if (!v || !out) return false;
+    if (v->tipo == VAL_ENTERO_SMALL) {
+        *out = v->como.entero_small;
+        return true;
+    }
+    if (v->tipo == VAL_ENTERO) {
+        /* mp_get_i64 devuelve los 64 bits bajos en signed; chequeamos
+           que el bignum quepa en el rango con mp_isfit (no existe en
+           libtommath estándar) — usamos el equivalente: comparar
+           mp_count_bits con 63 (bits de magnitud + signo). */
+        mp_int *m = v->como.entero;
+        if (mp_count_bits(m) < 64) {
+            /* Cabe en signed 64-bit. */
+            *out = mp_get_i64(m);
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+mp_int *valor_entero_a_mp_int(const Valor *v, bool *propio) {
+    if (!v || !propio) return NULL;
+    if (v->tipo == VAL_ENTERO) {
+        *propio = false;
+        return v->como.entero;
+    }
+    if (v->tipo == VAL_ENTERO_SMALL) {
+        mp_int *m = nuevo_mp_int();
+        if (!m) return NULL;
+        mp_set_i64(m, v->como.entero_small);
+        *propio = true;
+        return m;
+    }
+    return NULL;
+}
+
+Valor valor_entero_de_i64(int64_t n) {
+    /* SESIÓN 1: siempre BIG. La activación de SMALL se hace en
+       sesión 3 cambiando esta función. Mantener el contrato de
+       posesión consistente (callers reciben un Valor que requieren
+       destruir con valor_destruir). */
     mp_int *m = nuevo_mp_int();
     if (m == NULL) return valor_nulo();
-    mp_set_l(m, n);
+    mp_set_i64(m, n);
+    Valor v;
+    v.tipo = VAL_ENTERO;
+    v.dueno_cadena = false;
+    v.como.entero = m;
+    return v;
+}
+
+Valor valor_entero_de_mp_normalizado(mp_int *m) {
+    /* SESIÓN 1: nunca normaliza, siempre envuelve como BIG. La
+       normalización a SMALL se activa en sesión 3. */
+    if (!m) return valor_nulo();
     Valor v;
     v.tipo = VAL_ENTERO;
     v.dueno_cadena = false;
