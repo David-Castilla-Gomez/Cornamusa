@@ -138,11 +138,8 @@ static Valor nativa_longitud(EvalError *err, int n_args, Valor *args,
             return valor_nulo();
         }
         mp_clear_multi(&mag_diff, &mag_paso, &q, &r, &diff, NULL);
-        Valor out;
-        out.tipo = VAL_ENTERO;
-        out.dueno_cadena = false;
-        out.como.entero = resultado;
-        return out;
+        /* v0.11 (B9): longitud(rango) suele ser pequeña — demote. */
+        return valor_entero_de_mp_normalizado(resultado);
     }
     return error_nativa(err, linea, columna,
         "ErrorDeTipo: longitud() no soporta '%s'", valor_nombre_tipo(v));

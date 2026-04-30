@@ -975,11 +975,8 @@ bool iter_siguiente(Iterador *it, Valor *out) {
                 return false;
             }
             mp_clear(&actual);
-            Valor v;
-            v.tipo = VAL_ENTERO;
-            v.dueno_cadena = false;
-            v.como.entero = resultado;
-            *out = v;
+            /* v0.11 (B9): iteradores de rango suelen producir SMALL. */
+            *out = valor_entero_de_mp_normalizado(resultado);
             it->cursor++;
             return true;
         }

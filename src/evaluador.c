@@ -1128,7 +1128,7 @@ static Valor aplicar_unario_pos(EvalError *err, TipoToken op,
                 }
                 if (propio) liberar_mp(m);
                 valor_destruir(&v);
-                return valor_entero_de_mp(r);
+                return valor_entero_de_mp_normalizado(r);
             }
             valor_destruir(&v);
             return error_pos(err, linea, columna,
@@ -1687,10 +1687,10 @@ static void ejec_para(Evaluador *ev, const Sent *s) {
                 sent_set_error(ev, s, "memoria insuficiente en 'para'");
                 break;
             }
-            Valor vi;
-            vi.tipo = VAL_ENTERO;
-            vi.dueno_cadena = false;
-            vi.como.entero = clon;
+            /* v0.11 (B9): si la iteración cabe en SMALL, demote.
+               Útil para `para i en rango(0, 1000)` donde cada i es
+               pequeño — evita ~3000 mp_init/mp_clear extra. */
+            Valor vi = valor_entero_de_mp_normalizado(clon);
             if (!entorno_definir(ev->entorno_actual,
                                   objetivo->como.ident.nombre,
                                   objetivo->como.ident.longitud, vi)) {
