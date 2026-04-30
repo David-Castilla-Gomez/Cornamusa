@@ -331,6 +331,90 @@ static Valor cadena_desde_lexema(const char *lex, int len) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Constant folding (v0.11.3)
+ *
+ * Si una expresión binaria/unaria tiene operandos constantes (literales
+ * o sub-expresiones constantes recursivas), la computamos en
+ * compile-time y emitimos OP_CONST en lugar del bytecode aritmético.
+ *
+ * Cubre patrones comunes en código real:
+ *   `1 + 2`, `2 ** 10`, `60 * 60 * 24` (constantes nombradas), etc.
+ *
+ * NO foldeamos si la operación produciría error (división por cero,
+ * tipos incompatibles): dejamos que el runtime reporte el error con
+ * la línea correcta, no en compile-time.
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Devuelve true y rellena *out con un Valor recién construido si `e`
+ * es una expresión constante evaluable en compile-time. Toma posesión
+ * del Valor — el llamador debe destruirlo.
+ *
+ * Soporta: literales (NULO, BOOLEANO, ENTERO, DECIMAL, CADENA), GRUPO
+ * recursivo, UNARIO recursivo, BINARIO recursivo. NO soporta f-strings,
+ * identificadores ni llamadas (esos no son constantes en compile-time).
+ */
+static bool evaluar_constante(const Expr *e, Valor *out) {
+    if (!e) return false;
+    switch (e->tipo) {
+        case EXPR_LITERAL_NULO:
+            *out = valor_nulo();
+            return true;
+        case EXPR_LITERAL_BOOLEANO:
+            *out = valor_booleano(e->como.booleano.valor);
+            return true;
+        case EXPR_LITERAL_ENTERO:
+            *out = valor_entero_de_lexema(e->como.literal.lexema,
+                                            e->como.literal.longitud);
+            return out->tipo != VAL_NULO;  /* false si lexema malformado */
+        case EXPR_LITERAL_DECIMAL:
+            *out = valor_decimal_de_lexema(e->como.literal.lexema,
+                                             e->como.literal.longitud);
+            return out->tipo != VAL_NULO;
+        case EXPR_LITERAL_CADENA:
+            *out = cadena_desde_lexema(e->como.literal.lexema,
+                                         e->como.literal.longitud);
+            return out->tipo != VAL_NULO;
+        case EXPR_GRUPO:
+            return evaluar_constante(e->como.grupo.interna, out);
+        case EXPR_UNARIO: {
+            Valor inner;
+            if (!evaluar_constante(e->como.unario.operando, &inner)) return false;
+            EvalError err = {0};
+            *out = evaluador_aplicar_unario(&err,
+                (int)e->como.unario.op, inner, e->linea, e->columna);
+            if (err.tuvo_error) {
+                /* `inner` fue consumido por evaluador_aplicar_unario.
+                   Y `*out` puede contener basura — descartarlo. */
+                valor_destruir(out);
+                *out = valor_nulo();
+                return false;
+            }
+            return true;
+        }
+        case EXPR_BINARIO: {
+            Valor a, b;
+            if (!evaluar_constante(e->como.binario.izq, &a)) return false;
+            if (!evaluar_constante(e->como.binario.der, &b)) {
+                valor_destruir(&a);
+                return false;
+            }
+            EvalError err = {0};
+            *out = evaluador_aplicar_binario(&err,
+                (int)e->como.binario.op, a, b, e->linea, e->columna);
+            if (err.tuvo_error) {
+                valor_destruir(out);
+                *out = valor_nulo();
+                return false;
+            }
+            return true;
+        }
+        default:
+            return false;
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Compilación de expresiones
  * ────────────────────────────────────────────────────────────────── */
 
@@ -387,6 +471,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return compilador_compilar_expr(c, e->como.grupo.interna);
 
         case EXPR_BINARIO: {
+            /* v0.11.3: constant folding. Si ambos lados se reducen a
+               constantes, computamos el resultado en compile-time. */
+            Valor folded;
+            if (evaluar_constante(e, &folded)) {
+                chunk_emitir_constante(c->actual->chunk, folded, e->linea);
+                return true;
+            }
             if (!compilador_compilar_expr(c, e->como.binario.izq)) return false;
             if (!compilador_compilar_expr(c, e->como.binario.der)) return false;
             int op = token_a_opcode_binario(e->como.binario.op);
@@ -400,6 +491,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         }
 
         case EXPR_UNARIO: {
+            /* v0.11.3: constant folding para -3, no falso, +5, etc. */
+            Valor folded;
+            if (evaluar_constante(e, &folded)) {
+                chunk_emitir_constante(c->actual->chunk, folded, e->linea);
+                return true;
+            }
             if (!compilador_compilar_expr(c, e->como.unario.operando)) return false;
             switch (e->como.unario.op) {
                 case TT_MENOS:

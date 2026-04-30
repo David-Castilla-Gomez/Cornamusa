@@ -317,11 +317,14 @@ static void test_llamar_degradacion_polimorfica(void) {
 
 static void test_binario_promueve_a_int_int(void) {
     /* Site monomórfico int+int: tras ejecutar, los opcodes deben estar
-       quickened. */
+       quickened. v0.11.3: usamos variables intermedias (k0..k5) para
+       evitar que el constant folding del compilador reduzca el binario
+       a OP_CONST en compile-time. */
     const char *fuente =
-        "a = 1 + 2\n"     /* OP_SUMAR        → OP_SUMAR_INT_INT */
-        "b = 5 - 3\n"     /* OP_RESTAR       → OP_RESTAR_INT_INT */
-        "c = 4 * 6\n";    /* OP_MULTIPLICAR  → OP_MULTIPLICAR_INT_INT */
+        "k0 = 1\nk1 = 2\nk2 = 5\nk3 = 3\nk4 = 4\nk5 = 6\n"
+        "a = k0 + k1\n"     /* OP_SUMAR_INT_INT (tras quickening) */
+        "b = k2 - k3\n"     /* OP_RESTAR_INT_INT */
+        "c = k4 * k5\n";    /* OP_MULTIPLICAR_INT_INT */
     Arena a; Chunk chunk; VM vm;
     bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
     AFIRMAR(ok);
@@ -341,9 +344,11 @@ static void test_binario_promueve_a_int_int(void) {
 /* ───── 9. OP_MENOR int+int promueve, str+str se queda en slow ───── */
 
 static void test_menor_int_int_y_str_str(void) {
+    /* v0.11.3: variables para evitar constant folding. */
     const char *fuente =
-        "a = 1 < 2\n"             /* int+int → OP_MENOR_INT_INT */
-        "b = \"a\" < \"b\"\n";    /* str+str → se queda en OP_MENOR */
+        "k0 = 1\nk1 = 2\nk2 = \"a\"\nk3 = \"b\"\n"
+        "a = k0 < k1\n"             /* int+int → OP_MENOR_INT_INT */
+        "b = k2 < k3\n";            /* str+str → se queda en OP_MENOR */
     Arena a; Chunk chunk; VM vm;
     bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
     AFIRMAR(ok);

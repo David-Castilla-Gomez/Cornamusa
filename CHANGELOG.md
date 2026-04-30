@@ -6,6 +6,59 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.11.3] — 2026-04-30 — constant folding en compilador
+
+Pulido del pipeline de compilación. Expresiones cuyos operandos son
+todos constantes ahora se reducen a un único `OP_CONST` en compile-time
+en lugar de emitir bytecode aritmético.
+
+### Añadido (v0.11.3)
+
+- **`evaluar_constante` en `compilador.c`**: helper recursivo que
+  intenta evaluar una expresión en compile-time. Soporta:
+  - Literales (`NULO`, `BOOLEANO`, `ENTERO`, `DECIMAL`, `CADENA`).
+  - `EXPR_GRUPO` (paréntesis) recursivo.
+  - `EXPR_UNARIO` (`-x`, `+x`, `no x`, `~x`) cuando el operando es
+    constante.
+  - `EXPR_BINARIO` (todas las aritméticas/comparaciones/lógicas)
+    cuando ambos lados son constantes.
+- Reusa `evaluador_aplicar_unario` y `evaluador_aplicar_binario` —
+  el folding produce semánticamente lo mismo que el runtime.
+- **No foldeamos errores**: si la operación produciría un error
+  (división por cero, tipos incompatibles), el folding aborta y
+  dejamos al runtime reportar el error en su línea original.
+
+### Patrones que ahora se foldean
+
+```cornamusa
+SEGUNDOS_DIA = 60 * 60 * 24      # → OP_CONST 86400
+AREA = 3.14159 * 10 * 10         # → OP_CONST 314.159
+MENSAJE = "Hola, " + "mundo"     # → OP_CONST "Hola, mundo"
+LIMITE = 2 ** 16                 # → OP_CONST 65536
+PUEDE = 5 < 10 y 3 > 1           # → OP_CONST true
+```
+
+### Tests (v0.11.3)
+
+- Tests del IC actualizados (`test_bytecode_ic.c`): los casos que
+  antes hacían `1 + 2` para verificar `OP_SUMAR_INT_INT` ahora usan
+  variables intermedias (`k0 = 1; k1 = 2; a = k0 + k1`) para evitar
+  que el folding eluda el opcode bajo prueba. La especialización
+  IC sigue funcionando correctamente, pero se valida con código
+  realista (variables locales/globales, no literales).
+
+92 tests verde.
+
+### Notas (v0.11.3)
+
+- El impacto en benchmarks `benchmarks/*.cor` es marginal porque
+  esos workloads no tienen aritmética constante en hot loops. El
+  beneficio real es en código de aplicación: definiciones de
+  constantes nombradas, fórmulas pre-computables, configs.
+- Aún no foldeamos llamadas a built-ins puros como `longitud("hola")`
+  o `mat.PI * 2`. Sería natural en una sesión futura — solo requiere
+  whitelist de funciones puras.
+
 ## [0.11.2] — 2026-04-30 — fast-path int64 en iterador de `rango`
 
 Tech-debt #5 de la revisión post-release de v0.11.1 cerrado. Programas
