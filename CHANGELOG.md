@@ -6,6 +6,51 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.11.4] — 2026-04-30 — fix hash divergente en banda 2^62..2^63
+
+Cierra tech-debt #6 de la revisión post-release v0.11.1: bug latente
+de hash entre `VAL_ENTERO` BIG y `VAL_DECIMAL` con el mismo valor
+numérico cuando ambos caían en la banda `[2^62, 2^63)`.
+
+### Bug corregido (v0.11.4)
+
+- `valor_a_int64_si_cabe` (en `src/valor.c`) rechazaba BIG con
+  `mp_count_bits > 62`, pero un DECIMAL del mismo valor pasaba por
+  el camino i64 (rango ±9.2e18). Resultado: hashes divergentes.
+  Ejemplo:
+  ```cornamusa
+  d = {}
+  d[2 ** 62] = "uno"             # clave guardada como BIG
+  imprimir(d[2.0 ** 62])          # antes: ErrorDeClave (slots distintos)
+                                  # ahora: "uno" (mismo slot)
+  ```
+- Fix de 1 línea: `mp_count_bits > 62` → `mp_count_bits >= 64`.
+  Esto acepta hasta magnitud 63 bits (rango int64 completo excepto
+  INT64_MIN cuya magnitud es exactamente 64). Ahora BIGs en
+  `[INT64_MIN+1, INT64_MAX]` y DECIMALs equivalentes hashean al
+  mismo slot, manteniendo la invariante `a == b ⇒ hash(a) == hash(b)`.
+
+### Tests (v0.11.4)
+
+- Nuevo `test_hash_banda_2_62` en `test_small_int.c`: construye un
+  BIG con valor 2^62 y un DECIMAL con valor 2^62.0; verifica que
+  `dicc_asignar(dict, BIG)` permite recuperar con clave DECIMAL.
+- 14 tests boundaries totales (de 13 en v0.11.3).
+- 92 tests en suite completa.
+
+### Pendiente para v0.12+
+
+Tras este patch, los tech-debt restantes documentados son:
+- #2: helpers `valor_entero_a_mp_int` (público, no acepta bool) vs
+  `como_mp_int` (privado en evaluador.c, sí acepta bool). Aún
+  duplicados; razón legítima de existir, pero la convergencia hacia
+  un solo helper queda pendiente.
+- #4: MSVC fallback de `__builtin_mul_overflow` con cota int31.
+- #8: `long → int64_t` en indexación para Windows LLP64.
+- Threaded code dispatch (computed gotos): refactor masivo de
+  ~200 cambios al switch del VM por solo ~10-15% de ganancia.
+  ROI/coste no compensa frente a un pivote a v1.0 (Fase 11.2).
+
 ## [0.11.3] — 2026-04-30 — constant folding en compilador
 
 Pulido del pipeline de compilación. Expresiones cuyos operandos son

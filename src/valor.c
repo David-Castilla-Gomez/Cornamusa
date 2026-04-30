@@ -406,12 +406,20 @@ static uint64_t fnv1a_64(const uint8_t *data, size_t len) {
 }
 
 /* Convierte un valor numérico (booleano/entero/decimal) a int64 si
- * cabe sin pérdida. Devuelve true si la conversión es exacta. */
+ * cabe sin pérdida. Devuelve true si la conversión es exacta.
+ *
+ * v0.11.4: corregido el rango BIG. Antes aceptaba solo magnitud ≤ 62
+ * bits (rango SMALL); ahora acepta hasta < 64 bits (rango int64
+ * completo excepto INT64_MIN). Esto cierra una incoherencia de hash:
+ * un BIG en la banda 2^62..2^63 daba un hash distinto de un DECIMAL
+ * con el mismo valor numérico, porque el DECIMAL pasaba por el path
+ * rápido i64 (rango ±9.2e18) y el BIG no. Ahora ambos convergen al
+ * mismo path i64 → mismo hash. (Tech-debt #6 de revisión post-v0.11.) */
 static bool valor_a_int64_si_cabe(const Valor *v, int64_t *out) {
     if (v->tipo == VAL_BOOLEANO) { *out = v->como.booleano ? 1 : 0; return true; }
     if (v->tipo == VAL_ENTERO_SMALL) { *out = v->como.entero_small; return true; }
     if (v->tipo == VAL_ENTERO) {
-        if (mp_count_bits(v->como.entero) > 62) return false;
+        if (mp_count_bits(v->como.entero) >= 64) return false;
         *out = (int64_t)mp_get_i64(v->como.entero);
         return true;
     }

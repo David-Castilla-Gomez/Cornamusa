@@ -142,6 +142,34 @@ static void test_hash_equivalente(void) {
     dicc_liberar(d);
 }
 
+/* ───── 4b. Hash convergente en banda 2^62..2^63 (v0.11.4 fix) ─────
+ *
+ * Antes de v0.11.4, BIG con magnitud entre 63 y 63 bits NO pasaba por
+ * el path rápido i64 en `valor_a_int64_si_cabe`, pero un DECIMAL con
+ * el mismo valor SÍ. Resultado: hashes distintos.
+ *
+ * Tras v0.11.4, ambos convergen al path i64. */
+static void test_hash_banda_2_62(void) {
+    /* 2^62 = SMALL_INT_MAX + 1, no cabe en SMALL pero sí en int64. */
+    int64_t valor = (int64_t)CORNAMUSA_SMALL_INT_MAX + 1;  /* 2^62 */
+    Valor b = forzar_big(valor);
+    Valor d_v = valor_decimal((double)valor);
+    AFIRMAR(b.tipo == VAL_ENTERO);
+    /* Ambos deben dar el mismo hash → mismo slot en un dicc. */
+    Diccionario *dict = dicc_nuevo();
+    Valor v_uno = valor_cadena_duplicar("uno", 3);
+    AFIRMAR(dicc_asignar(dict, b, v_uno));   /* clave BIG */
+    Valor out;
+    AFIRMAR(dicc_obtener(dict, &d_v, &out)); /* recupera con clave DECIMAL */
+    char buf[64];
+    valor_a_cadena(&out, buf, sizeof(buf));
+    AFIRMAR(strcmp(buf, "uno") == 0);
+    valor_destruir(&out);
+    valor_destruir(&d_v);
+    /* dict toma posesión de b y v_uno. */
+    dicc_liberar(dict);
+}
+
 /* ───── 5. Aritmética: overflow SMALL+SMALL promueve a BIG ───── */
 
 /* Verificamos vía el evaluador (donde está small_op_small). Pero como
@@ -300,6 +328,7 @@ int main(void) {
     test_normalizado_demote();
     test_igualdad_cross_tag();
     test_hash_equivalente();
+    test_hash_banda_2_62();
     test_overflow_suma_promueve();
     test_overflow_resta_promueve();
     test_overflow_mult_promueve();
@@ -310,7 +339,7 @@ int main(void) {
     test_clone_preserva_tipo();
     test_helpers_extraccion();
     if (fallos == 0) {
-        printf("test_small_int: 13 tests PASS\n");
+        printf("test_small_int: 14 tests PASS\n");
         return 0;
     }
     fprintf(stderr, "test_small_int: %d FALLO(s)\n", fallos);
