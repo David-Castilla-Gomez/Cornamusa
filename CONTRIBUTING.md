@@ -4,27 +4,31 @@
 
 ## Antes de empezar
 
-1. Lee la **[especificación del lenguaje](ESPEC.md)** y el **[plan de desarrollo](recursos.md)**.
-2. Revisa los *issues* abiertos para no duplicar trabajo.
-3. Para cambios grandes, abre primero un *issue* de discusión.
+1. Lee el **[tutorial](docs/tutorial.md)** para entender el lenguaje desde la perspectiva del usuario.
+2. Lee la **[especificación formal](ESPEC.md)** si vas a tocar parser/lexer/VM.
+3. Revisa las **[decisiones cerradas](decisiones/)** (ADRs `B1`-`B10`): el razonamiento detrás de cada decisión grande del proyecto está documentado allí. Cualquier cambio que vaya a contradecir una ADR existente requiere primero discusión.
+4. Revisa los *issues* abiertos para no duplicar trabajo.
+5. Para cambios grandes, abre primero un *issue* de discusión.
 
 ## Áreas donde se necesita ayuda
 
-- **Diseño del lenguaje:** comentarios sobre `ESPEC.md`, sugerencias para naming castellano natural.
-- **Implementación en C:** lexer, parser, VM, GC.
-- **Tests:** programas `.cor` que ejerciten casos límite.
-- **Documentación:** tutoriales, ejemplos, traducción de mensajes de error.
-- **Biblioteca estándar:** módulos `matematicas`, `cadenas`, `io`, `json`, etc.
+- **Diseño del lenguaje:** comentarios sobre `ESPEC.md`, naming castellano natural, propuestas de features.
+- **Implementación en C:** lexer (`src/lexer.c`), parser (`src/parser.c`), VM bytecode (`src/vm.c`), compilador (`src/compilador.c`), GC (`src/memoria.c`).
+- **Tests:** programas `.cor` que ejerciten casos límite. Especialmente útiles los **tests diferenciales tree-walking vs bytecode** (`tests/CMakeLists.txt` sección `EJEMPLOS_DIFERENCIALES`) que validan que ambos motores producen output idéntico — son la red principal de seguridad ante regresiones semánticas.
+- **Documentación:** mejoras al tutorial y referencia en `docs/`. Ejemplos en `examples/`.
+- **Biblioteca estándar (`stdlib/*.cor`):** ampliar `matematicas`, `cadenas`, `sistema`; nuevos módulos como `archivos`, `json`, `regex` (planeados v1.1+).
+- **Built-ins planeados:** ver §4.2 de `ESPEC.md` para la lista (`leer`, `enumerar`, `mapear`, `filtrar`, etc.).
 
 ## Flujo de trabajo
 
 1. Haz un *fork* del repositorio.
 2. Crea una rama temática: `git checkout -b mi_caracteristica`.
 3. Implementa los cambios siguiendo el estilo del proyecto.
-4. Asegúrate de que los tests pasan: `make test`.
-5. Añade tests para tu cambio.
-6. Actualiza `CHANGELOG.md` bajo la sección `[No publicado]`.
-7. Envía un *pull request* con descripción clara.
+4. Asegúrate de que **todos** los tests pasan: `cmake --build build && cd build && ctest`.
+5. Añade tests para tu cambio. Para bugs encontrados, añade un test de regresión (mira `tests/unit/test_bytecode_ic.c::test_regresion_*` como ejemplos).
+6. Si el cambio afecta el lenguaje observable (sintaxis, semántica, built-ins), valida también los **tests diferenciales** tree-walking vs bytecode (corren con `ctest -L diferencial`).
+7. Actualiza `CHANGELOG.md` bajo la sección `[No publicado]` con una entrada que explique el porqué (no solo el qué — el qué ya está en el diff).
+8. Envía un *pull request* con descripción clara que enlace al *issue* original si lo hay.
 
 ## Estilo de código
 

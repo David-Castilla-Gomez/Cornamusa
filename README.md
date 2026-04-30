@@ -134,10 +134,12 @@ cmake --build build -j
 - **[Sitio web](https://david-castilla-gomez.github.io/Cornamusa/)** — tutorial paso a paso + referencia rápida (mdBook desplegado a GitHub Pages).
 - **[Tutorial](docs/tutorial.md)** — aprende Cornamusa desde cero, con código ejecutable.
 - **[Referencia rápida](docs/referencia.md)** — cheatsheet de sintaxis, built-ins, stdlib, errores.
+- **[FAQ](FAQ.md)** — preguntas frecuentes para nuevos usuarios.
 - **[ESPEC.md](ESPEC.md)** — especificación formal del lenguaje (gramática EBNF, semántica).
 - **[Decisiones (ADRs)](decisiones/)** — `B1` a `B10`, razonamiento detrás de las decisiones de diseño.
 - **[CHANGELOG.md](CHANGELOG.md)** — historial de cambios.
 - **[CONTRIBUTING.md](CONTRIBUTING.md)** — cómo contribuir.
+- **[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md)** — código de conducta.
 
 ## Inspiración
 
