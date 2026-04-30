@@ -285,6 +285,29 @@ set_tests_properties(bc_run_23_sistema_jugable PROPERTIES
     PASS_REGULAR_EXPRESSION "sin argumentos extra"
 )
 
+# v1.0 sesión 5: ejemplos avanzados (no más micro-demos).
+add_test(
+    NAME bc_run_24_notas_clase
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/24_notas_clase.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_24_notas_clase PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Aprobados .>=7.: 4 / 6"
+)
+
+add_test(
+    NAME bc_run_25_biblioteca_oop
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/25_biblioteca_oop.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_25_biblioteca_oop PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Items prestados ahora: 4"
+)
+
 # ───── Tests diferenciales tree-walking vs bytecode (v0.9.2) ─────
 # Para cada ejemplo compatible con ambos motores, ejecutamos ambos y
 # verificamos que produzcan EXACTAMENTE la misma salida. Es la red de

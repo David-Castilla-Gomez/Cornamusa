@@ -1,0 +1,220 @@
+# 25_biblioteca_oop.cor — Simulación de una biblioteca
+#
+# Demuestra: clases con herencia, métodos, estado encapsulado, super,
+# polimorfismo, listas de objetos heterogéneos.
+
+# ─── Jerarquía de Items ──────────────────────────────────
+
+clase Item:
+    funcion __iniciar__(yo, titulo, autor):
+        yo.titulo = titulo
+        yo.autor = autor
+        yo.disponible = verdadero
+        yo.veces_prestado = 0
+    fin funcion
+
+    funcion describir(yo):
+        # Cada subclase debería sobrescribir describir.
+        retornar yo.titulo + " - " + yo.autor
+    fin funcion
+
+    funcion estado(yo):
+        si yo.disponible:
+            retornar "disponible"
+        sino:
+            retornar "prestado"
+        fin si
+    fin funcion
+fin clase
+
+clase Libro extiende Item:
+    funcion __iniciar__(yo, titulo, autor, paginas):
+        super.__iniciar__(titulo, autor)
+        yo.paginas = paginas
+    fin funcion
+
+    funcion describir(yo):
+        base = super.describir()
+        retornar "[Libro] " + base + " (" + yo.titulo_paginas() + ")"
+    fin funcion
+
+    funcion titulo_paginas(yo):
+        # Sin built-in cadena() todavía. Construimos a mano.
+        retornar "varias páginas"
+    fin funcion
+fin clase
+
+clase Audiolibro extiende Item:
+    funcion __iniciar__(yo, titulo, autor, duracion_min):
+        super.__iniciar__(titulo, autor)
+        yo.duracion_min = duracion_min
+    fin funcion
+
+    funcion describir(yo):
+        base = super.describir()
+        retornar "[Audiolibro] " + base
+    fin funcion
+fin clase
+
+clase Revista extiende Item:
+    funcion __iniciar__(yo, titulo, numero):
+        super.__iniciar__(titulo, "varios autores")
+        yo.numero = numero
+    fin funcion
+
+    funcion describir(yo):
+        retornar "[Revista] " + yo.titulo + " (número " + " múltiple)"
+    fin funcion
+fin clase
+
+# ─── Lector ───────────────────────────────────────────────
+
+clase Lector:
+    funcion __iniciar__(yo, nombre, id_socio):
+        yo.nombre = nombre
+        yo.id_socio = id_socio
+        yo.prestamos_activos = []
+    fin funcion
+
+    funcion num_prestamos(yo):
+        retornar longitud(yo.prestamos_activos)
+    fin funcion
+fin clase
+
+# ─── Biblioteca ──────────────────────────────────────────
+
+clase Biblioteca:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+        yo.catalogo = []
+        yo.lectores = []
+        yo.max_prestamos_por_lector = 3
+    fin funcion
+
+    funcion agregar_item(yo, item):
+        agregar(yo.catalogo, item)
+    fin funcion
+
+    funcion agregar_lector(yo, lector):
+        agregar(yo.lectores, lector)
+    fin funcion
+
+    funcion buscar_item(yo, titulo):
+        para item en yo.catalogo:
+            si item.titulo == titulo:
+                retornar item
+            fin si
+        fin para
+        retornar nulo
+    fin funcion
+
+    funcion prestar(yo, titulo, lector):
+        item = yo.buscar_item(titulo)
+        si item es nulo:
+            imprimir("  ERROR: '" + titulo + "' no existe")
+            retornar falso
+        fin si
+        si no item.disponible:
+            imprimir("  ERROR: '" + titulo + "' ya está prestado")
+            retornar falso
+        fin si
+        si lector.num_prestamos() >= yo.max_prestamos_por_lector:
+            imprimir("  ERROR:", lector.nombre, "ya tiene 3 préstamos activos")
+            retornar falso
+        fin si
+        item.disponible = falso
+        item.veces_prestado = item.veces_prestado + 1
+        agregar(lector.prestamos_activos, item)
+        imprimir("  OK: " + lector.nombre + " toma '" + titulo + "'")
+        retornar verdadero
+    fin funcion
+
+    funcion devolver(yo, titulo, lector):
+        item = yo.buscar_item(titulo)
+        si item es nulo:
+            imprimir("  ERROR: '" + titulo + "' no existe")
+            retornar falso
+        fin si
+        # Sin built-in para quitar de lista por valor: filtramos.
+        nueva_lista = []
+        encontrado = falso
+        para p en lector.prestamos_activos:
+            si p.titulo == titulo:
+                encontrado = verdadero
+            sino:
+                agregar(nueva_lista, p)
+            fin si
+        fin para
+        si no encontrado:
+            imprimir("  ERROR:", lector.nombre, "no tenía '" + titulo + "'")
+            retornar falso
+        fin si
+        lector.prestamos_activos = nueva_lista
+        item.disponible = verdadero
+        imprimir("  OK: " + lector.nombre + " devuelve '" + titulo + "'")
+        retornar verdadero
+    fin funcion
+
+    funcion listar_catalogo(yo):
+        imprimir("=== Catálogo de", yo.nombre, "===")
+        para item en yo.catalogo:
+            imprimir("  -", item.describir(), "[" + item.estado() + "]")
+        fin para
+    fin funcion
+
+    funcion estadisticas(yo):
+        imprimir("=== Estadísticas ===")
+        imprimir("Items en catálogo:", longitud(yo.catalogo))
+        imprimir("Lectores registrados:", longitud(yo.lectores))
+        prestados = 0
+        para item en yo.catalogo:
+            si no item.disponible:
+                prestados = prestados + 1
+            fin si
+        fin para
+        imprimir("Items prestados ahora:", prestados)
+
+        # Listar items por veces prestadas (sin ordenar, en orden de
+        # catálogo — un ranking riguroso requeriría sort por clave que
+        # llegará en v1.x).
+        imprimir("Préstamos por título:")
+        para item en yo.catalogo:
+            imprimir("  ", item.titulo, "-", item.veces_prestado, "veces")
+        fin para
+    fin funcion
+fin clase
+
+# ─── Simulación ──────────────────────────────────────────
+
+biblio = Biblioteca("Biblioteca de Cornamusa")
+
+biblio.agregar_item(Libro("Don Quijote", "Cervantes", 800))
+biblio.agregar_item(Libro("Cien años de soledad", "García Márquez", 470))
+biblio.agregar_item(Libro("La Celestina", "Fernando de Rojas", 320))
+biblio.agregar_item(Audiolibro("Crafting Interpreters", "R. Nystrom", 720))
+biblio.agregar_item(Revista("MIT Tech Review", 142))
+
+ana = Lector("Ana", 1001)
+bob = Lector("Bob", 1002)
+biblio.agregar_lector(ana)
+biblio.agregar_lector(bob)
+
+biblio.listar_catalogo()
+imprimir()
+
+imprimir("--- Movimientos ---")
+biblio.prestar("Don Quijote", ana)
+biblio.prestar("Cien años de soledad", ana)
+biblio.prestar("Crafting Interpreters", ana)
+biblio.prestar("La Celestina", ana)        # debe fallar (>3)
+biblio.prestar("Don Quijote", bob)          # debe fallar (no disponible)
+biblio.prestar("La Celestina", bob)
+biblio.devolver("Don Quijote", ana)
+biblio.prestar("Don Quijote", bob)
+biblio.devolver("Cien años de soledad", ana)
+biblio.prestar("Cien años de soledad", bob)  # debe fallar (>3)
+
+imprimir()
+biblio.listar_catalogo()
+imprimir()
+biblio.estadisticas()

@@ -1,0 +1,151 @@
+# 24_notas_clase.cor — Análisis de notas de una clase
+#
+# Demuestra: diccionarios, listas, ordenamiento, control de flujo,
+# funciones que devuelven múltiples valores via tupla, formateo.
+#
+# Sin input interactivo: los datos vienen hardcoded para que el ejemplo
+# sea reproducible.
+
+# Notas de una clase: {nombre: [notas de varias asignaturas]}.
+notas_clase = {
+    "Ana":   [9, 8, 10, 7, 9],
+    "Bea":   [6, 7, 5, 8, 6],
+    "Carlos": [10, 9, 9, 10, 8],
+    "Diego": [4, 5, 6, 5, 4],
+    "Elena": [8, 8, 9, 7, 8],
+    "Fer":   [7, 6, 8, 7, 7],
+}
+
+# ─── Funciones de análisis ────────────────────────────────
+
+funcion promedio(xs):
+    suma = 0
+    para n en xs:
+        suma = suma + n
+    fin para
+    retornar suma / longitud(xs)
+fin funcion
+
+funcion maximo_lista(xs):
+    m = xs[0]
+    para n en xs:
+        si n > m:
+            m = n
+        fin si
+    fin para
+    retornar m
+fin funcion
+
+funcion minimo_lista(xs):
+    m = xs[0]
+    para n en xs:
+        si n < m:
+            m = n
+        fin si
+    fin para
+    retornar m
+fin funcion
+
+# Devuelve lista ordenada (no muta la original).
+funcion copia_ordenada(xs):
+    copia = []
+    para n en xs:
+        agregar(copia, n)
+    fin para
+    ordenar(copia)
+    retornar copia
+fin funcion
+
+funcion mediana(xs):
+    ord = copia_ordenada(xs)
+    n = longitud(ord)
+    si n % 2 == 1:
+        retornar ord[n // 2]
+    sino:
+        # Promedio de los dos centrales
+        a = ord[n // 2 - 1]
+        b = ord[n // 2]
+        retornar (a + b) / 2
+    fin si
+fin funcion
+
+# ─── Reporte por estudiante ──────────────────────────────
+
+imprimir("=== Reporte por estudiante ===")
+para nombre en claves(notas_clase):
+    notas = notas_clase[nombre]
+    p = promedio(notas)
+    mx = maximo_lista(notas)
+    mn = minimo_lista(notas)
+    med = mediana(notas)
+    imprimir(nombre, "-> promedio:", p, "max:", mx, "min:", mn, "mediana:", med)
+fin para
+
+# ─── Ranking ──────────────────────────────────────────────
+
+# Construir lista de tuplas (promedio, nombre).
+imprimir()
+imprimir("=== Ranking por promedio ===")
+
+# Como no hay sort por clave, hacemos selección simple (n^2 — para 6 alumnos
+# es trivial; para datasets grandes habría que usar otro algoritmo).
+nombres_ordenados = []
+nombres_pendientes = []
+para nombre en claves(notas_clase):
+    agregar(nombres_pendientes, nombre)
+fin para
+
+mientras longitud(nombres_pendientes) > 0:
+    mejor = nombres_pendientes[0]
+    mejor_prom = promedio(notas_clase[mejor])
+    para n en nombres_pendientes:
+        prom = promedio(notas_clase[n])
+        si prom > mejor_prom:
+            mejor = n
+            mejor_prom = prom
+        fin si
+    fin para
+    agregar(nombres_ordenados, mejor)
+    # Quitar `mejor` de pendientes
+    nuevos_pendientes = []
+    para n en nombres_pendientes:
+        si n != mejor:
+            agregar(nuevos_pendientes, n)
+        fin si
+    fin para
+    nombres_pendientes = nuevos_pendientes
+fin mientras
+
+posicion = 1
+para nombre en nombres_ordenados:
+    p = promedio(notas_clase[nombre])
+    imprimir(posicion, ".", nombre, "->", p)
+    posicion = posicion + 1
+fin para
+
+# ─── Estadísticas globales ───────────────────────────────
+
+imprimir()
+imprimir("=== Estadísticas globales ===")
+todas_notas = []
+para nombre en claves(notas_clase):
+    para nota en notas_clase[nombre]:
+        agregar(todas_notas, nota)
+    fin para
+fin para
+
+imprimir("Total de notas:", longitud(todas_notas))
+imprimir("Promedio global:", promedio(todas_notas))
+imprimir("Mediana global:", mediana(todas_notas))
+imprimir("Mejor nota:", maximo_lista(todas_notas))
+imprimir("Peor nota:", minimo_lista(todas_notas))
+
+# ¿Cuántos estudiantes tienen promedio >= 7?
+aprobados = 0
+para nombre en claves(notas_clase):
+    si promedio(notas_clase[nombre]) >= 7:
+        aprobados = aprobados + 1
+    fin si
+fin para
+total_alumnos = longitud(claves(notas_clase))
+imprimir("Aprobados (>=7):", aprobados, "/", total_alumnos)
