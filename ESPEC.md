@@ -276,7 +276,7 @@ fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
 | `bytes` | Secuencia inmutable de bytes | sí |
 | `lista` | Secuencia mutable indexada | no |
 | `tupla` | Secuencia inmutable indexada | sí |
-| `diccionario` | Mapa hash mutable (preserva orden de inserción) | no |
+| `diccionario` | Mapa hash mutable. **Orden de inserción NO preservado en v0.11.5** (`claves(d)` y `valores(d)` devuelven orden de tabla hash interna). Preservar el orden está reservado para v1.x. | no |
 | `conjunto` | Conjunto hash mutable | no |
 | `función` | Callable de primera clase | — |
 | `clase` | Plantilla de objetos | — |

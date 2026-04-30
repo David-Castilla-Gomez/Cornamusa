@@ -344,7 +344,7 @@ para clave en claves(persona):
 fin para
 ```
 
-`quitar(dicc, clave)` elimina una entrada y devuelve el valor.
+> En v0.11.5 no hay built-in para borrar una clave del dict (planeado v1.x). Mientras tanto puedes reescribir el dict completo con las claves que quieres conservar.
 
 ### Conjuntos
 
