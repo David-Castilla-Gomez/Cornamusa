@@ -391,6 +391,7 @@ static uint64_t fnv1a_64(const uint8_t *data, size_t len) {
  * cabe sin pérdida. Devuelve true si la conversión es exacta. */
 static bool valor_a_int64_si_cabe(const Valor *v, int64_t *out) {
     if (v->tipo == VAL_BOOLEANO) { *out = v->como.booleano ? 1 : 0; return true; }
+    if (v->tipo == VAL_ENTERO_SMALL) { *out = v->como.entero_small; return true; }
     if (v->tipo == VAL_ENTERO) {
         if (mp_count_bits(v->como.entero) > 62) return false;
         *out = (int64_t)mp_get_i64(v->como.entero);
@@ -1180,6 +1181,9 @@ Valor valor_modulo(Modulo *m) {
 void valor_destruir(Valor *v) {
     if (v == NULL) return;
     switch (v->tipo) {
+        case VAL_ENTERO_SMALL:
+            /* Inline: nada que liberar. */
+            break;
         case VAL_ENTERO:
             if (v->como.entero) {
                 mp_clear(v->como.entero);
@@ -1270,6 +1274,14 @@ Valor valor_clonar(const Valor *v) {
         case VAL_NULO:      return valor_nulo();
         case VAL_BOOLEANO:  return valor_booleano(v->como.booleano);
         case VAL_DECIMAL:   return valor_decimal(v->como.decimal);
+        case VAL_ENTERO_SMALL: {
+            /* SMALL es inline; copia trivial de la unión. */
+            Valor c;
+            c.tipo = VAL_ENTERO_SMALL;
+            c.dueno_cadena = false;
+            c.como.entero_small = v->como.entero_small;
+            return c;
+        }
         case VAL_ENTERO: {
             mp_int *m = nuevo_mp_int();
             if (m == NULL) return valor_nulo();
@@ -1406,6 +1418,10 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                     buffer[n] = '\0';
                 }
             }
+            break;
+        case VAL_ENTERO_SMALL:
+            n = snprintf(buffer, (size_t)capacidad, "%lld",
+                         (long long)v->como.entero_small);
             break;
         case VAL_ENTERO: {
             /* mp_radix_size devuelve el espacio necesario incluyendo
@@ -1631,6 +1647,7 @@ const char *valor_nombre_tipo(const Valor *v) {
     switch (v->tipo) {
         case VAL_NULO:      return "nulo";
         case VAL_BOOLEANO:  return "booleano";
+        case VAL_ENTERO_SMALL:
         case VAL_ENTERO:    return "entero";
         case VAL_DECIMAL:   return "decimal";
         case VAL_CADENA:    return "cadena";
@@ -1677,6 +1694,7 @@ bool valor_es_verdadero(const Valor *v) {
     switch (v->tipo) {
         case VAL_NULO:      return false;
         case VAL_BOOLEANO:  return v->como.booleano;
+        case VAL_ENTERO_SMALL: return v->como.entero_small != 0;
         case VAL_ENTERO:    return mp_iszero(v->como.entero) == MP_NO;
         case VAL_DECIMAL:   return v->como.decimal != 0.0;
         case VAL_CADENA:    return v->como.cadena.longitud > 0;
@@ -1720,39 +1738,42 @@ bool valor_es_verdadero(const Valor *v) {
 bool valor_iguales(const Valor *a, const Valor *b) {
     if (a == NULL || b == NULL) return a == b;
 
-    /* Caso especial: entero == decimal compara matemáticamente. */
-    if (a->tipo == VAL_ENTERO && b->tipo == VAL_DECIMAL) {
-        /* Convertir entero a double y comparar. Pierde precisión para
-           enteros grandes, pero es la semántica de Python. */
-        return mp_get_double(a->como.entero) == b->como.decimal;
-    }
-    if (a->tipo == VAL_DECIMAL && b->tipo == VAL_ENTERO) {
-        return a->como.decimal == mp_get_double(b->como.entero);
-    }
-
-    /* Booleanos se comparan como enteros con otros tipos numéricos
-       (Python: True == 1 == 1.0). */
-    if (a->tipo == VAL_BOOLEANO
-        && (b->tipo == VAL_ENTERO || b->tipo == VAL_DECIMAL)) {
-        long ai = a->como.booleano ? 1 : 0;
-        if (b->tipo == VAL_DECIMAL) return (double)ai == b->como.decimal;
-        mp_int tmp;
-        if (mp_init(&tmp) != MP_OKAY) return false;
-        mp_set_l(&tmp, ai);
-        bool igual = mp_cmp(&tmp, b->como.entero) == MP_EQ;
-        mp_clear(&tmp);
-        return igual;
-    }
-    if (b->tipo == VAL_BOOLEANO
-        && (a->tipo == VAL_ENTERO || a->tipo == VAL_DECIMAL)) {
-        long bi = b->como.booleano ? 1 : 0;
-        if (a->tipo == VAL_DECIMAL) return a->como.decimal == (double)bi;
-        mp_int tmp;
-        if (mp_init(&tmp) != MP_OKAY) return false;
-        mp_set_l(&tmp, bi);
-        bool igual = mp_cmp(a->como.entero, &tmp) == MP_EQ;
-        mp_clear(&tmp);
-        return igual;
+    /*
+     * Numéricos cross-tag (B9, v0.11): cualquier mezcla de
+     * SMALL/BIG/BOOLEANO/DECIMAL se normaliza y compara aquí
+     * arriba. Esto reemplaza las múltiples coerciones individuales
+     * que había antes y unifica el comportamiento para que
+     * SMALL(5) == BIG(5) == 5.0 == True (con 1).
+     */
+    bool a_num = valor_es_entero(a) || a->tipo == VAL_BOOLEANO
+                 || a->tipo == VAL_DECIMAL;
+    bool b_num = valor_es_entero(b) || b->tipo == VAL_BOOLEANO
+                 || b->tipo == VAL_DECIMAL;
+    if (a_num && b_num) {
+        /* Si alguno es decimal, comparamos en double (precisión
+           limitada para BIG grandes — semántica heredada de Python). */
+        if (a->tipo == VAL_DECIMAL || b->tipo == VAL_DECIMAL) {
+            double ad, bd;
+            if (a->tipo == VAL_DECIMAL) ad = a->como.decimal;
+            else if (a->tipo == VAL_BOOLEANO) ad = a->como.booleano ? 1.0 : 0.0;
+            else if (a->tipo == VAL_ENTERO_SMALL) ad = (double)a->como.entero_small;
+            else ad = mp_get_double(a->como.entero);
+            if (b->tipo == VAL_DECIMAL) bd = b->como.decimal;
+            else if (b->tipo == VAL_BOOLEANO) bd = b->como.booleano ? 1.0 : 0.0;
+            else if (b->tipo == VAL_ENTERO_SMALL) bd = (double)b->como.entero_small;
+            else bd = mp_get_double(b->como.entero);
+            return ad == bd;
+        }
+        /* Ambos son enteros (incluido bool). Si ambos caben en i64,
+           comparación inline; si no, promote a mp_int y usa mp_cmp. */
+        int64_t ai, bi;
+        bool a_fits = valor_a_int64_si_cabe(a, &ai);
+        bool b_fits = valor_a_int64_si_cabe(b, &bi);
+        if (a_fits && b_fits) return ai == bi;
+        /* Al menos uno es BIG fuera del rango i64 — ambos deben ser
+           BIG para tener chance de igualdad. */
+        if (a->tipo != VAL_ENTERO || b->tipo != VAL_ENTERO) return false;
+        return mp_cmp(a->como.entero, b->como.entero) == MP_EQ;
     }
 
     if (a->tipo != b->tipo) return false;
@@ -1761,6 +1782,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
         case VAL_NULO:      return true;
         case VAL_BOOLEANO:  return a->como.booleano == b->como.booleano;
         case VAL_DECIMAL:   return a->como.decimal == b->como.decimal;
+        case VAL_ENTERO_SMALL:
+            return a->como.entero_small == b->como.entero_small;
         case VAL_ENTERO:    return mp_cmp(a->como.entero, b->como.entero) == MP_EQ;
         case VAL_CADENA:
             if (a->como.cadena.longitud != b->como.cadena.longitud) return false;
