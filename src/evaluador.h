@@ -128,7 +128,6 @@ Valor evaluador_aplicar_unario(EvalError *err, int op_token,
  */
 mp_int *evaluador_nuevo_mp(void);
 void evaluador_liberar_mp(mp_int *m);
-Valor evaluador_valor_entero_de_mp(mp_int *m);
 
 /*
  * Camino rápido SMALL+SMALL para aritmética entera (B9 v0.11).

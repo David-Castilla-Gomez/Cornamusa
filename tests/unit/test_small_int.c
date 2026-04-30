@@ -150,48 +150,63 @@ static void test_hash_equivalente(void) {
 #include "evaluador.h"
 #include "lexer.h"  /* para TT_MAS, etc. */
 
+/*
+ * Validador común para casos donde dos resultados son aceptables:
+ *   - aplic=true + tipo=VAL_ENTERO (promovido a BIG con valor esperado).
+ *   - aplic=false (caller hace fallback BIG; verificamos que NO produjo
+ *     un Valor SMALL erróneo).
+ */
+static void verificar_overflow_promueve(bool aplic, Valor r,
+                                          int64_t valor_esperado) {
+    if (aplic) {
+        AFIRMAR(r.tipo == VAL_ENTERO);
+        int64_t out;
+        AFIRMAR(valor_entero_a_i64(&r, &out));
+        AFIRMAR(out == valor_esperado);
+    } else {
+        /* Si no aplicable, el resultado debe ser nulo (sentinel). */
+        AFIRMAR(r.tipo == VAL_NULO);
+    }
+    valor_destruir(&r);
+}
+
 static void test_overflow_suma_promueve(void) {
-    /* SMALL_MAX + 1 = (2^62 - 1) + 1 = 2^62, fuera del rango SMALL. */
+    /* SMALL_MAX + 1 = 2^62. Con margen 2^62 cabe en int64; valor_entero_de_i64
+       lo demote a BIG porque excede SMALL_INT_MAX. */
     bool aplic;
     Valor r = evaluador_small_op_small(NULL, TT_MAS,
         CORNAMUSA_SMALL_INT_MAX, 1, 0, 0, &aplic);
-    /* Implementaciones con __builtin_add_overflow detectan que el
-       resultado no cabe en int64 — pero CORNAMUSA_SMALL_INT_MAX + 1
-       cabe en int64 sin UB. Con margen 2^62 suma cabe; verificamos
-       que valor_entero_de_i64 promueva a BIG. */
-    if (aplic) {
-        AFIRMAR(r.tipo == VAL_ENTERO);  /* promovido a BIG */
-        int64_t out;
-        AFIRMAR(valor_entero_a_i64(&r, &out));
-        AFIRMAR(out == CORNAMUSA_SMALL_INT_MAX + 1);
-        valor_destruir(&r);
-    }
-    /* Si !aplic, el caller (evaluador_aplicar_binario) hace fallback a
-       BIG con mp_add. Tampoco es bug. */
+    verificar_overflow_promueve(aplic, r, CORNAMUSA_SMALL_INT_MAX + 1);
 }
 
 static void test_overflow_resta_promueve(void) {
     bool aplic;
     Valor r = evaluador_small_op_small(NULL, TT_MENOS,
         CORNAMUSA_SMALL_INT_MIN, 1, 0, 0, &aplic);
-    if (aplic) {
-        AFIRMAR(r.tipo == VAL_ENTERO);  /* (MIN - 1) no cabe en SMALL */
-        valor_destruir(&r);
-    }
+    verificar_overflow_promueve(aplic, r, CORNAMUSA_SMALL_INT_MIN - 1);
 }
 
 static void test_overflow_mult_promueve(void) {
-    /* SMALL_MAX * 2 = ~2^63 — fuera de int64 con __builtin_mul_overflow. */
+    /* SMALL_MAX * 2 ≈ 2^63 — overflow de int64 con __builtin_mul_overflow. */
     bool aplic;
     Valor r = evaluador_small_op_small(NULL, TT_ASTERISCO,
         CORNAMUSA_SMALL_INT_MAX, 2, 0, 0, &aplic);
-    /* Si __builtin_mul_overflow detecta, aplic=false → caller hace BIG.
-       Si no (MSVC fallback usa rango int32 pre-check), aplic=true y
-       valor_entero_de_i64 promueve a BIG. Ambos OK. */
-    if (aplic) {
-        AFIRMAR(r.tipo == VAL_ENTERO);
-        valor_destruir(&r);
-    }
+    /* Si __builtin_mul_overflow detecta → aplic=false (sentinel nulo).
+       Si MSVC fallback bailea por rango int32 → aplic=false también.
+       Si por alguna razón aplic=true, debe ser BIG con el valor doblado. */
+    verificar_overflow_promueve(aplic, r,
+        (int64_t)CORNAMUSA_SMALL_INT_MAX * 2);
+}
+
+/* SMALL_MIN * -1 — caso peligroso: -SMALL_MIN cabe en SMALL_MAX+1
+   = 2^62, así que cabe en int64 pero no en SMALL. Debe promover. */
+static void test_smallmin_mult_neg1(void) {
+    bool aplic;
+    Valor r = evaluador_small_op_small(NULL, TT_ASTERISCO,
+        CORNAMUSA_SMALL_INT_MIN, -1, 0, 0, &aplic);
+    /* Resultado matemático: -CORNAMUSA_SMALL_INT_MIN = 2^62 = SMALL_MAX+1. */
+    verificar_overflow_promueve(aplic,
+        r, -((int64_t)CORNAMUSA_SMALL_INT_MIN));
 }
 
 /* ───── 6. División SMALL_MIN / -1 (UB en C) → promueve a BIG ───── */
@@ -288,13 +303,14 @@ int main(void) {
     test_overflow_suma_promueve();
     test_overflow_resta_promueve();
     test_overflow_mult_promueve();
+    test_smallmin_mult_neg1();
     test_division_min_neg1();
     test_division_por_cero();
     test_modulo_python();
     test_clone_preserva_tipo();
     test_helpers_extraccion();
     if (fallos == 0) {
-        printf("test_small_int: 12 tests PASS\n");
+        printf("test_small_int: 13 tests PASS\n");
         return 0;
     }
     fprintf(stderr, "test_small_int: %d FALLO(s)\n", fallos);

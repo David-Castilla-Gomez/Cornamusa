@@ -122,18 +122,17 @@ Valor valor_entero_de_lexema(const char *lexema, int longitud) {
 
 Valor valor_entero_de_long(long n) {
     /* Delega en valor_entero_de_i64 para que pase por la política de
-       SMALL/BIG (B9, v0.11). En v0.11 sesión 1 todavía siempre devuelve
-       BIG; las sesiones siguientes activan SMALL. */
+       SMALL/BIG (B9, v0.11). */
     return valor_entero_de_i64((int64_t)n);
 }
 
 /* ──────────────────────────────────────────────────────────────────
- * Small-int tagging — helpers públicos (B9, v0.11 sesión 1).
+ * Small-int tagging — helpers públicos (B9, v0.11.0).
  *
- * En esta sesión la generación de SMALL está DESACTIVADA:
- * `valor_entero_de_i64` siempre devuelve VAL_ENTERO (BIG), igual que
- * la implementación pre-v0.11. La API queda lista para que las
- * sesiones siguientes (3+) cambien la política sin tocar callers.
+ * `valor_entero_de_i64(n)` produce SMALL si n cabe en
+ * [SMALL_INT_MIN, SMALL_INT_MAX], BIG en caso contrario.
+ * `valor_entero_de_mp_normalizado(m)` toma posesión de m y lo demote
+ * a SMALL si su valor cabe.
  * ────────────────────────────────────────────────────────────────── */
 
 bool valor_entero_a_i64(const Valor *v, int64_t *out) {
@@ -143,13 +142,13 @@ bool valor_entero_a_i64(const Valor *v, int64_t *out) {
         return true;
     }
     if (v->tipo == VAL_ENTERO) {
-        /* mp_get_i64 devuelve los 64 bits bajos en signed; chequeamos
-           que el bignum quepa en el rango con mp_isfit (no existe en
-           libtommath estándar) — usamos el equivalente: comparar
-           mp_count_bits con 63 (bits de magnitud + signo). */
+        /* mp_count_bits devuelve la magnitud del bignum (sin signo).
+           `< 64` significa magnitud ≤ 63 bits, que cubre el rango de
+           int64 EXCEPTO INT64_MIN (cuya magnitud es exactamente 64).
+           INT64_MIN queda excluido a propósito: como SMALL_INT_MIN es
+           -2^62, no perdemos nada útil y evitamos casos especiales. */
         mp_int *m = v->como.entero;
         if (mp_count_bits(m) < 64) {
-            /* Cabe en signed 64-bit. */
             *out = mp_get_i64(m);
             return true;
         }
@@ -160,8 +159,10 @@ bool valor_entero_a_i64(const Valor *v, int64_t *out) {
 
 mp_int *valor_entero_a_mp_int(const Valor *v, bool *propio) {
     if (!v || !propio) return NULL;
+    /* Inicializar *propio antes de cualquier return path para que el
+       caller no lea memoria sin inicializar si la alocación falla. */
+    *propio = false;
     if (v->tipo == VAL_ENTERO) {
-        *propio = false;
         return v->como.entero;
     }
     if (v->tipo == VAL_ENTERO_SMALL) {
@@ -175,8 +176,8 @@ mp_int *valor_entero_a_mp_int(const Valor *v, bool *propio) {
 }
 
 Valor valor_entero_de_i64(int64_t n) {
-    /* SESIÓN 3 (B9): activación de SMALL. Si n cabe en el rango SMALL,
-       devolvemos VAL_ENTERO_SMALL inline sin alocar. Si no, BIG. */
+    /* Si n cabe en el rango SMALL, devolvemos VAL_ENTERO_SMALL inline
+       sin alocar. Si no, BIG. */
     if (n >= CORNAMUSA_SMALL_INT_MIN && n <= CORNAMUSA_SMALL_INT_MAX) {
         Valor v;
         v.tipo = VAL_ENTERO_SMALL;
@@ -195,8 +196,8 @@ Valor valor_entero_de_i64(int64_t n) {
 }
 
 Valor valor_entero_de_mp_normalizado(mp_int *m) {
-    /* SESIÓN 3 (B9): normalizar a SMALL si el valor cabe. Toma posesión
-       de m y lo libera si demote ocurre. */
+    /* Normaliza a SMALL si el valor cabe. Toma posesión de m y lo
+       libera si demote ocurre. */
     if (!m) return valor_nulo();
     /* Si cabe en 63 bits (signo + magnitud), demote. mp_count_bits
        cuenta la magnitud en bits. */

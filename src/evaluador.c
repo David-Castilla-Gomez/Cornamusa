@@ -123,15 +123,9 @@ static mp_int *como_mp_int(const Valor *v, bool *propio_out) {
     return NULL;
 }
 
-/* Construye un Valor entero a partir de un mp_int recién inicializado.
-   Toma posesión del puntero. */
-static Valor valor_entero_de_mp(mp_int *m) {
-    Valor v;
-    v.tipo = VAL_ENTERO;
-    v.dueno_cadena = false;
-    v.como.entero = m;
-    return v;
-}
+/* (eliminado en v0.11.1: valor_entero_de_mp — todos los call sites
+   migraron a valor_entero_de_mp_normalizado en v0.11.0. Reportado
+   en code review post-release como warning -Wunused-function.) */
 
 /* Aloca un mp_int inicializado. NULL si OOM. */
 static mp_int *nuevo_mp(void) {
@@ -150,7 +144,6 @@ static void liberar_mp(mp_int *m) {
 /* Wrappers públicos para los inline caches de F10 (vm.c). */
 mp_int *evaluador_nuevo_mp(void) { return nuevo_mp(); }
 void evaluador_liberar_mp(mp_int *m) { liberar_mp(m); }
-Valor evaluador_valor_entero_de_mp(mp_int *m) { return valor_entero_de_mp(m); }
 
 /* ──────────────────────────────────────────────────────────────────
  * Aritmética entero ⊕ entero

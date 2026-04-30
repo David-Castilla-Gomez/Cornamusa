@@ -6,6 +6,63 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.11.1] — 2026-04-30 — fixes post-release (revisión crítica)
+
+Code review crítica independiente del refactor B9 detectó tres
+problemas de calidad y un bug latente. Esta versión los corrige
+sin cambios de comportamiento observable.
+
+### Corregido (v0.11.1)
+
+- **Bug latente — `valor_entero_a_mp_int` no inicializaba `*propio`**
+  cuando `nuevo_mp_int()` fallaba (OOM). Los callers que leyeran
+  `propio` para decidir si liberar leerían memoria sin inicializar.
+  Fix: `*propio = false` al inicio de la función. Severidad baja
+  en la práctica (OOM raro) pero la API pública debe ser robusta.
+- **Comentarios stale en `valor.c`** que describían "sesión 1, BIG
+  siempre" cuando el código ya producía SMALL. Reescritos para
+  reflejar el comportamiento actual de v0.11.0.
+- **Comentario engañoso en `valor_entero_a_i64`** ("comparar
+  mp_count_bits con 63") cuando el código compara `< 64`.
+  Reescrito explicando que `< 64` significa "magnitud ≤ 63 bits"
+  y que `INT64_MIN` queda excluido a propósito (SMALL_INT_MIN =
+  -2^62, así no perdemos rango útil).
+- **Función no usada `evaluador_valor_entero_de_mp` eliminada** del
+  API pública. La función `static valor_entero_de_mp` también
+  eliminada (warning `-Wunused-function`). Toda la producción
+  pasa por `valor_entero_de_mp_normalizado` ahora.
+
+### Tests reforzados (v0.11.1)
+
+- **Nuevo test `test_smallmin_mult_neg1`**: cubre `SMALL_MIN * -1`,
+  caso peligroso B9 §4 que no estaba en la suite original.
+- **Validador común `verificar_overflow_promueve`** — los tests de
+  overflow ahora validan EXPLÍCITAMENTE ambas ramas (`aplic=true`
+  con BIG y valor correcto, o `aplic=false` con sentinel nulo). En
+  v0.11.0 los tests usaban `if (aplic) { ... }` sin else, así
+  que pasaban silenciosamente con cualquier implementación que
+  jamás reportara `aplic=true`.
+- 13 tests boundaries en total (de 12 en v0.11.0).
+
+### Conocido para v0.12+ (post-release)
+
+La revisión crítica también identificó tres tech-debt no urgentes:
+
+- Iter de `VAL_RANGO` aloca `mp_int` por cada paso aunque inicio,
+  fin y paso quepan en `int64_t` — fast-path SMALL no implementado
+  en `valor.c::iter_siguiente`. Beneficiaría loops grandes como
+  `para i en rango(1_000_000)`.
+- MSVC fallback de `__builtin_mul_overflow` en `small_op_small` es
+  conservador (rechaza si cualquier operando excede int32). En
+  GCC/Clang ya está bien.
+- Hash divergente en banda 2^62..2^63 entre BIG y DECIMAL con mismo
+  valor numérico (preexistente, no introducido por B9). El refactor
+  B9 era el momento natural de armonizarlo y se dejó pasar.
+- Migración `long → int64_t` en indexación para Windows (LLP64).
+
+Ninguno bloquea el uso de v0.11.1 — son optimizaciones y limpieza
+para una sesión futura.
+
 ## [0.11.0] — 2026-04-30 — Small-int tagging (Fase 11.1)
 
 Segunda fase de optimización de rendimiento, basada en la decisión
