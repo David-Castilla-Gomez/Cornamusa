@@ -6,6 +6,126 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.10.0] — 2026-04-30 — Inline caching especializado tipo PEP 659 (Fase 10)
+
+Primera fase de optimización de rendimiento. Cuatro tandas de
+especializaciones implementadas en 5 sesiones de trabajo
+(detalladas en [decisiones/B8-inline-caching.md](decisiones/B8-inline-caching.md)).
+Quickening por reescritura del byte del opcode in-place; cache slots
+inline en el bytecode para los opcodes con cache versionada (PEP 659
+style, no side-table).
+
+### Especializaciones nuevas (v0.10.0)
+
+**Lookup de globales** (sesión 2):
+- `OP_OBTENER_GLOBAL` ahora ocupa 6 bytes (opcode + name_idx + 4 bytes
+  de cache). Slot inline guarda los 16 bits bajos de
+  `Diccionario.version` y el slot_idx en `entradas`. Tras un acierto
+  promueve a `OP_OBTENER_GLOBAL_CACHE` que lee directamente
+  `entradas[slot_idx]` sin hashing ni probing. Miss → degrada y
+  rebobina ip.
+- `Diccionario.version` (uint64_t) bumpea solo en cambios
+  estructurales (insert nuevo, remove, resize). NO en sobreescritura
+  — preserva el cache para `contador = contador + 1` en hot loop.
+
+**Llamadas a función** (sesión 3-4):
+- 4 variantes especializadas, sin cache slot (el byte del opcode es
+  el cache):
+  - `OP_LLAMAR_NATIVA` para `VAL_NATIVA`
+  - `OP_LLAMAR_BC` para `VAL_FUNCION_BC` (closure)
+  - `OP_LLAMAR_CLASE` para `VAL_CLASE` (instanciación + `__iniciar__`)
+  - `OP_LLAMAR_METODO_LIGADO` para `VAL_METODO_LIGADO`
+- Refactor: cada cuerpo de rama de `OP_LLAMAR` extraído a helper
+  `static` (`ejecutar_llamar_<tipo>`). Slow path captura el chunk del
+  caller antes de que el helper push'ee un frame nuevo, para
+  promover el opcode en el chunk correcto.
+
+**Aritmética y comparaciones int+int** (sesión 5-6):
+- `OP_SUMAR_INT_INT`, `OP_RESTAR_INT_INT`, `OP_MULTIPLICAR_INT_INT`
+  llaman `mp_add`/`mp_sub`/`mp_mul` directamente, saltándose el
+  switch general de tipos de `evaluador_aplicar_binario`.
+- `OP_MENOR_INT_INT`, `OP_MENOR_IGUAL_INT_INT`, `OP_MAYOR_INT_INT`,
+  `OP_MAYOR_IGUAL_INT_INT` con `mp_cmp` directo.
+- Helpers de bignum (`nuevo_mp`, `liberar_mp`, `valor_entero_de_mp`)
+  expuestos en `evaluador.h` para que `vm.c` no duplique gestión de
+  `mp_int`.
+
+**Acceso a atributos de instancia** (sesión 7-8):
+- `OP_OBTENER_ATRIBUTO` ahora 6 bytes con cache de
+  (clase_hash u16, slot_idx u16). Los 16 bits bajos del puntero a la
+  clase filtran cross-class; el slot_idx apunta a `instancia.atributos`.
+- `OP_OBTENER_ATRIBUTO_INSTANCIA` (fast path) verifica:
+  1. obj es `VAL_INSTANCIA`
+  2. low16(clase) coincide con cache
+  3. slot ocupado
+  4. clave guardada coincide con el nombre esperado (memcmp corto)
+- El check (4) es esencial: instancias de la misma clase pueden
+  tener layouts distintos si fueron mutadas dinámicamente.
+
+### Infraestructura (v0.10.0)
+
+- **ASan + UBSan en CI** (Linux/Clang Debug): job `sanitizers` en
+  `.github/workflows/build.yml` que compila con
+  `-fsanitize=address,undefined -fno-omit-frame-pointer` y corre
+  todos los tests. Captura corrupciones de heap y UB que serían
+  invisibles en builds Release. Importante para F10 que hace
+  rewriting in-place de bytecode.
+- **`CORNAMUSA_BYTECODE_VERSION = 1`** en `chunk.h` (decisión I7):
+  marcador de formato. Se bumpea cuando el layout binario rompa
+  compatibilidad. Hoy los chunks no se serializan a disco; la
+  constante prepara el terreno para futuras herramientas (`.cornc`
+  cache files, inspector externo).
+- **Decisión [B8-inline-caching.md](decisiones/B8-inline-caching.md)**
+  documentando arquitectura, riesgos, opcodes pendientes para
+  post-v1.0 (tier-2, tracing, threaded code dispatch, JIT).
+
+### Tests (v0.10.0)
+
+- **11 tests unitarios nuevos en `test_bytecode_ic.c`**: validan
+  quickening básico, hits múltiples estables, invalidación en
+  insert nuevo, no-invalidación en sobreescritura, promoción de
+  `OP_LLAMAR` a `_NATIVA`/`_BC`, degradación polimórfica,
+  promoción de binarios a `_INT_INT`, mezcla de tipos en mismo site,
+  shape cache de atributos.
+- 91 tests verde totales (incluye los 8 diferenciales tree-walking
+  vs bytecode — críticos para garantizar que el quickening no
+  introduce divergencia semántica).
+
+### Rendimiento (v0.10.0)
+
+Mediana de 5 corridas, cada benchmark contra binario v0.9.2 y v0.10.0
+construidos con CMake Release:
+
+| Benchmark             | v0.9.2  | v0.10.0 | Mejora |
+|-----------------------|---------|---------|--------|
+| bignum_factorial      | 33 ms   | 18 ms   | **1.83x** |
+| oo_intensivo          | 50 ms   | 37 ms   | **1.35x** |
+| dicc_intensivo        | 157 ms  | 130 ms  | 1.21x |
+| globales_lookup       | 1.18 s  | 1.04 s  | 1.14x |
+| fibonacci_recursivo   | 1.47 s  | 1.44 s  | 1.02x |
+
+**Geomedia ≈ 1.30x** (30% más rápido).
+
+`fibonacci_recursivo` mejora poco porque su cuello dominante es la
+asignación de `mp_int` por operación bignum, no el dispatch.
+Optimizar eso requeriría small-int tagging (i63 para enteros que
+caben en 63 bits) o pool de `mp_int` — quedan como trabajo
+post-F10, posiblemente v0.11.
+
+### Notas (v0.10.0)
+
+- El IC introduce riesgo de bugs por cache mal invalidado. Los tests
+  diferenciales son la red de seguridad principal — cualquier
+  divergencia de salida entre tree-walking (sin IC) y bytecode (con
+  IC) se manifiesta como test rojo.
+- Todos los cache slots son zero-init en chunks recién emitidos. El
+  primer hit del slow path los rellena. Si un programa solo ejecuta
+  un site UNA vez, paga 4 bytes extra de chunk sin beneficiarse —
+  aceptable.
+- Sites polimórficos (que oscilan entre tipos) pagan el coste de
+  rewrite en cada cambio. La detección de polimorfismo y degradación
+  permanente se queda como trabajo post-v1.0 (tier-2 PEP 659).
+
 ## [0.9.2] — 2026-04-29 — pulido pre-v1.0: stdlib `sistema`, tests diferenciales, benchmarks
 
 Pasada de madurez antes de decidir entre F10 (inline caching) y F11 (v1.0
