@@ -892,8 +892,6 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
         return false;
     }
 
-    if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
-
     /*
      * Dentro de función: prioridad local → upvalue → nuevo local.
      * En el scope raíz (top-level): toda asignación va a globales.
@@ -902,6 +900,8 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
         int slot = buscar_local(c->actual, destino->como.ident.nombre,
                                    destino->como.ident.longitud);
         if (slot >= 0) {
+            /* Local existente: empujar valor, asignar al slot. */
+            if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
             chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                 (uint8_t)slot, s->linea);
             return true;
@@ -910,18 +910,36 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
                                       destino->como.ident.nombre,
                                       destino->como.ident.longitud, s->linea);
         if (upv >= 0) {
+            if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
             chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
                                 (uint8_t)upv, s->linea);
             return true;
         }
-        /* Nuevo local: el valor ya está en el slot correcto del
-           stack; solo registramos el nombre. (OLD convention) */
+        /*
+         * Nuevo local. Antes de v0.11.5 usábamos "OLD convention":
+         * empujar valor + agregar_local sin OP_ASIGNAR_LOCAL, asumiendo
+         * que el push deja el valor en el slot del local. Eso solo
+         * funciona en la PRIMERA ejecución; dentro de un bucle el slot
+         * queda fijado y el push de iteraciones siguientes va a un
+         * stack pos distinto, dejando el slot con el valor de la
+         * primera iter (bug v0.11.5).
+         *
+         * Fix: emitir OP_NULO (reservar slot en stack), agregar_local,
+         * compilar valor (push), OP_ASIGNAR_LOCAL al slot (pop+asign).
+         */
+        chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
         int nuevo = agregar_local(c, destino->como.ident.nombre,
                                       destino->como.ident.longitud,
                                       s->linea);
         if (nuevo < 0) return false;
+        if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+        chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                            (uint8_t)nuevo, s->linea);
         return true;
     }
+
+    /* Top-level: empujar valor y guardar en global. */
+    if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
 
     int idx = agregar_nombre_global(c, destino->como.ident.nombre,
                                       destino->como.ident.longitud);

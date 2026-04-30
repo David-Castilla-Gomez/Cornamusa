@@ -447,7 +447,48 @@ static void test_obtener_atributo_promueve(void) {
     vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
 }
 
+/* ───── Regresión v0.11.5: nuevo local en bucle dentro de función ─────
+ *
+ * Bug detectado al validar el tutorial v1.0 (sesión 3): la "OLD
+ * convention" del compilador para nuevos locales (push valor +
+ * agregar_local sin OP_ASIGNAR_LOCAL) solo funcionaba en la PRIMERA
+ * ejecución. Dentro de un bucle dentro de una función, la asignación
+ * `a = v` quedaba con el valor de la primera iteración para siempre.
+ *
+ * Tree-walking sin bug; bytecode con bug. Los 8 tests diferenciales
+ * existentes no lo detectaron porque sus ejemplos no usan ese patrón.
+ *
+ * Fix: emitir OP_NULO + agregar_local + push valor + OP_ASIGNAR_LOCAL.
+ */
+
+static void test_regresion_local_nuevo_en_bucle(void) {
+    const char *fuente =
+        "funcion ejecutar():\n"
+        "    suma = 0\n"
+        "    para v en [1, 2, 3]:\n"
+        "        a = v + 10\n"          /* nuevo local 'a' en bucle */
+        "        suma = suma + a\n"
+        "    fin para\n"
+        "    retornar suma\n"
+        "fin funcion\n"
+        "resultado = ejecutar()\n";
+    Arena a; Chunk chunk; VM vm;
+    bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
+    AFIRMAR(ok);
+
+    /* Esperado: a = 11, 12, 13 → suma = 11 + 12 + 13 = 36. */
+    Valor n = valor_cadena_referencia("resultado", 9);
+    Valor v;
+    AFIRMAR(dicc_obtener(vm.globales, &n, &v));
+    char buf[32]; valor_a_cadena(&v, buf, sizeof(buf));
+    AFIRMAR(strcmp(buf, "36") == 0);
+    valor_destruir(&v);
+
+    vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
+}
+
 int main(void) {
+    test_regresion_local_nuevo_en_bucle();
     test_quickening_basico();
     test_hits_multiples_estables();
     test_insertacion_invalida_cache();

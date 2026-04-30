@@ -6,6 +6,99 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [0.11.5] — 2026-04-30 — FIX CRÍTICO: nuevo local en bucle dentro de función
+
+Bug serio de correctness en el bytecode VM, descubierto al validar el
+tutorial de v1.0 (sesión 3 del plan B10). El tree-walking interpreter
+no tenía el bug; los 8 tests diferenciales tree-walking↔bytecode
+existentes no lo detectaron porque sus ejemplos no usaban el patrón.
+
+### Bug
+
+Cuando una asignación a un **nuevo local** ocurre dentro de un bucle
+dentro de una función, el slot del local quedaba con el valor de la
+primera iteración para siempre.
+
+```cornamusa
+funcion main():
+    para v en [1, 2, 3]:
+        a = v + 10                  # nuevo local 'a'
+        imprimir("v=", v, "a=", a)
+    fin para
+fin funcion
+main()
+```
+
+Antes de v0.11.5:
+```
+v= 1 a= 11
+v= 2 a= 11      ← bug: siempre 11
+v= 3 a= 11      ← bug: siempre 11
+```
+
+Ahora v0.11.5 (correcto):
+```
+v= 1 a= 11
+v= 2 a= 12
+v= 3 a= 13
+```
+
+El bug afecta a **cualquier** programa con asignación a local nuevo
+dentro de un bucle dentro de función. Es un patrón extremadamente
+común en código real.
+
+### Causa raíz
+
+`compilar_asignar` en `src/compilador.c` usaba la "OLD convention"
+para nuevos locales: empujar el valor + `agregar_local` SIN emitir
+`OP_ASIGNAR_LOCAL`, asumiendo que el push deja el valor en el slot
+recién creado. Eso solo es cierto en la PRIMERA ejecución del
+bytecode emitido. Dentro de un bucle, el bytecode se ejecuta
+múltiples veces y en iteraciones siguientes el push va a un stack
+pos distinto del slot fijado en compile-time, dejando el slot con
+el valor de la primera iteración.
+
+### Fix
+
+Para nuevos locales en función:
+
+1. Emitir `OP_NULO` (reserva el slot en stack).
+2. `agregar_local` (registra el nombre y fija el slot index).
+3. Compilar la expresión del valor (push).
+4. `OP_ASIGNAR_LOCAL` al slot recién creado (pop + asign).
+
+El push del placeholder + asignación explícita funciona en cualquier
+iteración porque el stack queda con el mismo n elementos al inicio
+y al fin de cada iter.
+
+### Impacto en otras versiones
+
+Este bug ha estado presente desde **antes de v0.11** — probablemente
+desde v0.6 cuando se introdujo el bytecode VM. Los benchmarks no lo
+detectaron porque usaban variables globales (no locales nuevas en
+bucles). Los tests integración no lo detectaron porque no usaban el
+patrón. **v0.6.0 hasta v0.11.4 inclusive contienen este bug**.
+
+Después de la sesión, el camino crítico de programas reales
+funciona correctamente. Cualquier programa que demostraba algo
+"raro" (resultado constante donde debía variar) probablemente
+estaba afectado.
+
+### Tests
+
+- Nuevo `test_regresion_local_nuevo_en_bucle` en `test_bytecode_ic.c`:
+  ejecuta el patrón exacto del bug y verifica `suma = 11 + 12 + 13 = 36`.
+- 92 tests verde (incluye el nuevo).
+- Bench sin regresiones: globales_lookup ~218ms (igual que v0.11.4).
+
+### Lección
+
+Tutorial validado contra el intérprete real es una práctica esencial.
+El bug llevaba meses ahí; nadie lo había detectado porque los
+ejemplos test eran demasiado micro. Lo capturamos porque escribir
+un programa que un usuario humano escribiría reveló el patrón
+inmediatamente.
+
 ## [0.11.4] — 2026-04-30 — fix hash divergente en banda 2^62..2^63
 
 Cierra tech-debt #6 de la revisión post-release v0.11.1: bug latente
