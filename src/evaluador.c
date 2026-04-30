@@ -174,6 +174,20 @@ Valor evaluador_valor_entero_de_mp(mp_int *m) { return valor_entero_de_mp(m); }
  * Nota: usamos __builtin_*_overflow cuando está disponible (GCC/Clang).
  * Para MSVC fallback con check explícito vía rango.
  */
+/* Forward decl porque también lo invoca el wrapper público abajo. */
+static Valor small_op_small(EvalError *err, TipoToken op,
+                              int64_t a, int64_t b,
+                              int linea, int columna,
+                              bool *aplicable);
+
+Valor evaluador_small_op_small(EvalError *err, int op_token,
+                                int64_t a, int64_t b,
+                                int linea, int columna,
+                                bool *aplicable) {
+    return small_op_small(err, (TipoToken)op_token, a, b, linea, columna,
+                           aplicable);
+}
+
 static Valor small_op_small(EvalError *err, TipoToken op,
                               int64_t a, int64_t b,
                               int linea, int columna,

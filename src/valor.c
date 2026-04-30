@@ -115,11 +115,9 @@ Valor valor_entero_de_lexema(const char *lexema, int longitud) {
     }
     free(limpio);
 
-    Valor v;
-    v.tipo = VAL_ENTERO;
-    v.dueno_cadena = false;
-    v.como.entero = m;
-    return v;
+    /* v0.11 (B9): normalizar a SMALL si cabe — los literales en código
+       fuente son típicamente pequeños. */
+    return valor_entero_de_mp_normalizado(m);
 }
 
 Valor valor_entero_de_long(long n) {

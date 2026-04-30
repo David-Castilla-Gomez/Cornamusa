@@ -415,51 +415,113 @@ void vm_destruir(VM *vm) {
  * termina natural y el `break` del case sigue.
  */
 /*
- * TODO sesión 5 (B9): este macro degrada al slow path si CUALQUIER
- * operando es VAL_ENTERO_SMALL en lugar de VAL_ENTERO. Es correcto
- * (el slow path maneja SMALL bien) pero pierde el speedup del IC
- * para enteros pequeños. Sesión 5 añade un path SMALL+SMALL inline
- * que evita mp_int por completo.
+ * Aritmética IC (B9 v0.11): tres caminos
+ *
+ *   1. SMALL+SMALL — invoca evaluador_small_op_small() inline. Sin
+ *      malloc/mp_init. La normalización del resultado a SMALL/BIG la
+ *      hace evaluador_small_op_small via valor_entero_de_i64.
+ *      Si el helper reporta overflow (no aplicable), caer al path BIG.
+ *   2. BIG+BIG — path mp_* existente; el resultado pasa por
+ *      valor_entero_de_mp_normalizado para demote si cabe en SMALL.
+ *   3. Cualquier mezcla SMALL/BIG o tipo no-entero — degrade al
+ *      slow path OP_BASE.
+ *
+ * `OP_TT` es el TipoToken (TT_MAS, etc.) que evaluador_small_op_small
+ * espera. `MP_OP` es la función libtommath para el path BIG.
  */
-#define BIN_INT_INT_ARITH(BASE_OP, MP_OP)                                  \
-    do {                                                                    \
-        const uint8_t *opcode_addr = frame->ip - 1;                         \
-        if (vm->tope[-1].tipo != VAL_ENTERO ||                              \
-            vm->tope[-2].tipo != VAL_ENTERO) {                              \
-            uint8_t *_codigo = (uint8_t *)frame->chunk->codigo;             \
-            _codigo[(int)(opcode_addr - _codigo)] = (uint8_t)(BASE_OP);     \
-            frame->ip = opcode_addr;                                        \
-            break;                                                          \
-        }                                                                   \
-        Valor _b = sacar(vm);                                               \
-        Valor _a = sacar(vm);                                               \
-        mp_int *_r = evaluador_nuevo_mp();                                  \
-        if (!_r || MP_OP(_a.como.entero, _b.como.entero, _r) != MP_OKAY) {  \
-            evaluador_liberar_mp(_r);                                       \
-            valor_destruir(&_a); valor_destruir(&_b);                       \
-            VM_ERROR("memoria insuficiente");                               \
-            return VM_ERROR_RUNTIME;                                        \
-        }                                                                   \
-        valor_destruir(&_a); valor_destruir(&_b);                           \
-        empujar(vm, evaluador_valor_entero_de_mp(_r));                      \
+#define BIN_INT_INT_ARITH(BASE_OP, MP_OP, OP_TT)                            \
+    do {                                                                     \
+        const uint8_t *opcode_addr = frame->ip - 1;                          \
+        Valor *_pb = vm->tope - 1;                                           \
+        Valor *_pa = vm->tope - 2;                                           \
+        if (_pa->tipo == VAL_ENTERO_SMALL && _pb->tipo == VAL_ENTERO_SMALL) {\
+            int64_t _a64 = _pa->como.entero_small;                           \
+            int64_t _b64 = _pb->como.entero_small;                           \
+            bool _aplic;                                                     \
+            int _linea = linea_actual_frame(frame);                          \
+            Valor _r = evaluador_small_op_small(&vm->error, (OP_TT),         \
+                                                 _a64, _b64, _linea, 0, &_aplic);\
+            if (_aplic) {                                                    \
+                if (vm->error.tuvo_error) return VM_ERROR_RUNTIME;           \
+                vm->tope -= 2;                                               \
+                empujar(vm, _r);                                             \
+                break;                                                       \
+            }                                                                \
+            /* Overflow: fallback a path BIG con mp_int temporales. */       \
+            Valor _b = sacar(vm);                                            \
+            Valor _a = sacar(vm);                                            \
+            mp_int *_ma = evaluador_nuevo_mp();                              \
+            mp_int *_mb = evaluador_nuevo_mp();                              \
+            mp_int *_rmp = evaluador_nuevo_mp();                             \
+            if (!_ma || !_mb || !_rmp) {                                     \
+                evaluador_liberar_mp(_ma); evaluador_liberar_mp(_mb);        \
+                evaluador_liberar_mp(_rmp);                                  \
+                valor_destruir(&_a); valor_destruir(&_b);                    \
+                VM_ERROR("memoria insuficiente");                            \
+                return VM_ERROR_RUNTIME;                                     \
+            }                                                                \
+            mp_set_i64(_ma, _a64); mp_set_i64(_mb, _b64);                    \
+            if (MP_OP(_ma, _mb, _rmp) != MP_OKAY) {                          \
+                evaluador_liberar_mp(_ma); evaluador_liberar_mp(_mb);        \
+                evaluador_liberar_mp(_rmp);                                  \
+                valor_destruir(&_a); valor_destruir(&_b);                    \
+                VM_ERROR("fallo en operacion entera");                       \
+                return VM_ERROR_RUNTIME;                                     \
+            }                                                                \
+            evaluador_liberar_mp(_ma); evaluador_liberar_mp(_mb);            \
+            valor_destruir(&_a); valor_destruir(&_b);                        \
+            empujar(vm, valor_entero_de_mp_normalizado(_rmp));               \
+            break;                                                           \
+        }                                                                    \
+        if (_pa->tipo == VAL_ENTERO && _pb->tipo == VAL_ENTERO) {            \
+            Valor _b = sacar(vm);                                            \
+            Valor _a = sacar(vm);                                            \
+            mp_int *_r = evaluador_nuevo_mp();                               \
+            if (!_r || MP_OP(_a.como.entero, _b.como.entero, _r) != MP_OKAY) {\
+                evaluador_liberar_mp(_r);                                    \
+                valor_destruir(&_a); valor_destruir(&_b);                    \
+                VM_ERROR("memoria insuficiente");                            \
+                return VM_ERROR_RUNTIME;                                     \
+            }                                                                \
+            valor_destruir(&_a); valor_destruir(&_b);                        \
+            empujar(vm, valor_entero_de_mp_normalizado(_r));                 \
+            break;                                                           \
+        }                                                                    \
+        /* Mezcla SMALL/BIG o tipo no-entero: degradar al slow path. */      \
+        uint8_t *_codigo = (uint8_t *)frame->chunk->codigo;                  \
+        _codigo[(int)(opcode_addr - _codigo)] = (uint8_t)(BASE_OP);          \
+        frame->ip = opcode_addr;                                             \
     } while (0)
 
-/* Idem: ver TODO sesión 5 sobre BIN_INT_INT_ARITH. */
-#define BIN_INT_INT_CMP(BASE_OP, COND)                                     \
-    do {                                                                    \
-        const uint8_t *opcode_addr = frame->ip - 1;                         \
-        if (vm->tope[-1].tipo != VAL_ENTERO ||                              \
-            vm->tope[-2].tipo != VAL_ENTERO) {                              \
-            uint8_t *_codigo = (uint8_t *)frame->chunk->codigo;             \
-            _codigo[(int)(opcode_addr - _codigo)] = (uint8_t)(BASE_OP);     \
-            frame->ip = opcode_addr;                                        \
-            break;                                                          \
-        }                                                                   \
-        Valor _b = sacar(vm);                                               \
-        Valor _a = sacar(vm);                                               \
-        int _cmp = mp_cmp(_a.como.entero, _b.como.entero);                  \
-        valor_destruir(&_a); valor_destruir(&_b);                           \
-        empujar(vm, valor_booleano(COND));                                  \
+/*
+ * Comparaciones IC (B9 v0.11): camino rápido i64 si ambos SMALL,
+ * mp_cmp si ambos BIG, degrade en mezclas.
+ */
+#define BIN_INT_INT_CMP(BASE_OP, COND)                                      \
+    do {                                                                     \
+        const uint8_t *opcode_addr = frame->ip - 1;                          \
+        Valor *_pb = vm->tope - 1;                                           \
+        Valor *_pa = vm->tope - 2;                                           \
+        if (_pa->tipo == VAL_ENTERO_SMALL && _pb->tipo == VAL_ENTERO_SMALL) {\
+            int64_t _a64 = _pa->como.entero_small;                           \
+            int64_t _b64 = _pb->como.entero_small;                           \
+            int _cmp = (_a64 < _b64) ? -1 : (_a64 > _b64) ? 1 : 0;           \
+            vm->tope -= 2;                                                   \
+            empujar(vm, valor_booleano(COND));                               \
+            break;                                                           \
+        }                                                                    \
+        if (_pa->tipo == VAL_ENTERO && _pb->tipo == VAL_ENTERO) {            \
+            Valor _b = sacar(vm);                                            \
+            Valor _a = sacar(vm);                                            \
+            int _mp = mp_cmp(_a.como.entero, _b.como.entero);                \
+            int _cmp = (_mp == MP_LT) ? -1 : (_mp == MP_GT) ? 1 : 0;         \
+            valor_destruir(&_a); valor_destruir(&_b);                        \
+            empujar(vm, valor_booleano(COND));                               \
+            break;                                                           \
+        }                                                                    \
+        uint8_t *_codigo = (uint8_t *)frame->chunk->codigo;                  \
+        _codigo[(int)(opcode_addr - _codigo)] = (uint8_t)(BASE_OP);          \
+        frame->ip = opcode_addr;                                             \
     } while (0)
 
 /* ──────────────────────────────────────────────────────────────────
@@ -774,14 +836,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 const uint8_t *opcode_addr = frame->ip - 1;
                 int linea = linea_actual_frame(frame);
                 /* Capturar tipos antes de sacar (evaluador_aplicar_binario
-                   destruye los operandos).
-                   v0.11 (B9 sesión 4): promover a *_INT_INT solo si AMBOS
-                   son VAL_ENTERO (BIG). Si son SMALL evitamos el ping-pong
-                   con la variante INT_INT actual que aún rechaza SMALL.
-                   Sesión 5 hará que INT_INT acepte SMALL — entonces este
-                   chequeo volverá a `valor_es_entero`. */
-                bool ambos_int = (vm->tope[-1].tipo == VAL_ENTERO
-                                  && vm->tope[-2].tipo == VAL_ENTERO);
+                   destruye los operandos). v0.11 sesión 5: el IC ahora
+                   acepta SMALL+SMALL inline, así que promovemos siempre
+                   que ambos sean enteros (incluyendo SMALL). */
+                bool ambos_int = (valor_es_entero(&vm->tope[-1])
+                                  && valor_es_entero(&vm->tope[-2]));
                 Valor b = sacar(vm);
                 Valor a = sacar(vm);
                 int tt = opcode_a_token_binario(op);
@@ -813,9 +872,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 }
                 break;
             }
-            case OP_SUMAR_INT_INT:        BIN_INT_INT_ARITH(OP_SUMAR, mp_add); break;
-            case OP_RESTAR_INT_INT:       BIN_INT_INT_ARITH(OP_RESTAR, mp_sub); break;
-            case OP_MULTIPLICAR_INT_INT:  BIN_INT_INT_ARITH(OP_MULTIPLICAR, mp_mul); break;
+            case OP_SUMAR_INT_INT:        BIN_INT_INT_ARITH(OP_SUMAR, mp_add, TT_MAS); break;
+            case OP_RESTAR_INT_INT:       BIN_INT_INT_ARITH(OP_RESTAR, mp_sub, TT_MENOS); break;
+            case OP_MULTIPLICAR_INT_INT:  BIN_INT_INT_ARITH(OP_MULTIPLICAR, mp_mul, TT_ASTERISCO); break;
             case OP_MENOR_INT_INT:        BIN_INT_INT_CMP(OP_MENOR, _cmp == MP_LT); break;
             case OP_MENOR_IGUAL_INT_INT:  BIN_INT_INT_CMP(OP_MENOR_IGUAL, _cmp != MP_GT); break;
             case OP_MAYOR_INT_INT:        BIN_INT_INT_CMP(OP_MAYOR, _cmp == MP_GT); break;

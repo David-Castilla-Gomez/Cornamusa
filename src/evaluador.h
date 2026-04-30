@@ -2,6 +2,7 @@
 #define CORNAMUSA_EVALUADOR_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 #include "ast.h"
 #include "entorno.h"
@@ -128,6 +129,22 @@ Valor evaluador_aplicar_unario(EvalError *err, int op_token,
 mp_int *evaluador_nuevo_mp(void);
 void evaluador_liberar_mp(mp_int *m);
 Valor evaluador_valor_entero_de_mp(mp_int *m);
+
+/*
+ * Camino rápido SMALL+SMALL para aritmética entera (B9 v0.11).
+ *
+ * `op_token` es un TipoToken (int para no incluir lexer.h aquí).
+ * Operaciones soportadas: TT_MAS, TT_MENOS, TT_ASTERISCO,
+ * TT_DOBLE_BARRA, TT_PORCENTAJE.
+ *
+ * Devuelve un Valor (SMALL o BIG según corresponda) si la operación
+ * cabe inline. Si overflow o op no soportada, *aplicable=false y el
+ * llamador debe ir al path BIG con mp_int.
+ */
+Valor evaluador_small_op_small(EvalError *err, int op_token,
+                                int64_t a, int64_t b,
+                                int linea, int columna,
+                                bool *aplicable);
 
 /*
  * Conveniencia: ejecuta secuencialmente un programa (array de
