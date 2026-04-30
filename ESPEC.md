@@ -1,9 +1,12 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 0.1.0-borrador  
-**Estado:** En diseño activo (Fase 0 del plan de desarrollo)
+**Versión del documento:** 0.11.4
+**Estado:** Estable (camino a v1.0).
+**Última revisión:** 2026-04-30 — actualizada tras [B9 small-int tagging](decisiones/B9-small-int-tagging.md) y [B10 scope de v1.0](decisiones/B10-scope-de-v1.md).
 
-Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c` y la documentación de usuario.
+Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
+
+Las características marcadas con **(reservada)** o **(planeada)** describen sintaxis o semántica reservada para una versión futura — el parser puede aceptarla sin que la VM la implemente todavía. Son contratos intencionales con los usuarios para que su código sea forward-compatible.
 
 ---
 
@@ -283,105 +286,138 @@ fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
 
 ## 4. Built-ins
 
-### Funciones globales
+### 4.1 Funciones globales
 
+Esta es la lista **real** de built-ins disponibles en v0.11.4 (registrados en `src/nativos.c`).
+
+#### E/S y conversión
 | Cornamusa | Equivalente Python | Descripción |
 |---|---|---|
-| `imprimir(...)` | `print` | Imprime valores separados por espacio + salto de línea |
-| `leer(prompt="")` | `input` | Lee una línea del stdin |
-| `longitud(x)` | `len` | Tamaño de secuencia / colección |
-| `tipo(x)` | `type` | Tipo del valor |
-| `rango(...)` | `range` | Iterador numérico (1, 2 o 3 args) |
-| `enumerar(it, inicio=0)` | `enumerate` | Pares (índice, valor) |
-| `mapear(f, it)` | `map` | Aplicar función a iterable |
-| `filtrar(f, it)` | `filter` | Filtrar iterable por predicado |
-| `reducir(f, it, ini?)` | `functools.reduce` | Plegar iterable |
-| `ordenar(it, clave=nulo, invertido=falso)` | `sorted` | Lista ordenada |
-| `invertir(seq)` | `reversed` | Iterador inverso |
-| `suma(it, inicio=0)` | `sum` | Suma elementos |
-| `mínimo(...)` / `minimo` | `min` | Mínimo |
-| `máximo(...)` / `maximo` | `max` | Máximo |
-| `absoluto(x)` | `abs` | Valor absoluto |
-| `redondear(x, n=0)` | `round` | Redondeo |
-| `cadena(x)` | `str` | Convertir a cadena |
-| `entero(x, base=10)` | `int` | Convertir a entero |
-| `decimal(x)` | `float` | Convertir a decimal |
-| `booleano(x)` | `bool` | Convertir a booleano |
-| `lista(it)` | `list` | Convertir a lista |
-| `tupla(it)` | `tuple` | Convertir a tupla |
-| `diccionario(...)` | `dict` | Construir diccionario |
-| `conjunto(it)` | `set` | Construir conjunto |
-| `abrir(ruta, modo="l")` | `open` | Abrir archivo (`l`=lectura, `e`=escritura, `a`=añadir, `b`=binario) |
-| `iterar(x)` | `iter` | Obtener iterador |
-| `siguiente(it, def?)` | `next` | Siguiente del iterador |
-| `instancia_de(x, T)` | `isinstance` | Comprobación de tipo |
-| `subclase_de(C, P)` | `issubclass` | Comprobación de subclase |
-| `id(x)` | `id` | Identidad numérica |
-| `resumen(x)` | `hash` | Hash para colecciones |
-| `repr(x)` | `repr` | Representación textual |
+| `imprimir(...)` | `print(*args)` | Imprime valores separados por espacio + salto de línea |
+| `tipo(x)` | `type(x).__name__` | Devuelve el nombre del tipo como cadena ("entero", "lista", ...) |
 
-### Métodos especiales (dunders)
-
-Los nombres de métodos especiales en Cornamusa son **castellanos** (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md)). El runtime invoca estos nombres canónicos directamente; los nombres en inglés de Python no son reconocidos. Por ejemplo, `longitud(obj)` busca `__longitud__`, no `__len__`.
-
-#### Construcción y representación
-| Dunder | Python equivalente | Activación |
+#### Tamaño e iteración
+| Cornamusa | Equivalente Python | Descripción |
 |---|---|---|
-| `__iniciar__(yo, ...)` | `__init__` | Constructor: `Persona("Ana")` |
-| `__finalizar__(yo)` | `__del__` | Destructor (raro de implementar) |
-| `__cadena__(yo)` | `__str__` | `cadena(obj)`, `f"{obj}"`, `imprimir(obj)` |
-| `__repr__(yo)` | `__repr__` | `repr(obj)` — préstamo aceptado por brevedad |
-| `__booleano__(yo)` | `__bool__` | `booleano(obj)`, contexto de truthiness |
+| `longitud(x)` | `len(x)` | Tamaño de cadena, lista, dicc, conjunto, tupla, rango |
+| `rango(fin)`, `rango(inicio, fin)`, `rango(inicio, fin, paso)` | `range` | Construye un iterador entero perezoso |
 
-#### Comparaciones
-| Dunder | Python equivalente | Activación |
-|---|---|---|
-| `__igual__(yo, otro)` | `__eq__` | `a == b` |
-| `__distinto__(yo, otro)` | `__ne__` | `a != b` |
-| `__menor__(yo, otro)` | `__lt__` | `a < b` |
-| `__menor_igual__(yo, otro)` | `__le__` | `a <= b` |
-| `__mayor__(yo, otro)` | `__gt__` | `a > b` |
-| `__mayor_igual__(yo, otro)` | `__ge__` | `a >= b` |
-| `__resumen__(yo)` | `__hash__` | `resumen(obj)`, claves de dict/set |
+#### Colecciones (mutación / consulta)
+| Cornamusa | Descripción |
+|---|---|
+| `agregar(lista, valor)` | Añade `valor` al final de `lista`. Devuelve `nulo`. |
+| `quitar(lista_o_dicc_o_conj, clave_o_indice)` | Quita por índice (lista) / clave (dicc, conjunto). Devuelve el valor quitado. |
+| `insertar(lista, indice, valor)` | Inserta en posición `indice`, desplazando el resto. |
+| `invertir(lista)` | Invierte una lista in-place. Devuelve `nulo`. |
+| `ordenar(lista, invertido=falso)` | Ordena in-place. `invertido=verdadero` para descendente. |
+| `claves(dicc)` | Lista con las claves del diccionario. |
+| `valores(dicc)` | Lista con los valores del diccionario. |
+| `conjunto(iter?)` | Construye un conjunto vacío `conjunto()` o desde un iterable. |
 
-#### Colecciones e iteración
-| Dunder | Python equivalente | Activación |
-|---|---|---|
-| `__longitud__(yo)` | `__len__` | `longitud(obj)` |
-| `__obtener__(yo, k)` | `__getitem__` | `obj[k]` |
-| `__establecer__(yo, k, v)` | `__setitem__` | `obj[k] = v` |
-| `__borrar__(yo, k)` | `__delitem__` | `borrar obj[k]` |
-| `__contiene__(yo, x)` | `__contains__` | `x en obj` |
-| `__iterar__(yo)` | `__iter__` | `para x en obj:` |
-| `__siguiente__(yo)` | `__next__` | `siguiente(it)` |
+#### Excepciones (constructores de clases built-in)
+| Cornamusa | Descripción |
+|---|---|
+| `Excepcion(mensaje)` | Excepción base. |
+| `ErrorAritmetico(mensaje)` | Error matemático (división por cero, overflow lógico). |
+| `ErrorDeTipo(mensaje)` | Operación sobre tipo incorrecto. |
+| `ErrorDeValor(mensaje)` | Valor de tipo correcto pero inválido (e.g. `factorial(-1)`). |
+| `ErrorDeIndice(mensaje)` | Índice fuera de rango. |
+| `ErrorDeClave(mensaje)` | Clave no presente en diccionario. |
+| `ErrorDeNombre(mensaje)` | Identificador no definido (lanzado automáticamente por la VM). |
 
-#### Aritméticos
-| Dunder | Python equivalente | Activación |
-|---|---|---|
-| `__sumar__(yo, otro)` | `__add__` | `a + b` |
-| `__restar__(yo, otro)` | `__sub__` | `a - b` |
-| `__multiplicar__(yo, otro)` | `__mul__` | `a * b` |
-| `__dividir__(yo, otro)` | `__truediv__` | `a / b` |
-| `__div_entera__(yo, otro)` | `__floordiv__` | `a // b` |
-| `__modulo__(yo, otro)` | `__mod__` | `a % b` |
-| `__potencia__(yo, otro)` | `__pow__` | `a ** b` |
-| `__negar__(yo)` | `__neg__` | `-a` |
-| `__positivar__(yo)` | `__pos__` | `+a` |
-| `__absoluto__(yo)` | `__abs__` | `absoluto(a)` |
+#### Sistema y memoria
+| Cornamusa | Descripción |
+|---|---|
+| `recolectar()` | Fuerza una pasada del GC mark-sweep. Devuelve `nulo`. |
+| `obtener_argv()` | Lista de cadenas con los argumentos del programa (incluido el nombre del .cor en posición 0). Expuesta también via `sistema.argv` (importar `sistema`). |
+| `salir(codigo=0)` | Termina el proceso inmediatamente con el código indicado. No retorna. |
 
-#### Llamada y contexto
-| Dunder | Python equivalente | Activación |
-|---|---|---|
-| `__llamar__(yo, ...)` | `__call__` | `obj(args)` |
-| `__entrar__(yo)` | `__enter__` | `con obj como ...` (futuro) |
-| `__salir__(yo, exc)` | `__exit__` | `con obj como ...` (futuro) |
+### 4.2 Built-ins planeados (no en v0.11.4)
 
-#### Atributos dinámicos
-| Dunder | Python equivalente | Activación |
-|---|---|---|
-| `__obtener_atributo__(yo, nombre)` | `__getattr__` | `obj.x` cuando `x` no existe |
-| `__establecer_atributo__(yo, nombre, v)` | `__setattr__` | `obj.x = v` |
-| `__borrar_atributo__(yo, nombre)` | `__delattr__` | `borrar obj.x` |
+Los siguientes nombres aparecen en código de ejemplos y mensajes pero **aún no están registrados como built-ins**. Su sintaxis ya está reservada en la especificación para forward-compatibility:
+
+`leer`, `enumerar`, `mapear`, `filtrar`, `reducir`, `suma`, `mínimo`/`minimo`, `máximo`/`maximo`, `absoluto`, `redondear`, `cadena`, `entero`, `decimal`, `booleano`, `lista`, `tupla`, `diccionario`, `abrir`, `iterar`, `siguiente`, `instancia_de`, `subclase_de`, `id`, `resumen`, `repr`.
+
+Llegarán a la stdlib según demanda en versiones v1.x. Mientras tanto, escribir uno de estos nombres da `ErrorDeNombre` igual que cualquier identificador no definido.
+
+### 4.3 Métodos especiales (dunders)
+
+La filosofía de Cornamusa (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md)) es que los dunders son **castellanos** (`__iniciar__` no `__init__`).
+
+**En v0.11.4 sólo está implementado `__iniciar__`** (constructor de clase, invocado al hacer `Foo(args)`). Cualquier otro dunder definido en una clase es un método ordinario más — el runtime no lo invoca al evaluar operadores ni built-ins.
+
+```cornamusa
+clase Persona:
+    funcion __iniciar__(yo, nombre):       # ← este SÍ se invoca por Persona("Ana")
+        yo.nombre = nombre
+    fin funcion
+
+    funcion __sumar__(yo, otro):           # ← v0.11.4: método ordinario, NO se invoca por p1 + p2
+        retornar Persona(yo.nombre + otro.nombre)
+    fin funcion
+fin clase
+```
+
+Para v1.x se planea soporte de los siguientes dunders (la sintaxis se acepta hoy para forward-compatibility):
+
+- **Construcción/representación**: `__cadena__`, `__repr__`, `__booleano__`, `__finalizar__`.
+- **Comparaciones**: `__igual__`, `__distinto__`, `__menor__`, `__menor_igual__`, `__mayor__`, `__mayor_igual__`, `__resumen__`.
+- **Colecciones**: `__longitud__`, `__obtener__`, `__establecer__`, `__borrar__`, `__contiene__`, `__iterar__`, `__siguiente__`.
+- **Aritméticos**: `__sumar__`, `__restar__`, `__multiplicar__`, `__dividir__`, `__div_entera__`, `__modulo__`, `__potencia__`, `__negar__`, `__positivar__`, `__absoluto__`.
+- **Llamada/contexto**: `__llamar__`, `__entrar__`, `__salir__` (con `con` también planeado).
+- **Atributos dinámicos**: `__obtener_atributo__`, `__establecer_atributo__`, `__borrar_atributo__`.
+
+### 4.4 Biblioteca estándar (stdlib)
+
+En v0.11.4 hay tres módulos importables. Los archivos viven en `stdlib/*.cor` y se cargan via `importar`:
+
+#### `matematicas`
+Constantes y funciones matemáticas escritas en Cornamusa puro.
+
+```cornamusa
+importar matematicas
+imprimir(matematicas.PI)              # 3.141592653589793
+imprimir(matematicas.E)               # 2.718281828459045
+imprimir(matematicas.cuadrado(5))     # 25
+imprimir(matematicas.cubo(4))         # 64
+imprimir(matematicas.absoluto(-3))    # 3
+imprimir(matematicas.maximo(7, 2))    # 7
+imprimir(matematicas.minimo(7, 2))    # 2
+imprimir(matematicas.signo(-5))       # -1
+imprimir(matematicas.factorial(10))   # 3628800
+imprimir(matematicas.suma_rango(1, 11))   # 1+2+...+10 = 55
+imprimir(matematicas.es_par(4))       # verdadero
+imprimir(matematicas.es_impar(7))     # verdadero
+imprimir(matematicas.mcd(12, 18))     # 6
+```
+
+#### `cadenas`
+Operaciones sobre texto que requieren indexación UTF-8 (introducidas en v0.9.1).
+
+```cornamusa
+importar cadenas
+imprimir(cadenas.repetir("=", 20))                # "===================="
+imprimir(cadenas.empieza_con("hola.cor", "hola")) # verdadero
+imprimir(cadenas.termina_con("foo.txt", ".txt"))  # verdadero
+imprimir(cadenas.contar("aaabaa", "aa"))          # 2
+imprimir(cadenas.caracter("Cornamusa", 4))        # "a"
+```
+
+#### `sistema`
+Acceso a metadatos del proceso.
+
+```cornamusa
+importar sistema
+para arg en sistema.argv:
+    imprimir(arg)
+fin para
+si longitud(sistema.argv) < 2:
+    imprimir("Uso: programa <archivo>")
+    salir(1)
+fin si
+```
+
+`salir(codigo)` está disponible como built-in global directamente, sin necesidad de importar `sistema`.
 
 ---
 
@@ -590,6 +626,130 @@ Los operadores se desazucaran a llamadas a dunders. Por ejemplo:
 
 Si la clase no implementa el dunder correspondiente, el runtime lanza `ErrorDeTipo` con mensaje específico (ej. *"el tipo `Persona` no soporta el operador `+`"*).
 
+> **Nota v0.11.4**: solo `__iniciar__` se invoca automáticamente. Los demás se mencionan aquí como contrato de diseño para v1.x. Ver §4.3.
+
+### 6.7 Módulos
+
+Cornamusa carga código de otros archivos `.cor` mediante el sistema de módulos (decisión y diseño en código de F9). Los módulos viven en:
+
+1. El directorio del programa principal (resolución relativa).
+2. `stdlib/` adyacente al ejecutable de Cornamusa.
+
+#### Sintaxis
+
+```cornamusa
+importar matematicas                 # global `matematicas` accesible
+importar matematicas como mat        # alias: matematicas registrado como `mat`
+desde matematicas importar PI, factorial   # selectivo: PI y factorial directos
+desde matematicas importar factorial como fact  # con alias
+importar mat.geometria               # subsegmentos: busca mat/geometria.cor
+```
+
+#### Semántica
+
+- Cada módulo se carga **una vez**: posteriores `importar` retornan el mismo objeto cacheado.
+- El módulo es un valor de tipo `modulo` con atributos accesibles via `m.x`.
+- Las funciones definidas en un módulo **capturan las globales del módulo** (closures sobre el dicc del módulo). Una función importada y llamada desde el importador sigue viendo las globales originales.
+
+```cornamusa
+# matematicas.cor
+PI = 3.141592653589793
+
+funcion area_circulo(r):
+    retornar PI * r * r            # PI viene de matematicas, no del importador
+fin funcion
+```
+
+```cornamusa
+# uso.cor
+desde matematicas importar area_circulo
+PI = 3.0    # local del importador, NO afecta a matematicas.PI
+imprimir(area_circulo(2))   # 12.566... usando matematicas.PI, no el local
+```
+
+#### Limitaciones (v0.11.4)
+
+- `desde X importar *` no soportado (anti-patrón).
+- Los módulos no soportan `__iniciar__` ni código de inicialización condicional avanzada — todo el cuerpo del módulo se ejecuta secuencialmente al cargar.
+
+### 6.8 Closures, lambdas y upvalues
+
+Las funciones definidas dentro de otra función capturan las variables del scope enclosing como **upvalues**:
+
+```cornamusa
+funcion contador():
+    n = 0
+    funcion siguiente():
+        nolocal n             # sin esto, `n = n+1` es asignación a local nuevo
+        n = n + 1
+        retornar n
+    fin funcion
+    retornar siguiente
+fin funcion
+
+c = contador()
+imprimir(c())   # 1
+imprimir(c())   # 2
+imprimir(c())   # 3
+```
+
+`lambda` define una función anónima de una sola expresión:
+
+```cornamusa
+cuadrado = lambda x: x * x
+imprimir(cuadrado(7))   # 49
+
+# Útil con primitivas que aceptan callables:
+ordenar(personas, clave=lambda p: p.edad)   # (clave= aún no implementado en ordenar v0.11)
+```
+
+Los upvalues se cierran (capturan el valor actual del slot del frame enclosing) cuando la función enclosing retorna, manteniendo viva la closure incluso después.
+
+### 6.9 Slicing e indexación
+
+Las **listas** y **cadenas** soportan indexación con `[i]` (positivo o negativo) y rebanadas `[i:f:p]`:
+
+```cornamusa
+xs = [10, 20, 30, 40, 50]
+imprimir(xs[0])      # 10
+imprimir(xs[-1])     # 50 (último)
+imprimir(xs[1:4])    # [20, 30, 40]
+imprimir(xs[::-1])   # [50, 40, 30, 20, 10] (paso negativo)
+imprimir(xs[::2])    # [10, 30, 50]
+
+s = "Cornamusa"
+imprimir(s[0])       # "C"
+imprimir(s[-2])      # "s"
+# (slicing de cadenas planeado para v1.x; en v0.11.4 solo s[i] de un carácter.)
+```
+
+Los **diccionarios** se indexan por clave (no por posición):
+
+```cornamusa
+d = {"nombre": "Ana", "edad": 30}
+imprimir(d["nombre"])    # "Ana"
+d["edad"] = 31           # asignación
+```
+
+Acceso a clave inexistente lanza `ErrorDeClave`.
+
+### 6.10 Operadores `es` y `en`
+
+- `a es b` → identidad (mismo objeto en memoria). Para inmutables pequeños (enteros, booleanos), puede dar resultados implementación-dependientes; usar `==` para comparación de valor.
+- `a no es b` → identidad negada.
+- `x en y` → pertenencia. Funciona con listas, tuplas, conjuntos, diccionarios (busca clave), cadenas (busca subcadena).
+- `x no en y` → pertenencia negada.
+
+### 6.11 Aritmética entera y bignum (B3 + B9)
+
+Los enteros son de **precisión arbitraria** (decisión [B3](decisiones/B3-representacion-numerica.md)). `2 ** 1000` es válido sin overflow. Internamente (decisión [B9](decisiones/B9-small-int-tagging.md)):
+
+- Enteros que caben en 63 bits viven inline en el `Valor` (representación SMALL).
+- Enteros más grandes son punteros a `mp_int` (libtommath, BIG).
+- Las operaciones SMALL+SMALL se ejecutan inline con detección de overflow; cuando un resultado excede 63 bits se promueve a BIG transparentemente.
+
+Esta distinción es **invisible al programa**: `tipo(5)` y `tipo(2 ** 1000)` ambos devuelven `"entero"`. Los programas no necesitan distinguir SMALL de BIG.
+
 ---
 
 ## 7. Programa de ejemplo (sintaxis canónica)
@@ -671,26 +831,41 @@ fin intentar
 
 ---
 
-## 9. Cuestiones abiertas
+## 9. Decisiones cerradas y trabajo futuro
 
-Las decisiones cerradas viven en `decisiones/` como ADRs. Estado de los bloqueadores grandes ([REPASO_CRITICO.md](REPASO_CRITICO.md)):
+### Decisiones de diseño (ADRs en `decisiones/`)
 
 | ID | Tema | Estado |
 |---|---|---|
-| B1 | Modelo de bloques | ✅ `decisiones/B1-modelo-de-bloques.md` |
-| B2 | Tree-walking vs bytecode | ✅ `decisiones/B2-tree-walking-vs-bytecode.md` |
-| B3 | Representación numérica (bignum/i64) | ⏳ Pendiente |
-| B4 | Tildes y Unicode | ✅ `decisiones/B4-tildes-y-unicode.md` |
-| B5+B6 | `yo` + dunders | ✅ `decisiones/B5-B6-yo-y-dunders.md` |
-| B7 | Formato numérico | ✅ `decisiones/B7-formato-numerico.md` |
+| B1 | Modelo de bloques (`fin <etiqueta>`) | ✅ `decisiones/B1-modelo-de-bloques.md` |
+| B2 | Tree-walking + bytecode (AST compartido) | ✅ `decisiones/B2-tree-walking-vs-bytecode.md` |
+| B3 | Representación numérica (bignum desde día 1) | ✅ Cerrado en v0.4 (boxed mp_int); refinado en v0.11 con tagged SMALL+BIG (B9) |
+| B4 | Tildes y Unicode (keywords ASCII, ids Unicode NFC) | ✅ `decisiones/B4-tildes-y-unicode.md` |
+| B5+B6 | `yo` + dunders castellanos | ✅ `decisiones/B5-B6-yo-y-dunders.md` |
+| B7 | Formato numérico (`.` decimal, `_` miles) | ✅ `decisiones/B7-formato-numerico.md` |
+| B8 | Inline caching tipo PEP 659 | ✅ `decisiones/B8-inline-caching.md` (v0.10.0) |
+| B9 | Small-int tagging (i63 inline) | ✅ `decisiones/B9-small-int-tagging.md` (v0.11.0) |
+| B10 | Scope de v1.0 (docs sobre GC generacional) | ✅ `decisiones/B10-scope-de-v1.md` |
 
-**Pendientes de menor calado** (a resolver durante implementación):
+### Reservas para v1.x (no implementadas en v0.11.4)
 
-1. **Memoization de `from-import`.** Caché de módulos por ruta canónica. Decisión en Fase 9.
-2. **String interpolation `f""`.** Permitir expresiones completas como Python (no solo `{ident}`). Confirmar en Fase 2.
-3. **Tipos numéricos exactos.** ¿`fracción` en stdlib? Aplazado a v1.1.
-4. **Coincidir (pattern matching).** Reservada como keyword pero no implementada hasta v1.1+.
-5. **Async/await.** Reservadas pero no implementadas hasta v2.0.
+1. **F-strings con expresiones**. El parser acepta `f"hola {nombre}"`, pero la VM aún no las interpola. Llegarán en v1.1+.
+2. **`con` (context managers)**. Reservada como keyword. Implementación pendiente.
+3. **Pattern matching (`coincidir`)**. Reservada como keyword. Diseño pendiente.
+4. **`borrar` (`del` de Python)**. Reservada.
+5. **Generadores (`producir` ≈ `yield`)**. Reservada.
+6. **Async/await (`asincrono`/`esperar`)**. Reservadas. v2.0+.
+7. **Tipos numéricos exactos**. `Fraccion`, `Decimal` en stdlib; v1.x.
+8. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta pero el runtime las ignora.
+9. **Decoradores (`@deco`)**. La gramática los acepta. Runtime: parcial.
+10. **Dunders distintos de `__iniciar__`**. Reservados. v1.x.
+
+### Trabajo de runtime pendiente (no afecta a la sintaxis)
+
+- **GC generacional** — postergado a post-v1.0 (decisión B10). El GC mark-sweep tri-color actual es suficiente para los workloads conocidos.
+- **Threaded code dispatch** — descartado tras análisis ROI/coste post-v0.11.
+- **JIT / tracing** — Fase 12+ del plan; aplazadas indefinidamente.
+- **Concurrencia / hilos** — decisión I3 aplazada al post-v1.0.
 
 ---
 
