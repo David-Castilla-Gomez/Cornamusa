@@ -6,6 +6,140 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.0.0] — 2026-04-30 — Cornamusa estable
+
+Primera versión **estable** de Cornamusa. El lenguaje es funcional,
+documentado y usable. Marca el final del ciclo de optimización +
+documentación iniciado tras v0.10.0.
+
+### Hito v1.0 según plan B10
+
+El plan original (referenciado en B2) listaba "GC generacional + docs
++ sitio web" para v1.0. Tras completar v0.7-v0.11 (clases, GC, módulos,
+inline caching, small-int tagging) el rendimiento ya era razonable y
+el cuello real era la documentación. La decisión [B10](decisiones/B10-scope-de-v1.md)
+reorientó el scope:
+
+- **GC generacional postergado** a post-v1.0 (decisión guiada por
+  datos cuando programas reales lo justifiquen).
+- **v1.0 enfocado en hacer el lenguaje USABLE para nuevos usuarios**:
+  documentación, sitio web, ejemplos avanzados, fixes derivados de
+  validar la documentación contra el intérprete.
+
+### Cambios v1.0 (acumulados desde v0.11.0)
+
+**Documentación**:
+- `ESPEC.md` actualizado a v0.11.4 (clases, herencia, módulos, IC,
+  small-int) — antes en "Fase 0 borrador" desde el inicio del proyecto.
+- `docs/tutorial.md` (nuevo, ~600 líneas, 11 secciones) paso a paso
+  desde "hola mundo" hasta clases y módulos. Cada bloque de código
+  validado contra `cornamusa --bytecode`.
+- `docs/referencia.md` (nuevo, ~640 líneas) cheatsheet con tablas
+  densas: sintaxis, operadores, tipos, control, funciones, clases,
+  excepciones, built-ins reales, stdlib, errores comunes.
+- `FAQ.md` (nuevo, ~250 líneas) preguntas frecuentes para usuarios
+  nuevos: por qué castellano, vs Python, instalación, sintaxis,
+  rendimiento, desarrollo, curiosidades.
+- `CONTRIBUTING.md` actualizado con referencias a tutorial, ADRs,
+  tests diferenciales tree-walking vs bytecode.
+
+**Sitio web**:
+- `docs/SUMMARY.md` + `docs/introduccion.md` + `book.toml` →
+  configuración mdBook.
+- `.github/workflows/book.yml` → CI que construye y despliega a
+  GitHub Pages.
+- URL: https://david-castilla-gomez.github.io/Cornamusa/
+- Apuntes técnicos (libros/papers de SELF, V8, Lua, CPython, etc.)
+  movidos a `docs/papers/` — quedan en el repo pero no en el sitio
+  público.
+
+**Ejemplos avanzados** (no más micro-demos):
+- `examples/24_notas_clase.cor` — análisis estadístico de notas
+  con dicc, listas, ordenamiento, mediana.
+- `examples/25_biblioteca_oop.cor` — simulación de biblioteca con
+  herencia (Libro, Audiolibro, Revista), polimorfismo, validaciones.
+
+**Fixes críticos descubiertos al validar docs/ejemplos contra el
+intérprete real** (los 8 tests diferenciales existentes no los
+detectaban porque no usaban los patrones):
+
+- **v0.11.5** (commit d492da5): nuevo local en bucle dentro de
+  función mantenía el valor de la primera iteración para siempre.
+  Bug presente desde v0.6.0 (introducción del bytecode VM). Fix:
+  emitir OP_NULO + agregar_local + push valor + OP_ASIGNAR_LOCAL en
+  lugar de la "OLD convention" original.
+- **v0.11.6** (commit 64d9555): el fix de v0.11.5 hacía crecer el
+  stack +1 por iteración del `mientras`. Tras 2+ iters → desincroni-
+  zación. Fix: `pre_reservar_locales(c, sent, linea)` recursivo que
+  emite OP_NULO + agregar_local UNA vez ANTES del bucle por cada
+  nuevo local detectado en el cuerpo. Las asignaciones dentro
+  ejecutan plain OP_ASIGNAR_LOCAL.
+- Ambos con tests de regresión específicos en
+  `tests/unit/test_bytecode_ic.c::test_regresion_*`.
+
+**Correcciones derivadas de validar docs**:
+- `valor_a_int64_si_cabe` en `valor.c` aceptaba sólo magnitud ≤62
+  bits para BIG (rango SMALL), creando hash divergente con DECIMAL
+  en banda 2^62..2^63. Ampliado a magnitud ≤63 bits → hash convergen-
+  te (v0.11.4).
+- `quitar(dicc, clave)` documentado como reservado v1.x — solo
+  funciona sobre listas en v1.0.
+- ESPEC: diccionario "preserva orden de inserción" → NO en v1.0
+  (era aspiración no aterrizada).
+
+### Compromiso de estabilidad post-v1.0
+
+Documentado en [B10](decisiones/B10-scope-de-v1.md):
+
+- **Sintaxis del lenguaje**: congelada hasta v2.0. Cambios incompa-
+  tibles requieren major version.
+- **Built-ins y stdlib**: pueden añadir miembros entre minor versions;
+  no pueden cambiar comportamiento de los existentes sin major.
+- **AST, formato de chunks de bytecode, GC, IC, small-int**: detalles
+  internos que pueden cambiar entre minor versions.
+- **CLI flags públicas**: estables (`--bytecode`, `--version`,
+  `--ast`, `--tokens`, `-h`).
+- **Errores de runtime**: la categoría es estable, la redacción
+  puede mejorar.
+
+### Rendimiento (mediana de 5 corridas, v0.10.0 vs v1.0.0)
+
+| Benchmark | v0.10 | v1.0 | Mejora |
+|---|---|---|---|
+| `fibonacci_recursivo` | 1.33 s | **228 ms** | **5.83x** |
+| `globales_lookup` | 993 ms | **205 ms** | **4.84x** |
+| `dicc_intensivo` | 121 ms | **40 ms** | **3.03x** |
+| `oo_intensivo` | 44 ms | **23 ms** | **1.91x** |
+| `bignum_factorial` | 29 ms | **16 ms** | **1.81x** |
+
+Geomedia ≈ **3x**.
+
+### Tests
+
+- 96 tests verde (incluyendo 8 diferenciales tree-walking↔bytecode,
+  14 boundaries de small-int, 11 de IC F10).
+- ASan + UBSan en CI Linux.
+- Build CI en Linux + Windows + macOS × Debug + Release.
+
+### Después de v1.0
+
+Roadmap post-v1.0 abierto, no comprometido:
+
+- **v1.1+**: f-strings con interpolación real, dunders aritméticos
+  (`__sumar__`, `__cadena__`, etc.), `nolocal` (escritura a upvalues),
+  más stdlib (`archivos`, `json`, `regex`), generadores (`producir`),
+  context managers (`con`).
+- **v1.x**: pattern matching (`coincidir`).
+- **v2.0** (lejano): concurrencia/async, NaN-boxing, posiblemente
+  GC generacional si datos lo justifican.
+
+### Agradecimientos
+
+24 tags publicados desde v0.1.0 (2026-04-26) hasta v1.0.0
+(2026-04-30). El proyecto comenzó como ejercicio personal de David
+Castilla y se desarrolló con la asistencia constante de Claude
+(Anthropic) como pareja de programación.
+
 ## [0.11.6] — 2026-04-30 — FIX: stack growth en mientras con nuevo local
 
 Bug latente derivado del fix de v0.11.5 detectado al validar

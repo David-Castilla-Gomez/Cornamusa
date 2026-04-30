@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-0.11.6-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.0.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -32,7 +32,7 @@ imprimir("PI =", mat.PI)
 imprimir("100! =", mat.factorial(100))
 ```
 
-## Características (en v0.11.0)
+## Características (en v1.0.0)
 
 - ✅ **Sintaxis castellana natural**: `si`/`sino`, `mientras`, `para X en Y`, `funcion`, `clase`, `intentar`/`atrapar`/`finalmente`, `verdadero`/`falso`/`nulo`.
 - ✅ **Tipado dinámico** con tipos completos: enteros bignum, decimales f64, cadenas UTF-8, listas, diccionarios, conjuntos, tuplas.
@@ -71,7 +71,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v0.11.0 publicada.** El lenguaje es funcional para programas reales con rendimiento mejorado por inline caching y small-int tagging: OOP completo, GC, excepciones, módulos, stdlib mínima (`matematicas`, `cadenas`, `sistema`), tests diferenciales, benchmarks. Falta release final v1.0 con GC generacional, sitio web y docs completos.
+**v1.0.0 publicada.** Cornamusa es estable, documentado y usable. Lenguaje funcional para programas reales con rendimiento ~3x sobre v0.10 (5.8x en `fibonacci_recursivo`, 4.8x en `globales_lookup`, 3x en `dicc_intensivo`). [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -88,7 +88,9 @@ Hoja de ruta resumida:
 | **v0.9** | **Módulos + stdlib** | ✅ |
 | **v0.10** | **Inline caching especializado tipo PEP 659** | ✅ |
 | **v0.11** | **Small-int tagging (i63 inline en `Valor`)** | ✅ |
-| v1.0 | GC generacional + docs completos + sitio web | ⏳ |
+| **v1.0** | **Documentación, sitio web, ejemplos avanzados, estabilidad** | ✅ |
+| v1.x | F-strings, dunders aritméticos, `nolocal`, más stdlib | ⏳ |
+| v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
 
