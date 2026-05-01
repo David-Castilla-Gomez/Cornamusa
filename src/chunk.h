@@ -226,11 +226,23 @@ typedef enum {
     /*
      * OP_FORMATO_F: pop el TOS, lo convierte a VAL_CADENA con la
      * representación canónica de `imprimir`/`cadena()` y empuja la
-     * cadena resultante. Equivale a llamar `cadena(x)` pero sin pasar
-     * por el dispatch de OP_LLAMAR_NATIVA (más barato y aísla la
-     * semántica de interpolación de la API pública).
+     * cadena resultante.
+     *
+     * v1.2: si TOS es VAL_INSTANCIA con `__cadena__` definido, la VM
+     * invoca el dunder (despachando un frame). El resultado puede ser
+     * de cualquier tipo — el opcode siguiente, OP_ASEGURAR_CADENA,
+     * verifica que sea cadena. Para no-instancias OP_FORMATO_F siempre
+     * deja una cadena directamente.
      */
     OP_FORMATO_F,
+
+    /*
+     * OP_ASEGURAR_CADENA (v1.2): verifica que el TOS sea VAL_CADENA;
+     * si no, emite ErrorDeTipo claro mencionando que `__cadena__` debe
+     * retornar cadena. Sin operandos. Usado tras OP_FORMATO_F en
+     * f-cadenas para validar el retorno de `__cadena__`.
+     */
+    OP_ASEGURAR_CADENA,
 
     /* ---- Retorno ---- */
     OP_RETORNAR,

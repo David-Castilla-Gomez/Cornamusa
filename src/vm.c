@@ -698,6 +698,156 @@ static ResultadoVM ejecutar_llamar_clase(VM *vm, CallFrame **frame_inout,
     return VM_OK;
 }
 
+/*
+ * v1.2: prepara un frame para invocar un dunder binario sobre el TOS.
+ *
+ * Pre:  stack = [..., izq, der], izq es VAL_INSTANCIA y su clase tiene
+ *       el dunder `dunder_name`.
+ * Post: stack = [..., closure, izq, der] (3 slots); nuevo CallFrame
+ *       apilado con `base_pila` apuntando al closure. El primer
+ *       parámetro del closure ve `izq` como receptor (`yo`) y el
+ *       segundo ve `der`.
+ *
+ * Devuelve VM_OK si se preparó correctamente; VM_ERROR_RUNTIME en
+ * desbordamiento de pila o aridad incorrecta.
+ *
+ * El llamador NO debe pop los operandos antes de invocar — esta
+ * función reorganiza la pila tal cual.
+ */
+static ResultadoVM ejecutar_dunder_binario(VM *vm, CallFrame **frame_inout,
+                                             Closure *m,
+                                             const char *dunder_name,
+                                             int dunder_len) {
+    (void)dunder_len;
+    CallFrame *frame = *frame_inout;
+    FuncionBC *fn = m->plantilla;
+    /* Aridad 2 = (yo, otro). */
+    if (fn->aridad != 2) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %s() debe aceptar 2 argumentos (yo, otro)",
+            dunder_name);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+        llamar_set_error(vm, frame, "Desbordamiento de pila");
+        return VM_ERROR_RUNTIME;
+    }
+    /* Reorganizar pila: [..., izq, der] → [..., closure, izq, der]. */
+    empujar(vm, valor_nulo());                  /* tope++ */
+    vm->tope[-1] = vm->tope[-2];                /* arg = der */
+    vm->tope[-2] = vm->tope[-3];                /* receptor = izq */
+    closure_retener(m);
+    vm->tope[-3] = valor_closure(m);            /* callee = closure */
+
+    Valor *base_nuevo = &vm->tope[-3];
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = m;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (m->globales_definicion != NULL
+        && m->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = m->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
+
+/*
+ * v1.2: prepara un frame para invocar un dunder unario sobre el TOS.
+ *
+ * Pre:  stack = [..., obj], obj es VAL_INSTANCIA y su clase tiene el
+ *       dunder `dunder_name` (con aridad 1, solo `yo`).
+ * Post: stack = [..., closure, obj]; nuevo CallFrame apilado.
+ *
+ * El dunder retorna un valor que el OP_RETORNAR del frame deja en
+ * el tope del stack del caller — exactamente el comportamiento que
+ * el opcode original (OP_FORMATO_F, OP_INDICE, ...) habría producido.
+ */
+static ResultadoVM ejecutar_dunder_unario(VM *vm, CallFrame **frame_inout,
+                                            Closure *m,
+                                            const char *dunder_name,
+                                            int dunder_len) {
+    (void)dunder_len;
+    CallFrame *frame = *frame_inout;
+    FuncionBC *fn = m->plantilla;
+    if (fn->aridad != 1) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %s() debe aceptar 1 argumento (yo)", dunder_name);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+        llamar_set_error(vm, frame, "Desbordamiento de pila");
+        return VM_ERROR_RUNTIME;
+    }
+    /* Reorganizar pila: [..., obj] → [..., closure, obj]. */
+    empujar(vm, valor_nulo());                  /* tope++ */
+    vm->tope[-1] = vm->tope[-2];                /* receptor = obj */
+    closure_retener(m);
+    vm->tope[-2] = valor_closure(m);            /* callee = closure */
+
+    Valor *base_nuevo = &vm->tope[-2];
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = m;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (m->globales_definicion != NULL
+        && m->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = m->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
+
+/*
+ * Devuelve el nombre del dunder asociado a un opcode binario, o NULL
+ * si el opcode no tiene dunder definido (ej. OP_ES, OP_EN — identidad
+ * y membership no son sobrecargables).
+ */
+static const char *dunder_para_op_binario(OpCode op) {
+    switch (op) {
+        case OP_SUMAR:        return "__sumar__";
+        case OP_RESTAR:       return "__restar__";
+        case OP_MULTIPLICAR:  return "__multiplicar__";
+        case OP_DIVIDIR:      return "__dividir__";
+        case OP_DIVIDIR_ENTERO: return "__dividir_entero__";
+        case OP_MODULO:       return "__modulo__";
+        case OP_POTENCIA:     return "__potencia__";
+        default: return NULL;
+    }
+}
+
 static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout,
                                                   Valor *base_nuevo,
                                                   uint8_t n_args) {
@@ -841,6 +991,27 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                    que ambos sean enteros (incluyendo SMALL). */
                 bool ambos_int = (valor_es_entero(&vm->tope[-1])
                                   && valor_es_entero(&vm->tope[-2]));
+                /* v1.2: si el operando izquierdo es VAL_INSTANCIA y su
+                   clase define el dunder correspondiente, despachamos
+                   a `__sumar__`/`__restar__`/etc. preparando un frame
+                   nuevo. El dunder devuelve el resultado vía OP_RETORNAR
+                   y queda en el tope del stack del caller. */
+                if (vm->tope[-2].tipo == VAL_INSTANCIA) {
+                    const char *dunder = dunder_para_op_binario((OpCode)op);
+                    if (dunder) {
+                        Closure *m = clase_obtener_metodo(
+                            vm->tope[-2].como.instancia->clase,
+                            dunder, (int)strlen(dunder));
+                        if (m) {
+                            if (ejecutar_dunder_binario(vm, &frame, m,
+                                                          dunder,
+                                                          (int)strlen(dunder)) != VM_OK) {
+                                return VM_ERROR_RUNTIME;
+                            }
+                            break;
+                        }
+                    }
+                }
                 Valor b = sacar(vm);
                 Valor a = sacar(vm);
                 int tt = opcode_a_token_binario(op);
@@ -1731,10 +1902,32 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
 
             /* ─── Built-in print ─── */
             case OP_FORMATO_F: {
-                /* Coerce TOS a cadena con representación estilo
-                   `imprimir`. Usa buffer dinámico (escala hasta 16 MB
-                   para colecciones grandes) — sin truncado en casos
-                   habituales. */
+                /* Coerce TOS a cadena.
+                 *
+                 * v1.2: si TOS es VAL_INSTANCIA y su clase define
+                 * `__cadena__`, invocamos el dunder. El resultado debe
+                 * ser una cadena — el opcode siguiente al frame (que
+                 * sigue siendo OP_FORMATO_F en el caller) verifica al
+                 * volver. NO usamos un opcode validador adicional
+                 * porque el resultado del dunder queda directo en
+                 * stack y, si no es cadena, OP_SUMAR posterior dará
+                 * ErrorDeTipo claro.
+                 *
+                 * Si no es instancia o no tiene `__cadena__`,
+                 * delegamos en `valor_a_cadena_alocada` (escala hasta
+                 * 16 MB para colecciones grandes). */
+                if (vm->tope[-1].tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        vm->tope[-1].como.instancia->clase,
+                        "__cadena__", 10);
+                    if (m) {
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__cadena__", 10) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
                 Valor v = sacar(vm);
                 Valor r = valor_a_cadena_alocada(&v);
                 valor_destruir(&v);
@@ -1746,23 +1939,43 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 break;
             }
 
+            case OP_ASEGURAR_CADENA: {
+                if (vm->tope[-1].tipo != VAL_CADENA) {
+                    Valor v = sacar(vm);
+                    const char *tn = valor_nombre_tipo(&v);
+                    valor_destruir(&v);
+                    VM_ERROR("ErrorDeTipo: __cadena__ debe retornar cadena, "
+                             "no '%s'", tn);
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+
             case OP_IMPRIMIR: {
                 uint8_t n = LEER_BYTE();
-                /* Args en stack en orden de izq a der; los sacamos en
-                   orden inverso, los imprimimos en el orden correcto.
-                   El buffer fijo de 256 cabe el máximo (uint8_t). */
+                /* v1.2: el compilador emite OP_FORMATO_F + OP_ASEGURAR_CADENA
+                 * para cada arg, así que aquí todos son VAL_CADENA. Escribimos
+                 * directo desde el buffer interno con fwrite — sin truncado. */
                 Valor args[256];
                 for (int i = n - 1; i >= 0; i--) args[i] = sacar(vm);
-                char buffer[1024];
                 for (int i = 0; i < n; i++) {
                     if (i > 0) fputc(' ', stdout);
-                    valor_a_cadena(&args[i], buffer, sizeof(buffer));
-                    fputs(buffer, stdout);
+                    if (args[i].tipo == VAL_CADENA) {
+                        fwrite(args[i].como.cadena.texto, 1,
+                                (size_t)args[i].como.cadena.longitud, stdout);
+                    } else {
+                        /* Defensivo: si alguien usa `imprimir` por puntero
+                         * (`f = imprimir; f(x)`), no pasa por el atajo del
+                         * compilador y los args llegan crudos. Fallback al
+                         * buffer fijo legacy. */
+                        char buffer[1024];
+                        valor_a_cadena(&args[i], buffer, sizeof(buffer));
+                        fputs(buffer, stdout);
+                    }
                 }
                 fputc('\n', stdout);
                 fflush(stdout);
                 for (int i = 0; i < n; i++) valor_destruir(&args[i]);
-                /* `imprimir(...)` es una expresión: empuja nulo. */
                 empujar(vm, valor_nulo());
                 break;
             }

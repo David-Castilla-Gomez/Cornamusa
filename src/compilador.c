@@ -579,6 +579,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 && buscar_local(c->actual, "imprimir", 8) < 0) {
                 for (int i = 0; i < n_args; i++) {
                     if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                    /* v1.2: coerce cada arg a cadena via OP_FORMATO_F.
+                     * Esto invoca `__cadena__` si el arg es una
+                     * instancia con dunder definido; en otro caso usa
+                     * `valor_a_cadena_alocada`. OP_ASEGURAR_CADENA
+                     * valida que el resultado sea cadena. */
+                    chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
                 }
                 chunk_emitir_byte2(c->actual->chunk, OP_IMPRIMIR,
                                    (uint8_t)n_args, e->linea);
@@ -819,6 +826,9 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 if (p->expr) {
                     if (!compilador_compilar_expr(c, p->expr)) return false;
                     chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
+                    /* v1.2: validar que el resultado de OP_FORMATO_F
+                     * (posiblemente venido de `__cadena__`) sea cadena. */
+                    chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
                 } else {
                     Valor v = valor_cadena_desde_escapes(p->literal, p->longitud);
                     if (v.tipo == VAL_NULO) {

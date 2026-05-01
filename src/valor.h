@@ -420,6 +420,20 @@ void clase_liberar(Clase *c);
 Valor valor_clase(Clase *c);
 
 /*
+ * Busca un método por nombre en la tabla `metodos` de la clase. Útil
+ * para invocar dunders (`__sumar__`, `__cadena__`, ...) y constructor
+ * (`__iniciar__`). NO sube por la cadena de superclases — los métodos
+ * heredados se copian al `metodos` propio en `OP_HEREDAR`.
+ *
+ * Devuelve el `Closure *` del método si existe, NULL si no o si la
+ * entrada no es VAL_FUNCION_BC (caso patológico).
+ *
+ * El refcount NO se incrementa — el llamador debe `closure_retener`
+ * si guarda la referencia más allá de la vida de la clase.
+ */
+Closure *clase_obtener_metodo(const Clase *cl, const char *nombre, int len);
+
+/*
  * Instancia de una clase (Fase 8 v0.7.0).
  *
  * Mantiene una referencia compartida a su `Clase` (refcount) y un

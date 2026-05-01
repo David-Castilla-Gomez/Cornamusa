@@ -1173,6 +1173,23 @@ Valor valor_clase(Clase *c) {
     return v;
 }
 
+Closure *clase_obtener_metodo(const Clase *cl, const char *nombre, int len) {
+    if (!cl || !cl->metodos || !nombre || len <= 0) return NULL;
+    Valor clave = valor_cadena_referencia(nombre, len);
+    Valor metodo;
+    if (!dicc_obtener(cl->metodos, &clave, &metodo)) return NULL;
+    if (metodo.tipo != VAL_FUNCION_BC) {
+        valor_destruir(&metodo);
+        return NULL;
+    }
+    Closure *c = metodo.como.closure;
+    /* `dicc_obtener` devuelve un clon con refcount +1. Como el contrato
+       de este helper es "no-owning" y `cl->metodos` mantiene la closure
+       viva mientras la clase exista, descartamos el incremento extra. */
+    valor_destruir(&metodo);
+    return c;
+}
+
 Instancia *instancia_nueva(Clase *c) {
     if (!c) return NULL;
     Instancia *i = (Instancia *)gc_alocar(sizeof(Instancia), GC_TIPO_INSTANCIA);
