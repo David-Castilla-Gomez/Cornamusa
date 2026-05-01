@@ -1,0 +1,24 @@
+# Benchmark: dispatch de __indice__ en bucle hot.
+# Cada `obj[k]` con obj de clase custom invoca __indice__. Sin IC,
+# el lookup se repite por cada iteración. Con IC el closure queda
+# cacheado en el call site.
+
+clase Tabla:
+    funcion __iniciar__(yo, datos):
+        yo.datos = datos
+    fin funcion
+
+    funcion __indice__(yo, k):
+        retornar yo.datos[k]
+    fin funcion
+fin clase
+
+n = 100000
+t = Tabla([10, 20, 30, 40, 50])
+total = 0
+
+para i en rango(n):
+    total = total + t[i % 5]
+fin para
+
+imprimir("n =", n, "total =", total)

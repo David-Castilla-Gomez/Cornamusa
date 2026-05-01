@@ -1,0 +1,28 @@
+# Benchmark: dispatch de dunder aritmético en bucle hot.
+# Cada `v + w` invoca `__sumar__`. Sin IC, hace lookup en clase.metodos
+# en cada iteración. Con IC, debería cachear el closure y ser
+# significativamente más rápido (esperado 1.5-3x).
+#
+# Comparación: misma operación con primitivos (entero+entero) tarda
+# microsegundos; con dunder debería ser ~10x más lento sin IC.
+
+clase V:
+    funcion __iniciar__(yo, a, b):
+        yo.a = a
+        yo.b = b
+    fin funcion
+
+    funcion __sumar__(yo, otro):
+        retornar V(yo.a + otro.a, yo.b + otro.b)
+    fin funcion
+fin clase
+
+n = 100000
+acumulador = V(0, 0)
+incremento = V(1, 1)
+
+para i en rango(n):
+    acumulador = acumulador + incremento
+fin para
+
+imprimir("n =", n, "acum.a =", acumulador.a, "acum.b =", acumulador.b)
