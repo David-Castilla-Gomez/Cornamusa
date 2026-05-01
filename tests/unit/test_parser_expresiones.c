@@ -123,7 +123,18 @@ static void test_literal_cadena(void) {
 }
 
 static void test_literal_f_cadena(void) {
-    verificar("f\"hola {x}\"", "(lit-fstr f\"hola {x}\")");
+    /* v1.1: el parser descompone la f-cadena en partes literales y
+       expresiones evaluables. Antes (v0.x) el AST guardaba el lexema
+       crudo; ahora se materializa como sub-AST. */
+    verificar("f\"hola {x}\"",
+              "(lit-fstr (lit \"hola \") (expr (ident x)))");
+    verificar("f\"sin interp\"",
+              "(lit-fstr (lit \"sin interp\"))");
+    verificar("f\"\"", "(lit-fstr)");
+    verificar("f\"a{x}b{c}d\"",
+              "(lit-fstr (lit \"a\") (expr (ident x)) (lit \"b\") (expr (ident c)) (lit \"d\"))");
+    verificar("f\"{{lit}}\"",
+              "(lit-fstr (lit \"{lit}\"))");
 }
 
 static void test_literal_booleano(void) {

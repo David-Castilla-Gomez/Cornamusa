@@ -296,10 +296,15 @@ static int token_a_opcode_binario(TipoToken op) {
  * produzcan el mismo Valor cadena.
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor cadena_desde_lexema(const char *lex, int len) {
-    if (len < 2) return valor_cadena_referencia("", 0);
-    const char *src = lex + 1;
-    int srclen = len - 2;
+/*
+ * Procesa los escapes de un slice de cadena fuente y construye un
+ * Valor cadena con el contenido decodificado. Compartido por
+ * `EXPR_LITERAL_CADENA` (que pasa el lexema sin las comillas) y por
+ * las partes literales de `EXPR_LITERAL_F_CADENA` (que ya vienen sin
+ * comillas — el parser las separa).
+ */
+static Valor cadena_desde_slice(const char *src, int srclen) {
+    if (srclen <= 0) return valor_cadena_duplicar("", 0);
     char *buf = (char *)malloc((size_t)srclen + 1);
     if (!buf) return valor_nulo();
     int j = 0;
@@ -328,6 +333,11 @@ static Valor cadena_desde_lexema(const char *lex, int len) {
     v.como.cadena.texto = buf;
     v.como.cadena.longitud = j;
     return v;
+}
+
+static Valor cadena_desde_lexema(const char *lex, int len) {
+    if (len < 2) return valor_cadena_referencia("", 0);
+    return cadena_desde_slice(lex + 1, len - 2);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -822,11 +832,41 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return true;
         }
 
-        /* Aplazadas a sesiones siguientes. */
-        case EXPR_LITERAL_F_CADENA:
-            error_compilacion(c, e->linea, e->columna,
-                "esta forma de expresion no esta implementada en bytecode v0.7");
-            return false;
+        case EXPR_LITERAL_F_CADENA: {
+            /* Compila a una cadena de partes concatenadas con OP_SUMAR.
+             * Cada parte literal se emite como OP_CONST con la cadena
+             * (escapes ya decodificados); cada parte expresión se
+             * compila y se pasa por OP_FORMATO_F (str-coerce). */
+            int n = e->como.f_cadena.n_partes;
+            const ParteFCadena *partes = e->como.f_cadena.partes;
+            if (n == 0) {
+                /* f"" → cadena vacía. */
+                Valor v = valor_cadena_duplicar("", 0);
+                chunk_emitir_constante(c->actual->chunk, v, e->linea);
+                return true;
+            }
+            for (int i = 0; i < n; i++) {
+                const ParteFCadena *p = &partes[i];
+                if (p->expr) {
+                    if (!compilador_compilar_expr(c, p->expr)) return false;
+                    chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
+                } else {
+                    Valor v = cadena_desde_slice(p->literal, p->longitud);
+                    if (v.tipo == VAL_NULO) {
+                        error_compilacion(c, e->linea, e->columna,
+                            "memoria insuficiente al compilar f-cadena");
+                        return false;
+                    }
+                    chunk_emitir_constante(c->actual->chunk, v, e->linea);
+                }
+                /* Concatenar con la cadena acumulada (excepto en la
+                 * primera parte, que es el seed). */
+                if (i > 0) {
+                    chunk_emitir_byte(c->actual->chunk, OP_SUMAR, e->linea);
+                }
+            }
+            return true;
+        }
     }
 
     error_compilacion(c, e->linea, e->columna,

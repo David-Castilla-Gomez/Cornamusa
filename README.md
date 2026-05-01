@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.0.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.1.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -44,6 +44,9 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **GC mark-sweep** automático con `recolectar()` para forzarlo manualmente.
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
 - ✅ **Stdlib mínima**: `matematicas` (PI, E, factorial, mcd, ...), `cadenas` (repetir, contar, empieza_con, ...) y `sistema` (`argv`, `salir`).
+- ✅ **Conversores explícitos** (v1.1): `cadena()`, `entero()`, `decimal()`, `booleano()`, `lista()`, `tupla()`, `diccionario()`.
+- ✅ **F-cadenas con interpolación real** (v1.1): `f"hola {nombre}, tienes {edad+10} en 10 anos"` evalúa cada `{expr}`. Soporta llaves dobles `{{` `}}`, expresiones complejas, anidación.
+- ✅ **Entrada interactiva** (v1.1): `leer([prompt])` lee de stdin para programas interactivos.
 - ✅ **Tests diferenciales** tree-walking vs bytecode + **benchmarks** en [`benchmarks/`](benchmarks/).
 - ✅ **Inline caching** estilo PEP 659 con quickening por reescritura de opcode (decisión [B8](decisiones/B8-inline-caching.md)). Especializaciones: `OP_OBTENER_GLOBAL_CACHE`, `OP_LLAMAR_{NATIVA,BC,CLASE,METODO_LIGADO}`, `OP_*_INT_INT` (suma/resta/mult + comparaciones), `OP_OBTENER_ATRIBUTO_INSTANCIA` (shape cache).
 - ✅ **Small-int tagging** (decisión [B9](decisiones/B9-small-int-tagging.md)): enteros que caben en 63 bits viven inline en `Valor` sin alocar `mp_int`. Operaciones SMALL+SMALL inline con detección de overflow vía `__builtin_*_overflow`. Aritmética bignum (libtommath) sigue disponible transparentemente para enteros grandes. ~2.7x geomedia sobre v0.10 (6x en `fibonacci_recursivo`).
@@ -89,7 +92,8 @@ Hoja de ruta resumida:
 | **v0.10** | **Inline caching especializado tipo PEP 659** | ✅ |
 | **v0.11** | **Small-int tagging (i63 inline en `Valor`)** | ✅ |
 | **v1.0** | **Documentación, sitio web, ejemplos avanzados, estabilidad** | ✅ |
-| v1.x | F-strings, dunders aritméticos, `nolocal`, más stdlib | ⏳ |
+| **v1.1** | **Conversores, `leer()`, f-cadenas con interpolación real** | ✅ |
+| v1.2+ | Dunders aritméticos, `nolocal`, `mapear`/`filtrar`, más stdlib | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
@@ -130,6 +134,10 @@ cmake --build build -j
 **Avanzados** (programas no triviales):
 - [`24_notas_clase.cor`](examples/24_notas_clase.cor) — análisis de notas con dicc, listas, ordenamiento, mediana
 - [`25_biblioteca_oop.cor`](examples/25_biblioteca_oop.cor) — simulación de biblioteca con OOP, herencia, polimorfismo
+
+**v1.1**:
+- [`26_leer_jugable.cor`](examples/26_leer_jugable.cor) — calculadora de IMC con `leer()` interactivo y conversores
+- [`27_fstrings_jugable.cor`](examples/27_fstrings_jugable.cor) — interpolación real con f-cadenas (anidación, bignum, lista)
 
 ## Documentación
 

@@ -213,12 +213,205 @@ static Expr *parsear_cadena(Parser *p) {
     return expr_literal_cadena(p->arena, t.inicio, t.longitud, t.linea, t.columna);
 }
 
+/*
+ * Parser de f-cadena con interpolación real (v1.1).
+ *
+ * El lexer entrega el lexema completo `f"..."` (o `f'...'`); aquí lo
+ * descomponemos en partes literales y partes expresión, recursando con
+ * un sub-parser sobre cada `{expr}` interno.
+ *
+ * Soporte actual:
+ *   - f-cadenas simples (un solo delimitador). Las triples
+ *     (`f"""..."""`) NO están soportadas todavía — el lexer las
+ *     tokeniza pero el parser las rechaza con un error claro.
+ *   - Llaves dobles `{{` y `}}` se preservan como llave única en el
+ *     literal.
+ *   - `{expr}` interno se parsea como una expresión Cornamusa
+ *     completa. Debe consumir EXACTAMENTE el slice; tokens sobrantes
+ *     dan error de sintaxis.
+ *   - Las partes literales preservan escapes (`\n`, `\t`, ...) sin
+ *     procesar — la decodificación final ocurre en compilador y
+ *     evaluador, igual que para `EXPR_LITERAL_CADENA`.
+ */
 static Expr *parsear_f_cadena(Parser *p) {
     Token t = p->actual;
     avanzar(p);
-    /* En sesión 5 parsearemos los {expr} internos. Por ahora el lexema
-       completo se almacena tal cual. */
-    return expr_literal_f_cadena(p->arena, t.inicio, t.longitud, t.linea, t.columna);
+
+    if (t.longitud < 3) {
+        error_en(p, &t, "f-cadena malformada");
+        return NULL;
+    }
+    /* t.inicio[0] es 'f' o 'F'. */
+    char delim = t.inicio[1];
+    bool es_triple = (t.longitud >= 6 && t.inicio[2] == delim
+                                       && t.inicio[3] == delim);
+    if (es_triple) {
+        error_en(p, &t,
+            "f-cadenas triples (f\"\"\"...\"\"\") aún no soportadas en v1.1");
+        return NULL;
+    }
+    /* Cuerpo entre comillas: skip 'f' + delim al inicio, delim al final. */
+    const char *cuerpo = t.inicio + 2;
+    int cuerpo_len = t.longitud - 3;
+    if (cuerpo_len < 0) cuerpo_len = 0;
+
+    /* Buffers temporales en heap (la arena no permite resize). Se
+       liberan al final independientemente del éxito. */
+    int part_cap = 4;
+    int part_n = 0;
+    ParteFCadena *partes_tmp = (ParteFCadena *)malloc(
+        sizeof(ParteFCadena) * (size_t)part_cap);
+    int buf_cap = 256;
+    int buf_len = 0;
+    char *buf = (char *)malloc((size_t)buf_cap);
+    if (!partes_tmp || !buf) {
+        free(partes_tmp); free(buf);
+        error_en(p, &t, "memoria insuficiente al parsear f-cadena");
+        return NULL;
+    }
+
+#define EMPUJAR_PARTE(P)                                                  \
+    do {                                                                  \
+        if (part_n == part_cap) {                                         \
+            int nuevo_cap = part_cap * 2;                                 \
+            ParteFCadena *np = (ParteFCadena *)realloc(partes_tmp,        \
+                sizeof(ParteFCadena) * (size_t)nuevo_cap);                \
+            if (!np) { goto fallo_oom; }                                  \
+            partes_tmp = np;                                              \
+            part_cap = nuevo_cap;                                         \
+        }                                                                 \
+        partes_tmp[part_n++] = (P);                                       \
+    } while (0)
+
+#define EMPUJAR_BYTE(B)                                                   \
+    do {                                                                  \
+        if (buf_len == buf_cap) {                                         \
+            int nuevo_cap = buf_cap * 2;                                  \
+            char *nb = (char *)realloc(buf, (size_t)nuevo_cap);           \
+            if (!nb) { goto fallo_oom; }                                  \
+            buf = nb;                                                     \
+            buf_cap = nuevo_cap;                                          \
+        }                                                                 \
+        buf[buf_len++] = (B);                                             \
+    } while (0)
+
+#define VOLCAR_LITERAL()                                                  \
+    do {                                                                  \
+        if (buf_len > 0) {                                                \
+            char *lit = (char *)arena_alocar(p->arena, (size_t)buf_len);  \
+            if (!lit) { goto fallo_oom; }                                 \
+            memcpy(lit, buf, (size_t)buf_len);                            \
+            ParteFCadena pl;                                              \
+            pl.literal = lit;                                             \
+            pl.longitud = buf_len;                                        \
+            pl.expr = NULL;                                               \
+            EMPUJAR_PARTE(pl);                                            \
+            buf_len = 0;                                                  \
+        }                                                                 \
+    } while (0)
+
+    int i = 0;
+    while (i < cuerpo_len) {
+        char c = cuerpo[i];
+        if (c == '{') {
+            if (i + 1 < cuerpo_len && cuerpo[i + 1] == '{') {
+                EMPUJAR_BYTE('{');
+                i += 2;
+                continue;
+            }
+            VOLCAR_LITERAL();
+            i++; /* skip '{' */
+            int inicio_expr = i;
+            int profundidad = 1;
+            while (i < cuerpo_len && profundidad > 0) {
+                char d = cuerpo[i];
+                if (d == '{') profundidad++;
+                else if (d == '}') {
+                    profundidad--;
+                    if (profundidad == 0) break;
+                }
+                i++;
+            }
+            if (profundidad != 0) {
+                error_en(p, &t,
+                    "f-cadena: `{` sin cerrar antes del fin de la cadena");
+                goto fallo;
+            }
+            int len_expr = i - inicio_expr;
+            i++; /* skip '}' */
+            if (len_expr == 0) {
+                error_en(p, &t,
+                    "f-cadena: expresión vacía entre `{` y `}`");
+                goto fallo;
+            }
+            /* Copiar slice a buffer null-terminated en arena para el
+               sub-lexer (que requiere `*l->actual == '\0'` para detectar EOF). */
+            char *src = (char *)arena_alocar(p->arena, (size_t)len_expr + 1);
+            if (!src) { goto fallo_oom; }
+            memcpy(src, cuerpo + inicio_expr, (size_t)len_expr);
+            src[len_expr] = '\0';
+
+            Lexer sub_l;
+            lexer_iniciar(&sub_l, src, p->archivo);
+            Parser sub_p;
+            parser_iniciar(&sub_p, &sub_l, p->arena, src, p->archivo);
+            Expr *sub = parser_parsear_expr(&sub_p);
+            if (!sub || sub_p.tuvo_error) {
+                error_en(p, &t,
+                    "f-cadena: expresión interna inválida");
+                goto fallo;
+            }
+            if (sub_p.actual.tipo != TT_FIN_ARCHIVO) {
+                error_en(p, &t,
+                    "f-cadena: tokens sobrantes en expresión interpolada");
+                goto fallo;
+            }
+            ParteFCadena pe;
+            pe.literal = NULL;
+            pe.longitud = 0;
+            pe.expr = sub;
+            EMPUJAR_PARTE(pe);
+            continue;
+        }
+        if (c == '}') {
+            if (i + 1 < cuerpo_len && cuerpo[i + 1] == '}') {
+                EMPUJAR_BYTE('}');
+                i += 2;
+                continue;
+            }
+            error_en(p, &t,
+                "f-cadena: `}` sin un `{` previo (usa `}}` para llave literal)");
+            goto fallo;
+        }
+        EMPUJAR_BYTE(c);
+        i++;
+    }
+    VOLCAR_LITERAL();
+
+    /* Trasladar partes_tmp a arena. */
+    ParteFCadena *partes_arena = NULL;
+    if (part_n > 0) {
+        partes_arena = (ParteFCadena *)arena_alocar(
+            p->arena, sizeof(ParteFCadena) * (size_t)part_n);
+        if (!partes_arena) { goto fallo_oom; }
+        memcpy(partes_arena, partes_tmp,
+                sizeof(ParteFCadena) * (size_t)part_n);
+    }
+    free(partes_tmp);
+    free(buf);
+    return expr_literal_f_cadena(p->arena, partes_arena, part_n,
+                                  t.linea, t.columna);
+
+fallo_oom:
+    error_en(p, &t, "memoria insuficiente al parsear f-cadena");
+fallo:
+    free(partes_tmp);
+    free(buf);
+    return NULL;
+
+#undef EMPUJAR_PARTE
+#undef EMPUJAR_BYTE
+#undef VOLCAR_LITERAL
 }
 
 static Expr *parsear_booleano(Parser *p) {

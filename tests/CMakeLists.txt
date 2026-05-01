@@ -308,6 +308,33 @@ set_tests_properties(bc_run_25_biblioteca_oop PROPERTIES
     PASS_REGULAR_EXPRESSION "Items prestados ahora: 4"
 )
 
+# v1.1: f-cadenas con interpolación real.
+add_test(
+    NAME bc_run_27_fstrings_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/27_fstrings_jugable.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_27_fstrings_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Hola Ana, tienes 30 anos"
+)
+
+# v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
+add_test(
+    NAME bc_run_26_leer_jugable
+    COMMAND ${CMAKE_COMMAND}
+            -DCORNAMUSA_BIN=$<TARGET_FILE:cornamusa>
+            -DARCHIVO_COR=${CMAKE_SOURCE_DIR}/examples/26_leer_jugable.cor
+            "-DENTRADA_LINEAS=Ana;30;65;1.70"
+            "-DESPERADO=Categoria: normal"
+            -DWORKDIR=${CMAKE_SOURCE_DIR}
+            -P ${CMAKE_SOURCE_DIR}/tests/integracion/run_con_stdin.cmake
+)
+set_tests_properties(bc_run_26_leer_jugable PROPERTIES
+    LABELS "integracion"
+)
+
 # ───── Tests diferenciales tree-walking vs bytecode (v0.9.2) ─────
 # Para cada ejemplo compatible con ambos motores, ejecutamos ambos y
 # verificamos que produzcan EXACTAMENTE la misma salida. Es la red de
@@ -327,6 +354,7 @@ set(EJEMPLOS_DIFERENCIALES
     16_lista_busqueda
     17_dicc_frecuencia
     18_conj_y_tupla
+    27_fstrings_jugable
 )
 foreach(ej ${EJEMPLOS_DIFERENCIALES})
     add_test(

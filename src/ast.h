@@ -38,6 +38,7 @@ struct RamaSi;
 typedef struct RamaSi RamaSi;
 struct Parametro;
 typedef struct Parametro Parametro;
+typedef struct ParteFCadena ParteFCadena;
 
 /* ──────────────────────────────────────────────────────────────────
  * Expresiones
@@ -48,7 +49,7 @@ typedef enum {
     EXPR_LITERAL_ENTERO,        /* 42, 0xff (lexema sin parsear todavía) */
     EXPR_LITERAL_DECIMAL,       /* 3.14, 1.5e-3 */
     EXPR_LITERAL_CADENA,        /* "hola", 'mundo' (incluye comillas) */
-    EXPR_LITERAL_F_CADENA,      /* f"hola {nombre}" — interp diferida a s5 */
+    EXPR_LITERAL_F_CADENA,      /* f"hola {nombre}" — partes en como.f_cadena */
     EXPR_LITERAL_BOOLEANO,      /* verdadero / falso */
     EXPR_LITERAL_NULO,          /* nulo */
 
@@ -183,7 +184,38 @@ struct Expr {
             const char *nombre;       /* nombre del método tras el punto */
             int longitud;
         } super;
+
+        /*
+         * F-cadena descompuesta en partes (v1.1).
+         *
+         * Cada parte es o bien literal (texto plano entre `{...}`)
+         * o expresión (sub-Expr a evaluar y formatear). El array
+         * `partes` se aloca en arena.
+         *
+         * Convenciones:
+         *   - parte.expr == NULL  →  parte literal, lee `literal`/`longitud`.
+         *   - parte.expr != NULL  →  parte expresión, ignora literal.
+         */
+        struct {
+            ParteFCadena *partes;
+            int n_partes;
+        } f_cadena;
     } como;
+};
+
+/*
+ * Una parte de una f-cadena: literal o expresión.
+ *
+ * Para parte literal `expr` es NULL y `literal`/`longitud` apuntan al
+ * texto (alocado en arena, ya procesado: `{{` se ha colapsado a `{`,
+ * `}}` a `}`, escapes `\n` resueltos).
+ *
+ * Para parte expresión `expr` es no-NULL y los demás campos se ignoran.
+ */
+struct ParteFCadena {
+    const char *literal;
+    int longitud;
+    Expr *expr;
 };
 
 /* ──────────────────────────────────────────────────────────────────
@@ -200,7 +232,8 @@ struct Expr {
 Expr *expr_literal_entero(Arena *a, const char *lexema, int len, int linea, int col);
 Expr *expr_literal_decimal(Arena *a, const char *lexema, int len, int linea, int col);
 Expr *expr_literal_cadena(Arena *a, const char *lexema, int len, int linea, int col);
-Expr *expr_literal_f_cadena(Arena *a, const char *lexema, int len, int linea, int col);
+Expr *expr_literal_f_cadena(Arena *a, ParteFCadena *partes, int n_partes,
+                              int linea, int col);
 Expr *expr_literal_booleano(Arena *a, bool valor, int linea, int col);
 Expr *expr_literal_nulo(Arena *a, int linea, int col);
 Expr *expr_ident(Arena *a, const char *nombre, int len, int linea, int col);

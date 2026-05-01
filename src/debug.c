@@ -240,6 +240,7 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
                 "OP_ITER_SIGUIENTE", slot, off, destino);
             return offset + 4;
         }
+        case OP_FORMATO_F:       return instruccion_simple("OP_FORMATO_F", offset, out);
         case OP_RETORNAR:        return instruccion_simple("OP_RETORNAR", offset, out);
     }
 

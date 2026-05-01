@@ -342,8 +342,11 @@ longitud("Cornamusa")      # 9
 ### Prefijos
 
 ```cornamusa
-f"hola {nombre}"     # interpolación (parser lo acepta; ejecución v1.x)
-r"C:\ruta\a"         # raw, sin escapes
+f"hola {nombre}"     # interpolación (v1.1: completo, evalúa cada {expr})
+f"{1+2*3}"           # expresiones complejas
+f"{{literal}}"       # → "{literal}", llaves dobles preservan literal
+f"capas: {f'in-{x}'}" # anidación
+r"C:\ruta\a"         # raw, sin escapes (reservado v1.x)
 b"\x00\xff"          # bytes (reservado v1.x)
 ```
 
@@ -437,16 +440,24 @@ importar paquete.submodulo                 # subsegmentos
 
 ---
 
-## 11. Built-ins (v0.11.5)
+## 11. Built-ins (v1.1.0)
 
-22 funciones y constructores registrados como globales.
+30 funciones y constructores registrados como globales.
 
 ### E/S y conversión
 
 | Firma | Descripción |
 |---|---|
 | `imprimir(*args)` | Imprime args separados por espacio + `\n` |
+| `leer([prompt])` | Lee una línea de stdin. Sin args silencioso, con cadena la imprime como prompt. EOF inmediato → `""`. **(v1.1)** |
 | `tipo(x)` | Cadena con el nombre del tipo |
+| `cadena(x)` | Coerción a cadena (representación de `imprimir`). **(v1.1)** |
+| `entero(x)` | Coerción a entero (entero/decimal/booleano/cadena). **(v1.1)** |
+| `decimal(x)` | Coerción a decimal. **(v1.1)** |
+| `booleano(x)` | Coerción a booleano según truthiness. **(v1.1)** |
+| `lista(iter)` | Materializa iterable como lista. **(v1.1)** |
+| `tupla(iter)` | Materializa iterable como tupla inmutable. **(v1.1)** |
+| `diccionario(pares)` | Construye dicc desde iterable de pares o de otro dicc. **(v1.1)** |
 
 ### Tamaño e iteración
 
@@ -488,9 +499,9 @@ importar paquete.submodulo                 # subsegmentos
 | `obtener_argv()` | Lista de cadenas con args del programa (también `sistema.argv`) |
 | `salir(codigo=0)` | Termina el proceso. No retorna |
 
-### No registrados todavía (v1.x)
+### No registrados todavía (v1.2+)
 
-`leer`, `enumerar`, `mapear`, `filtrar`, `reducir`, `suma`, `mínimo`/`minimo`, `máximo`/`maximo`, `absoluto`, `redondear`, `cadena`, `entero`, `decimal`, `booleano`, `lista`, `tupla`, `diccionario`, `abrir`, `iterar`, `siguiente`, `instancia_de`, `subclase_de`, `id`, `resumen`, `repr`.
+`enumerar`, `mapear`, `filtrar`, `reducir`, `suma`, `mínimo`/`minimo`, `máximo`/`maximo`, `absoluto`, `redondear`, `abrir`, `iterar`, `siguiente`, `instancia_de`, `subclase_de`, `id`, `resumen`, `repr`.
 
 ---
 

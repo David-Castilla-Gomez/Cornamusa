@@ -35,9 +35,13 @@ Expr *expr_literal_cadena(Arena *a, const char *lexema, int len, int linea, int 
     return e;
 }
 
-Expr *expr_literal_f_cadena(Arena *a, const char *lexema, int len, int linea, int col) {
+Expr *expr_literal_f_cadena(Arena *a, ParteFCadena *partes, int n_partes,
+                              int linea, int col) {
     Expr *e = nuevo_expr(a, EXPR_LITERAL_F_CADENA, linea, col);
-    if (e) { e->como.literal.lexema = lexema; e->como.literal.longitud = len; }
+    if (e) {
+        e->como.f_cadena.partes = partes;
+        e->como.f_cadena.n_partes = n_partes;
+    }
     return e;
 }
 
@@ -294,11 +298,30 @@ static void expr_a_buffer(const Expr *e, EscrituraBuffer *eb) {
             wb_escribir_lexema(eb, e->como.literal.lexema, e->como.literal.longitud);
             wb_escribir(eb, ")");
             break;
-        case EXPR_LITERAL_F_CADENA:
-            wb_escribir(eb, "(lit-fstr ");
-            wb_escribir_lexema(eb, e->como.literal.lexema, e->como.literal.longitud);
+        case EXPR_LITERAL_F_CADENA: {
+            wb_escribir(eb, "(lit-fstr");
+            for (int i = 0; i < e->como.f_cadena.n_partes; i++) {
+                const ParteFCadena *p = &e->como.f_cadena.partes[i];
+                wb_escribir(eb, " ");
+                if (p->expr) {
+                    wb_escribir(eb, "(expr ");
+                    expr_a_buffer(p->expr, eb);
+                    wb_escribir(eb, ")");
+                } else {
+                    wb_escribir(eb, "(lit \"");
+                    if (p->longitud > 0) {
+                        for (int k = 0; k < p->longitud; k++) {
+                            char ch = p->literal[k];
+                            char tmp[2] = { ch, '\0' };
+                            wb_escribir(eb, tmp);
+                        }
+                    }
+                    wb_escribir(eb, "\")");
+                }
+            }
             wb_escribir(eb, ")");
             break;
+        }
         case EXPR_LITERAL_BOOLEANO:
             wb_escribir(eb, e->como.booleano.valor ? "(lit-bool verdadero)" : "(lit-bool falso)");
             break;

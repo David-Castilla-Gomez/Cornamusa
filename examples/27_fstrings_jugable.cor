@@ -1,0 +1,34 @@
+# 27_fstrings_jugable.cor — interpolación real con f-cadenas (v1.1).
+#
+# Demuestra `f"hola {nombre}"` con sintaxis de interpolación, que
+# desde v1.1 evalúa cada `{expresión}` y la concatena con las partes
+# literales. Ambos motores (tree-walking y bytecode) producen el mismo
+# resultado byte a byte.
+
+nombre = "Ana"
+edad = 30
+imprimir(f"Hola {nombre}, tienes {edad} anos")
+
+# Aritmética dentro de la interpolación.
+imprimir(f"calculo: {1 + 2 * 3}")
+
+# Tipos coercionados a cadena automáticamente.
+imprimir(f"bignum: {2 ** 100}")
+imprimir(f"lista: {[1, 2, 3]}")
+imprimir(f"booleano: {verdadero}, nulo: {nulo}")
+
+# Llaves dobles `{{` `}}` se preservan como llave literal.
+imprimir(f"{{literal}}")
+
+# F-cadena vacía y mezcla de partes.
+imprimir(f"")
+imprimir(f"a{nombre}b{nombre}c")
+
+# Llamadas a función dentro de la expresión.
+funcion saludar(s):
+    retornar f"hola {s}"
+fin funcion
+imprimir(saludar("Mundo"))
+
+# F-cadenas anidadas: una expresión interna puede ser otra f-cadena.
+imprimir(f"capas: {f'inner-{edad}'}")

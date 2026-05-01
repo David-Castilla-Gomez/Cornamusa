@@ -406,6 +406,61 @@ imprimir(cadenas.contar("aaabaa", "aa"))     # 2
 imprimir(cadenas.caracter("Cornamusa", 4))   # a
 ```
 
+### F-cadenas con interpolación (v1.1)
+
+Para construir cadenas con valores embebidos sin concatenar manualmente, usa el prefijo `f`:
+
+```cornamusa
+nombre = "Ana"
+edad = 30
+imprimir(f"Hola {nombre}, tienes {edad} anos")
+# → Hola Ana, tienes 30 anos
+
+# Cualquier expresión vale dentro de las llaves
+imprimir(f"el doble de {edad} es {edad * 2}")
+# → el doble de 30 es 60
+
+# Anidación
+imprimir(f"capas: {f'inner-{edad}'}")
+# → capas: inner-30
+
+# Llaves literales con `{{` y `}}`
+imprimir(f"{{literal}}")           # → {literal}
+```
+
+Cualquier tipo se convierte a cadena automáticamente: enteros bignum, decimales, booleanos, listas, etc.
+
+### Conversores explícitos (v1.1)
+
+Cuando necesitas convertir entre tipos:
+
+```cornamusa
+imprimir(cadena(42))            # "42"
+imprimir(cadena(2 ** 100))      # bignum completo, sin pérdida
+imprimir(entero("42"))          # 42 (parse base 10)
+imprimir(entero("-7"))          # -7
+imprimir(entero(3.9))           # 3 (truncar hacia cero)
+imprimir(decimal("3,14"))       # ErrorDeValor (Cornamusa usa "."), prueba decimal("3.14")
+imprimir(decimal("3.14"))       # 3.14
+imprimir(booleano([]))          # falso  (lista vacía)
+imprimir(booleano("hola"))      # verdadero
+imprimir(lista("abc"))          # ["a", "b", "c"]
+imprimir(tupla(rango(3)))       # (0, 1, 2)
+imprimir(diccionario([("a", 1), ("b", 2)]))   # {"a": 1, "b": 2}
+```
+
+### Entrada interactiva con `leer()` (v1.1)
+
+Para leer del teclado (stdin):
+
+```cornamusa
+nombre = leer("Tu nombre: ")
+edad = entero(leer("Edad: "))
+imprimir(f"Hola {nombre}, en 10 anos tendras {edad + 10}")
+```
+
+`leer()` sin argumentos lee una línea silenciosa; con un prompt cadena lo imprime sin newline antes de leer.
+
 ---
 
 ## 8. Clases y objetos

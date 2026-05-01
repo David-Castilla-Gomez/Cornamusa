@@ -161,9 +161,9 @@ n = leer_numero("3,14", locale="es")        # → 3.14
 - Comilla simple: `'hola'`
 - Comilla doble: `"hola"`
 - Triple comilla (multilínea): `"""..."""` o `'''...'''`
-- Prefijo `f` (interpolación): `f"hola, {nombre}"`
-- Prefijo `b` (bytes): `b"\x00\xff"`
-- Prefijo `r` (raw, sin escapes): `r"C:\ruta"`
+- Prefijo `f` (interpolación, **completo desde v1.1**): `f"hola, {nombre}, en {edad+10} anos"`. Cada `{expr}` se evalúa como expresión Cornamusa completa y se concatena con las partes literales. Llaves dobles `{{` y `}}` se preservan como llave literal. Anidación soportada (`f"{f'{x}'}"`). Triples (`f"""..."""`) reservadas para v1.2.
+- Prefijo `b` (bytes): `b"\x00\xff"` — **reservado para v1.x**, aún no implementado.
+- Prefijo `r` (raw, sin escapes): `r"C:\ruta"` — **reservado para v1.x**, aún no implementado.
 
 **Secuencias de escape:** `\n`, `\t`, `\r`, `\\`, `\'`, `\"`, `\0`, `\xHH`, `\uHHHH`, `\u{HHHHHH}`.
 
@@ -288,13 +288,21 @@ fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
 
 ### 4.1 Funciones globales
 
-Esta es la lista **real** de built-ins disponibles en v0.11.4 (registrados en `src/nativos.c`).
+Esta es la lista **real** de built-ins disponibles en v1.1.0 (registrados en `src/nativos.c`).
 
 #### E/S y conversión
 | Cornamusa | Equivalente Python | Descripción |
 |---|---|---|
 | `imprimir(...)` | `print(*args)` | Imprime valores separados por espacio + salto de línea |
+| `leer([prompt])` | `input([prompt])` | Lee una línea de stdin. Sin prompt o con cadena prompt. EOF inmediato → `""`. |
 | `tipo(x)` | `type(x).__name__` | Devuelve el nombre del tipo como cadena ("entero", "lista", ...) |
+| `cadena(x)` | `str(x)` | Coerción a cadena (representación canónica de `imprimir`). Idempotente sobre cadenas. |
+| `entero(x)` | `int(x)` | Coerción a entero. Acepta entero, decimal (truncar), booleano, cadena (parse base 10). |
+| `decimal(x)` | `float(x)` | Coerción a decimal. Acepta decimal, entero, booleano, cadena (`strtod`). |
+| `booleano(x)` | `bool(x)` | Coerción a booleano según truthiness §6.2. Siempre éxito. |
+| `lista(iter)` | `list(iter)` | Materializa un iterable como lista. Acepta lista/tupla/conjunto/cadena/rango/dicc. |
+| `tupla(iter)` | `tuple(iter)` | Como `lista(iter)` pero devuelve tupla inmutable. |
+| `diccionario(pares)` | `dict(pares)` | Construye dicc desde iterable de pares `(clave, valor)` o desde otro dicc. |
 
 #### Tamaño e iteración
 | Cornamusa | Equivalente Python | Descripción |
@@ -332,13 +340,13 @@ Esta es la lista **real** de built-ins disponibles en v0.11.4 (registrados en `s
 | `obtener_argv()` | Lista de cadenas con los argumentos del programa (incluido el nombre del .cor en posición 0). Expuesta también via `sistema.argv` (importar `sistema`). |
 | `salir(codigo=0)` | Termina el proceso inmediatamente con el código indicado. No retorna. |
 
-### 4.2 Built-ins planeados (no en v0.11.4)
+### 4.2 Built-ins planeados (no en v1.1.0)
 
 Los siguientes nombres aparecen en código de ejemplos y mensajes pero **aún no están registrados como built-ins**. Su sintaxis ya está reservada en la especificación para forward-compatibility:
 
-`leer`, `enumerar`, `mapear`, `filtrar`, `reducir`, `suma`, `mínimo`/`minimo`, `máximo`/`maximo`, `absoluto`, `redondear`, `cadena`, `entero`, `decimal`, `booleano`, `lista`, `tupla`, `diccionario`, `abrir`, `iterar`, `siguiente`, `instancia_de`, `subclase_de`, `id`, `resumen`, `repr`.
+`enumerar`, `mapear`, `filtrar`, `reducir`, `suma`, `mínimo`/`minimo`, `máximo`/`maximo`, `absoluto`, `redondear`, `abrir`, `iterar`, `siguiente`, `instancia_de`, `subclase_de`, `id`, `resumen`, `repr`.
 
-Llegarán a la stdlib según demanda en versiones v1.x. Mientras tanto, escribir uno de estos nombres da `ErrorDeNombre` igual que cualquier identificador no definido.
+Llegarán a la stdlib según demanda en versiones v1.x posteriores. Mientras tanto, escribir uno de estos nombres da `ErrorDeNombre` igual que cualquier identificador no definido.
 
 ### 4.3 Métodos especiales (dunders)
 

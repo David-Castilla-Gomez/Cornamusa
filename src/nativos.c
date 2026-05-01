@@ -245,6 +245,520 @@ fail:
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Conversores explícitos (v1.1).
+ *
+ * `cadena(x)`, `entero(x)`, `decimal(x)`, `booleano(x)`. Permiten
+ * coerción explícita entre tipos sin depender de operadores
+ * implícitos. Útiles en programas que mezclan I/O (donde todo entra
+ * como cadena) con aritmética.
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * Trim de espacios ASCII al inicio y al final. No muta `*texto` (es
+ * const) — devuelve nuevos `inicio`/`longitud` apuntando al sub-rango
+ * limpio. Usado para parseo numérico desde cadenas.
+ */
+static void trim_ascii(const char *texto, int longitud,
+                        const char **inicio_out, int *longitud_out) {
+    int i = 0;
+    while (i < longitud && (texto[i] == ' ' || texto[i] == '\t'
+                             || texto[i] == '\n' || texto[i] == '\r')) i++;
+    int j = longitud;
+    while (j > i && (texto[j-1] == ' ' || texto[j-1] == '\t'
+                      || texto[j-1] == '\n' || texto[j-1] == '\r')) j--;
+    *inicio_out = texto + i;
+    *longitud_out = j - i;
+}
+
+/*
+ * cadena(x) — devuelve una cadena con la representación tipo `imprimir`.
+ *
+ * Para enteros bignum se usa `mp_radix_size` + alocación dinámica para
+ * preservar todos los dígitos. El resto de tipos cabe holgadamente en
+ * un buffer de 4096 bytes (decimales, listas pequeñas, etc.). Para
+ * tipos compuestos muy grandes la cadena puede truncarse, pero no es
+ * un escenario habitual.
+ */
+static Valor nativa_cadena(EvalError *err, int n_args, Valor *args,
+                            int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena() requiere 1 argumento, recibio %d", n_args);
+    }
+    const Valor *v = &args[0];
+    /* Cadena → cadena: clon profundo (idempotente). */
+    if (v->tipo == VAL_CADENA) {
+        return valor_cadena_duplicar(v->como.cadena.texto, v->como.cadena.longitud);
+    }
+    /* Entero bignum: dimensionar exactamente. SMALL cabe en 32 bytes. */
+    if (v->tipo == VAL_ENTERO) {
+        int tam = 0;
+        if (mp_radix_size(v->como.entero, 10, &tam) != MP_OKAY) {
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        char *buf = (char *)malloc((size_t)tam);
+        if (!buf) return error_nativa(err, linea, columna, "memoria insuficiente");
+        size_t escritos;
+        if (mp_to_radix(v->como.entero, buf, (size_t)tam, &escritos, 10) != MP_OKAY) {
+            free(buf);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        /* mp_to_radix incluye '\0' en `escritos`. */
+        int n = (int)escritos - 1;
+        if (n < 0) n = 0;
+        Valor r = valor_cadena_duplicar(buf, n);
+        free(buf);
+        return r;
+    }
+    /* Resto: buffer de 4096. Suficiente para casos comunes. */
+    char buffer[4096];
+    int n = valor_a_cadena(v, buffer, sizeof(buffer));
+    return valor_cadena_duplicar(buffer, n);
+}
+
+/*
+ * entero(x) — convierte a entero.
+ *
+ *   entero(int)         → no-op (clon).
+ *   entero(decimal)     → truncar hacia cero. Falla si NaN/Inf o fuera
+ *                         del rango de int64 (caso raro).
+ *   entero(booleano)    → 0 o 1.
+ *   entero("123")       → parse base 10 (acepta signo). ErrorDeValor si
+ *                         no es un literal entero válido.
+ *   entero(otro)        → ErrorDeTipo.
+ */
+static Valor nativa_entero(EvalError *err, int n_args, Valor *args,
+                            int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: entero() requiere 1 argumento, recibio %d", n_args);
+    }
+    const Valor *v = &args[0];
+    if (valor_es_entero(v)) {
+        return valor_clonar(v);
+    }
+    if (v->tipo == VAL_BOOLEANO) {
+        return valor_entero_de_i64(v->como.booleano ? 1 : 0);
+    }
+    if (v->tipo == VAL_DECIMAL) {
+        double d = v->como.decimal;
+        if (d != d) {  /* NaN */
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: no se puede convertir NaN a entero");
+        }
+        if (d > 9.2233720368547748e18 || d < -9.2233720368547758e18) {
+            /* Fuera del rango de int64 — soporte de bignum desde double
+               se aplazará a una iteración futura si surge la demanda. */
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: decimal fuera del rango de entero (truncado)");
+        }
+        int64_t n = (int64_t)d;  /* C99: truncado hacia cero. */
+        return valor_entero_de_i64(n);
+    }
+    if (v->tipo == VAL_CADENA) {
+        const char *txt; int len;
+        trim_ascii(v->como.cadena.texto, v->como.cadena.longitud, &txt, &len);
+        if (len == 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: cadena vacia no es entero valido");
+        }
+        bool negativo = false;
+        if (txt[0] == '+' || txt[0] == '-') {
+            negativo = (txt[0] == '-');
+            txt++; len--;
+        }
+        if (len == 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: '%.*s' no es entero valido",
+                v->como.cadena.longitud, v->como.cadena.texto);
+        }
+        /* Validar que solo hay dígitos y guiones bajos (mismo subconjunto
+           que un literal Cornamusa sin prefijo). */
+        for (int i = 0; i < len; i++) {
+            char c = txt[i];
+            if (!((c >= '0' && c <= '9') || c == '_')) {
+                return error_nativa(err, linea, columna,
+                    "ErrorDeValor: '%.*s' no es entero valido",
+                    v->como.cadena.longitud, v->como.cadena.texto);
+            }
+        }
+        Valor r = valor_entero_de_lexema(txt, len);
+        if (r.tipo == VAL_NULO) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: '%.*s' no es entero valido",
+                v->como.cadena.longitud, v->como.cadena.texto);
+        }
+        if (negativo) {
+            /* Negar in-place. SMALL: int64 directo (no overflow porque
+               SMALL_INT_MIN = -SMALL_INT_MAX - 1, y los valores que vienen
+               de un parse positivo no llegan a SMALL_INT_MAX exacto sin
+               quedar dentro). BIG: mp_neg in place, y normalizar. */
+            if (r.tipo == VAL_ENTERO_SMALL) {
+                r.como.entero_small = -r.como.entero_small;
+            } else {
+                /* mp_neg: documentación libtommath dice que destino
+                   puede ser igual a fuente. */
+                if (mp_neg(r.como.entero, r.como.entero) != MP_OKAY) {
+                    valor_destruir(&r);
+                    return error_nativa(err, linea, columna,
+                        "memoria insuficiente");
+                }
+            }
+        }
+        return r;
+    }
+    return error_nativa(err, linea, columna,
+        "ErrorDeTipo: entero() no acepta '%s'", valor_nombre_tipo(v));
+}
+
+/*
+ * decimal(x) — convierte a decimal.
+ *
+ *   decimal(decimal)    → no-op.
+ *   decimal(int)        → conversión exacta (puede perder precisión si
+ *                         el bignum supera 2^53).
+ *   decimal(booleano)   → 0.0 o 1.0.
+ *   decimal("3.14")     → strtod. ErrorDeValor si no parsea limpio.
+ *   decimal(otro)       → ErrorDeTipo.
+ */
+static Valor nativa_decimal(EvalError *err, int n_args, Valor *args,
+                             int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: decimal() requiere 1 argumento, recibio %d", n_args);
+    }
+    const Valor *v = &args[0];
+    if (v->tipo == VAL_DECIMAL) return *v;
+    if (v->tipo == VAL_BOOLEANO) {
+        return valor_decimal(v->como.booleano ? 1.0 : 0.0);
+    }
+    if (v->tipo == VAL_ENTERO_SMALL) {
+        return valor_decimal((double)v->como.entero_small);
+    }
+    if (v->tipo == VAL_ENTERO) {
+        return valor_decimal(mp_get_double(v->como.entero));
+    }
+    if (v->tipo == VAL_CADENA) {
+        const char *txt; int len;
+        trim_ascii(v->como.cadena.texto, v->como.cadena.longitud, &txt, &len);
+        if (len == 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: cadena vacia no es decimal valido");
+        }
+        /* Necesitamos null-terminated para strtod; el buffer fuente
+           no lo está. Stack para casos pequeños, malloc si no. */
+        char stack_buf[64];
+        char *buf = stack_buf;
+        char *heap = NULL;
+        if (len + 1 > (int)sizeof(stack_buf)) {
+            heap = (char *)malloc((size_t)len + 1);
+            if (!heap) return error_nativa(err, linea, columna,
+                "memoria insuficiente");
+            buf = heap;
+        }
+        memcpy(buf, txt, (size_t)len);
+        buf[len] = '\0';
+        char *end = NULL;
+        double d = strtod(buf, &end);
+        bool ok = (end != NULL) && (*end == '\0') && (end != buf);
+        if (heap) free(heap);
+        if (!ok) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: '%.*s' no es decimal valido",
+                v->como.cadena.longitud, v->como.cadena.texto);
+        }
+        return valor_decimal(d);
+    }
+    return error_nativa(err, linea, columna,
+        "ErrorDeTipo: decimal() no acepta '%s'", valor_nombre_tipo(v));
+}
+
+/*
+ * booleano(x) — siempre éxito. Aplica las reglas de truthiness de
+ * ESPEC §6.2: nulo, falso, 0, 0.0, "", [], {}, () → falso; resto verdadero.
+ */
+static Valor nativa_booleano(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: booleano() requiere 1 argumento, recibio %d", n_args);
+    }
+    return valor_booleano(valor_es_verdadero(&args[0]));
+}
+
+/*
+ * lista([iterable]) — construye una lista materializada.
+ *
+ *   lista()          → []
+ *   lista([1,2,3])   → [1, 2, 3] (copia)
+ *   lista((1,2))     → [1, 2]
+ *   lista({"a":1})   → ["a"]                 (claves del dicc)
+ *   lista({1, 2})    → [1, 2]                (orden indeterminado)
+ *   lista("abc")     → ["a", "b", "c"]
+ *   lista(rango(3))  → [0, 1, 2]
+ *   lista(otro)      → ErrorDeTipo
+ */
+static Valor nativa_lista(EvalError *err, int n_args, Valor *args,
+                           int linea, int columna) {
+    if (n_args > 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista() acepta 0 o 1 argumento, recibio %d", n_args);
+    }
+    Lista *l = lista_nueva(0);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+    if (n_args == 0) return valor_lista(l);
+
+    const Valor *it = &args[0];
+    if (!valor_es_iterable(it)) {
+        lista_liberar(l);
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista() no acepta '%s' como iterable",
+            valor_nombre_tipo(it));
+    }
+    Iterador *iter = iter_nuevo(it);
+    if (!iter) {
+        lista_liberar(l);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        if (!lista_agregar(l, elem)) {
+            valor_destruir(&elem);
+            iter_destruir(iter);
+            lista_liberar(l);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    iter_destruir(iter);
+    return valor_lista(l);
+}
+
+/*
+ * tupla([iterable]) — construye una tupla inmutable a partir de un
+ * iterable. Materializa primero en lista para conocer el tamaño y
+ * después transfiere a la tupla (que requiere `cuenta` fijo).
+ */
+static Valor nativa_tupla(EvalError *err, int n_args, Valor *args,
+                           int linea, int columna) {
+    if (n_args > 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla() acepta 0 o 1 argumento, recibio %d", n_args);
+    }
+    if (n_args == 0) {
+        Tupla *t = tupla_nueva(0);
+        if (!t) return error_nativa(err, linea, columna, "memoria insuficiente");
+        return valor_tupla(t);
+    }
+    const Valor *it = &args[0];
+    if (!valor_es_iterable(it)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla() no acepta '%s' como iterable",
+            valor_nombre_tipo(it));
+    }
+    /* Recolectar primero en buffer dinámico (no conocemos el tamaño
+       a priori para diccionario/conjunto/cadena/rango), luego copiar. */
+    Lista *tmp = lista_nueva(0);
+    if (!tmp) return error_nativa(err, linea, columna, "memoria insuficiente");
+    Iterador *iter = iter_nuevo(it);
+    if (!iter) {
+        lista_liberar(tmp);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        if (!lista_agregar(tmp, elem)) {
+            valor_destruir(&elem);
+            iter_destruir(iter);
+            lista_liberar(tmp);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    iter_destruir(iter);
+
+    Tupla *t = tupla_nueva(tmp->cuenta);
+    if (!t) {
+        lista_liberar(tmp);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    /* Mover los Valores del array temporal a la tupla. */
+    for (int i = 0; i < tmp->cuenta; i++) {
+        t->elementos[i] = tmp->elementos[i];
+    }
+    /* Vaciar tmp para que `lista_liberar` no destruya los elementos
+       que ya pertenecen a la tupla. */
+    tmp->cuenta = 0;
+    lista_liberar(tmp);
+    return valor_tupla(t);
+}
+
+/*
+ * diccionario([iterable_de_pares]) — construye un diccionario.
+ *
+ *   diccionario()                          → {}
+ *   diccionario({"a":1})                   → copia del diccionario.
+ *   diccionario([("a",1), ("b",2)])        → {"a":1, "b":2}
+ *   diccionario([["k",1]])                 → {"k":1}
+ *   diccionario(otro)                      → ErrorDeTipo
+ *
+ * Cada elemento del iterable debe ser a su vez un iterable de
+ * exactamente dos elementos (lista o tupla). La clave debe ser
+ * hashable; si no, ErrorDeTipo.
+ */
+static Valor nativa_diccionario(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args > 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: diccionario() acepta 0 o 1 argumento, recibio %d",
+            n_args);
+    }
+    Diccionario *d = dicc_nuevo();
+    if (!d) return error_nativa(err, linea, columna, "memoria insuficiente");
+    if (n_args == 0) return valor_diccionario(d);
+
+    const Valor *src = &args[0];
+    /* Caso especial: dicc → dicc (copia entrada por entrada). */
+    if (src->tipo == VAL_DICCIONARIO) {
+        const Diccionario *origen = src->como.dicc;
+        for (int i = 0; i < origen->capacidad; i++) {
+            if (origen->entradas[i].ocupada) {
+                if (!dicc_asignar(d, valor_clonar(&origen->entradas[i].clave),
+                                       valor_clonar(&origen->entradas[i].valor))) {
+                    dicc_liberar(d);
+                    return error_nativa(err, linea, columna,
+                        "memoria insuficiente");
+                }
+            }
+        }
+        return valor_diccionario(d);
+    }
+    /* Caso general: iterable de pares. */
+    if (!valor_es_iterable(src)) {
+        dicc_liberar(d);
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: diccionario() no acepta '%s' como iterable",
+            valor_nombre_tipo(src));
+    }
+    Iterador *iter = iter_nuevo(src);
+    if (!iter) {
+        dicc_liberar(d);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor par;
+    int idx = 0;
+    while (iter_siguiente(iter, &par)) {
+        Valor *elementos = NULL;
+        int cuenta = 0;
+        if (par.tipo == VAL_LISTA) {
+            elementos = par.como.lista->elementos;
+            cuenta = par.como.lista->cuenta;
+        } else if (par.tipo == VAL_TUPLA) {
+            elementos = par.como.tupla->elementos;
+            cuenta = par.como.tupla->cuenta;
+        } else {
+            valor_destruir(&par);
+            iter_destruir(iter);
+            dicc_liberar(d);
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: diccionario() espera pares (clave, valor) en el indice %d",
+                idx);
+        }
+        if (cuenta != 2) {
+            valor_destruir(&par);
+            iter_destruir(iter);
+            dicc_liberar(d);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: diccionario() requiere pares de longitud 2, recibio %d en indice %d",
+                cuenta, idx);
+        }
+        if (!valor_es_hashable(&elementos[0])) {
+            const char *tn = valor_nombre_tipo(&elementos[0]);
+            valor_destruir(&par);
+            iter_destruir(iter);
+            dicc_liberar(d);
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: diccionario() clave no hashable: '%s'", tn);
+        }
+        Valor clave = valor_clonar(&elementos[0]);
+        Valor valor = valor_clonar(&elementos[1]);
+        valor_destruir(&par);
+        if (!dicc_asignar(d, clave, valor)) {
+            iter_destruir(iter);
+            dicc_liberar(d);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        idx++;
+    }
+    iter_destruir(iter);
+    return valor_diccionario(d);
+}
+
+/*
+ * leer([prompt]) — lee una línea de stdin.
+ *
+ *   leer()           → lee hasta '\n' o EOF; devuelve cadena sin '\n'.
+ *   leer(prompt)     → imprime prompt sin '\n' (con flush) y luego lee.
+ *   leer(no-cadena)  → ErrorDeTipo.
+ *   leer(>1 args)    → ErrorDeTipo.
+ *
+ * Si stdin está cerrado en EOF inmediato, devuelve cadena vacía. Lee
+ * con buffer dinámico para soportar líneas arbitrariamente largas.
+ *
+ * UTF-8: los bytes se devuelven tal cual los recibe el SO; no se
+ * normaliza NFC (el lexer normaliza el código fuente, pero la
+ * entrada del usuario no es código).
+ */
+static Valor nativa_leer(EvalError *err, int n_args, Valor *args,
+                          int linea, int columna) {
+    if (n_args > 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: leer() acepta 0 o 1 argumento, recibio %d", n_args);
+    }
+    if (n_args == 1) {
+        if (args[0].tipo != VAL_CADENA) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: leer() requiere una cadena como prompt, no '%s'",
+                valor_nombre_tipo(&args[0]));
+        }
+        fwrite(args[0].como.cadena.texto, 1,
+                (size_t)args[0].como.cadena.longitud, stdout);
+        fflush(stdout);
+    }
+
+    /* Buffer dinámico. Empieza pequeño y dobla cuando se llena.
+       Sin límite máximo; si fread agota memoria, devolvemos OOM. */
+    int capacidad = 128;
+    int longitud = 0;
+    char *buf = (char *)malloc((size_t)capacidad);
+    if (!buf) return error_nativa(err, linea, columna, "memoria insuficiente");
+
+    int c;
+    while ((c = getchar()) != EOF && c != '\n') {
+        if (longitud + 1 >= capacidad) {
+            int nueva = capacidad * 2;
+            char *nuevo = (char *)realloc(buf, (size_t)nueva);
+            if (!nuevo) {
+                free(buf);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            buf = nuevo;
+            capacidad = nueva;
+        }
+        buf[longitud++] = (char)c;
+    }
+    /* Trim de '\r' final si stdin viene en CRLF (ej. Windows con
+       texto). El '\n' nunca queda incluido (lo consume el bucle). */
+    if (longitud > 0 && buf[longitud - 1] == '\r') {
+        longitud--;
+    }
+    Valor r = valor_cadena_duplicar(buf, longitud);
+    free(buf);
+    if (r.tipo == VAL_NULO) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    return r;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Métodos sobre listas (built-ins de mutación)
  *
  * Cornamusa todavía no tiene método-syntax sobre tipos primitivos
@@ -795,6 +1309,15 @@ static const EntradaNativa NATIVAS[] = {
     {"longitud", 8, nativa_longitud},
     {"tipo",     4, nativa_tipo},
     {"rango",    5, nativa_rango},
+    /* Conversores (v1.1). */
+    {"cadena",      6,  nativa_cadena},
+    {"entero",      6,  nativa_entero},
+    {"decimal",     7,  nativa_decimal},
+    {"booleano",    8,  nativa_booleano},
+    {"lista",       5,  nativa_lista},
+    {"tupla",       5,  nativa_tupla},
+    {"diccionario", 11, nativa_diccionario},
+    {"leer",        4,  nativa_leer},
     {"agregar",  7, nativa_agregar},
     {"quitar",   6, nativa_quitar},
     {"insertar", 8, nativa_insertar},

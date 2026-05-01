@@ -222,6 +222,16 @@ typedef enum {
     OP_ITER_SIGUIENTE, /* operando u16 = offset_fin; lee tope (iterador),
                           si hay siguiente push valor; si no, pop y salta */
 
+    /* ---- F-strings (v1.1) ---- */
+    /*
+     * OP_FORMATO_F: pop el TOS, lo convierte a VAL_CADENA con la
+     * representación canónica de `imprimir`/`cadena()` y empuja la
+     * cadena resultante. Equivale a llamar `cadena(x)` pero sin pasar
+     * por el dispatch de OP_LLAMAR_NATIVA (más barato y aísla la
+     * semántica de interpolación de la API pública).
+     */
+    OP_FORMATO_F,
+
     /* ---- Retorno ---- */
     OP_RETORNAR,
 } OpCode;

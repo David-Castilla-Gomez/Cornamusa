@@ -661,6 +661,46 @@ static Valor eval_diccionario(Evaluador *ev, const Expr *e);
 static Valor eval_conjunto(Evaluador *ev, const Expr *e);
 static Valor eval_tupla(Evaluador *ev, const Expr *e);
 
+/*
+ * Procesa los escapes de un slice de cadena (sin las comillas) y
+ * construye un Valor cadena. Compartido por EXPR_LITERAL_CADENA y
+ * por las partes literales de EXPR_LITERAL_F_CADENA.
+ *
+ * Devuelve VAL_NULO en OOM. El llamador convierte VAL_NULO en un
+ * error_en con mensaje contextual.
+ */
+static Valor slice_a_cadena_eval(const char *src, int srclen) {
+    if (srclen <= 0) return valor_cadena_duplicar("", 0);
+    char *buf = (char *)malloc((size_t)srclen + 1);
+    if (!buf) return valor_nulo();
+    int j = 0;
+    for (int i = 0; i < srclen; i++) {
+        char c = src[i];
+        if (c == '\\' && i + 1 < srclen) {
+            char nx = src[++i];
+            switch (nx) {
+                case 'n': buf[j++] = '\n'; break;
+                case 't': buf[j++] = '\t'; break;
+                case 'r': buf[j++] = '\r'; break;
+                case '0': buf[j++] = '\0'; break;
+                case '\\': buf[j++] = '\\'; break;
+                case '\'': buf[j++] = '\''; break;
+                case '"': buf[j++] = '"'; break;
+                default: buf[j++] = nx; break;
+            }
+        } else {
+            buf[j++] = c;
+        }
+    }
+    buf[j] = '\0';
+    Valor v;
+    v.tipo = VAL_CADENA;
+    v.dueno_cadena = true;
+    v.como.cadena.texto = buf;
+    v.como.cadena.longitud = j;
+    return v;
+}
+
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
     if (ev->error.tuvo_error) return valor_nulo();
 
@@ -676,54 +716,90 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
             return valor_decimal_de_lexema(e->como.literal.lexema,
                                             e->como.literal.longitud);
         case EXPR_LITERAL_CADENA: {
-            /* El lexema incluye comillas: "hola" o 'mundo'. Las quitamos
-             * y procesamos las secuencias de escape mínimas (\n \t \\
-             * \" \'). Para esta sesión basta una pasada simple — la
-             * versión completa con \xHH y \uHHHH llega en F4 S3 cuando
-             * el evaluador trate cadenas como ciudadanos completos. */
+            /* El lexema incluye comillas: las quitamos y delegamos al
+             * helper que procesa los escapes mínimos. */
             const char *lex = e->como.literal.lexema;
             int len = e->como.literal.longitud;
             if (len < 2) return valor_cadena_referencia("", 0);
-            char delim = lex[0];
-            (void)delim;
-            const char *src = lex + 1;
-            int srclen = len - 2;  /* sin comillas */
-            char *buf = (char *)malloc((size_t)srclen + 1);
-            if (!buf) return error_en(ev, e, "memoria insuficiente");
-            int j = 0;
-            for (int i = 0; i < srclen; i++) {
-                char c = src[i];
-                if (c == '\\' && i + 1 < srclen) {
-                    char nx = src[++i];
-                    switch (nx) {
-                        case 'n': buf[j++] = '\n'; break;
-                        case 't': buf[j++] = '\t'; break;
-                        case 'r': buf[j++] = '\r'; break;
-                        case '0': buf[j++] = '\0'; break;
-                        case '\\': buf[j++] = '\\'; break;
-                        case '\'': buf[j++] = '\''; break;
-                        case '"': buf[j++] = '"'; break;
-                        default:
-                            /* Escape no reconocido: copia literal del
-                             * carácter siguiente; el lexer ya validó las
-                             * formas conocidas. */
-                            buf[j++] = nx; break;
-                    }
-                } else {
-                    buf[j++] = c;
-                }
-            }
-            buf[j] = '\0';
-            Valor v;
-            v.tipo = VAL_CADENA;
-            v.dueno_cadena = true;
-            v.como.cadena.texto = buf;
-            v.como.cadena.longitud = j;
+            Valor v = slice_a_cadena_eval(lex + 1, len - 2);
+            if (v.tipo == VAL_NULO) return error_en(ev, e, "memoria insuficiente");
             return v;
         }
-        case EXPR_LITERAL_F_CADENA:
-            return error_en(ev, e,
-                "f-cadenas con interpolacion aun no implementadas en v0.4");
+        case EXPR_LITERAL_F_CADENA: {
+            /* Itera las partes y concatena. Las partes literales pasan
+             * por el helper de escapes; las expresión por evaluar +
+             * coerción a cadena. */
+            Valor acc = valor_cadena_duplicar("", 0);
+            if (acc.tipo == VAL_NULO) return error_en(ev, e, "memoria insuficiente");
+            int n = e->como.f_cadena.n_partes;
+            const ParteFCadena *partes = e->como.f_cadena.partes;
+            for (int i = 0; i < n; i++) {
+                const ParteFCadena *p = &partes[i];
+                Valor pieza;
+                if (p->expr) {
+                    Valor v = evaluador_evaluar_expr(ev, p->expr);
+                    if (ev->error.tuvo_error) {
+                        valor_destruir(&v); valor_destruir(&acc);
+                        return valor_nulo();
+                    }
+                    if (v.tipo == VAL_CADENA) {
+                        pieza = valor_cadena_duplicar(v.como.cadena.texto,
+                                                        v.como.cadena.longitud);
+                    } else if (v.tipo == VAL_ENTERO) {
+                        int tam = 0;
+                        if (mp_radix_size(v.como.entero, 10, &tam) != MP_OKAY) {
+                            valor_destruir(&v); valor_destruir(&acc);
+                            return error_en(ev, e, "memoria insuficiente");
+                        }
+                        char *buf = (char *)malloc((size_t)tam);
+                        if (!buf) {
+                            valor_destruir(&v); valor_destruir(&acc);
+                            return error_en(ev, e, "memoria insuficiente");
+                        }
+                        size_t escritos;
+                        if (mp_to_radix(v.como.entero, buf, (size_t)tam,
+                                          &escritos, 10) != MP_OKAY) {
+                            free(buf);
+                            valor_destruir(&v); valor_destruir(&acc);
+                            return error_en(ev, e, "error al formatear entero");
+                        }
+                        int len_pieza = (int)escritos - 1;
+                        if (len_pieza < 0) len_pieza = 0;
+                        pieza = valor_cadena_duplicar(buf, len_pieza);
+                        free(buf);
+                    } else {
+                        char buffer[4096];
+                        int len_pieza = valor_a_cadena(&v, buffer, sizeof(buffer));
+                        pieza = valor_cadena_duplicar(buffer, len_pieza);
+                    }
+                    valor_destruir(&v);
+                } else {
+                    pieza = slice_a_cadena_eval(p->literal, p->longitud);
+                }
+                if (pieza.tipo == VAL_NULO) {
+                    valor_destruir(&acc);
+                    return error_en(ev, e, "memoria insuficiente");
+                }
+                /* Concatenar acc + pieza in-place. */
+                int la = acc.como.cadena.longitud;
+                int lp = pieza.como.cadena.longitud;
+                char *combinado = (char *)malloc((size_t)(la + lp + 1));
+                if (!combinado) {
+                    valor_destruir(&acc); valor_destruir(&pieza);
+                    return error_en(ev, e, "memoria insuficiente");
+                }
+                if (la > 0) memcpy(combinado, acc.como.cadena.texto, (size_t)la);
+                if (lp > 0) memcpy(combinado + la, pieza.como.cadena.texto, (size_t)lp);
+                combinado[la + lp] = '\0';
+                valor_destruir(&acc);
+                valor_destruir(&pieza);
+                acc.tipo = VAL_CADENA;
+                acc.dueno_cadena = true;
+                acc.como.cadena.texto = combinado;
+                acc.como.cadena.longitud = la + lp;
+            }
+            return acc;
+        }
 
         case EXPR_IDENT: {
             Valor v;

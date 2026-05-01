@@ -6,6 +6,100 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.1.0] — 2026-05-01 — Built-ins esenciales
+
+Primera entrega menor sobre v1.0.0. Cierra las tres promesas públicas
+más visibles que aún no aterrizaban: conversores explícitos, lectura
+desde stdin y f-cadenas con interpolación real. Sin cambios de
+sintaxis (B10 respetado): la línea `f"hola {nombre}"` ya parseaba en
+v1.0 pero no interpolaba; ahora sí.
+
+### Built-ins añadidos (NATIVAS[] en `src/nativos.c`)
+
+- `cadena(x)` — coerción a cadena. Idempotente sobre `VAL_CADENA`;
+  para enteros bignum dimensiona el buffer con `mp_radix_size` para
+  preservar todos los dígitos.
+- `entero(x)` — desde int (no-op), decimal (truncar hacia cero),
+  booleano (0/1), cadena (parse base 10 con signo opcional y `_`
+  como separador). `ErrorDeValor` si la cadena no es entero válido o
+  el decimal está fuera del rango int64; `ErrorDeTipo` para otros tipos.
+- `decimal(x)` — desde decimal (no-op), int (vía `mp_get_double`),
+  booleano, cadena (`strtod`). `ErrorDeValor`/`ErrorDeTipo` análogos.
+- `booleano(x)` — siempre éxito; aplica las reglas de truthiness de
+  ESPEC §6.2.
+- `lista(iter)` — materializa cualquier iterable como lista. Acepta
+  lista (copia), tupla, conjunto, cadena (caracteres), rango,
+  diccionario (claves).
+- `tupla(iter)` — igual a `lista` pero devuelve tupla inmutable.
+- `diccionario(iter_de_pares)` — construye desde lista/tupla de pares
+  `(clave, valor)`, o copia desde otro diccionario. Valida arity de
+  pares y hashabilidad de claves.
+- `leer([prompt])` — entrada interactiva desde stdin con buffer
+  dinámico. Soporta CRLF (Windows). Sin args devuelve cadena vacía
+  ante EOF inmediato; con un argumento cadena lo imprime sin newline
+  como prompt antes de leer.
+
+Tests unit en [tests/unit/test_bytecode_conversores.c](tests/unit/test_bytecode_conversores.c)
+(38 casos cubriendo camino feliz + errores de tipo + errores de
+valor + arity + idempotencia). El `leer()` se valida end-to-end con
+[examples/26_leer_jugable.cor](examples/26_leer_jugable.cor)
+(calculadora de IMC) y stdin redirigido vía script CMake.
+
+### F-cadenas con interpolación real
+
+El lexer y parser ya reconocían `f"..."` desde v0.2 (Fase 2), pero el
+contenido se almacenaba crudo y el compilador/evaluador rechazaban con
+"no implementado". v1.1 cierra el ciclo:
+
+- **AST** ([src/ast.h](src/ast.h)): nuevo tipo `ParteFCadena` con
+  `{ literal, longitud, expr }`. `EXPR_LITERAL_F_CADENA` ahora referencia
+  un array de partes en lugar del lexema crudo.
+- **Parser** ([src/parser.c](src/parser.c)): mini-parser interno que
+  divide el lexema por `{...}` (respetando llaves balanceadas y `{{`/`}}`
+  como literales), instancia un sub-lexer + sub-parser sobre cada slice
+  de expresión, y verifica que consume EXACTAMENTE el slice (tokens
+  sobrantes → error claro).
+- **Compilador** ([src/compilador.c](src/compilador.c)): emite
+  `OP_CONST` con cada parte literal (escapes ya decodificados) y, para
+  partes expresión, compila + `OP_FORMATO_F` + `OP_SUMAR` para
+  concatenar acumulando.
+- **Tree-walking** ([src/evaluador.c](src/evaluador.c)): itera partes
+  y concatena con buffer dinámico.
+- **Nuevo opcode** `OP_FORMATO_F`: pop, convierte a cadena con
+  representación canónica de `imprimir`, push.
+
+Limitación conocida: triples (`f"""..."""`) no soportadas todavía
+— el lexer las tokeniza pero el parser las rechaza con un error
+explícito. Pendiente para v1.2.
+
+Tests en [tests/unit/test_bytecode_fstrings.c](tests/unit/test_bytecode_fstrings.c)
+(35+ casos: literal puro, escapes, llaves dobles, interpolación
+simple/aritmética/llamadas, mezclas, coerción de tipos incluido bignum,
+anidación, errores). Diferencial tree-walking ↔ bytecode con
+[examples/27_fstrings_jugable.cor](examples/27_fstrings_jugable.cor).
+
+### Refactors menores
+
+- `cadena_desde_lexema` (compilador) y el procesamiento inline de
+  `EXPR_LITERAL_CADENA` (evaluador) extraen un helper compartido
+  `cadena_desde_slice` / `slice_a_cadena_eval` que también consume
+  las partes literales de f-cadenas.
+- Test infrastructure: nuevo script
+  [tests/integracion/run_con_stdin.cmake](tests/integracion/run_con_stdin.cmake)
+  que ejecuta un .cor con stdin redirigido y verifica regex sobre stdout
+  (usado por el test `bc_run_26_leer_jugable`).
+
+### Compatibilidad
+
+- Sintaxis: sin cambios. Cualquier programa válido en v1.0 sigue
+  válido en v1.1.
+- Built-ins: solo añadidos, ninguno renombrado o eliminado.
+- AST: el campo `como.literal` para `EXPR_LITERAL_F_CADENA` ya no
+  contiene el lexema crudo — los consumidores externos del AST (poco
+  probable fuera del proyecto) deben leer `como.f_cadena.partes`. La
+  representación textual del `--ast` cambia (verificado en
+  `tests/unit/test_parser_expresiones.c`).
+
 ## [1.0.0] — 2026-04-30 — Cornamusa estable
 
 Primera versión **estable** de Cornamusa. El lenguaje es funcional,

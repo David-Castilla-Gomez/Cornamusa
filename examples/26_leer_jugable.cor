@@ -1,0 +1,29 @@
+# 26_leer_jugable.cor — entrada interactiva con `leer()` (v1.1).
+#
+# Demuestra cómo combinar `leer()` con los conversores `entero()` /
+# `decimal()` para construir programas interactivos con tipo dinámico.
+#
+# Para probarlo redirigiendo stdin:
+#   echo -e "Ana\n30\n1.75" | ./build/cornamusa --bytecode examples/26_leer_jugable.cor
+
+imprimir("=== Calculadora de IMC ===")
+nombre = leer("Tu nombre: ")
+edad = entero(leer("Edad (anos): "))
+peso = decimal(leer("Peso (kg): "))
+altura = decimal(leer("Altura (m): "))
+
+imc = peso / (altura * altura)
+imprimir("---")
+imprimir("Hola,", nombre)
+imprimir("Edad:", edad)
+imprimir("IMC:", imc)
+
+si imc < 18.5:
+    imprimir("Categoria: peso bajo")
+sino si imc < 25.0:
+    imprimir("Categoria: normal")
+sino si imc < 30.0:
+    imprimir("Categoria: sobrepeso")
+sino:
+    imprimir("Categoria: obesidad")
+fin si
