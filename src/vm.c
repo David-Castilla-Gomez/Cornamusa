@@ -831,19 +831,88 @@ static ResultadoVM ejecutar_dunder_unario(VM *vm, CallFrame **frame_inout,
 }
 
 /*
+ * v1.2: prepara un frame para invocar un dunder ternario sobre el TOS.
+ *
+ * Pre:  stack = [..., obj, k, v], obj es VAL_INSTANCIA y su clase
+ *       tiene `dunder_name` con aridad 3.
+ * Post: stack = [..., closure, obj, k, v]; nuevo CallFrame apilado.
+ *
+ * Usado por `__asignar_indice__(yo, clave, valor)`.
+ */
+static ResultadoVM ejecutar_dunder_ternario(VM *vm, CallFrame **frame_inout,
+                                              Closure *m,
+                                              const char *dunder_name,
+                                              int dunder_len) {
+    (void)dunder_len;
+    CallFrame *frame = *frame_inout;
+    FuncionBC *fn = m->plantilla;
+    if (fn->aridad != 3) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %s() debe aceptar 3 argumentos (yo, clave, valor)",
+            dunder_name);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+        llamar_set_error(vm, frame, "Desbordamiento de pila");
+        return VM_ERROR_RUNTIME;
+    }
+    /* Reorganizar pila: [..., obj, k, v] → [..., closure, obj, k, v]. */
+    empujar(vm, valor_nulo());                  /* tope++ */
+    vm->tope[-1] = vm->tope[-2];                /* arg2 (v) */
+    vm->tope[-2] = vm->tope[-3];                /* arg1 (k) */
+    vm->tope[-3] = vm->tope[-4];                /* receptor (obj) */
+    closure_retener(m);
+    vm->tope[-4] = valor_closure(m);            /* callee = closure */
+
+    Valor *base_nuevo = &vm->tope[-4];
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = m;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (m->globales_definicion != NULL
+        && m->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = m->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
+
+/*
  * Devuelve el nombre del dunder asociado a un opcode binario, o NULL
  * si el opcode no tiene dunder definido (ej. OP_ES, OP_EN — identidad
  * y membership no son sobrecargables).
  */
 static const char *dunder_para_op_binario(OpCode op) {
     switch (op) {
-        case OP_SUMAR:        return "__sumar__";
-        case OP_RESTAR:       return "__restar__";
-        case OP_MULTIPLICAR:  return "__multiplicar__";
-        case OP_DIVIDIR:      return "__dividir__";
-        case OP_DIVIDIR_ENTERO: return "__dividir_entero__";
-        case OP_MODULO:       return "__modulo__";
-        case OP_POTENCIA:     return "__potencia__";
+        case OP_SUMAR:           return "__sumar__";
+        case OP_RESTAR:          return "__restar__";
+        case OP_MULTIPLICAR:     return "__multiplicar__";
+        case OP_DIVIDIR:         return "__dividir__";
+        case OP_DIVIDIR_ENTERO:  return "__dividir_entero__";
+        case OP_MODULO:          return "__modulo__";
+        case OP_POTENCIA:        return "__potencia__";
+        case OP_IGUAL:           return "__igual__";
+        case OP_DISTINTO:        return "__distinto__";
+        case OP_MENOR:           return "__menor__";
+        case OP_MENOR_IGUAL:     return "__menor_igual__";
+        case OP_MAYOR:           return "__mayor__";
+        case OP_MAYOR_IGUAL:     return "__mayor_igual__";
         default: return NULL;
     }
 }
@@ -1552,6 +1621,20 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
 
             /* ─── Indexación ─── */
             case OP_INDICE: {
+                /* v1.2: si el objeto es VAL_INSTANCIA y su clase define
+                 * `__indice__(yo, clave)`, despachamos el dunder. */
+                if (vm->tope[-2].tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        vm->tope[-2].como.instancia->clase,
+                        "__indice__", 10);
+                    if (m) {
+                        if (ejecutar_dunder_binario(vm, &frame, m,
+                                                      "__indice__", 10) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
                 Valor key = sacar(vm);
                 Valor obj = sacar(vm);
                 Valor r = valor_nulo();
@@ -1695,6 +1778,19 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             }
             case OP_ASIGNAR_INDICE: {
                 /* Stack: [..., obj, key, valor]. */
+                /* v1.2: __asignar_indice__(yo, clave, valor). */
+                if (vm->tope[-3].tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        vm->tope[-3].como.instancia->clase,
+                        "__asignar_indice__", 18);
+                    if (m) {
+                        if (ejecutar_dunder_ternario(vm, &frame, m,
+                                                       "__asignar_indice__", 18) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
                 Valor valor = sacar(vm);
                 Valor key = sacar(vm);
                 Valor obj = sacar(vm);

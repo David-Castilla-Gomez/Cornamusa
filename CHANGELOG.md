@@ -6,6 +6,81 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.2.0] — 2026-05-01 — Dunders aritméticos y de coerción
+
+Hace que el OOP de Cornamusa sea idiomático. HOY (v1.1) `Vector + Vector`
+con `__sumar__` definido NO funcionaba — el operador `+` no buscaba el
+dunder. v1.2 cierra esa promesa: los operadores binarios, las
+comparaciones, `__cadena__` (en f-strings y `imprimir`) y `obj[k]` /
+`obj[k] = v` ahora delegan en dunders cuando están definidos.
+
+### Nuevos dunders soportados
+
+- **Aritméticos binarios**: `__sumar__`, `__restar__`, `__multiplicar__`,
+  `__dividir__`, `__dividir_entero__`, `__modulo__`, `__potencia__`.
+- **Comparación**: `__igual__`, `__distinto__`, `__menor__`,
+  `__menor_igual__`, `__mayor__`, `__mayor_igual__`.
+- **Coerción a cadena**: `__cadena__` invocado por f-strings (`f"{obj}"`)
+  e `imprimir(obj)`. Validación: si `__cadena__` retorna no-cadena
+  → ErrorDeTipo claro vía nuevo opcode `OP_ASEGURAR_CADENA`.
+- **Indexación**: `__indice__(yo, clave)` para `obj[k]`,
+  `__asignar_indice__(yo, clave, valor)` para `obj[k] = v`.
+
+### Fuera del alcance
+
+- `__longitud__` (para `longitud(obj)`): requiere atajo del compilador
+  + opcode dedicado, aplazado a v1.3.
+- `__llamar__` (para `obj(args)` con instancia callable): aplazado.
+- Operadores reflejados (e.g. `5 + V(...)` busca `__sumar_derecho__` en
+  V): aplazado. Hoy solo el lado izquierdo dispara el dunder.
+- Dunders en evaluador tree-walking: tree-walking nunca soportó clases
+  (decisión Fase 2-5), así que dunders solo en bytecode VM.
+
+### Arquitectura
+
+Tres helpers de dispatch en [src/vm.c](src/vm.c) — `ejecutar_dunder_unario`
+(arity 1, ej. `__cadena__`), `ejecutar_dunder_binario` (arity 2, ej.
+`__sumar__`), `ejecutar_dunder_ternario` (arity 3, `__asignar_indice__`).
+Todos preparan un CallFrame con la pila reorganizada como
+`[..., closure, receptor, args...]` y devuelven al dispatch loop. El
+resultado del dunder queda en el stack del caller vía `OP_RETORNAR`
+del frame.
+
+Helper compartido [`clase_obtener_metodo`](src/valor.c) para el lookup
+no-owning sobre `clase->metodos`. Reusable para todos los dunders y
+para futuras extensiones.
+
+Mapper [`dunder_para_op_binario`](src/vm.c) traduce opcode → nombre del
+dunder. El slow path de los operadores binarios consulta este mapper
+antes de delegar al evaluador genérico.
+
+### Compatibilidad con IC F10
+
+Los fast paths `_INT_INT` (suma/resta/mult + comparaciones) siguen
+funcionando exactamente igual. El IC se promueve cuando ambos operandos
+son enteros y degrade al slow path si aparece una instancia. El
+dispatch del dunder solo ocurre en el slow path, así que no hay
+penalización para código aritmético puro.
+
+### Optimización adicional
+
+`OP_IMPRIMIR` ahora escribe directo desde el buffer de la cadena (sin
+truncado a 1024 bytes) cuando el arg ya viene como cadena del
+compilador. El compilador emite `OP_FORMATO_F + OP_ASEGURAR_CADENA`
+antes de `OP_IMPRIMIR` para garantizar que cada arg pasa por
+`__cadena__` si aplica.
+
+### Tests y ejemplos
+
+- [tests/unit/test_bytecode_dunders.c](tests/unit/test_bytecode_dunders.c)
+  con 10 tests cubriendo los 14 dunders + IC + validación de tipo.
+- [examples/28_dunders_jugable.cor](examples/28_dunders_jugable.cor) —
+  Vector2D con OOP idiomático: `v + w`, `v * 5`, `v == w`, `f"v = {v}"`,
+  además de TablaInversa con `__indice__`/`__asignar_indice__` y
+  Persona con `__menor__` para comparaciones.
+
+103/103 tests pasan (102 previos + nuevo `test_bytecode_dunders`).
+
 ## [1.1.1] — 2026-05-01 — Limpieza derivada de revisión
 
 Patch sin features nuevas. Cierra la deuda técnica de la revisión

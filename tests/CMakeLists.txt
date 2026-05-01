@@ -320,6 +320,18 @@ set_tests_properties(bc_run_27_fstrings_jugable PROPERTIES
     PASS_REGULAR_EXPRESSION "Hola Ana, tienes 30 anos"
 )
 
+# v1.2: dunders aritmeticos + __cadena__ + __indice__.
+add_test(
+    NAME bc_run_28_dunders_jugable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/28_dunders_jugable.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_28_dunders_jugable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "v . w = <4, 6>"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

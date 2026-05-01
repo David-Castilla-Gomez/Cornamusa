@@ -352,7 +352,34 @@ Llegarán a la stdlib según demanda en versiones v1.x posteriores. Mientras tan
 
 La filosofía de Cornamusa (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md)) es que los dunders son **castellanos** (`__iniciar__` no `__init__`).
 
-**En v0.11.4 sólo está implementado `__iniciar__`** (constructor de clase, invocado al hacer `Foo(args)`). Cualquier otro dunder definido en una clase es un método ordinario más — el runtime no lo invoca al evaluar operadores ni built-ins.
+**Implementados en v1.2.0** (solo bytecode VM — tree-walking no soporta clases):
+
+| Dunder | Operador / built-in | Aridad |
+|---|---|---|
+| `__iniciar__` | `Foo(args)` (constructor) | n+1 (yo + args) |
+| `__sumar__` | `+` | 2 (yo, otro) |
+| `__restar__` | `-` (binario) | 2 |
+| `__multiplicar__` | `*` | 2 |
+| `__dividir__` | `/` | 2 |
+| `__dividir_entero__` | `//` | 2 |
+| `__modulo__` | `%` | 2 |
+| `__potencia__` | `**` | 2 |
+| `__igual__` | `==` | 2 |
+| `__distinto__` | `!=` | 2 |
+| `__menor__` | `<` | 2 |
+| `__menor_igual__` | `<=` | 2 |
+| `__mayor__` | `>` | 2 |
+| `__mayor_igual__` | `>=` | 2 |
+| `__cadena__` | `f"{obj}"`, `imprimir(obj)` | 1 (yo) |
+| `__indice__` | `obj[k]` | 2 (yo, clave) |
+| `__asignar_indice__` | `obj[k] = v` | 3 (yo, clave, valor) |
+
+Reglas:
+- El dunder solo se invoca si el operando IZQUIERDO es VAL_INSTANCIA y la clase lo define. Operadores reflejados (`5 + V(...)` busca `__sumar_derecho__`) NO están soportados todavía.
+- `__cadena__` debe retornar cadena. Si retorna otro tipo, ErrorDeTipo.
+- Los demás dunders pueden retornar cualquier tipo. Para `==`, `<`, etc. el resultado se interpreta según las reglas de truthiness §6.2 cuando se usa en `si`.
+
+**Aplazados a v1.3+**: `__longitud__` (para `longitud(obj)`), `__llamar__` (para `obj(args)`), operadores reflejados.
 
 ```cornamusa
 clase Persona:
@@ -360,7 +387,7 @@ clase Persona:
         yo.nombre = nombre
     fin funcion
 
-    funcion __sumar__(yo, otro):           # ← v0.11.4: método ordinario, NO se invoca por p1 + p2
+    funcion __sumar__(yo, otro):           # ← invocado por p1 + p2 (v1.2)
         retornar Persona(yo.nombre + otro.nombre)
     fin funcion
 fin clase

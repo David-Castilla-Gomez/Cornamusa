@@ -1,0 +1,118 @@
+# 28_dunders_jugable.cor — métodos especiales (dunders) v1.2.
+#
+# Las clases pueden definir __sumar__, __restar__, __cadena__, etc.
+# para integrarse con los operadores y built-ins de Cornamusa. Hace
+# que el OOP sea idiomático: `v1 + v2`, `imprimir(p)`, `m[i]` invocan
+# el método de la clase si está definido.
+#
+# Dunders disponibles en v1.2:
+#   __iniciar__                                  — constructor (v0.7+)
+#   __sumar__, __restar__, __multiplicar__,      — operadores binarios
+#   __dividir__, __dividir_entero__, __modulo__,
+#   __potencia__
+#   __igual__, __distinto__,                     — comparación
+#   __menor__, __menor_igual__,
+#   __mayor__, __mayor_igual__
+#   __cadena__                                   — representación textual
+#   __indice__, __asignar_indice__               — obj[k] y obj[k] = v
+
+clase Vector2D:
+    funcion __iniciar__(yo, a, b):
+        yo.a = a
+        yo.b = b
+    fin funcion
+
+    funcion __sumar__(yo, otro):
+        retornar Vector2D(yo.a + otro.a, yo.b + otro.b)
+    fin funcion
+
+    funcion __restar__(yo, otro):
+        retornar Vector2D(yo.a - otro.a, yo.b - otro.b)
+    fin funcion
+
+    funcion __multiplicar__(yo, escalar):
+        retornar Vector2D(yo.a * escalar, yo.b * escalar)
+    fin funcion
+
+    funcion __igual__(yo, otro):
+        retornar yo.a == otro.a y yo.b == otro.b
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"<{yo.a}, {yo.b}>"
+    fin funcion
+
+    funcion modulo_cuadrado(yo):
+        retornar yo.a * yo.a + yo.b * yo.b
+    fin funcion
+fin clase
+
+# Aritmética como con números primitivos:
+v = Vector2D(3, 4)
+w = Vector2D(1, 2)
+
+imprimir("v =", v)              # → v = <3, 4>
+imprimir("w =", w)
+imprimir("v + w =", v + w)      # → v + w = <4, 6>
+imprimir("v - w =", v - w)
+imprimir("v * 5 =", v * 5)
+imprimir("v == v? ", v == v)
+imprimir("v == w?", v == w)
+imprimir("|v|^2 =", v.modulo_cuadrado())
+
+# Encadenado:
+suma_total = v + w + Vector2D(10, 10)
+imprimir("v + w + (10,10) =", suma_total)
+
+# Diccionario indexable con clave compuesta:
+clase TablaInversa:
+    funcion __iniciar__(yo):
+        yo.datos = {}
+    fin funcion
+
+    funcion __indice__(yo, clave):
+        si clave en yo.datos:
+            retornar yo.datos[clave]
+        fin si
+        retornar -1
+    fin funcion
+
+    funcion __asignar_indice__(yo, clave, valor):
+        yo.datos[clave] = valor
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"TablaInversa({yo.datos})"
+    fin funcion
+fin clase
+
+t = TablaInversa()
+t["uno"] = 1
+t["dos"] = 2
+t["tres"] = 3
+imprimir(t)
+imprimir("t[uno] =", t["uno"])
+imprimir("t[no_existe] =", t["no_existe"])
+
+# Comparación para ordenamiento manual:
+clase Persona:
+    funcion __iniciar__(yo, nombre, edad):
+        yo.nombre = nombre
+        yo.edad = edad
+    fin funcion
+
+    funcion __menor__(yo, otra):
+        retornar yo.edad < otra.edad
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"{yo.nombre}({yo.edad})"
+    fin funcion
+fin clase
+
+ana = Persona("Ana", 30)
+luis = Persona("Luis", 25)
+imprimir(ana, "vs", luis)
+si luis < ana:
+    imprimir(luis, "es mas joven que", ana)
+fin si
