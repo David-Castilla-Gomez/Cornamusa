@@ -288,7 +288,11 @@ static Valor nativa_cadena(EvalError *err, int n_args, Valor *args,
     const Valor *v = &args[0];
     /* Cadena → cadena: clon profundo (idempotente). */
     if (v->tipo == VAL_CADENA) {
-        return valor_cadena_duplicar(v->como.cadena.texto, v->como.cadena.longitud);
+        Valor r = valor_cadena_duplicar(v->como.cadena.texto, v->como.cadena.longitud);
+        if (r.tipo == VAL_NULO) {
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        return r;
     }
     /* Entero bignum: dimensionar exactamente. SMALL cabe en 32 bytes. */
     if (v->tipo == VAL_ENTERO) {
@@ -308,12 +312,19 @@ static Valor nativa_cadena(EvalError *err, int n_args, Valor *args,
         if (n < 0) n = 0;
         Valor r = valor_cadena_duplicar(buf, n);
         free(buf);
+        if (r.tipo == VAL_NULO) {
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
         return r;
     }
     /* Resto: buffer de 4096. Suficiente para casos comunes. */
     char buffer[4096];
     int n = valor_a_cadena(v, buffer, sizeof(buffer));
-    return valor_cadena_duplicar(buffer, n);
+    Valor r = valor_cadena_duplicar(buffer, n);
+    if (r.tipo == VAL_NULO) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    return r;
 }
 
 /*
@@ -335,7 +346,14 @@ static Valor nativa_entero(EvalError *err, int n_args, Valor *args,
     }
     const Valor *v = &args[0];
     if (valor_es_entero(v)) {
-        return valor_clonar(v);
+        Valor r = valor_clonar(v);
+        if (r.tipo == VAL_NULO && v->tipo != VAL_NULO) {
+            /* `valor_clonar` devuelve VAL_NULO ante OOM al copiar mp_int.
+               Como v sí era entero, esto es un fallo de memoria, no un
+               valor genuinamente nulo. */
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        return r;
     }
     if (v->tipo == VAL_BOOLEANO) {
         return valor_entero_de_i64(v->como.booleano ? 1 : 0);
@@ -523,7 +541,7 @@ static Valor nativa_lista(EvalError *err, int n_args, Valor *args,
     Valor elem;
     while (iter_siguiente(iter, &elem)) {
         if (!lista_agregar(l, elem)) {
-            valor_destruir(&elem);
+            /* lista_agregar libera elem internamente cuando falla. */
             iter_destruir(iter);
             lista_liberar(l);
             return error_nativa(err, linea, columna, "memoria insuficiente");
@@ -567,7 +585,7 @@ static Valor nativa_tupla(EvalError *err, int n_args, Valor *args,
     Valor elem;
     while (iter_siguiente(iter, &elem)) {
         if (!lista_agregar(tmp, elem)) {
-            valor_destruir(&elem);
+            /* lista_agregar libera elem internamente cuando falla. */
             iter_destruir(iter);
             lista_liberar(tmp);
             return error_nativa(err, linea, columna, "memoria insuficiente");
@@ -620,13 +638,25 @@ static Valor nativa_diccionario(EvalError *err, int n_args, Valor *args,
     if (src->tipo == VAL_DICCIONARIO) {
         const Diccionario *origen = src->como.dicc;
         for (int i = 0; i < origen->capacidad; i++) {
-            if (origen->entradas[i].ocupada) {
-                if (!dicc_asignar(d, valor_clonar(&origen->entradas[i].clave),
-                                       valor_clonar(&origen->entradas[i].valor))) {
-                    dicc_liberar(d);
-                    return error_nativa(err, linea, columna,
-                        "memoria insuficiente");
-                }
+            if (!origen->entradas[i].ocupada) continue;
+            const Valor *src_k = &origen->entradas[i].clave;
+            const Valor *src_v = &origen->entradas[i].valor;
+            Valor clave = valor_clonar(src_k);
+            Valor valor = valor_clonar(src_v);
+            /* `valor_clonar` devuelve VAL_NULO ante OOM al copiar
+               mp_int/cadena con dueño. Distinguimos OOM de un VAL_NULO
+               genuino comparando tipo original. */
+            bool oom = (clave.tipo == VAL_NULO && src_k->tipo != VAL_NULO)
+                    || (valor.tipo == VAL_NULO && src_v->tipo != VAL_NULO);
+            if (oom) {
+                valor_destruir(&clave);
+                valor_destruir(&valor);
+                dicc_liberar(d);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            if (!dicc_asignar(d, clave, valor)) {
+                dicc_liberar(d);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
             }
         }
         return valor_diccionario(d);
