@@ -71,9 +71,21 @@ static bool ejecutar_para_inspeccion(const char *fuente,
  * coincidencia para los opcodes que probamos).
  */
 static int buscar_primer_opcode(const Chunk *chunk, OpCode op) {
-    for (int i = 0; i < chunk->cuenta; i++) {
-        if (chunk->codigo[i] == (uint8_t)op) return i;
+    /* Itera por opcodes (no por bytes) usando desensamblar_instruccion
+       para avanzar correctamente — evita falsos positivos de bytes
+       operando que casualmente coinciden con el opcode buscado. */
+    FILE *nul = fopen("/dev/null", "w");
+    int offset = 0;
+    while (offset < chunk->cuenta) {
+        if (chunk->codigo[offset] == (uint8_t)op) {
+            if (nul) fclose(nul);
+            return offset;
+        }
+        int sig = desensamblar_instruccion(chunk, offset, nul);
+        if (sig <= offset) break;
+        offset = sig;
     }
+    if (nul) fclose(nul);
     return -1;
 }
 

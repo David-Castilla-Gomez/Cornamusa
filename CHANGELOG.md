@@ -6,6 +6,105 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.9.0] — 2026-05-01 — Stdlib `json` (intercambio universal)
+
+Complemento natural de v1.8: tras añadir lectura/escritura de
+archivos, ahora un programa Cornamusa puede leer configs JSON y
+emitir respuestas JSON. Resuelve la pregunta filosófica de cómo
+mantener la identidad castellana del lenguaje frente a un formato
+universal anglófono.
+
+### Filosofía: identidad sin aislamiento
+
+JSON es un formato de intercambio universal (RFC 8259) — no un
+lenguaje. Cornamusa preserva su identidad castellana en CÓDIGO (los
+literales `verdadero/falso/nulo` siguen igual) pero acepta JSON
+estándar para interoperar con configs, APIs y datasets externos.
+
+**El usuario nunca ve `true/false/null` en su código Cornamusa**, solo
+en archivos JSON externos. La traducción es automática:
+
+```cornamusa
+importar archivos
+importar json
+
+cfg = json.parsear(archivos.leer("config.json"))
+si cfg["debug"] == verdadero:           # ← castellano puro,
+    imprimir(f"version: {cfg['version']}") #   aunque el JSON dijera "true"
+fin si
+
+archivos.escribir("salida.json", json.serializar({
+    "estado": verdadero,
+    "datos": [1, 2, nulo]
+}))                                     # ← serializa a true/null automáticamente
+```
+
+### Built-ins nuevos (2)
+
+- `json_parsear(cadena)` → Valor. Parsea JSON estándar y devuelve
+  el valor Cornamusa correspondiente. Auto-traduce
+  `null/true/false ↔ nulo/verdadero/falso`.
+- `json_serializar(valor)` → cadena. Recursivo. Tipos no
+  serializables (instancias, funciones, rangos, claves no-cadena en
+  diccionarios) → ErrorDeTipo claro.
+
+### Mapeo (Cornamusa ↔ JSON)
+
+| Cornamusa | JSON |
+|---|---|
+| `nulo` | `null` |
+| `verdadero` | `true` |
+| `falso` | `false` |
+| `entero`/`decimal` | `number` |
+| `cadena` | `string` |
+| `lista`/`tupla` | `array` (tupla → array; al re-parsear es lista) |
+| `diccionario` con claves cadena | `object` |
+| Otros (instancia, función, rango, conjunto) | ErrorDeTipo |
+
+### Implementación
+
+- Parser recursivo descendente en
+  [src/nativos.c](src/nativos.c) `JsonParser`. Maneja todos los tipos
+  RFC 8259 + escapes (`\n`, `\t`, `\"`, `\\`, `\/`, `\b`, `\f`,
+  `\uXXXX` con conversión correcta a UTF-8 para BMP).
+- Serializer con buffer dinámico `JsonOut` que escala hasta lo que
+  necesite. Escapa caracteres de control y comillas; deja UTF-8
+  multibyte tal cual (válido en JSON).
+- Validación anti-NaN/Inf en serializer (no son JSON válido).
+
+### Módulo `stdlib/json.cor`
+
+```cornamusa
+importar json
+
+dato = json.parsear("...")
+texto = json.serializar(obj)
+```
+
+### Tests y ejemplos
+
+- 11 tests unit en
+  [tests/unit/test_bytecode_json.c](tests/unit/test_bytecode_json.c):
+  parse de primitivos, arrays, objects, anidación, escapes (incluido
+  `\uXXXX`), round-trip preservando nulo/verdadero/falso, errores
+  de sintaxis, errores de tipo en serializer.
+- [examples/32_json_archivos.cor](examples/32_json_archivos.cor):
+  patrón completo escribir → leer crudo → parsear → modificar → escribir.
+- 113/113 tests pasan.
+
+### Limitaciones documentadas
+
+- **Surrogates UTF-16 no manejados**: `😀` (emoji) se
+  parsea como dos codepoints separados. RFC 8259 los permite pero
+  son raros; iterar a manejo completo si surge demanda.
+- **Errores no atrapables**: `json.parsear("...")` con JSON inválido
+  termina el programa (limitación preexistente de las nativas).
+  Pendiente para v1.x: refactor que permita
+  `intentar json.parsear(...) atrapar Excepcion como e: ...`.
+- **Sin pretty-print**: el serializer emite JSON compacto sin
+  indentación. Aceptable para intercambio entre programas; iterar
+  a `json.serializar(obj, indentar=2)` si se requiere para humanos.
+
 ## [1.8.0] — 2026-05-01 — Stdlib `archivos` (I/O persistente)
 
 Pivot de optimización a features tras 4 experimentos de perf que

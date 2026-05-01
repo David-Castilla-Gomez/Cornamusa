@@ -1,0 +1,57 @@
+# 32_json_archivos.cor — JSON + archivos: persistencia de datos (v1.9).
+#
+# Combina los stdlib `archivos` (v1.8) y `json` (v1.9) para implementar
+# un patrón típico: leer config desde JSON, modificar datos, escribir
+# de vuelta. Auto-traduce true/false/null ↔ verdadero/falso/nulo en
+# las fronteras del archivo.
+
+importar archivos
+importar json
+
+# 1. Construir datos en castellano puro.
+config = {
+    "nombre": "Cornamusa",
+    "version": "1.9.0",
+    "estable": verdadero,
+    "deprecado": falso,
+    "ramas": ["main", "dev"],
+    "config_extra": nulo,
+    "metadatos": {
+        "autor": "David",
+        "anio": 2026,
+        "lineas": 6500
+    }
+}
+
+# 2. Serializar a JSON y guardar en archivo.
+ruta = "/tmp/cornamusa_config.json"
+archivos.escribir(ruta, json.serializar(config))
+imprimir("Escrito en:", ruta)
+
+# 3. Leer el archivo crudo (JSON estándar con true/null).
+imprimir("---")
+imprimir("Contenido crudo del archivo:")
+imprimir(archivos.leer(ruta))
+
+# 4. Leer y parsear de vuelta.
+imprimir("---")
+imprimir("Tras parsear (castellano interno):")
+recargado = json.parsear(archivos.leer(ruta))
+imprimir(recargado)
+
+# 5. Verificar que la traducción es transparente.
+imprimir("---")
+imprimir("Comparaciones tras round-trip:")
+imprimir("estable es verdadero?", recargado["estable"] == verdadero)
+imprimir("deprecado es falso?", recargado["deprecado"] == falso)
+imprimir("config_extra es nulo?", recargado["config_extra"] == nulo)
+imprimir(f"autor: {recargado['metadatos']['autor']}")
+imprimir(f"anio: {recargado['metadatos']['anio']}")
+
+# 6. Modificar y persistir cambios.
+recargado["version"] = "1.9.1"
+recargado["estable"] = falso  # imagina que rompimos algo
+archivos.escribir(ruta, json.serializar(recargado))
+imprimir("---")
+imprimir("Tras update:")
+imprimir(archivos.leer(ruta))

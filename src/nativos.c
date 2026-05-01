@@ -1272,6 +1272,543 @@ static Valor nativa_obtener_argv(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * JSON (v1.9)
+ *
+ * Built-ins primitivos para parsear y serializar JSON estándar
+ * (RFC 8259). La capa de usuario es `stdlib/json.cor` que reexporta
+ * con nombres castellanos (`json.parsear`, `json.serializar`).
+ *
+ * Mapeo (Cornamusa ↔ JSON):
+ *   nulo        ↔ null
+ *   verdadero   ↔ true
+ *   falso       ↔ false
+ *   entero/decimal ↔ number
+ *   cadena      ↔ string
+ *   lista/tupla ↔ array (tupla → array; al re-parsear es lista)
+ *   diccionario ↔ object (claves cadena obligatorias)
+ *
+ * Filosofía v1.9: JSON es un formato de intercambio universal.
+ * Cornamusa preserva su identidad castellana en CÓDIGO (los
+ * literales `verdadero/falso/nulo` siguen igual) pero acepta JSON
+ * estándar para interoperar. El usuario nunca ve `true/false/null`
+ * en su código Cornamusa — solo en archivos JSON externos.
+ * ────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    const char *texto;
+    int pos;
+    int len;
+    char err_msg[256];
+    bool tuvo_error;
+} JsonParser;
+
+static void jp_set_error(JsonParser *p, const char *fmt, ...) {
+    if (p->tuvo_error) return;
+    p->tuvo_error = true;
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(p->err_msg, sizeof(p->err_msg), fmt, ap);
+    va_end(ap);
+}
+
+static void jp_saltar_espacios(JsonParser *p) {
+    while (p->pos < p->len) {
+        char c = p->texto[p->pos];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r') p->pos++;
+        else break;
+    }
+}
+
+static Valor jp_valor(JsonParser *p);  /* fwd decl */
+
+static Valor jp_string(JsonParser *p) {
+    if (p->pos >= p->len || p->texto[p->pos] != '"') {
+        jp_set_error(p, "se esperaba '\"' en posicion %d", p->pos);
+        return valor_nulo();
+    }
+    p->pos++;
+    int cap = 64, cuenta = 0;
+    char *buf = (char *)malloc((size_t)cap);
+    if (!buf) { jp_set_error(p, "memoria insuficiente"); return valor_nulo(); }
+#define APPEND_C(c) do { \
+        if (cuenta + 1 > cap) { \
+            cap *= 2; \
+            char *nb = (char *)realloc(buf, (size_t)cap); \
+            if (!nb) { free(buf); jp_set_error(p, "memoria insuficiente"); return valor_nulo(); } \
+            buf = nb; \
+        } \
+        buf[cuenta++] = (c); \
+    } while (0)
+    while (p->pos < p->len) {
+        char c = p->texto[p->pos];
+        if (c == '"') {
+            p->pos++;
+            Valor r = valor_cadena_duplicar(buf, cuenta);
+            free(buf);
+            if (r.tipo == VAL_NULO) jp_set_error(p, "memoria insuficiente");
+            return r;
+        }
+        if (c == '\\') {
+            p->pos++;
+            if (p->pos >= p->len) {
+                free(buf);
+                jp_set_error(p, "escape sin completar al final del JSON");
+                return valor_nulo();
+            }
+            char esc = p->texto[p->pos++];
+            switch (esc) {
+                case '"':  APPEND_C('"');  break;
+                case '\\': APPEND_C('\\'); break;
+                case '/':  APPEND_C('/');  break;
+                case 'b':  APPEND_C('\b'); break;
+                case 'f':  APPEND_C('\f'); break;
+                case 'n':  APPEND_C('\n'); break;
+                case 'r':  APPEND_C('\r'); break;
+                case 't':  APPEND_C('\t'); break;
+                case 'u': {
+                    if (p->pos + 4 > p->len) {
+                        free(buf);
+                        jp_set_error(p, "\\u sin 4 hex digits");
+                        return valor_nulo();
+                    }
+                    unsigned cp = 0;
+                    for (int i = 0; i < 4; i++) {
+                        char h = p->texto[p->pos + i];
+                        unsigned d;
+                        if (h >= '0' && h <= '9') d = (unsigned)(h - '0');
+                        else if (h >= 'a' && h <= 'f') d = (unsigned)(h - 'a' + 10);
+                        else if (h >= 'A' && h <= 'F') d = (unsigned)(h - 'A' + 10);
+                        else {
+                            free(buf);
+                            jp_set_error(p, "hex invalido en \\u");
+                            return valor_nulo();
+                        }
+                        cp = (cp << 4) | d;
+                    }
+                    p->pos += 4;
+                    if (cp < 0x80) {
+                        APPEND_C((char)cp);
+                    } else if (cp < 0x800) {
+                        APPEND_C((char)(0xC0 | (cp >> 6)));
+                        APPEND_C((char)(0x80 | (cp & 0x3F)));
+                    } else {
+                        APPEND_C((char)(0xE0 | (cp >> 12)));
+                        APPEND_C((char)(0x80 | ((cp >> 6) & 0x3F)));
+                        APPEND_C((char)(0x80 | (cp & 0x3F)));
+                    }
+                    break;
+                }
+                default:
+                    free(buf);
+                    jp_set_error(p, "escape invalido \\%c", esc);
+                    return valor_nulo();
+            }
+        } else if ((unsigned char)c < 0x20) {
+            free(buf);
+            jp_set_error(p, "caracter de control sin escapar en cadena");
+            return valor_nulo();
+        } else {
+            APPEND_C(c);
+            p->pos++;
+        }
+    }
+    free(buf);
+    jp_set_error(p, "cadena sin cerrar");
+    return valor_nulo();
+#undef APPEND_C
+}
+
+static Valor jp_numero(JsonParser *p) {
+    int inicio = p->pos;
+    bool tiene_punto = false, tiene_exp = false;
+    if (p->pos < p->len && p->texto[p->pos] == '-') p->pos++;
+    while (p->pos < p->len && p->texto[p->pos] >= '0' && p->texto[p->pos] <= '9') p->pos++;
+    if (p->pos < p->len && p->texto[p->pos] == '.') {
+        tiene_punto = true; p->pos++;
+        while (p->pos < p->len && p->texto[p->pos] >= '0' && p->texto[p->pos] <= '9') p->pos++;
+    }
+    if (p->pos < p->len && (p->texto[p->pos] == 'e' || p->texto[p->pos] == 'E')) {
+        tiene_exp = true; p->pos++;
+        if (p->pos < p->len && (p->texto[p->pos] == '+' || p->texto[p->pos] == '-')) p->pos++;
+        while (p->pos < p->len && p->texto[p->pos] >= '0' && p->texto[p->pos] <= '9') p->pos++;
+    }
+    int len_num = p->pos - inicio;
+    if (len_num == 0 || (len_num == 1 && p->texto[inicio] == '-')) {
+        jp_set_error(p, "numero invalido");
+        return valor_nulo();
+    }
+    char buf_stack[64];
+    char *buf = buf_stack;
+    char *heap = NULL;
+    if (len_num + 1 > (int)sizeof(buf_stack)) {
+        heap = (char *)malloc((size_t)len_num + 1);
+        if (!heap) { jp_set_error(p, "memoria insuficiente"); return valor_nulo(); }
+        buf = heap;
+    }
+    memcpy(buf, p->texto + inicio, (size_t)len_num);
+    buf[len_num] = '\0';
+    Valor r;
+    if (tiene_punto || tiene_exp) {
+        r = valor_decimal(strtod(buf, NULL));
+    } else {
+        char *end = NULL;
+        long long v = strtoll(buf, &end, 10);
+        if (end == buf || *end != '\0') {
+            r = valor_decimal(strtod(buf, NULL));
+        } else {
+            r = valor_entero_de_i64((int64_t)v);
+        }
+    }
+    if (heap) free(heap);
+    return r;
+}
+
+static Valor jp_array(JsonParser *p) {
+    p->pos++;
+    Lista *l = lista_nueva(0);
+    if (!l) { jp_set_error(p, "memoria insuficiente"); return valor_nulo(); }
+    jp_saltar_espacios(p);
+    if (p->pos < p->len && p->texto[p->pos] == ']') {
+        p->pos++;
+        return valor_lista(l);
+    }
+    for (;;) {
+        Valor v = jp_valor(p);
+        if (p->tuvo_error) {
+            valor_destruir(&v);
+            lista_liberar(l);
+            return valor_nulo();
+        }
+        if (!lista_agregar(l, v)) {
+            lista_liberar(l);
+            jp_set_error(p, "memoria insuficiente");
+            return valor_nulo();
+        }
+        jp_saltar_espacios(p);
+        if (p->pos >= p->len) {
+            lista_liberar(l);
+            jp_set_error(p, "array sin cerrar");
+            return valor_nulo();
+        }
+        char c = p->texto[p->pos];
+        if (c == ']') { p->pos++; return valor_lista(l); }
+        if (c != ',') {
+            lista_liberar(l);
+            jp_set_error(p, "se esperaba ',' o ']'");
+            return valor_nulo();
+        }
+        p->pos++;
+        jp_saltar_espacios(p);
+    }
+}
+
+static Valor jp_object(JsonParser *p) {
+    p->pos++;
+    Diccionario *d = dicc_nuevo();
+    if (!d) { jp_set_error(p, "memoria insuficiente"); return valor_nulo(); }
+    jp_saltar_espacios(p);
+    if (p->pos < p->len && p->texto[p->pos] == '}') {
+        p->pos++;
+        return valor_diccionario(d);
+    }
+    for (;;) {
+        jp_saltar_espacios(p);
+        Valor clave = jp_string(p);
+        if (p->tuvo_error) {
+            valor_destruir(&clave);
+            dicc_liberar(d);
+            return valor_nulo();
+        }
+        jp_saltar_espacios(p);
+        if (p->pos >= p->len || p->texto[p->pos] != ':') {
+            valor_destruir(&clave);
+            dicc_liberar(d);
+            jp_set_error(p, "se esperaba ':' tras clave");
+            return valor_nulo();
+        }
+        p->pos++;
+        jp_saltar_espacios(p);
+        Valor val = jp_valor(p);
+        if (p->tuvo_error) {
+            valor_destruir(&clave);
+            valor_destruir(&val);
+            dicc_liberar(d);
+            return valor_nulo();
+        }
+        if (!dicc_asignar(d, clave, val)) {
+            dicc_liberar(d);
+            jp_set_error(p, "memoria insuficiente");
+            return valor_nulo();
+        }
+        jp_saltar_espacios(p);
+        if (p->pos >= p->len) {
+            dicc_liberar(d);
+            jp_set_error(p, "objeto sin cerrar");
+            return valor_nulo();
+        }
+        char c = p->texto[p->pos];
+        if (c == '}') { p->pos++; return valor_diccionario(d); }
+        if (c != ',') {
+            dicc_liberar(d);
+            jp_set_error(p, "se esperaba ',' o '}'");
+            return valor_nulo();
+        }
+        p->pos++;
+    }
+}
+
+static bool jp_match_lit(JsonParser *p, const char *lit) {
+    int n = (int)strlen(lit);
+    if (p->pos + n > p->len) return false;
+    if (memcmp(p->texto + p->pos, lit, (size_t)n) != 0) return false;
+    p->pos += n;
+    return true;
+}
+
+static Valor jp_valor(JsonParser *p) {
+    jp_saltar_espacios(p);
+    if (p->pos >= p->len) {
+        jp_set_error(p, "JSON vacio o truncado");
+        return valor_nulo();
+    }
+    char c = p->texto[p->pos];
+    if (c == '"') return jp_string(p);
+    if (c == '[') return jp_array(p);
+    if (c == '{') return jp_object(p);
+    if (c == '-' || (c >= '0' && c <= '9')) return jp_numero(p);
+    if (jp_match_lit(p, "true"))  return valor_booleano(true);
+    if (jp_match_lit(p, "false")) return valor_booleano(false);
+    if (jp_match_lit(p, "null"))  return valor_nulo();
+    jp_set_error(p, "valor JSON no reconocido en pos %d", p->pos);
+    return valor_nulo();
+}
+
+static Valor nativa_json_parsear(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: json_parsear() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: json_parsear() espera una cadena con JSON");
+    }
+    JsonParser p;
+    p.texto = args[0].como.cadena.texto;
+    p.len = args[0].como.cadena.longitud;
+    p.pos = 0;
+    p.tuvo_error = false;
+    p.err_msg[0] = '\0';
+    Valor r = jp_valor(&p);
+    if (p.tuvo_error) {
+        valor_destruir(&r);
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: JSON invalido — %s", p.err_msg);
+    }
+    jp_saltar_espacios(&p);
+    if (p.pos < p.len) {
+        valor_destruir(&r);
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: JSON con caracteres sobrantes");
+    }
+    return r;
+}
+
+/* ───── Serializer ───── */
+
+typedef struct {
+    char *buf;
+    int cap;
+    int cuenta;
+    bool oom;
+} JsonOut;
+
+static void jo_iniciar(JsonOut *o) {
+    o->cap = 256;
+    o->cuenta = 0;
+    o->oom = false;
+    o->buf = (char *)malloc((size_t)o->cap);
+    if (!o->buf) o->oom = true;
+}
+
+static void jo_append(JsonOut *o, const char *s, int n) {
+    if (o->oom) return;
+    if (o->cuenta + n + 1 > o->cap) {
+        int nuevo = o->cap;
+        while (nuevo < o->cuenta + n + 1) nuevo *= 2;
+        char *nb = (char *)realloc(o->buf, (size_t)nuevo);
+        if (!nb) { o->oom = true; return; }
+        o->buf = nb;
+        o->cap = nuevo;
+    }
+    memcpy(o->buf + o->cuenta, s, (size_t)n);
+    o->cuenta += n;
+}
+
+static void jo_append_str(JsonOut *o, const char *s) {
+    jo_append(o, s, (int)strlen(s));
+}
+
+static void jo_append_char(JsonOut *o, char c) {
+    jo_append(o, &c, 1);
+}
+
+static void jo_escape_cadena(JsonOut *o, const char *s, int n) {
+    jo_append_char(o, '"');
+    for (int i = 0; i < n; i++) {
+        unsigned char c = (unsigned char)s[i];
+        switch (c) {
+            case '"':  jo_append_str(o, "\\\""); break;
+            case '\\': jo_append_str(o, "\\\\"); break;
+            case '\b': jo_append_str(o, "\\b"); break;
+            case '\f': jo_append_str(o, "\\f"); break;
+            case '\n': jo_append_str(o, "\\n"); break;
+            case '\r': jo_append_str(o, "\\r"); break;
+            case '\t': jo_append_str(o, "\\t"); break;
+            default:
+                if (c < 0x20) {
+                    char buf[8];
+                    snprintf(buf, sizeof(buf), "\\u%04x", c);
+                    jo_append_str(o, buf);
+                } else {
+                    jo_append_char(o, (char)c);
+                }
+        }
+    }
+    jo_append_char(o, '"');
+}
+
+static bool js_serializar(JsonOut *o, const Valor *v, char *err, int err_cap) {
+    if (o->oom) { snprintf(err, err_cap, "memoria insuficiente"); return false; }
+    switch (v->tipo) {
+        case VAL_NULO: jo_append_str(o, "null"); return true;
+        case VAL_BOOLEANO:
+            jo_append_str(o, v->como.booleano ? "true" : "false");
+            return true;
+        case VAL_ENTERO_SMALL: {
+            char buf[32];
+            snprintf(buf, sizeof(buf), "%lld", (long long)v->como.entero_small);
+            jo_append_str(o, buf);
+            return true;
+        }
+        case VAL_ENTERO: {
+            int tam = 0;
+            if (mp_radix_size(v->como.entero, 10, &tam) != MP_OKAY) {
+                snprintf(err, err_cap, "memoria insuficiente");
+                return false;
+            }
+            char *buf = (char *)malloc((size_t)tam);
+            if (!buf) { snprintf(err, err_cap, "memoria insuficiente"); return false; }
+            size_t escritos;
+            if (mp_to_radix(v->como.entero, buf, (size_t)tam, &escritos, 10) != MP_OKAY) {
+                free(buf);
+                snprintf(err, err_cap, "error formateando entero");
+                return false;
+            }
+            jo_append(o, buf, (int)escritos - 1);
+            free(buf);
+            return true;
+        }
+        case VAL_DECIMAL: {
+            double d = v->como.decimal;
+            if (d != d) {
+                snprintf(err, err_cap,
+                    "ErrorDeValor: NaN no es serializable a JSON");
+                return false;
+            }
+            /* Detectar Inf: 2*Inf == Inf, pero d != d*0.5 si d es Inf. */
+            if (d > 1.7976931348623157e308 || d < -1.7976931348623157e308) {
+                snprintf(err, err_cap,
+                    "ErrorDeValor: Infinito no es serializable a JSON");
+                return false;
+            }
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%.17g", d);
+            jo_append_str(o, buf);
+            return true;
+        }
+        case VAL_CADENA:
+            jo_escape_cadena(o, v->como.cadena.texto, v->como.cadena.longitud);
+            return true;
+        case VAL_LISTA: {
+            jo_append_char(o, '[');
+            Lista *l = v->como.lista;
+            for (int i = 0; i < l->cuenta; i++) {
+                if (i > 0) jo_append_char(o, ',');
+                if (!js_serializar(o, &l->elementos[i], err, err_cap)) return false;
+            }
+            jo_append_char(o, ']');
+            return true;
+        }
+        case VAL_TUPLA: {
+            jo_append_char(o, '[');
+            Tupla *t = v->como.tupla;
+            for (int i = 0; i < t->cuenta; i++) {
+                if (i > 0) jo_append_char(o, ',');
+                if (!js_serializar(o, &t->elementos[i], err, err_cap)) return false;
+            }
+            jo_append_char(o, ']');
+            return true;
+        }
+        case VAL_DICCIONARIO: {
+            jo_append_char(o, '{');
+            Diccionario *d = v->como.dicc;
+            int impreso = 0;
+            for (int i = 0; i < d->capacidad; i++) {
+                if (!d->entradas[i].ocupada) continue;
+                if (d->entradas[i].clave.tipo != VAL_CADENA) {
+                    snprintf(err, err_cap,
+                        "ErrorDeTipo: solo claves cadena son serializables a JSON");
+                    return false;
+                }
+                if (impreso > 0) jo_append_char(o, ',');
+                jo_escape_cadena(o,
+                    d->entradas[i].clave.como.cadena.texto,
+                    d->entradas[i].clave.como.cadena.longitud);
+                jo_append_char(o, ':');
+                if (!js_serializar(o, &d->entradas[i].valor, err, err_cap)) return false;
+                impreso++;
+            }
+            jo_append_char(o, '}');
+            return true;
+        }
+        default:
+            snprintf(err, err_cap,
+                "ErrorDeTipo: '%s' no es serializable a JSON",
+                valor_nombre_tipo(v));
+            return false;
+    }
+}
+
+static Valor nativa_json_serializar(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: json_serializar() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    JsonOut o;
+    jo_iniciar(&o);
+    if (o.oom) {
+        free(o.buf);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    char err_local[256];
+    err_local[0] = '\0';
+    if (!js_serializar(&o, &args[0], err_local, sizeof(err_local))) {
+        free(o.buf);
+        return error_nativa(err, linea, columna, "%s", err_local);
+    }
+    Valor r = valor_cadena_duplicar(o.buf, o.cuenta);
+    free(o.buf);
+    if (r.tipo == VAL_NULO) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    return r;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * I/O de archivos (v1.8)
  *
  * Built-ins primitivos para leer y escribir archivos. La capa de
@@ -1646,6 +2183,9 @@ static const EntradaNativa NATIVAS[] = {
     {"archivo_existe",   14, nativa_archivo_existe},
     {"archivo_lineas",   14, nativa_archivo_lineas},
     {"archivo_agregar",  15, nativa_archivo_agregar},
+    /* JSON (v1.9). */
+    {"json_parsear",     12, nativa_json_parsear},
+    {"json_serializar",  15, nativa_json_serializar},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

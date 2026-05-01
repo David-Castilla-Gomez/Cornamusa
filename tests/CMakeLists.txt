@@ -368,6 +368,18 @@ set_tests_properties(bc_run_31_archivos PROPERTIES
     PASS_REGULAR_EXPRESSION "evento: fin"
 )
 
+# v1.9: stdlib json + interop con archivos.
+add_test(
+    NAME bc_run_32_json_archivos
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/32_json_archivos.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_32_json_archivos PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Tras update"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

@@ -1,0 +1,45 @@
+# Cornamusa stdlib: json.cor
+#
+# Lectura y escritura de JSON estándar (RFC 8259). Wrapper sobre los
+# built-ins `json_parsear` y `json_serializar`.
+#
+# Filosofía: JSON es un formato de intercambio universal. Cornamusa
+# preserva su identidad castellana en CÓDIGO (los literales
+# `verdadero/falso/nulo` siguen igual) pero acepta JSON estándar para
+# interoperar con configs, APIs y datasets externos. La traducción
+# es automática al leer/escribir:
+#
+#     null  ↔ nulo
+#     true  ↔ verdadero
+#     false ↔ falso
+#     number ↔ entero/decimal
+#     string ↔ cadena
+#     array  ↔ lista
+#     object ↔ diccionario (claves cadena)
+#
+# Uso:
+#   importar archivos
+#   importar json
+#
+#   # Leer config desde archivo:
+#   cfg = json.parsear(archivos.leer("config.json"))
+#   si cfg["debug"] == verdadero:
+#       imprimir(f"version: {cfg['version']}")
+#   fin si
+#
+#   # Construir y escribir:
+#   datos = {
+#       "nombre": "Cornamusa",
+#       "version": "1.9.0",
+#       "activo": verdadero,
+#       "tags": ["lenguaje", "castellano", "interpretado"]
+#   }
+#   archivos.escribir("salida.json", json.serializar(datos))
+
+funcion parsear(texto):
+    retornar json_parsear(texto)
+fin funcion
+
+funcion serializar(valor):
+    retornar json_serializar(valor)
+fin funcion
