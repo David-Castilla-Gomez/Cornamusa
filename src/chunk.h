@@ -244,6 +244,16 @@ typedef enum {
      */
     OP_ASEGURAR_CADENA,
 
+    /*
+     * OP_LONGITUD (v1.3): pop TOS, push longitud (entero).
+     *   - VAL_INSTANCIA con `__longitud__`: dispatch al dunder.
+     *   - Cadena/lista/dicc/conjunto/tupla/rango: cuenta elementos
+     *     (semántica de la nativa `longitud`).
+     *   - Otros tipos: ErrorDeTipo.
+     * Atajo del compilador para `longitud(arg)` con un solo arg.
+     */
+    OP_LONGITUD,
+
     /* ---- Retorno ---- */
     OP_RETORNAR,
 } OpCode;

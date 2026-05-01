@@ -352,7 +352,7 @@ Llegarán a la stdlib según demanda en versiones v1.x posteriores. Mientras tan
 
 La filosofía de Cornamusa (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md)) es que los dunders son **castellanos** (`__iniciar__` no `__init__`).
 
-**Implementados en v1.2.0** (solo bytecode VM — tree-walking no soporta clases):
+**Implementados en v1.3.0** (solo bytecode VM — tree-walking no soporta clases):
 
 | Dunder | Operador / built-in | Aridad |
 |---|---|---|
@@ -370,16 +370,25 @@ La filosofía de Cornamusa (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md))
 | `__menor_igual__` | `<=` | 2 |
 | `__mayor__` | `>` | 2 |
 | `__mayor_igual__` | `>=` | 2 |
-| `__cadena__` | `f"{obj}"`, `imprimir(obj)` | 1 (yo) |
+| `__cadena__` | `f"{obj}"`, `imprimir(obj)`, `cadena(obj)` | 1 (yo) |
 | `__indice__` | `obj[k]` | 2 (yo, clave) |
 | `__asignar_indice__` | `obj[k] = v` | 3 (yo, clave, valor) |
+| `__longitud__` | `longitud(obj)` | 1 (yo) |
+| `__llamar__` | `obj(args)` | n+1 (yo + args) |
+| `__sumar_derecho__` | `5 + V(...)` cuando V no tiene `__sumar__` | 2 (yo, otro) |
+| `__restar_derecho__` | `5 - V(...)` etc. | 2 |
+| `__multiplicar_derecho__` | `3 * V(...)` etc. | 2 |
+| `__dividir_derecho__`, `__dividir_entero_derecho__`, `__modulo_derecho__`, `__potencia_derecho__` | reflejados aritméticos | 2 |
 
 Reglas:
-- El dunder solo se invoca si el operando IZQUIERDO es VAL_INSTANCIA y la clase lo define. Operadores reflejados (`5 + V(...)` busca `__sumar_derecho__`) NO están soportados todavía.
+- El dunder normal solo se invoca si el operando IZQUIERDO es VAL_INSTANCIA y la clase lo define. Si izq no maneja, se busca el dunder reflejado en el lado DERECHO (solo aritméticos).
+- En reflejado, el receptor (`yo`) es el operando DERECHO y el primer argumento (`otro`) es el IZQUIERDO.
 - `__cadena__` debe retornar cadena. Si retorna otro tipo, ErrorDeTipo.
-- Los demás dunders pueden retornar cualquier tipo. Para `==`, `<`, etc. el resultado se interpreta según las reglas de truthiness §6.2 cuando se usa en `si`.
+- `__longitud__` y los aritméticos pueden retornar cualquier tipo, pero el caller suele asumir entero (e.g. `len(obj) * 2`).
+- Para `==`, `<`, etc. el resultado se interpreta según las reglas de truthiness §6.2 cuando se usa en `si`.
+- `==` y `!=` NO se auto-derivan: si defines solo `__igual__`, `obj != obj` cae al path de identidad por defecto.
 
-**Aplazados a v1.3+**: `__longitud__` (para `longitud(obj)`), `__llamar__` (para `obj(args)`), operadores reflejados.
+**Aplazados a v1.4+**: dunders de iteración (`__iterar__`, `__siguiente__`), `__hash__` y `__es_hashable__`.
 
 ```cornamusa
 clase Persona:

@@ -282,6 +282,109 @@ static void test_sin_dunder_da_error(void) {
                     "operador");
 }
 
+/* ───── v1.3: __sumar_derecho__ (operadores reflejados) ───── */
+
+static void test_sumar_derecho(void) {
+    /* `5 + V(10)` cuando V tiene __sumar_derecho__ pero NO __sumar__. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __sumar_derecho__(yo, otro):\n"
+                  "    retornar V(otro + yo.a, yo.b)\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "v = 5 + V(10, 20)\n"
+                  "x = v.a + v.b * 1000",
+                  "x", "20015");  /* 5+10=15; 15 + 20*1000 */
+}
+
+static void test_multiplicar_derecho(void) {
+    verificar_var(DEFINE_VEC
+                  "  funcion __multiplicar_derecho__(yo, k):\n"
+                  "    retornar V(yo.a * k, yo.b * k)\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "v = 3 * V(10, 20)\n"
+                  "x = v.a + v.b",
+                  "x", "90");  /* 30 + 60 */
+}
+
+static void test_normal_tiene_prioridad_sobre_reflejado(void) {
+    /* Si izq es instancia con __sumar__, NO se invoca __sumar_derecho__
+       del derecho aunque exista. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __sumar__(yo, otro):\n"
+                  "    retornar 100\n"
+                  "  fin funcion\n"
+                  "  funcion __sumar_derecho__(yo, otro):\n"
+                  "    retornar 999\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "x = V(1, 2) + V(3, 4)",
+                  "x", "100");
+}
+
+/* ───── v1.3: __llamar__ (instancias callable) ───── */
+
+static void test_llamar_un_arg(void) {
+    verificar_var(DEFINE_VEC
+                  "  funcion __llamar__(yo, n):\n"
+                  "    retornar yo.a + n\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "f = V(10, 20)\n"
+                  "x = f(7)",
+                  "x", "17");
+}
+
+static void test_llamar_varios_args(void) {
+    /* Nota: `y` es palabra reservada (operador AND), no se puede usar
+       como parámetro. Usamos p,q,r. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __llamar__(yo, p, q, r):\n"
+                  "    retornar yo.a + p + q + r\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "f = V(100, 0)\n"
+                  "x = f(1, 2, 3)",
+                  "x", "106");
+}
+
+static void test_llamar_sin_dunder(void) {
+    verificar_error(DEFINE_VEC "fin clase\n"
+                    "v = V(1, 2)\n"
+                    "x = v()",
+                    "no es invocable");
+}
+
+/* ───── v1.3: __longitud__ ───── */
+
+static void test_longitud_dunder(void) {
+    verificar_var(DEFINE_VEC
+                  "  funcion __longitud__(yo):\n"
+                  "    retornar yo.a + yo.b\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "x = longitud(V(3, 4))",
+                  "x", "7");
+}
+
+static void test_longitud_nativa_aun_funciona(void) {
+    /* Tipos primitivos siguen funcionando con el atajo. */
+    verificar_var("x = longitud(\"hola\")", "x", "4");
+    verificar_var("x = longitud([1, 2, 3, 4, 5])", "x", "5");
+    verificar_var("x = longitud(rango(10))", "x", "10");
+    verificar_var("x = longitud({\"a\": 1, \"b\": 2})", "x", "2");
+}
+
+/* ───── v1.3: cadena() invoca __cadena__ ───── */
+
+static void test_cadena_dunder_atajo(void) {
+    verificar_var(STR_BASE "v = V(7, 11)\nx = cadena(v)", "x", "<7,11>");
+    /* Sin dunder, comportamiento legacy (representación default). */
+    verificar_var(DEFINE_VEC "fin clase\n"
+                  "x = cadena(V(1, 2))",
+                  "x", "<instancia de V>");
+}
+
 int main(void) {
     test_sumar();
     test_restar_multiplicar_dividir();
@@ -293,6 +396,15 @@ int main(void) {
     test_asignar_indice();
     test_ic_no_se_rompe();
     test_sin_dunder_da_error();
+    test_sumar_derecho();
+    test_multiplicar_derecho();
+    test_normal_tiene_prioridad_sobre_reflejado();
+    test_llamar_un_arg();
+    test_llamar_varios_args();
+    test_llamar_sin_dunder();
+    test_longitud_dunder();
+    test_longitud_nativa_aun_funciona();
+    test_cadena_dunder_atajo();
 
     if (fallos == 0) {
         printf("dunders: todos los tests pasan\n");

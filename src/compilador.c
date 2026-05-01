@@ -591,6 +591,37 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                                    (uint8_t)n_args, e->linea);
                 return true;
             }
+            /* v1.3: atajo `longitud(arg)` → OP_LONGITUD. Despacha a
+             * `__longitud__` si el arg es instancia con dunder, o a la
+             * lógica de la nativa para tipos primitivos. */
+            bool es_longitud =
+                callee->tipo == EXPR_IDENT
+                && callee->como.ident.longitud == 8
+                && memcmp(callee->como.ident.nombre, "longitud", 8) == 0
+                && n_args == 1
+                && buscar_local(c->actual, "longitud", 8) < 0;
+            if (es_longitud) {
+                if (!compilador_compilar_expr(c, e->como.llamada.args[0])) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, e->linea);
+                return true;
+            }
+            /* v1.3: atajo `cadena(arg)` → OP_FORMATO_F + OP_ASEGURAR_CADENA.
+             * Hace que `cadena(obj)` invoque `__cadena__` consistentemente
+             * con f-strings e `imprimir`. La nativa `cadena` queda como
+             * fallback indirecto (`f = cadena; f(x)` no pasa por el
+             * atajo). */
+            bool es_cadena =
+                callee->tipo == EXPR_IDENT
+                && callee->como.ident.longitud == 6
+                && memcmp(callee->como.ident.nombre, "cadena", 6) == 0
+                && n_args == 1
+                && buscar_local(c->actual, "cadena", 6) < 0;
+            if (es_cadena) {
+                if (!compilador_compilar_expr(c, e->como.llamada.args[0])) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
+                chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                return true;
+            }
             /* Caso general: empuja callee, después args, y emite
                OP_LLAMAR [n]. La VM se encarga del frame y de validar
                aridad. */

@@ -216,10 +216,10 @@ static void test_sobrescritura_no_invalida(void) {
 /* ───── 5. OP_LLAMAR se promueve a OP_LLAMAR_NATIVA al invocar ───── */
 
 static void test_llamar_promueve_a_nativa(void) {
-    /* Nota: `imprimir` se compila a OP_IMPRIMIR (atajo en compilador,
-       NO pasa por OP_LLAMAR). Usamos `longitud` que sí va por
-       OP_LLAMAR como nativa cualquiera. */
-    const char *fuente = "n = longitud(\"hola\")\n";
+    /* Nota: `imprimir` y `longitud` se compilan a OP_IMPRIMIR/OP_LONGITUD
+       (atajos en compilador, NO pasan por OP_LLAMAR). Usamos `tipo` que
+       sí va por OP_LLAMAR como nativa cualquiera. */
+    const char *fuente = "n = tipo(\"hola\")\n";
     Arena a; Chunk chunk; VM vm;
     bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
     AFIRMAR(ok);
@@ -229,12 +229,12 @@ static void test_llamar_promueve_a_nativa(void) {
     AFIRMAR(fast >= 0);
     AFIRMAR(slow < 0);
 
-    /* Y n debe ser 4. */
+    /* Y n debe ser "cadena". */
     Valor n_n = valor_cadena_referencia("n", 1);
     Valor v;
     AFIRMAR(dicc_obtener(vm.globales, &n_n, &v));
     char buf[32]; valor_a_cadena(&v, buf, sizeof(buf));
-    AFIRMAR(strcmp(buf, "4") == 0);
+    AFIRMAR(strcmp(buf, "cadena") == 0);
     valor_destruir(&v);
 
     vm_destruir(&vm); chunk_destruir(&chunk); arena_destruir(&a);
@@ -287,15 +287,16 @@ static void test_llamar_degradacion_polimorfica(void) {
      * espontánea).
      */
     const char *fuente =
-        "a = longitud(\"a\")\n"
-        "b = longitud(\"bb\")\n"
-        "c = longitud(\"ccc\")\n";
+        "a = tipo(\"a\")\n"
+        "b = tipo(\"bb\")\n"
+        "c = tipo(\"ccc\")\n";
     Arena a; Chunk chunk; VM vm;
     bool ok = ejecutar_para_inspeccion(fuente, &a, &chunk, &vm);
     AFIRMAR(ok);
 
-    /* Tres call sites, todos a `longitud` (nativa). Los tres deben
-       acabar como OP_LLAMAR_NATIVA. */
+    /* Tres call sites, todos a `tipo` (nativa). Los tres deben
+       acabar como OP_LLAMAR_NATIVA. v1.3: ya no podemos usar `longitud`
+       aquí porque el compilador la atajea como OP_LONGITUD. */
     int count_nativa = 0;
     int count_slow = 0;
     for (int i = 0; i < chunk.cuenta; i++) {

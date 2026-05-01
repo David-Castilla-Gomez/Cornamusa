@@ -332,6 +332,18 @@ set_tests_properties(bc_run_28_dunders_jugable PROPERTIES
     PASS_REGULAR_EXPRESSION "v . w = <4, 6>"
 )
 
+# v1.3: operadores reflejados + __llamar__ + __longitud__.
+add_test(
+    NAME bc_run_29_oop_avanzado
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/29_oop_avanzado.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_29_oop_avanzado PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "contador interno: 3"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

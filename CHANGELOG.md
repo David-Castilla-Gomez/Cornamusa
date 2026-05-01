@@ -6,6 +6,119 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.3.0] — 2026-05-01 — Dunders avanzados (reflejados, __llamar__, __longitud__)
+
+Cierra el modelo OOP de Cornamusa. v1.2 implementó los dunders básicos
+(aritméticos, comparación, `__cadena__`, indexación). v1.3 añade los
+restantes: operadores reflejados (5 + V), instancias callable
+(`obj(args)` invoca `__llamar__`) y `longitud(obj)` invoca
+`__longitud__`.
+
+### Operadores reflejados
+
+Cuando el lado izquierdo NO maneja el operador (no es instancia o no
+tiene el dunder normal), se busca el dunder reflejado en el lado
+derecho. Permite escribir `5 + V(...)` cuando V define
+`__sumar_derecho__`.
+
+Dunders reflejados implementados (solo aritméticos):
+`__sumar_derecho__`, `__restar_derecho__`, `__multiplicar_derecho__`,
+`__dividir_derecho__`, `__dividir_entero_derecho__`,
+`__modulo_derecho__`, `__potencia_derecho__`.
+
+Comparaciones (`<`, `>`, etc.) NO tienen reflejado dedicado — el
+usuario invierte el operador (`b > a` en lugar de buscar
+`__menor_derecho__` en a).
+
+Implementación: nuevo helper `ejecutar_dunder_binario_reflejado` en
+[src/vm.c](src/vm.c) que reorganiza la pila a `[..., closure, der, izq]`
+(receptor=der, arg=izq). El slow path de operadores binarios
+consulta `dunder_para_op_binario_reflejado` cuando el directo no
+aplica.
+
+### `__llamar__` (instancias callable)
+
+```cornamusa
+clase Multiplicador:
+    funcion __iniciar__(yo, factor):
+        yo.factor = factor
+    fin funcion
+    funcion __llamar__(yo, n):
+        retornar n * yo.factor
+    fin funcion
+fin clase
+
+doblar = Multiplicador(2)
+imprimir(doblar(5))   # 10
+```
+
+Implementación: nuevo case `VAL_INSTANCIA` en `OP_LLAMAR` slow path
+que delega a `ejecutar_llamar_instancia` — busca `__llamar__` en la
+clase, prepara CallFrame con receptor=instancia y los args
+desplazados un slot. NO promueve a opcode especializado (el camino es
+poco frecuente; el dispatch genérico se mantiene).
+
+### `__longitud__`
+
+```cornamusa
+clase Pila:
+    funcion __iniciar__(yo):
+        yo.items = []
+    fin funcion
+    funcion __longitud__(yo):
+        retornar longitud(yo.items)
+    fin funcion
+fin clase
+
+p = Pila()
+imprimir(longitud(p))   # 0 via __longitud__
+```
+
+Implementación: nuevo opcode `OP_LONGITUD` (`src/vm.c`) y atajo del
+compilador para `longitud(arg)` con un solo argumento (similar al
+atajo de `imprimir`/`cadena`). El handler busca `__longitud__` en la
+clase y delega al dunder, o cae a la lógica de la nativa para tipos
+primitivos. Helper compartido `nativos_calcular_longitud`
+(`src/nativos.h`) factoriza la lógica.
+
+### `cadena()` ahora invoca `__cadena__`
+
+Fix de inconsistencia detectado en revisión post-v1.2: `f"{obj}"` y
+`imprimir(obj)` invocaban `__cadena__` pero `cadena(obj)` lo ignoraba.
+v1.3 añade el atajo del compilador para `cadena(arg)` que emite
+`OP_FORMATO_F + OP_ASEGURAR_CADENA`, igual que las otras dos formas.
+La nativa `cadena` queda como fallback indirecto (`f = cadena; f(x)`).
+
+### Tests y ejemplos
+
+- 9 tests nuevos en [tests/unit/test_bytecode_dunders.c](tests/unit/test_bytecode_dunders.c):
+  reflejados, `__llamar__` con varios arity, sin-dunder, `__longitud__`,
+  `cadena()` con dunder.
+- [examples/29_oop_avanzado.cor](examples/29_oop_avanzado.cor): Vec
+  con suma reflejada, Multiplicador callable, Pila con
+  `__longitud__`, Contador con estado interno.
+
+107/107 tests pasan.
+
+### Refactors menores
+
+- Comentario obsoleto en `OP_FORMATO_F` actualizado para reflejar la
+  coordinación con `OP_ASEGURAR_CADENA` (estaba diciendo que NO
+  existía un opcode validador, cuando ya se había añadido en v1.2).
+- `nativa_longitud` ahora delega en `nativos_calcular_longitud` —
+  elimina la duplicación con el handler de `OP_LONGITUD`.
+- Tests de IC (`test_bytecode_ic.c`): cambiado de `longitud` a `tipo`
+  como ejemplo de "nativa cualquiera" (`longitud` ahora se atajea a
+  OP_LONGITUD por el compilador).
+
+### Compatibilidad
+
+- API: nuevos `clase_obtener_metodo`, `nativos_calcular_longitud`. El
+  resto de la API pública sin cambios.
+- Comportamiento observable: programas v1.2 siguen funcionando idéntico.
+  Adicionalmente ahora `cadena(obj)` invoca `__cadena__` y `5 + V(...)`,
+  `obj(args)`, `longitud(obj)` funcionan donde antes daban ErrorDeTipo.
+
 ## [1.2.0] — 2026-05-01 — Dunders aritméticos y de coerción
 
 Hace que el OOP de Cornamusa sea idiomático. HOY (v1.1) `Vector + Vector`

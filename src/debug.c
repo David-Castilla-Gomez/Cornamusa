@@ -242,6 +242,7 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         }
         case OP_FORMATO_F:       return instruccion_simple("OP_FORMATO_F", offset, out);
         case OP_ASEGURAR_CADENA: return instruccion_simple("OP_ASEGURAR_CADENA", offset, out);
+        case OP_LONGITUD:        return instruccion_simple("OP_LONGITUD", offset, out);
         case OP_RETORNAR:        return instruccion_simple("OP_RETORNAR", offset, out);
     }
 

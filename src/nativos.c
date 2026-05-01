@@ -60,13 +60,8 @@ static Valor nativa_imprimir(EvalError *err, int n_args, Valor *args,
  * Para otros: ErrorDeTipo.
  * ────────────────────────────────────────────────────────────────── */
 
-static Valor nativa_longitud(EvalError *err, int n_args, Valor *args,
-                              int linea, int columna) {
-    if (n_args != 1) {
-        return error_nativa(err, linea, columna,
-            "ErrorDeTipo: longitud() requiere 1 argumento, recibio %d", n_args);
-    }
-    const Valor *v = &args[0];
+Valor nativos_calcular_longitud(EvalError *err, const Valor *v,
+                                  int linea, int columna) {
     if (v->tipo == VAL_CADENA) {
         long n = 0;
         size_t pos = 0;
@@ -143,6 +138,15 @@ static Valor nativa_longitud(EvalError *err, int n_args, Valor *args,
     }
     return error_nativa(err, linea, columna,
         "ErrorDeTipo: longitud() no soporta '%s'", valor_nombre_tipo(v));
+}
+
+static Valor nativa_longitud(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: longitud() requiere 1 argumento, recibio %d", n_args);
+    }
+    return nativos_calcular_longitud(err, &args[0], linea, columna);
 }
 
 /* ──────────────────────────────────────────────────────────────────

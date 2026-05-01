@@ -894,6 +894,75 @@ static ResultadoVM ejecutar_dunder_ternario(VM *vm, CallFrame **frame_inout,
 }
 
 /*
+ * v1.3: prepara un frame para invocar un dunder binario REFLEJADO.
+ *
+ * Pre:  stack = [..., izq, der], der es VAL_INSTANCIA y su clase tiene
+ *       el dunder reflejado (`__sumar_derecho__`, etc.).
+ * Post: stack = [..., closure, der, izq]; CallFrame apilado. El
+ *       receptor del dunder reflejado es DER y el primer argumento
+ *       (`otro`) es IZQ — el orden inverso del operador.
+ *
+ * Usado cuando el lado izquierdo no tiene el dunder normal pero el
+ * derecho sí. Ejemplo: `5 + V(...)` invoca `V.__sumar_derecho__(5)`.
+ */
+static ResultadoVM ejecutar_dunder_binario_reflejado(VM *vm, CallFrame **frame_inout,
+                                                       Closure *m,
+                                                       const char *dunder_name,
+                                                       int dunder_len) {
+    (void)dunder_len;
+    CallFrame *frame = *frame_inout;
+    FuncionBC *fn = m->plantilla;
+    if (fn->aridad != 2) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %s() debe aceptar 2 argumentos (yo, otro)",
+            dunder_name);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+        llamar_set_error(vm, frame, "Desbordamiento de pila");
+        return VM_ERROR_RUNTIME;
+    }
+    /* Swap izq↔der; luego push closure abajo, igual que el normal. */
+    Valor tmp = vm->tope[-2];
+    vm->tope[-2] = vm->tope[-1];
+    vm->tope[-1] = tmp;
+    /* Pre: [..., der, izq]. Reorganizar a [..., closure, der, izq]. */
+    empujar(vm, valor_nulo());                  /* tope++ */
+    vm->tope[-1] = vm->tope[-2];                /* arg = izq */
+    vm->tope[-2] = vm->tope[-3];                /* receptor = der */
+    closure_retener(m);
+    vm->tope[-3] = valor_closure(m);            /* callee = closure */
+
+    Valor *base_nuevo = &vm->tope[-3];
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = m;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (m->globales_definicion != NULL
+        && m->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = m->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
+
+/*
  * Devuelve el nombre del dunder asociado a un opcode binario, o NULL
  * si el opcode no tiene dunder definido (ej. OP_ES, OP_EN — identidad
  * y membership no son sobrecargables).
@@ -915,6 +984,105 @@ static const char *dunder_para_op_binario(OpCode op) {
         case OP_MAYOR_IGUAL:     return "__mayor_igual__";
         default: return NULL;
     }
+}
+
+/*
+ * v1.3: nombre del dunder reflejado. Solo aritméticos (suma/resta/...);
+ * para comparaciones la convención es invertir el operador
+ * (`a < b` → `b > a`) que el usuario maneja explícitamente, no hay
+ * dunder reflejado dedicado.
+ *
+ * Devuelve NULL si el opcode no soporta reflejado (igualdad,
+ * comparaciones, identidad, membership).
+ */
+static const char *dunder_para_op_binario_reflejado(OpCode op) {
+    switch (op) {
+        case OP_SUMAR:           return "__sumar_derecho__";
+        case OP_RESTAR:          return "__restar_derecho__";
+        case OP_MULTIPLICAR:     return "__multiplicar_derecho__";
+        case OP_DIVIDIR:         return "__dividir_derecho__";
+        case OP_DIVIDIR_ENTERO:  return "__dividir_entero_derecho__";
+        case OP_MODULO:          return "__modulo_derecho__";
+        case OP_POTENCIA:        return "__potencia_derecho__";
+        default: return NULL;
+    }
+}
+
+/*
+ * v1.3: invoca `__llamar__` cuando el callee de OP_LLAMAR es una
+ * instancia con dunder definido. La instancia actúa como receptor;
+ * los argumentos pasados al call-site se preservan tras shift.
+ *
+ * Pre:  stack contiene [..., instancia, arg1, ..., argN] con
+ *       base_nuevo[0]=instancia.
+ * Post: stack [..., closure, instancia, arg1, ..., argN]; CallFrame
+ *       apilado con base_pila=base_nuevo.
+ */
+static ResultadoVM ejecutar_llamar_instancia(VM *vm, CallFrame **frame_inout,
+                                               Valor *base_nuevo,
+                                               uint8_t n_args) {
+    CallFrame *frame = *frame_inout;
+    /* `base_nuevo[0]` debe ser VAL_INSTANCIA (callee). */
+    if (base_nuevo[0].tipo != VAL_INSTANCIA) {
+        llamar_set_error(vm, frame,
+            "estado interno corrupto: ejecutar_llamar_instancia sin instancia");
+        return VM_ERROR_RUNTIME;
+    }
+    Closure *m = clase_obtener_metodo(
+        base_nuevo[0].como.instancia->clase, "__llamar__", 10);
+    if (!m) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: instancia no es invocable (define __llamar__)");
+        return VM_ERROR_RUNTIME;
+    }
+    FuncionBC *fn = m->plantilla;
+    if ((int)n_args + 1 != fn->aridad) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: __llamar__() esperaba %d argumentos, recibio %d",
+            fn->aridad - 1, n_args);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame,
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return VM_ERROR_RUNTIME;
+    }
+    if (vm->tope - vm->pila >= VM_PILA_MAX) {
+        llamar_set_error(vm, frame, "Desbordamiento de pila");
+        return VM_ERROR_RUNTIME;
+    }
+    /* Shift args derecha 1 slot para hacer hueco al receptor. */
+    if (n_args > 0) {
+        memmove(base_nuevo + 2, base_nuevo + 1,
+                sizeof(Valor) * (size_t)n_args);
+    }
+    vm->tope++;
+    closure_retener(m);
+    Valor instancia_old = *base_nuevo;
+    *base_nuevo = valor_closure(m);
+    base_nuevo[1] = instancia_old;  /* receptor (transferimos refcount) */
+
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = m;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (m->globales_definicion != NULL
+        && m->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = m->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
 }
 
 static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout,
@@ -1075,6 +1243,26 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                             if (ejecutar_dunder_binario(vm, &frame, m,
                                                           dunder,
                                                           (int)strlen(dunder)) != VM_OK) {
+                                return VM_ERROR_RUNTIME;
+                            }
+                            break;
+                        }
+                    }
+                }
+                /* v1.3: si el izq no manejó la operación pero el der
+                   es instancia con dunder reflejado, despachamos.
+                   Permite expresiones tipo `5 + V(...)` cuando V define
+                   `__sumar_derecho__`. */
+                if (vm->tope[-1].tipo == VAL_INSTANCIA) {
+                    const char *dunder_d = dunder_para_op_binario_reflejado((OpCode)op);
+                    if (dunder_d) {
+                        Closure *m = clase_obtener_metodo(
+                            vm->tope[-1].como.instancia->clase,
+                            dunder_d, (int)strlen(dunder_d));
+                        if (m) {
+                            if (ejecutar_dunder_binario_reflejado(
+                                    vm, &frame, m,
+                                    dunder_d, (int)strlen(dunder_d)) != VM_OK) {
                                 return VM_ERROR_RUNTIME;
                             }
                             break;
@@ -2001,17 +2189,15 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 /* Coerce TOS a cadena.
                  *
                  * v1.2: si TOS es VAL_INSTANCIA y su clase define
-                 * `__cadena__`, invocamos el dunder. El resultado debe
-                 * ser una cadena — el opcode siguiente al frame (que
-                 * sigue siendo OP_FORMATO_F en el caller) verifica al
-                 * volver. NO usamos un opcode validador adicional
-                 * porque el resultado del dunder queda directo en
-                 * stack y, si no es cadena, OP_SUMAR posterior dará
-                 * ErrorDeTipo claro.
+                 * `__cadena__`, invocamos el dunder. El compilador
+                 * SIEMPRE emite `OP_ASEGURAR_CADENA` justo después,
+                 * que valida que el resultado sea cadena y emite
+                 * ErrorDeTipo con el nombre del dunder si no.
                  *
                  * Si no es instancia o no tiene `__cadena__`,
                  * delegamos en `valor_a_cadena_alocada` (escala hasta
-                 * 16 MB para colecciones grandes). */
+                 * 16 MB para colecciones grandes) — el resultado ya
+                 * es cadena y `OP_ASEGURAR_CADENA` es no-op. */
                 if (vm->tope[-1].tipo == VAL_INSTANCIA) {
                     Closure *m = clase_obtener_metodo(
                         vm->tope[-1].como.instancia->clase,
@@ -2029,6 +2215,34 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 valor_destruir(&v);
                 if (r.tipo == VAL_NULO) {
                     VM_ERROR("memoria insuficiente al formatear f-cadena");
+                    return VM_ERROR_RUNTIME;
+                }
+                empujar(vm, r);
+                break;
+            }
+
+            case OP_LONGITUD: {
+                /* v1.3: si TOS es VAL_INSTANCIA con `__longitud__`,
+                 * dispatch al dunder. Caso contrario, calcula longitud
+                 * con la lógica de la nativa `longitud`. */
+                if (vm->tope[-1].tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        vm->tope[-1].como.instancia->clase,
+                        "__longitud__", 12);
+                    if (m) {
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__longitud__", 12) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
+                Valor v = sacar(vm);
+                int linea = linea_actual_frame(frame);
+                Valor r = nativos_calcular_longitud(&vm->error, &v, linea, 0);
+                valor_destruir(&v);
+                if (vm->error.tuvo_error) {
+                    valor_destruir(&r);
                     return VM_ERROR_RUNTIME;
                 }
                 empujar(vm, r);
@@ -2792,6 +3006,15 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                                 base_nuevo, n_args) != VM_OK)
                             return VM_ERROR_RUNTIME;
                         promote = OP_LLAMAR_METODO_LIGADO;
+                        break;
+                    case VAL_INSTANCIA:
+                        /* v1.3: instancia callable via __llamar__. NO
+                           promovemos a un opcode especializado — el
+                           camino es raro y promote=OP_LLAMAR sigue
+                           viniendo aquí en el siguiente hit. */
+                        if (ejecutar_llamar_instancia(vm, &frame,
+                                base_nuevo, n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
                         break;
                     default:
                         VM_ERROR("ErrorDeTipo: '%s' no es invocable",

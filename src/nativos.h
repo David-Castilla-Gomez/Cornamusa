@@ -42,4 +42,17 @@ void nativos_registrar_dicc(Diccionario *globales);
  */
 void nativos_set_argv(int argc, char **argv);
 
+/*
+ * Calcula la longitud de `v` (cadena, lista, dicc, conjunto, tupla,
+ * rango) y la devuelve como Valor entero. Si `v` es VAL_INSTANCIA, NO
+ * intenta `__longitud__` (los dunders los maneja la VM directamente
+ * vía OP_LONGITUD). Para otros tipos no soportados, setea `*err` con
+ * ErrorDeTipo y devuelve nulo.
+ *
+ * Compartido entre la nativa `longitud` y el handler de `OP_LONGITUD`
+ * (v1.3) para garantizar comportamiento idéntico.
+ */
+Valor nativos_calcular_longitud(struct EvalError *err, const Valor *v,
+                                  int linea, int columna);
+
 #endif /* CORNAMUSA_NATIVOS_H */
