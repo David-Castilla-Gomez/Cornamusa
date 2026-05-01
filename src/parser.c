@@ -323,8 +323,26 @@ static Expr *parsear_f_cadena(Parser *p) {
             i++; /* skip '{' */
             int inicio_expr = i;
             int profundidad = 1;
+            /* Trackeo de cadenas internas para que `}` dentro de una
+               cadena (ej. `f"{ \"}\" }"`) no se confunda con el cierre
+               de la interpolación. v1.1.1. */
             while (i < cuerpo_len && profundidad > 0) {
                 char d = cuerpo[i];
+                if (d == '"' || d == '\'') {
+                    char delim_str = d;
+                    i++;
+                    while (i < cuerpo_len && cuerpo[i] != delim_str) {
+                        if (cuerpo[i] == '\\' && i + 1 < cuerpo_len) i += 2;
+                        else i++;
+                    }
+                    if (i >= cuerpo_len) {
+                        error_en(p, &t,
+                            "f-cadena: cadena interna sin cerrar");
+                        goto fallo;
+                    }
+                    i++; /* skip delim de cierre */
+                    continue;
+                }
                 if (d == '{') profundidad++;
                 else if (d == '}') {
                     profundidad--;

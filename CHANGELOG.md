@@ -6,6 +6,59 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.1.1] — 2026-05-01 — Limpieza derivada de revisión
+
+Patch sin features nuevas. Cierra la deuda técnica de la revisión
+post-v1.1.0:
+
+### Bugs
+
+- **F-cadenas con cadenas internas que contienen llaves**: el lexer
+  y el parser contaban `}` literal dentro de una cadena interna como
+  cierre de la interpolación. Ahora `f"{ '}' }"`, `f"{eco('hola{')}"`
+  y similares funcionan correctamente. Test de regresión añadido en
+  [tests/unit/test_bytecode_fstrings.c](tests/unit/test_bytecode_fstrings.c)
+  (`test_brace_en_cadena_interna`). Tocados:
+  [src/lexer.c](src/lexer.c) `saltar_interpolacion` y
+  [src/parser.c](src/parser.c) `parsear_f_cadena`.
+
+- **Buffer de 4096 truncaba silenciosamente**: la coerción a cadena de
+  colecciones grandes (listas/dicc con > ~4 kB de repr) cortaba la
+  salida sin reportar. Nueva API `valor_a_cadena_alocada` en
+  [src/valor.c](src/valor.c) escala el buffer dinámicamente hasta 16 MB,
+  con dimensionamiento exacto vía `mp_radix_size` para enteros bignum
+  y copia profunda directa para cadenas. Adoptada por `OP_FORMATO_F`
+  (vm.c), evaluador tree-walking y `nativa_cadena`. Test de regresión
+  con lista de 2000 elementos (`test_lista_grande_no_trunca`).
+
+### Refactor
+
+- **Helper compartido `valor_cadena_desde_escapes`**: el código de
+  decodificación de escapes (`\n`, `\t`, etc.) estaba duplicado en
+  `src/compilador.c` (`cadena_desde_slice`) y `src/evaluador.c`
+  (`slice_a_cadena_eval`). Ahora vive en [src/valor.c](src/valor.c) con
+  prototipo público y los dos motores delegan en él. Elimina el riesgo
+  de divergencia accidental.
+
+### Documentación
+
+- **`leer()`**: comentario en código y nota en
+  [docs/referencia.md](docs/referencia.md) aclarando que EOF inmediato
+  y línea vacía son indistinguibles (ambos devuelven `""`). Si tu
+  programa necesita detectar fin-de-stream, usa una sentinela.
+- **`nativa_entero` rama decimal**: comentario sobre los magic numbers
+  `9.2233720368547748e18` y `9.2233720368547758e18` — explica por qué
+  son asimétricos (INT64_MAX no es exactamente representable en double;
+  el redondeo a nearest cae en INT64_MAX + 1).
+
+### Compatibilidad
+
+- API: nuevo `valor_a_cadena_alocada` añadido a `valor.h`. El resto
+  de la API pública sin cambios.
+- Comportamiento observable: f-cadenas con cadenas internas que antes
+  daban error de sintaxis ahora funcionan. Cadenas más largas en
+  `cadena()` y f-strings preservan todo el contenido.
+
 ## [1.1.0] — 2026-05-01 — Built-ins esenciales
 
 Primera entrega menor sobre v1.0.0. Cierra las tres promesas públicas

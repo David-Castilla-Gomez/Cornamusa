@@ -449,7 +449,7 @@ importar paquete.submodulo                 # subsegmentos
 | Firma | Descripción |
 |---|---|
 | `imprimir(*args)` | Imprime args separados por espacio + `\n` |
-| `leer([prompt])` | Lee una línea de stdin. Sin args silencioso, con cadena la imprime como prompt. EOF inmediato → `""`. **(v1.1)** |
+| `leer([prompt])` | Lee una línea de stdin. Sin args silencioso, con cadena la imprime como prompt. EOF inmediato y línea vacía son INDISTINGUIBLES (`""` en ambos). **(v1.1)** |
 | `tipo(x)` | Cadena con el nombre del tipo |
 | `cadena(x)` | Coerción a cadena (representación de `imprimir`). **(v1.1)** |
 | `entero(x)` | Coerción a entero (entero/decimal/booleano/cadena). **(v1.1)** |

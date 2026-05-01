@@ -1731,46 +1731,12 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
 
             /* ─── Built-in print ─── */
             case OP_FORMATO_F: {
-                /* Convierte el TOS a su representación cadena estilo
-                   `imprimir` y empuja el resultado. Para enteros bignum
-                   se dimensiona el buffer con `mp_radix_size`; el resto
-                   cabe holgadamente en 4096 bytes. */
+                /* Coerce TOS a cadena con representación estilo
+                   `imprimir`. Usa buffer dinámico (escala hasta 16 MB
+                   para colecciones grandes) — sin truncado en casos
+                   habituales. */
                 Valor v = sacar(vm);
-                Valor r;
-                if (v.tipo == VAL_CADENA) {
-                    /* `cadena` → `cadena`: copia profunda (dueña). */
-                    r = valor_cadena_duplicar(v.como.cadena.texto,
-                                                v.como.cadena.longitud);
-                } else if (v.tipo == VAL_ENTERO) {
-                    int tam = 0;
-                    if (mp_radix_size(v.como.entero, 10, &tam) != MP_OKAY) {
-                        valor_destruir(&v);
-                        VM_ERROR("memoria insuficiente al formatear entero");
-                        return VM_ERROR_RUNTIME;
-                    }
-                    char *buf = (char *)malloc((size_t)tam);
-                    if (!buf) {
-                        valor_destruir(&v);
-                        VM_ERROR("memoria insuficiente al formatear entero");
-                        return VM_ERROR_RUNTIME;
-                    }
-                    size_t escritos;
-                    if (mp_to_radix(v.como.entero, buf, (size_t)tam,
-                                      &escritos, 10) != MP_OKAY) {
-                        free(buf);
-                        valor_destruir(&v);
-                        VM_ERROR("error al convertir entero a cadena");
-                        return VM_ERROR_RUNTIME;
-                    }
-                    int n = (int)escritos - 1;
-                    if (n < 0) n = 0;
-                    r = valor_cadena_duplicar(buf, n);
-                    free(buf);
-                } else {
-                    char buffer[4096];
-                    int n = valor_a_cadena(&v, buffer, sizeof(buffer));
-                    r = valor_cadena_duplicar(buffer, n);
-                }
+                Valor r = valor_a_cadena_alocada(&v);
                 valor_destruir(&v);
                 if (r.tipo == VAL_NULO) {
                     VM_ERROR("memoria insuficiente al formatear f-cadena");

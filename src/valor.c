@@ -250,6 +250,38 @@ Valor valor_cadena_duplicar(const char *texto, int longitud) {
     return v;
 }
 
+Valor valor_cadena_desde_escapes(const char *src, int srclen) {
+    if (srclen <= 0) return valor_cadena_duplicar("", 0);
+    char *buf = (char *)malloc((size_t)srclen + 1);
+    if (!buf) return valor_nulo();
+    int j = 0;
+    for (int i = 0; i < srclen; i++) {
+        char c = src[i];
+        if (c == '\\' && i + 1 < srclen) {
+            char nx = src[++i];
+            switch (nx) {
+                case 'n': buf[j++] = '\n'; break;
+                case 't': buf[j++] = '\t'; break;
+                case 'r': buf[j++] = '\r'; break;
+                case '0': buf[j++] = '\0'; break;
+                case '\\': buf[j++] = '\\'; break;
+                case '\'': buf[j++] = '\''; break;
+                case '"': buf[j++] = '"'; break;
+                default: buf[j++] = nx; break;
+            }
+        } else {
+            buf[j++] = c;
+        }
+    }
+    buf[j] = '\0';
+    Valor v;
+    v.tipo = VAL_CADENA;
+    v.dueno_cadena = true;
+    v.como.cadena.texto = buf;
+    v.como.cadena.longitud = j;
+    return v;
+}
+
 Valor valor_funcion(const struct Sent *def, struct Entorno *entorno_def) {
     Valor v;
     v.tipo = VAL_FUNCION;
@@ -1459,6 +1491,62 @@ void valor_imprimir(const Valor *v, FILE *out) {
     char buffer[1024];
     valor_a_cadena(v, buffer, sizeof(buffer));
     fputs(buffer, out);
+}
+
+Valor valor_a_cadena_alocada(const Valor *v) {
+    if (v == NULL) return valor_cadena_duplicar("nulo", 4);
+
+    /* Cadena: copia profunda directa (sin pasar por formato). */
+    if (v->tipo == VAL_CADENA) {
+        return valor_cadena_duplicar(v->como.cadena.texto,
+                                       v->como.cadena.longitud);
+    }
+    /* Entero bignum: dimensionar exactamente con mp_radix_size. */
+    if (v->tipo == VAL_ENTERO) {
+        int tam = 0;
+        if (mp_radix_size(v->como.entero, 10, &tam) != MP_OKAY) {
+            return valor_nulo();
+        }
+        char *buf = (char *)malloc((size_t)tam);
+        if (!buf) return valor_nulo();
+        size_t escritos;
+        if (mp_to_radix(v->como.entero, buf, (size_t)tam, &escritos, 10) != MP_OKAY) {
+            free(buf);
+            return valor_nulo();
+        }
+        int n = (int)escritos - 1;
+        if (n < 0) n = 0;
+        Valor r = valor_cadena_duplicar(buf, n);
+        free(buf);
+        return r;
+    }
+    /* Resto: snprintf con buffer escalable.
+     *
+     * `valor_a_cadena` trunca silenciosamente si la repr no cabe.
+     * Detectamos saturación heurísticamente: si los bytes escritos
+     * llegan al límite del buffer (con margen de 4 bytes para
+     * cubrir el truncado de listas/dicc, que rompen al `cap - 2`),
+     * doblamos. Cap máximo 16 MB — beyond eso aceptamos el truncado
+     * silencioso del comportamiento legacy. */
+    int cap = 1024;
+    char *buf = NULL;
+    int n = 0;
+    const int CAP_MAX = 16 * 1024 * 1024;
+    while (cap <= CAP_MAX) {
+        char *nuevo = (char *)realloc(buf, (size_t)cap);
+        if (!nuevo) { free(buf); return valor_nulo(); }
+        buf = nuevo;
+        n = valor_a_cadena(v, buf, cap);
+        /* Si quedan al menos 4 bytes de margen, asumimos que la
+           representación cabe completa. */
+        if (n + 4 < cap) break;
+        if (cap == CAP_MAX) break;
+        long siguiente = (long)cap * 2;
+        cap = (siguiente > CAP_MAX) ? CAP_MAX : (int)siguiente;
+    }
+    Valor r = valor_cadena_duplicar(buf, n);
+    free(buf);
+    return r;
 }
 
 int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {

@@ -285,43 +285,13 @@ static Valor nativa_cadena(EvalError *err, int n_args, Valor *args,
         return error_nativa(err, linea, columna,
             "ErrorDeTipo: cadena() requiere 1 argumento, recibio %d", n_args);
     }
-    const Valor *v = &args[0];
-    /* Cadena → cadena: clon profundo (idempotente). */
-    if (v->tipo == VAL_CADENA) {
-        Valor r = valor_cadena_duplicar(v->como.cadena.texto, v->como.cadena.longitud);
-        if (r.tipo == VAL_NULO) {
-            return error_nativa(err, linea, columna, "memoria insuficiente");
-        }
-        return r;
-    }
-    /* Entero bignum: dimensionar exactamente. SMALL cabe en 32 bytes. */
-    if (v->tipo == VAL_ENTERO) {
-        int tam = 0;
-        if (mp_radix_size(v->como.entero, 10, &tam) != MP_OKAY) {
-            return error_nativa(err, linea, columna, "memoria insuficiente");
-        }
-        char *buf = (char *)malloc((size_t)tam);
-        if (!buf) return error_nativa(err, linea, columna, "memoria insuficiente");
-        size_t escritos;
-        if (mp_to_radix(v->como.entero, buf, (size_t)tam, &escritos, 10) != MP_OKAY) {
-            free(buf);
-            return error_nativa(err, linea, columna, "memoria insuficiente");
-        }
-        /* mp_to_radix incluye '\0' en `escritos`. */
-        int n = (int)escritos - 1;
-        if (n < 0) n = 0;
-        Valor r = valor_cadena_duplicar(buf, n);
-        free(buf);
-        if (r.tipo == VAL_NULO) {
-            return error_nativa(err, linea, columna, "memoria insuficiente");
-        }
-        return r;
-    }
-    /* Resto: buffer de 4096. Suficiente para casos comunes. */
-    char buffer[4096];
-    int n = valor_a_cadena(v, buffer, sizeof(buffer));
-    Valor r = valor_cadena_duplicar(buffer, n);
-    if (r.tipo == VAL_NULO) {
+    /* Delegamos en `valor_a_cadena_alocada` que dimensiona el buffer
+       dinámicamente: para bignum exacto vía `mp_radix_size`, para
+       cadena copia profunda directa, y para colecciones escala el
+       buffer hasta 16 MB. Convertimos su VAL_NULO de OOM en un
+       `error_nativa` con posición. */
+    Valor r = valor_a_cadena_alocada(&args[0]);
+    if (r.tipo == VAL_NULO && args[0].tipo != VAL_NULO) {
         return error_nativa(err, linea, columna, "memoria insuficiente");
     }
     return r;
@@ -364,9 +334,13 @@ static Valor nativa_entero(EvalError *err, int n_args, Valor *args,
             return error_nativa(err, linea, columna,
                 "ErrorDeValor: no se puede convertir NaN a entero");
         }
+        /* Rango de int64 expresado como double. INT64_MAX (2^63 - 1) NO
+           es exactamente representable en double — el redondeo a nearest
+           lo lleva a 2^63 = 9.2233720368547758e18 (que YA está fuera de
+           int64). Por eso el límite superior aceptado es 2^63 - 1024 ≈
+           9.2233720368547748e18. INT64_MIN sí es exacto en double:
+           -2^63 = -9.2233720368547758e18. */
         if (d > 9.2233720368547748e18 || d < -9.2233720368547758e18) {
-            /* Fuera del rango de int64 — soporte de bignum desde double
-               se aplazará a una iteración futura si surge la demanda. */
             return error_nativa(err, linea, columna,
                 "ErrorDeValor: decimal fuera del rango de entero (truncado)");
         }
@@ -730,12 +704,17 @@ static Valor nativa_diccionario(EvalError *err, int n_args, Valor *args,
  *   leer(no-cadena)  → ErrorDeTipo.
  *   leer(>1 args)    → ErrorDeTipo.
  *
- * Si stdin está cerrado en EOF inmediato, devuelve cadena vacía. Lee
- * con buffer dinámico para soportar líneas arbitrariamente largas.
+ * EOF inmediato y línea vacía son INDISTINGUIBLES — ambos devuelven
+ * cadena vacía. Si tu programa necesita detectar fin-de-stream,
+ * usa una sentinela (`leer("> ")` con palabra clave de fin tipo
+ * "salir") o espera a v1.x para una API que reporte EOF explícito.
+ *
+ * Lee con buffer dinámico para soportar líneas arbitrariamente largas.
  *
  * UTF-8: los bytes se devuelven tal cual los recibe el SO; no se
- * normaliza NFC (el lexer normaliza el código fuente, pero la
- * entrada del usuario no es código).
+ * normaliza NFC. Si el terminal entrega bytes inválidos en UTF-8,
+ * `longitud(leer())` puede dar resultado inesperado al iterar
+ * codepoints (`utf8proc_iterate` rechaza secuencias mal formadas).
  */
 static Valor nativa_leer(EvalError *err, int n_args, Valor *args,
                           int linea, int columna) {

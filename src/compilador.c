@@ -297,47 +297,16 @@ static int token_a_opcode_binario(TipoToken op) {
  * ────────────────────────────────────────────────────────────────── */
 
 /*
- * Procesa los escapes de un slice de cadena fuente y construye un
- * Valor cadena con el contenido decodificado. Compartido por
- * `EXPR_LITERAL_CADENA` (que pasa el lexema sin las comillas) y por
- * las partes literales de `EXPR_LITERAL_F_CADENA` (que ya vienen sin
- * comillas — el parser las separa).
+ * `cadena_desde_lexema` toma el lexema completo con comillas y
+ * delega en `valor_cadena_desde_escapes` (declarado en valor.h)
+ * que maneja la decodificación de escapes. El mismo helper se
+ * comparte con el evaluador y con las partes literales de
+ * `EXPR_LITERAL_F_CADENA` para garantizar comportamiento
+ * idéntico entre ambos motores.
  */
-static Valor cadena_desde_slice(const char *src, int srclen) {
-    if (srclen <= 0) return valor_cadena_duplicar("", 0);
-    char *buf = (char *)malloc((size_t)srclen + 1);
-    if (!buf) return valor_nulo();
-    int j = 0;
-    for (int i = 0; i < srclen; i++) {
-        char ch = src[i];
-        if (ch == '\\' && i + 1 < srclen) {
-            char nx = src[++i];
-            switch (nx) {
-                case 'n': buf[j++] = '\n'; break;
-                case 't': buf[j++] = '\t'; break;
-                case 'r': buf[j++] = '\r'; break;
-                case '0': buf[j++] = '\0'; break;
-                case '\\': buf[j++] = '\\'; break;
-                case '\'': buf[j++] = '\''; break;
-                case '"': buf[j++] = '"'; break;
-                default: buf[j++] = nx; break;
-            }
-        } else {
-            buf[j++] = ch;
-        }
-    }
-    buf[j] = '\0';
-    Valor v;
-    v.tipo = VAL_CADENA;
-    v.dueno_cadena = true;
-    v.como.cadena.texto = buf;
-    v.como.cadena.longitud = j;
-    return v;
-}
-
 static Valor cadena_desde_lexema(const char *lex, int len) {
     if (len < 2) return valor_cadena_referencia("", 0);
-    return cadena_desde_slice(lex + 1, len - 2);
+    return valor_cadena_desde_escapes(lex + 1, len - 2);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -851,7 +820,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     if (!compilador_compilar_expr(c, p->expr)) return false;
                     chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
                 } else {
-                    Valor v = cadena_desde_slice(p->literal, p->longitud);
+                    Valor v = valor_cadena_desde_escapes(p->literal, p->longitud);
                     if (v.tipo == VAL_NULO) {
                         error_compilacion(c, e->linea, e->columna,
                             "memoria insuficiente al compilar f-cadena");

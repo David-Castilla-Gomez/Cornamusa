@@ -661,46 +661,6 @@ static Valor eval_diccionario(Evaluador *ev, const Expr *e);
 static Valor eval_conjunto(Evaluador *ev, const Expr *e);
 static Valor eval_tupla(Evaluador *ev, const Expr *e);
 
-/*
- * Procesa los escapes de un slice de cadena (sin las comillas) y
- * construye un Valor cadena. Compartido por EXPR_LITERAL_CADENA y
- * por las partes literales de EXPR_LITERAL_F_CADENA.
- *
- * Devuelve VAL_NULO en OOM. El llamador convierte VAL_NULO en un
- * error_en con mensaje contextual.
- */
-static Valor slice_a_cadena_eval(const char *src, int srclen) {
-    if (srclen <= 0) return valor_cadena_duplicar("", 0);
-    char *buf = (char *)malloc((size_t)srclen + 1);
-    if (!buf) return valor_nulo();
-    int j = 0;
-    for (int i = 0; i < srclen; i++) {
-        char c = src[i];
-        if (c == '\\' && i + 1 < srclen) {
-            char nx = src[++i];
-            switch (nx) {
-                case 'n': buf[j++] = '\n'; break;
-                case 't': buf[j++] = '\t'; break;
-                case 'r': buf[j++] = '\r'; break;
-                case '0': buf[j++] = '\0'; break;
-                case '\\': buf[j++] = '\\'; break;
-                case '\'': buf[j++] = '\''; break;
-                case '"': buf[j++] = '"'; break;
-                default: buf[j++] = nx; break;
-            }
-        } else {
-            buf[j++] = c;
-        }
-    }
-    buf[j] = '\0';
-    Valor v;
-    v.tipo = VAL_CADENA;
-    v.dueno_cadena = true;
-    v.como.cadena.texto = buf;
-    v.como.cadena.longitud = j;
-    return v;
-}
-
 Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
     if (ev->error.tuvo_error) return valor_nulo();
 
@@ -721,7 +681,7 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
             const char *lex = e->como.literal.lexema;
             int len = e->como.literal.longitud;
             if (len < 2) return valor_cadena_referencia("", 0);
-            Valor v = slice_a_cadena_eval(lex + 1, len - 2);
+            Valor v = valor_cadena_desde_escapes(lex + 1, len - 2);
             if (v.tipo == VAL_NULO) return error_en(ev, e, "memoria insuficiente");
             return v;
         }
@@ -742,39 +702,10 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
                         valor_destruir(&v); valor_destruir(&acc);
                         return valor_nulo();
                     }
-                    if (v.tipo == VAL_CADENA) {
-                        pieza = valor_cadena_duplicar(v.como.cadena.texto,
-                                                        v.como.cadena.longitud);
-                    } else if (v.tipo == VAL_ENTERO) {
-                        int tam = 0;
-                        if (mp_radix_size(v.como.entero, 10, &tam) != MP_OKAY) {
-                            valor_destruir(&v); valor_destruir(&acc);
-                            return error_en(ev, e, "memoria insuficiente");
-                        }
-                        char *buf = (char *)malloc((size_t)tam);
-                        if (!buf) {
-                            valor_destruir(&v); valor_destruir(&acc);
-                            return error_en(ev, e, "memoria insuficiente");
-                        }
-                        size_t escritos;
-                        if (mp_to_radix(v.como.entero, buf, (size_t)tam,
-                                          &escritos, 10) != MP_OKAY) {
-                            free(buf);
-                            valor_destruir(&v); valor_destruir(&acc);
-                            return error_en(ev, e, "error al formatear entero");
-                        }
-                        int len_pieza = (int)escritos - 1;
-                        if (len_pieza < 0) len_pieza = 0;
-                        pieza = valor_cadena_duplicar(buf, len_pieza);
-                        free(buf);
-                    } else {
-                        char buffer[4096];
-                        int len_pieza = valor_a_cadena(&v, buffer, sizeof(buffer));
-                        pieza = valor_cadena_duplicar(buffer, len_pieza);
-                    }
+                    pieza = valor_a_cadena_alocada(&v);
                     valor_destruir(&v);
                 } else {
-                    pieza = slice_a_cadena_eval(p->literal, p->longitud);
+                    pieza = valor_cadena_desde_escapes(p->literal, p->longitud);
                 }
                 if (pieza.tipo == VAL_NULO) {
                     valor_destruir(&acc);

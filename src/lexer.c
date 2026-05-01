@@ -436,9 +436,9 @@ static bool procesar_escape(Lexer *l, bool en_triple, Token *err_out) {
  * En f-cadenas: tras consumir una `{`, salta hasta su `}` correspondiente,
  * tracking profundidad de llaves anidadas. Devuelve true si error.
  *
- * Nota de simplificación: NO trackeamos cadenas dentro de {...}. Si el
- * usuario escribe `f"{f(\"x\")}"` con cadenas anidadas raras, podríamos
- * confundirnos. El parser detectará inconsistencias en sesión posterior.
+ * v1.1.1: trackea cadenas internas — `"..."` y `'...'` no cuentan
+ * llaves dentro. Esto permite `f"{f(\"}\")}"` y similares. Los
+ * escapes `\"`/`\'` se respetan dentro de la cadena interna.
  */
 static bool saltar_interpolacion(Lexer *l, bool permitir_newline,
                                   Token *err_out) {
@@ -454,6 +454,36 @@ static bool saltar_interpolacion(Lexer *l, bool permitir_newline,
             avanzar(l);
             l->linea++;
             l->inicio_linea = l->actual;
+        } else if (c == '"' || c == '\'') {
+            /* Cadena interna: saltar hasta el delim de cierre,
+               respetando `\"`/`\'` escapados. NO incrementa profundidad
+               aunque contenga `{` o `}` literales. */
+            char delim = c;
+            avanzar(l);
+            while (!en_fin(l) && mirar(l) != delim) {
+                char d = mirar(l);
+                if (d == '\n' && !permitir_newline) {
+                    *err_out = token_error(l,
+                        "cadena en f-cadena sin cerrar antes del fin de línea");
+                    return true;
+                }
+                if (d == '\\') {
+                    avanzar(l);
+                    if (!en_fin(l)) avanzar(l);
+                } else {
+                    if (d == '\n') {
+                        l->linea++;
+                        l->inicio_linea = l->actual + 1;
+                    }
+                    avanzar(l);
+                }
+            }
+            if (en_fin(l)) {
+                *err_out = token_error(l,
+                    "cadena en f-cadena sin cerrar antes del fin de archivo");
+                return true;
+            }
+            avanzar(l); /* consume delim de cierre */
         } else if (c == '{') {
             profundidad++;
             avanzar(l);

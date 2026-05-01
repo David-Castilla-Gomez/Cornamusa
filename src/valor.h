@@ -589,6 +589,21 @@ Valor valor_cadena_referencia(const char *texto, int longitud);
 Valor valor_cadena_duplicar(const char *texto, int longitud);
 
 /*
+ * Construye una cadena copiando un slice y procesando los escapes
+ * canónicos (`\n`, `\t`, `\r`, `\0`, `\\`, `\"`, `\'`). Para escapes
+ * no reconocidos copia el carácter siguiente literal.
+ *
+ * Usado por:
+ *   - El compilador y el evaluador para `EXPR_LITERAL_CADENA` (con el
+ *     lexema sin las comillas).
+ *   - Las partes literales de `EXPR_LITERAL_F_CADENA`.
+ *
+ * Devuelve VAL_NULO ante OOM. El llamador convierte VAL_NULO en un
+ * error contextual.
+ */
+Valor valor_cadena_desde_escapes(const char *src, int srclen);
+
+/*
  * Construye un VAL_FUNCION referenciando un SENT_FUNCION del AST y un
  * entorno de definición. El Valor NO toma posesión — el AST y el
  * entorno deben vivir mientras la función se use.
@@ -666,6 +681,20 @@ void valor_imprimir(const Valor *v, FILE *salida);
  * silenciosamente si el buffer es insuficiente.
  */
 int valor_a_cadena(const Valor *v, char *buffer, int capacidad);
+
+/*
+ * Variante con asignación dinámica: convierte `v` a su representación
+ * cadena estilo `imprimir` y devuelve un Valor cadena dueño con el
+ * resultado completo, sin truncado para tipos comunes (entero bignum,
+ * cadena). Para colecciones grandes escala el buffer hasta cap máximo
+ * configurado (16 MB) — más allá trunca silenciosamente como
+ * `valor_a_cadena`.
+ *
+ * Devuelve VAL_NULO ante OOM. Idéntico a `cadena(x)` salvo que no
+ * propaga errores de runtime — el llamador convierte VAL_NULO en
+ * error contextual.
+ */
+Valor valor_a_cadena_alocada(const Valor *v);
 
 /*
  * Devuelve el nombre del tipo en castellano (para `tipo()` built-in

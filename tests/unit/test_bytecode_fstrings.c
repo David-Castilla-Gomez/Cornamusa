@@ -185,6 +185,33 @@ static void test_anidacion(void) {
     verificar_var("a = \"x\"\nx = f\"<{f'[{a}]'}>\"", "x", "<[x]>");
 }
 
+/* ───── Regresión v1.1.1: cadenas internas con llaves ───── */
+
+static void test_brace_en_cadena_interna(void) {
+    /* La `}` dentro de una cadena interna no debe cerrar la
+       interpolación. Se usa el delim opuesto al de la f-cadena. */
+    verificar_var("x = f\"{ '}' }\"",        "x", "}");
+    verificar_var("x = f\"{ '{' }\"",        "x", "{");
+    verificar_var("x = f\"{ '}{' }\"",       "x", "}{");
+    verificar_var("x = f'{ \"}\" }'",        "x", "}");
+    verificar_var("x = f'doble: {\"{}{}\"}'", "x", "doble: {}{}");
+}
+
+/* ───── Regresión v1.1.1: buffer dinámico para colecciones grandes ───── */
+
+static void test_lista_grande_no_trunca(void) {
+    /* 2000 elementos serializados pasan los 4096 bytes del buffer
+       legacy. La nueva API escala dinámicamente. */
+    verificar_var(
+        "xs = []\n"
+        "para i en rango(2000):\n"
+        "    agregar(xs, i)\n"
+        "fin para\n"
+        "s = cadena(xs)\n"
+        "x = longitud(s)",
+        "x", "10890");
+}
+
 /* ───── Errores ─────
  *
  * El helper `verificar_error` solo captura errores de runtime y
@@ -210,6 +237,8 @@ int main(void) {
     test_mezcla_literal_expr();
     test_coercion_tipos();
     test_anidacion();
+    test_brace_en_cadena_interna();
+    test_lista_grande_no_trunca();
     test_errores_parser();
 
     if (fallos == 0) {
