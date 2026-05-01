@@ -1,0 +1,66 @@
+# 33_atrapar_robusto.cor — programas robustos con errores atrapables (v1.10).
+#
+# Cornamusa v1.10 hace que los errores de built-ins (archivos, json,
+# longitud, operadores binarios, etc.) sean atrapables vía
+# `intentar/atrapar/finalmente`. Un programa que lee config con
+# fallback puede manejar archivo inexistente o JSON corrupto sin
+# terminar.
+
+importar archivos
+importar json
+
+# Helper: cargar config con fallback a defaults.
+funcion cargar_config(ruta):
+    intentar:
+        retornar json.parsear(archivos.leer(ruta))
+    atrapar ErrorDeIO como e:
+        imprimir(f"  ! archivo no encontrado: {ruta}, usando defaults")
+        retornar {"debug": falso, "version": "0.0.0", "puerto": 8080}
+    atrapar ErrorDeValor como e:
+        imprimir(f"  ! JSON corrupto en {ruta}: {e}")
+        imprimir(f"    usando defaults")
+        retornar {"debug": falso, "version": "0.0.0", "puerto": 8080}
+    fin intentar
+fin funcion
+
+# Caso 1: archivo no existe → fallback.
+imprimir("Caso 1: ruta inexistente")
+cfg1 = cargar_config("/tmp/no_existe.json")
+imprimir(f"  cfg.puerto = {cfg1['puerto']}")
+imprimir("---")
+
+# Caso 2: archivo con JSON inválido → fallback.
+ruta_corrupta = "/tmp/corrupto.json"
+archivos.escribir(ruta_corrupta, "{ esto no es valido")
+imprimir("Caso 2: JSON corrupto")
+cfg2 = cargar_config(ruta_corrupta)
+imprimir(f"  cfg.version = {cfg2['version']}")
+imprimir("---")
+
+# Caso 3: archivo valido → carga real.
+ruta_valida = "/tmp/valida.json"
+archivos.escribir(ruta_valida,
+    json.serializar({"debug": verdadero, "version": "1.0", "puerto": 3000}))
+imprimir("Caso 3: JSON valido")
+cfg3 = cargar_config(ruta_valida)
+imprimir(f"  cfg.puerto = {cfg3['puerto']}, debug = {cfg3['debug']}")
+imprimir("---")
+
+# Caso 4: errores de tipo en operadores también son atrapables.
+imprimir("Caso 4: errores de operador")
+intentar:
+    _x = 5 + "string"
+atrapar ErrorDeTipo como e:
+    imprimir(f"  ErrorDeTipo atrapado: {e}")
+fin intentar
+
+# Caso 5: errores de built-ins inline (longitud, conversores).
+intentar:
+    longitud(42)
+atrapar Excepcion como e:
+    imprimir(f"  longitud(int) atrapado: {e}")
+fin intentar
+
+# Caso 6: el programa SIGUE VIVO tras múltiples errores.
+imprimir("---")
+imprimir("Programa completo, sin terminar abruptamente.")

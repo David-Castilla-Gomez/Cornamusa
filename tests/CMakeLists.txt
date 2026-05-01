@@ -380,6 +380,18 @@ set_tests_properties(bc_run_32_json_archivos PROPERTIES
     PASS_REGULAR_EXPRESSION "Tras update"
 )
 
+# v1.10: errores atrapables en nativas.
+add_test(
+    NAME bc_run_33_atrapar_robusto
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/33_atrapar_robusto.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_33_atrapar_robusto PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "sin terminar abruptamente"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

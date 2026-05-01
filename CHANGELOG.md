@@ -6,6 +6,128 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.10.0] — 2026-05-01 — Errores atrapables en built-ins
+
+Cierra una **limitación documentada desde v1.1**: los errores de
+runtime en built-ins (`archivos.leer("no existe")`, `json.parsear("...")`,
+`longitud(42)`, `5 + "hola"`, etc.) ahora son **atrapables** vía
+`intentar/atrapar`. Combinado con v1.8 (`archivos`) y v1.9 (`json`),
+esto desbloquea programas robustos: cargar config con fallback,
+validar input, recuperarse de I/O fallido.
+
+### Antes (v1.9)
+
+```cornamusa
+intentar:
+    archivos.leer("/no/existe")
+atrapar Excepcion como e:
+    imprimir("nunca se ejecuta")
+fin intentar
+# El programa terminaba con ErrorDeIO antes de llegar a `atrapar`.
+```
+
+### Ahora (v1.10)
+
+```cornamusa
+funcion cargar_config(ruta):
+    intentar:
+        retornar json.parsear(archivos.leer(ruta))
+    atrapar ErrorDeIO como e:
+        imprimir(f"  ! archivo no encontrado, defaults")
+        retornar {"puerto": 8080}
+    atrapar ErrorDeValor como e:
+        imprimir(f"  ! JSON corrupto: {e}")
+        retornar {"puerto": 8080}
+    fin intentar
+fin funcion
+
+cfg = cargar_config("/no/existe.json")  # cae al primer atrapar
+```
+
+### Implementación
+
+Dos piezas en [src/vm.c](src/vm.c):
+
+1. **`vm_lanzar_excepcion(vm, frame, e)`**: helper compartido que
+   hace todo el unwind (cierra upvalues, descarta stack, pop frames),
+   restaura `vm->globales` para cada frame descartado que swapeó
+   (función de módulo importado), empuja la excepción al stack del
+   handler y salta a `ip_handler`. Refactor del flujo previo de
+   `OP_LANZAR` que tenía un bug preexistente (no restauraba globales).
+
+2. **`intentar_atrapar_error_nativa(vm, &frame)`**: detecta error
+   activo en `vm->error`, parsea el prefijo `"ClaseDeError: detalle"`,
+   construye `Excepcion` con esa clase y mensaje, y dispatch al
+   handler activo. Si no hay handler o falla la conversión, retorna
+   false y el caller mantiene el comportamiento legacy (terminar).
+
+3. **`RAISE_OR_DIE()` macro**: reemplaza el patrón
+   `return VM_ERROR_RUNTIME` post-`VM_ERROR(...)` en el dispatch loop.
+   Si hay handler, dispatch al handler con `goto raise_atrapado`. Si
+   no, `return VM_ERROR_RUNTIME`.
+
+Aplicado a opcodes con errores semánticamente atrapables:
+- Operadores binarios slow path (`evaluador_aplicar_binario`).
+- Operadores unarios (`OP_NEGAR`, `OP_NO`).
+- `OP_LONGITUD` (atajo a `longitud(arg)`).
+- `OP_ASEGURAR_CADENA` (validación de `__cadena__`).
+- Llamadas a nativas (`ejecutar_llamar_nativa` actualizado a
+  `frame_inout`).
+
+Otros opcodes mantienen `return VM_ERROR_RUNTIME` directo (estado
+interno corrupto, desbordamiento de pila — bugs no atrapables).
+
+### Convención de mensajes
+
+Las nativas siguen el patrón `"ClaseDeError: detalle"` desde v1.0+. El
+parser de `intentar_atrapar_error_nativa` usa el primer `:` como
+separador. Si no hay `:`, la clase es `"Excepcion"` genérica.
+
+Clases observadas en runtime:
+- `ErrorDeTipo`: argumento de tipo incorrecto.
+- `ErrorDeValor`: tipo correcto pero valor inválido.
+- `ErrorDeIndice`: índice fuera de rango.
+- `ErrorDeClave`: clave no presente en diccionario.
+- `ErrorDeIO`: error de archivo (no existe, permisos).
+- `ErrorAritmetico`: división por cero, etc.
+
+### Bug fix incidental
+
+El unwind de `OP_LANZAR` no restauraba `vm->globales` cuando
+descartaba frames de funciones importadas desde módulos. Si una
+excepción se lanzaba desde dentro de `archivos.leer()` y se
+atrapaba en el caller, `vm->globales` quedaba apuntando al dicc del
+módulo `archivos`, y los globales del caller (incluido `archivos`
+mismo) dejaban de ser accesibles. v1.10 lo corrige iterando los
+frames descartados y restaurando cada `globales_pre_llamada`.
+
+### Tests y ejemplo
+
+- 8 tests unit en
+  [tests/unit/test_bytecode_atrapar.c](tests/unit/test_bytecode_atrapar.c):
+  errores de tipo (longitud, suma), I/O (archivo inexistente), valor
+  (JSON inválido), atrapar por clase específica, múltiples atrapados
+  consecutivos, globales preservados tras unwind a través de módulo,
+  excepción como valor manipulable.
+- [examples/33_atrapar_robusto.cor](examples/33_atrapar_robusto.cor):
+  patrón típico `cargar_config con fallback` con archivo inexistente,
+  JSON corrupto y JSON válido. Demuestra que el programa SIGUE VIVO
+  tras múltiples errores.
+- 116/116 tests pasan.
+
+### Limitaciones
+
+- **Solo se atrapan errores generados POR el dispatch loop principal**
+  (operadores, OP_LONGITUD, llamadas a nativas, etc.). Algunos errores
+  internos profundos (corrupción de estado) siguen siendo fatales — son
+  bugs, no condiciones de error semántico.
+- **El parser de `"Clase: mensaje"` es greedy del primer `:`**. Si un
+  mensaje contiene `:` antes del prefijo de clase, podría parsearse
+  raro. Las nativas siguen una convención estricta así que no es
+  problema real.
+- **Sin re-raise automático**: el bloque `atrapar` consume la
+  excepción. Para re-lanzar usa `lanzar e` explícito.
+
 ## [1.9.0] — 2026-05-01 — Stdlib `json` (intercambio universal)
 
 Complemento natural de v1.8: tras añadir lectura/escritura de

@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.9.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.10.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -104,7 +104,8 @@ Hoja de ruta resumida:
 | **v1.7** | **Inline path con constructor (cierre del experimento OOP-perf)** | ✅ |
 | **v1.8** | **Stdlib `archivos` (I/O persistente)** | ✅ |
 | **v1.9** | **Stdlib `json` (intercambio universal)** | ✅ |
-| v1.10+ | errores atrapables en nativas, funcionales (`mapear`/`filtrar`) | ⏳ |
+| **v1.10** | **Errores atrapables en built-ins** | ✅ |
+| v1.11+ | funcionales (`mapear`/`filtrar`/`reducir`/`enumerar`), `formato`, `fechas` | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
@@ -164,6 +165,9 @@ cmake --build build -j
 
 **v1.9**:
 - [`32_json_archivos.cor`](examples/32_json_archivos.cor) — `json.parsear`/`serializar` combinado con `archivos`, mostrando auto-traducción `verdadero/falso/nulo ↔ true/false/null`
+
+**v1.10**:
+- [`33_atrapar_robusto.cor`](examples/33_atrapar_robusto.cor) — programas robustos con errores atrapables: cargar config con fallback ante archivo inexistente o JSON corrupto
 
 ## Documentación
 

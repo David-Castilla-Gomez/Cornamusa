@@ -377,6 +377,27 @@ void vm_destruir(VM *vm) {
     } while (0)
 
 /*
+ * v1.10: RAISE_OR_DIE — usar en lugar de `return VM_ERROR_RUNTIME` tras
+ * un `VM_ERROR(...)` cuando el error es semánticamente atrapable
+ * (ErrorDeTipo, ErrorDeIndice, ErrorDeIO, etc.). Si hay un handler
+ * `intentar/atrapar` activo en pila, convierte el error en
+ * Excepcion y dispatch al handler. El `goto` salta al final del
+ * cuerpo del for, que continúa con el frame del handler.
+ *
+ * Si no hay handler o falla la conversión, retorna VM_ERROR_RUNTIME
+ * (comportamiento legacy: termina el programa).
+ *
+ * NOTA: solo válido dentro del cuerpo del bucle `for(;;)` principal
+ * de `vm_ejecutar_dispatch`, que tiene la etiqueta `raise_atrapado`
+ * al final del body.
+ */
+#define RAISE_OR_DIE()                                                         \
+    do {                                                                       \
+        if (intentar_atrapar_error_nativa(vm, &frame)) goto raise_atrapado;    \
+        return VM_ERROR_RUNTIME;                                               \
+    } while (0)
+
+/*
  * F10: helpers para inline cache de OP_LLAMAR.
  *
  * `opcode_addr` apunta al byte del opcode dentro de chunk->codigo. El
@@ -537,13 +558,130 @@ void vm_destruir(VM *vm) {
  * el frame nuevo.
  * ────────────────────────────────────────────────────────────────── */
 
-static ResultadoVM ejecutar_llamar_nativa(VM *vm, CallFrame *frame,
+/*
+ * v1.10: dispatch unificado de excepción.
+ *
+ * Toma una `Excepcion *` con refcount activo, hace unwind hasta el
+ * handler activo (cierra upvalues, descarta stack, pop frames),
+ * empuja la excepción al stack del handler y salta a `ip_handler`.
+ *
+ * Si NO hay handler, libera la excepción, escribe el error en
+ * `vm->error` con formato "Clase: mensaje" y retorna VM_ERROR_RUNTIME
+ * (comportamiento legacy: terminar programa).
+ *
+ * Toma posesión de `e` (refcount). El caller no debe liberarlo.
+ */
+static ResultadoVM vm_lanzar_excepcion(VM *vm, CallFrame **frame_inout,
+                                         Excepcion *e) {
+    CallFrame *frame = *frame_inout;
+    if (vm->n_handlers == 0) {
+        /* Sin handler: error fatal con clase + mensaje. */
+        vm->error.tuvo_error = true;
+        vm->error.linea = linea_actual_frame(frame);
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "%.*s: %.*s",
+            e->longitud_clase, e->clase,
+            e->longitud_mensaje, e->mensaje);
+        excepcion_liberar(e);
+        return VM_ERROR_RUNTIME;
+    }
+    HandlerFrame h = vm->handlers[--vm->n_handlers];
+    /* Cerrar upvalues que estén por encima del handler tope. */
+    cerrar_upvalues_hasta(vm, vm->pila + h.tope_offset);
+    /* Descartar slots del stack hasta volver al nivel del handler. */
+    while (vm->tope > vm->pila + h.tope_offset) {
+        Valor v = *(--vm->tope);
+        valor_destruir(&v);
+    }
+    /* Pop frames hasta el del handler. v1.10: restaurar
+       `vm->globales` para cada frame descartado que swapeó (función
+       de módulo importado). El estado correcto al final es el que
+       tenía el frame del handler (frame[h.frame_idx]). */
+    while (vm->n_frames > h.frame_idx) {
+        vm->n_frames--;
+        CallFrame *fr_descartado = &vm->frames[vm->n_frames];
+        if (fr_descartado->globales_pre_llamada != NULL) {
+            vm->globales = fr_descartado->globales_pre_llamada;
+        }
+        /* No restauramos `modulo_en_carga` — si la excepción se
+           lanza durante carga de un módulo, el módulo queda
+           parcialmente importado y se reinicia en la próxima
+           importación. Aceptable para v1.10. */
+    }
+    /* Empujar la excepción para que el handler la consuma. */
+    empujar(vm, valor_excepcion(e));
+    /* Saltar al handler. */
+    *frame_inout = &vm->frames[vm->n_frames - 1];
+    (*frame_inout)->ip = h.ip_handler;
+    return VM_OK;
+}
+
+/*
+ * v1.10: convierte un error de nativa (`vm->error`) en una excepción
+ * Cornamusa atrapable. Parsea el prefijo "ClaseDeError: detalle" del
+ * mensaje. Si no hay handler activo o falla la conversión, retorna
+ * false — el caller mantiene comportamiento legacy.
+ *
+ * Si el atrapado tiene éxito, limpia `vm->error.tuvo_error` y devuelve
+ * true. El frame del caller se actualiza vía `frame_inout`.
+ */
+static bool intentar_atrapar_error_nativa(VM *vm, CallFrame **frame_inout) {
+    if (!vm->error.tuvo_error || vm->n_handlers == 0) return false;
+    /* Parsear "Clase: mensaje". Si no hay ":", clase = "Excepcion". */
+    const char *msg = vm->error.mensaje;
+    int total = (int)strlen(msg);
+    int sep = -1;
+    for (int i = 0; i < total; i++) {
+        if (msg[i] == ':') { sep = i; break; }
+    }
+    const char *clase;
+    int len_clase;
+    const char *detalle;
+    int len_detalle;
+    if (sep > 0) {
+        clase = msg;
+        len_clase = sep;
+        /* Saltar ":" y espacio inicial. */
+        int inicio_det = sep + 1;
+        while (inicio_det < total && msg[inicio_det] == ' ') inicio_det++;
+        detalle = msg + inicio_det;
+        len_detalle = total - inicio_det;
+    } else {
+        clase = "Excepcion";
+        len_clase = 9;
+        detalle = msg;
+        len_detalle = total;
+    }
+    Excepcion *e = excepcion_nueva(clase, len_clase, detalle, len_detalle);
+    if (!e) return false;  /* OOM: caer al comportamiento legacy. */
+    /* Limpiar el error antes de hacer dispatch. */
+    vm->error.tuvo_error = false;
+    vm->error.mensaje[0] = '\0';
+    if (vm_lanzar_excepcion(vm, frame_inout, e) != VM_OK) {
+        /* No debería pasar (ya verificamos n_handlers > 0). */
+        return false;
+    }
+    return true;
+}
+
+static ResultadoVM ejecutar_llamar_nativa(VM *vm, CallFrame **frame_inout,
                                             Valor *base_nuevo, uint8_t n_args) {
+    CallFrame *frame = *frame_inout;
     int linea = linea_actual_frame(frame);
     Valor *args = base_nuevo + 1;
     Valor r = base_nuevo->como.nativa.fn(&vm->error, n_args, args, linea, 0);
     if (vm->error.tuvo_error) {
         valor_destruir(&r);
+        /* v1.10: si hay handler activo, convertir el error en
+           excepción atrapable y dispatch. Si NO hay handler (o falla
+           OOM), retornar VM_ERROR_RUNTIME — comportamiento legacy. */
+        if (intentar_atrapar_error_nativa(vm, frame_inout)) {
+            /* Excepción atrapada: limpiar también la pila de args y
+               callee, ya que el unwind del handler se hizo antes
+               (descartando hasta tope_offset del handler — cubre los
+               args/callee si estaban por encima). */
+            return VM_OK;
+        }
         return VM_ERROR_RUNTIME;
     }
     for (int i = 0; i < n_args; i++) {
@@ -1421,7 +1559,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                                                       a, b, linea, 0);
                 if (vm->error.tuvo_error) {
                     valor_destruir(&r);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
                 }
                 empujar(vm, r);
                 /* F10: si ambos eran enteros y el op tiene variante
@@ -1461,7 +1599,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                                                     linea, 0);
                 if (vm->error.tuvo_error) {
                     valor_destruir(&r);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
                 }
                 empujar(vm, r);
                 break;
@@ -1473,7 +1611,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                                                     linea, 0);
                 if (vm->error.tuvo_error) {
                     valor_destruir(&r);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
                 }
                 empujar(vm, r);
                 break;
@@ -2422,7 +2560,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 valor_destruir(&v);
                 if (vm->error.tuvo_error) {
                     valor_destruir(&r);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
                 }
                 empujar(vm, r);
                 break;
@@ -2435,7 +2573,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     valor_destruir(&v);
                     VM_ERROR("ErrorDeTipo: __cadena__ debe retornar cadena, "
                              "no '%s'", tn);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
                 }
                 break;
             }
@@ -3095,7 +3233,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     DEGRADAR_LLAMAR();
                     break;
                 }
-                if (ejecutar_llamar_nativa(vm, frame, base_nuevo, n_args)
+                if (ejecutar_llamar_nativa(vm, &frame, base_nuevo, n_args)
                     != VM_OK) {
                     return VM_ERROR_RUNTIME;
                 }
@@ -3163,7 +3301,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
 
                 switch (callee.tipo) {
                     case VAL_NATIVA:
-                        if (ejecutar_llamar_nativa(vm, frame, base_nuevo,
+                        if (ejecutar_llamar_nativa(vm, &frame, base_nuevo,
                                                      n_args) != VM_OK)
                             return VM_ERROR_RUNTIME;
                         promote = OP_LLAMAR_NATIVA;
@@ -3204,11 +3342,16 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 break;
             }
         }
+        /* v1.10: punto de aterrizaje para RAISE_OR_DIE cuando una
+           excepción se atrapó. El frame ya cambió al del handler;
+           continuamos el bucle leyendo el siguiente opcode allí. */
+        raise_atrapado: ;
     }
 }
 
 #undef LEER_BYTE
 #undef VM_ERROR
+#undef RAISE_OR_DIE
 
 ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
     vm->memoria.gc_habilitado = true;
