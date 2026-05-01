@@ -1271,6 +1271,294 @@ static Valor nativa_obtener_argv(EvalError *err, int n_args, Valor *args,
     return valor_lista(l);
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * I/O de archivos (v1.8)
+ *
+ * Built-ins primitivos para leer y escribir archivos. La capa de
+ * usuario es el módulo `stdlib/archivos.cor` que reexporta estos
+ * con nombres amigables (`archivos.leer`, etc.).
+ *
+ * Manejo de errores: si fopen/fread/fwrite fallan (archivo no existe,
+ * permisos, OOM), reportan error de runtime con `error_nativa`. Los
+ * errores no son atrapables vía `intentar/atrapar` (limitación
+ * preexistente de las nativas) — el programa termina. Para v1.8 esto
+ * es aceptable; iterar a una API que reporte excepciones atrapables
+ * queda para v1.9+.
+ *
+ * Encoding: bytes crudos. Cornamusa cadenas son UTF-8 pero estas
+ * funciones no validan ni convierten. El programa que lea un archivo
+ * UTF-16 vería bytes raros. Documentado.
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * archivo_leer(ruta) → cadena con todo el contenido del archivo.
+ *
+ * Modo de lectura binaria. Para archivos grandes, usa el sistema
+ * operativo para alocar el tamaño exacto.
+ */
+static Valor nativa_archivo_leer(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_leer() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_leer() espera una cadena con la ruta");
+    }
+    /* Necesitamos null-terminar la ruta — VAL_CADENA no lo está. */
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_ruta_stack[1024];
+    char *ruta = buf_ruta_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_ruta_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+    FILE *f = fopen(ruta, "rb");
+    if (!f) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo abrir '%s' para lectura", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    if (fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        if (ruta_heap) free(ruta_heap);
+        return error_nativa(err, linea, columna,
+            "ErrorDeIO: fseek fallo en archivo");
+    }
+    long tam = ftell(f);
+    if (tam < 0) {
+        fclose(f);
+        if (ruta_heap) free(ruta_heap);
+        return error_nativa(err, linea, columna,
+            "ErrorDeIO: ftell fallo en archivo");
+    }
+    rewind(f);
+
+    char *contenido = (char *)malloc((size_t)tam + 1);
+    if (!contenido) {
+        fclose(f);
+        if (ruta_heap) free(ruta_heap);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    size_t leido = fread(contenido, 1, (size_t)tam, f);
+    fclose(f);
+    if (ruta_heap) free(ruta_heap);
+    contenido[leido] = '\0';
+    Valor r = valor_cadena_duplicar(contenido, (int)leido);
+    free(contenido);
+    if (r.tipo == VAL_NULO) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    return r;
+}
+
+/*
+ * archivo_escribir(ruta, contenido) → nulo.
+ *
+ * Modo de escritura: trunca el archivo si existe (rb+ → wb).
+ */
+static Valor nativa_archivo_escribir(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_escribir() requiere 2 argumentos, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_escribir() espera ruta como cadena");
+    }
+    if (args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_escribir() espera contenido como cadena");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_ruta_stack[1024];
+    char *ruta = buf_ruta_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_ruta_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+    FILE *f = fopen(ruta, "wb");
+    if (!f) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo abrir '%s' para escritura", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    int len_contenido = args[1].como.cadena.longitud;
+    if (len_contenido > 0) {
+        size_t escrito = fwrite(args[1].como.cadena.texto, 1,
+                                  (size_t)len_contenido, f);
+        if ((int)escrito != len_contenido) {
+            fclose(f);
+            if (ruta_heap) free(ruta_heap);
+            return error_nativa(err, linea, columna,
+                "ErrorDeIO: fwrite fallo en archivo");
+        }
+    }
+    fclose(f);
+    if (ruta_heap) free(ruta_heap);
+    return valor_nulo();
+}
+
+/*
+ * archivo_existe(ruta) → booleano.
+ *
+ * Implementación portable usando fopen("rb"). NO distingue entre
+ * "archivo no existe" y "permisos negados" — ambos retornan falso.
+ */
+static Valor nativa_archivo_existe(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_existe() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_existe() espera una cadena con la ruta");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_ruta_stack[1024];
+    char *ruta = buf_ruta_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_ruta_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+    FILE *f = fopen(ruta, "rb");
+    bool existe = (f != NULL);
+    if (f) fclose(f);
+    if (ruta_heap) free(ruta_heap);
+    return valor_booleano(existe);
+}
+
+/*
+ * archivo_lineas(ruta) → lista de cadenas, una por línea.
+ *
+ * El separador es '\n'. La línea final se incluye aunque no termine
+ * con '\n'. Para archivos CRLF (Windows), el '\r' final de cada línea
+ * se conserva — el programa puede limpiarlo si lo necesita.
+ */
+static Valor nativa_archivo_lineas(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    /* Reusa la lógica de archivo_leer y luego split. */
+    Valor contenido = nativa_archivo_leer(err, n_args, args, linea, columna);
+    if (err->tuvo_error || contenido.tipo != VAL_CADENA) {
+        return contenido;
+    }
+    Lista *l = lista_nueva(0);
+    if (!l) {
+        valor_destruir(&contenido);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    const char *texto = contenido.como.cadena.texto;
+    int total = contenido.como.cadena.longitud;
+    int inicio_linea = 0;
+    for (int i = 0; i <= total; i++) {
+        if (i == total || texto[i] == '\n') {
+            int len_linea = i - inicio_linea;
+            /* Si la última línea está vacía y veníamos de un '\n', no
+               la añadimos (estilo readlines de Python). */
+            if (i == total && len_linea == 0 && i > 0 && texto[i-1] == '\n') {
+                break;
+            }
+            Valor v = valor_cadena_duplicar(texto + inicio_linea, len_linea);
+            if (v.tipo == VAL_NULO) {
+                lista_liberar(l);
+                valor_destruir(&contenido);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            if (!lista_agregar(l, v)) {
+                lista_liberar(l);
+                valor_destruir(&contenido);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            inicio_linea = i + 1;
+        }
+    }
+    valor_destruir(&contenido);
+    return valor_lista(l);
+}
+
+/*
+ * archivo_agregar(ruta, contenido) → nulo.
+ *
+ * Modo append: añade `contenido` al final de `ruta`. Crea el archivo
+ * si no existe. Útil para logs.
+ */
+static Valor nativa_archivo_agregar(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_agregar() requiere 2 argumentos, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_agregar() espera ruta como cadena");
+    }
+    if (args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_agregar() espera contenido como cadena");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_ruta_stack[1024];
+    char *ruta = buf_ruta_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_ruta_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+    FILE *f = fopen(ruta, "ab");
+    if (!f) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo abrir '%s' para append", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    int len_contenido = args[1].como.cadena.longitud;
+    if (len_contenido > 0) {
+        size_t escrito = fwrite(args[1].como.cadena.texto, 1,
+                                  (size_t)len_contenido, f);
+        if ((int)escrito != len_contenido) {
+            fclose(f);
+            if (ruta_heap) free(ruta_heap);
+            return error_nativa(err, linea, columna,
+                "ErrorDeIO: fwrite fallo en archivo");
+        }
+    }
+    fclose(f);
+    if (ruta_heap) free(ruta_heap);
+    return valor_nulo();
+}
+
 /*
  * salir(codigo) → no retorna. Termina el proceso con el código indicado.
  * Si codigo no es entero/booleano, error de tipo.
@@ -1352,6 +1640,12 @@ static const EntradaNativa NATIVAS[] = {
     /* Sistema (v0.9.2). */
     {"obtener_argv",    12, nativa_obtener_argv},
     {"salir",            5, nativa_salir},
+    /* I/O de archivos (v1.8). */
+    {"archivo_leer",     12, nativa_archivo_leer},
+    {"archivo_escribir", 16, nativa_archivo_escribir},
+    {"archivo_existe",   14, nativa_archivo_existe},
+    {"archivo_lineas",   14, nativa_archivo_lineas},
+    {"archivo_agregar",  15, nativa_archivo_agregar},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

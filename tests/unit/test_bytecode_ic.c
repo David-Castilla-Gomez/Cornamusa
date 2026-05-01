@@ -17,6 +17,7 @@
 #include <string.h>
 
 #include "arena.h"
+#include "debug.h"
 #include "ast.h"
 #include "chunk.h"
 #include "compilador.h"
@@ -296,18 +297,22 @@ static void test_llamar_degradacion_polimorfica(void) {
 
     /* Tres call sites, todos a `tipo` (nativa). Los tres deben
        acabar como OP_LLAMAR_NATIVA. v1.3: ya no podemos usar `longitud`
-       aquí porque el compilador la atajea como OP_LONGITUD. */
+       aquí porque el compilador la atajea como OP_LONGITUD.
+       v1.8: itera con desensamblar_instruccion para avanzar
+       correctamente por opcodes con operandos (evita falsos positivos
+       de bytes operando que coinciden con OP_LLAMAR). */
     int count_nativa = 0;
     int count_slow = 0;
-    for (int i = 0; i < chunk.cuenta; i++) {
-        if (chunk.codigo[i] == (uint8_t)OP_LLAMAR_NATIVA) {
-            count_nativa++;
-            i++;  /* skip n_args */
-        } else if (chunk.codigo[i] == (uint8_t)OP_LLAMAR) {
-            count_slow++;
-            i++;
-        }
+    FILE *nul = fopen("/dev/null", "w");
+    int offset = 0;
+    while (offset < chunk.cuenta) {
+        uint8_t op = chunk.codigo[offset];
+        if (op == (uint8_t)OP_LLAMAR_NATIVA) count_nativa++;
+        else if (op == (uint8_t)OP_LLAMAR) count_slow++;
+        offset = desensamblar_instruccion(&chunk, offset, nul);
+        if (offset < 0) break;
     }
+    if (nul) fclose(nul);
     AFIRMAR(count_nativa == 3);
     AFIRMAR(count_slow == 0);
 

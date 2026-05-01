@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.7.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.8.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -43,7 +43,7 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **Closures con upvalues**, lambdas, slicing de listas.
 - ✅ **GC mark-sweep** automático con `recolectar()` para forzarlo manualmente.
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
-- ✅ **Stdlib mínima**: `matematicas` (PI, E, factorial, mcd, ...), `cadenas` (repetir, contar, empieza_con, ...) y `sistema` (`argv`, `salir`).
+- ✅ **Stdlib mínima**: `matematicas` (PI, E, factorial, mcd, ...), `cadenas` (repetir, contar, empieza_con, ...), `sistema` (`argv`, `salir`) y `archivos` (`leer`, `escribir`, `lineas`, `existe`, `agregar`) desde v1.8.
 - ✅ **Conversores explícitos** (v1.1): `cadena()`, `entero()`, `decimal()`, `booleano()`, `lista()`, `tupla()`, `diccionario()`.
 - ✅ **F-cadenas con interpolación real** (v1.1): `f"hola {nombre}, tienes {edad+10} en 10 anos"` evalúa cada `{expr}`. Soporta llaves dobles `{{` `}}`, expresiones complejas, anidación.
 - ✅ **Entrada interactiva** (v1.1): `leer([prompt])` lee de stdin para programas interactivos.
@@ -102,7 +102,8 @@ Hoja de ruta resumida:
 | **v1.5** | **Inline path para dunders triviales (perf 1.17x)** | ✅ |
 | **v1.6** | **Inline path unario (`__cadena__`, `__longitud__`)** | ✅ |
 | **v1.7** | **Inline path con constructor (cierre del experimento OOP-perf)** | ✅ |
-| v1.8+ | threaded dispatch o features (iteración, stdlib, funcionales) | ⏳ |
+| **v1.8** | **Stdlib `archivos` (I/O persistente)** | ✅ |
+| v1.9+ | stdlib `json`, errores atrapables en nativas, funcionales | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
@@ -156,6 +157,9 @@ cmake --build build -j
 
 **v1.4**:
 - [`30_closures_nolocal.cor`](examples/30_closures_nolocal.cor) — contador, sumador, memoización con cache, toggle compartido entre dos closures
+
+**v1.8**:
+- [`31_archivos.cor`](examples/31_archivos.cor) — I/O persistente con `archivos.escribir`/`leer`/`lineas`/`agregar`/`existe`
 
 ## Documentación
 

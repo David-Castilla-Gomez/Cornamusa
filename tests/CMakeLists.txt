@@ -356,6 +356,18 @@ set_tests_properties(bc_run_30_closures_nolocal PROPERTIES
     PASS_REGULAR_EXPRESSION "115"
 )
 
+# v1.8: stdlib archivos (I/O persistente).
+add_test(
+    NAME bc_run_31_archivos
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/31_archivos.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_31_archivos PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "evento: fin"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

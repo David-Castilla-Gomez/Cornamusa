@@ -1,0 +1,56 @@
+# Cornamusa stdlib: archivos.cor
+#
+# Lectura y escritura de archivos. Wrapper sobre los built-ins
+# `archivo_leer`, `archivo_escribir`, `archivo_lineas`,
+# `archivo_existe`, `archivo_agregar`.
+#
+# Uso:
+#   importar archivos
+#
+#   # Leer todo el contenido
+#   texto = archivos.leer("config.txt")
+#
+#   # Escribir (trunca si existe)
+#   archivos.escribir("salida.txt", "hola mundo")
+#
+#   # Lista de líneas (sin '\n' final, salvo CRLF que conserva '\r')
+#   para linea en archivos.lineas("datos.txt"):
+#       imprimir(linea)
+#   fin para
+#
+#   # Comprobar existencia antes de leer
+#   si archivos.existe("config.txt"):
+#       texto = archivos.leer("config.txt")
+#   fin si
+#
+#   # Append (útil para logs)
+#   archivos.agregar("log.txt", f"[{ahora()}] evento\n")
+#
+# Manejo de errores: si la operación falla (archivo no existe, sin
+# permisos, OOM), el programa termina con error de runtime. Los
+# errores no son atrapables vía `intentar/atrapar` en v1.8 — usa
+# `archivos.existe(ruta)` para chequear antes de leer.
+#
+# Encoding: bytes crudos. Cornamusa cadenas son UTF-8; estas funciones
+# no validan ni convierten. Si el archivo es UTF-16 u otro encoding,
+# los bytes llegan como cadenas con secuencias mal formadas.
+
+funcion leer(ruta):
+    retornar archivo_leer(ruta)
+fin funcion
+
+funcion escribir(ruta, contenido):
+    archivo_escribir(ruta, contenido)
+fin funcion
+
+funcion lineas(ruta):
+    retornar archivo_lineas(ruta)
+fin funcion
+
+funcion existe(ruta):
+    retornar archivo_existe(ruta)
+fin funcion
+
+funcion agregar(ruta, contenido):
+    archivo_agregar(ruta, contenido)
+fin funcion

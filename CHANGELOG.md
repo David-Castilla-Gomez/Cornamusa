@@ -6,6 +6,77 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.8.0] — 2026-05-01 — Stdlib `archivos` (I/O persistente)
+
+Pivot de optimización a features tras 4 experimentos de perf que
+mostraron returns decrecientes (v1.5–v1.7 + -O3). v1.8 añade lo que
+los programas reales más necesitan: persistencia de datos.
+
+### Built-ins nuevos (5)
+
+- `archivo_leer(ruta)` → cadena con todo el contenido. Lectura
+  binaria, dimensionada exactamente con `fseek`/`ftell`.
+- `archivo_escribir(ruta, contenido)` → nulo. Trunca el archivo si
+  existe.
+- `archivo_lineas(ruta)` → lista de cadenas, una por línea (split por
+  `\n`, sin la nueva línea final). La línea final con `\n` no produce
+  cadena vacía adicional (estilo `readlines` Python).
+- `archivo_existe(ruta)` → booleano. NO distingue entre "no existe"
+  y "permisos negados" — ambos retornan falso.
+- `archivo_agregar(ruta, contenido)` → nulo. Append; crea el archivo
+  si no existe. Útil para logs.
+
+### Módulo `stdlib/archivos.cor`
+
+Reexporta los built-ins con nombres amigables:
+
+```cornamusa
+importar archivos
+
+# Patrón típico:
+si archivos.existe("config.txt"):
+    contenido = archivos.leer("config.txt")
+    para linea en archivos.lineas("config.txt"):
+        imprimir(linea)
+    fin para
+fin si
+
+archivos.escribir("salida.txt", "hola mundo")
+archivos.agregar("log.txt", f"[{fecha}] evento\n")
+```
+
+### Limitaciones documentadas
+
+- **Errores no atrapables**: si fopen/fread/fwrite falla, el programa
+  termina con `ErrorDeIO`. Las nativas no soportan `intentar/atrapar`
+  (limitación preexistente). Para v1.8 esto es aceptable: usa
+  `archivos.existe(ruta)` para chequear antes de leer.
+- **Encoding**: bytes crudos. Cornamusa cadenas son UTF-8; estas
+  funciones no validan ni convierten. Archivos en otro encoding
+  (UTF-16, latín-1) llegan como bytes mal formados.
+- **Sin streaming**: `archivos.leer` carga todo el contenido en
+  memoria. Para archivos muy grandes (>100MB) esta API no es
+  apropiada — iterar `archivos.lineas` también materializa primero.
+
+### Tests y ejemplos
+
+- 6 tests unit en
+  [tests/unit/test_bytecode_archivos.c](tests/unit/test_bytecode_archivos.c):
+  round-trip, existe, lineas, agregar, errores de tipo, módulo wrapper.
+- [examples/31_archivos.cor](examples/31_archivos.cor): demo
+  completa con escribir/leer/lineas/append/existe.
+- 110/110 tests pasan (nuevo `bc_run_31_archivos` integración).
+
+### Direcciones para v1.9+
+
+- **`json` stdlib**: parse + serialize. Combinable con `archivos` da
+  un patrón completo para configs y persistencia ligera.
+- **Errores atrapables en nativas**: refactor que permita
+  `intentar archivos.leer(...) atrapar Excepcion como e: ...`.
+- **Streaming**: API basada en handlers (`con archivos.abrir(ruta)
+  como f:`) cuando lleguen los context managers.
+- **Funcionales** (`mapear`/`filtrar`/`reducir`/`enumerar`).
+
 ## [1.7.0] — 2026-05-01 — Inline path con constructor (cierre del experimento OOP)
 
 Última iteración de la serie de optimizaciones específicas de OOP

@@ -1,0 +1,47 @@
+# 31_archivos.cor — I/O de archivos con stdlib `archivos` (v1.8).
+#
+# Cornamusa v1.8 añade lectura/escritura de archivos al stdlib.
+# Los programas pueden persistir datos, leer config, procesar logs.
+
+importar archivos
+
+ruta = "/tmp/cornamusa_demo.txt"
+
+# 1. Escribir un archivo simple.
+archivos.escribir(ruta, "Hola, archivo!\nLinea 2\nLinea 3")
+imprimir("Archivo escrito en:", ruta)
+
+# 2. Leer todo el contenido.
+contenido = archivos.leer(ruta)
+imprimir("---")
+imprimir("Contenido completo:")
+imprimir(contenido)
+
+# 3. Leer linea por linea.
+imprimir("---")
+imprimir("Linea por linea:")
+n = 1
+para l en archivos.lineas(ruta):
+    imprimir(f"  {n}: {l}")
+    n = n + 1
+fin para
+
+# 4. Append a un log.
+log_ruta = "/tmp/cornamusa_log.txt"
+archivos.escribir(log_ruta, "")  # truncar
+para evento en ["inicio", "carga_datos", "procesamiento", "fin"]:
+    archivos.agregar(log_ruta, f"evento: {evento}\n")
+fin para
+
+imprimir("---")
+imprimir("Log:")
+imprimir(archivos.leer(log_ruta))
+
+# 5. Chequeo antes de leer.
+si archivos.existe(ruta):
+    imprimir(f"{ruta} existe, longitud:", longitud(archivos.leer(ruta)))
+fin si
+
+si no archivos.existe("/tmp/no_existe.xyz"):
+    imprimir("/tmp/no_existe.xyz no existe — OK")
+fin si
