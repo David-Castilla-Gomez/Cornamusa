@@ -203,6 +203,9 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     chunk_iniciar(&f->chunk);
     f->refcount = 1;
     f->n_upvalues = 0;
+    f->inline_desc.tipo = DUNDER_INLINE_NONE;
+    f->inline_desc.attr_yo = NULL;
+    f->inline_desc.attr_otro = NULL;
     return f;
 }
 
@@ -214,6 +217,9 @@ void funcion_bc_liberar(FuncionBC *f) {
     if (f->refcount > 0) return;
     chunk_destruir(&f->chunk);
     free(f->nombre);
+    /* v1.5: liberar descriptor inline si fue alocado. */
+    if (f->inline_desc.attr_yo) free(f->inline_desc.attr_yo);
+    if (f->inline_desc.attr_otro) free(f->inline_desc.attr_otro);
     gc_desenlazar(&f->obj);
     free(f);
 }

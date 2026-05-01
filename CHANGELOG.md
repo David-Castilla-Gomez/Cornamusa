@@ -6,6 +6,105 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.5.0] — 2026-05-01 — Inline path para dunders triviales
+
+Primera optimización de rendimiento del modelo OOP. Tras profilear el
+dispatch de dunders (commit 7cf37e9 con benchmarks dedicados) descubrí
+que el cuello NO es el lookup de método (~50-100ns) sino la
+preparación del CallFrame (~500ns: ~15 writes + memmove + swap
+globales). Esta versión ataca exactamente ese cuello para los dunders
+suficientemente simples.
+
+### El plan original que fue descartado
+
+Inicialmente intenté un cache de lookup (estilo F10 IC para
+atributos): cachear el `Closure *` resuelto por `clase_obtener_metodo`
+y saltar el lookup en hits subsiguientes. Speedup medido: ~5%, perdido
+en ruido. El lookup ya era barato; el costo dominante estaba en otra
+parte.
+
+Los benchmarks dedicados quedaron en
+[benchmarks/oo_dunder_aritmetico.cor](benchmarks/oo_dunder_aritmetico.cor)
+y [benchmarks/oo_dunder_indice.cor](benchmarks/oo_dunder_indice.cor)
+para validar futuras optimizaciones.
+
+### Inline path para dunders triviales
+
+Los dunders más simples encajan en patrones reconocibles en
+compile-time. Para `retornar yo.A OP otro.B` (operación binaria
+trivial entre atributos), el compilador detecta el patrón y la VM
+ejecuta inline sin crear `CallFrame`:
+
+```cornamusa
+clase Persona:
+    funcion __iniciar__(yo, edad):
+        yo.edad = edad
+    fin funcion
+
+    funcion __menor__(yo, otra):
+        retornar yo.edad < otra.edad     # ← detectado, fast path
+    fin funcion
+fin clase
+
+# `ana < luis` evita memmove + swap globales + frame init.
+```
+
+**Speedup medido**: 1.17x para el caso trivial. Modesto pero real, y
+acumulativo para programas que comparan/ordenan instancias en bucles
+hot.
+
+### Implementación
+
+- Nuevo struct `DunderInlineDesc` en
+  [src/chunk.h](src/chunk.h), incrustado en `FuncionBC`. Tipo + nombres
+  de atributos (heap-duplicados) + token del operador.
+- Detector `detectar_inline_dunder` en
+  [src/compilador.c](src/compilador.c) inspecciona el AST del cuerpo
+  tras compilarlo. Patrón soportado:
+  `SENT_BLOQUE { SENT_RETORNAR { EXPR_BINARIO(EXPR_ATRIBUTO yo,
+   op, EXPR_ATRIBUTO otro) } }` con `op` aritmético o de comparación.
+- Fast path en
+  [src/vm.c](src/vm.c) slow path de operadores binarios: si
+  `m->plantilla->inline_desc.tipo == DUNDER_INLINE_BIN_ATTR_OP_ATTR`
+  Y ambos operandos son `VAL_INSTANCIA`, lee atributos directos via
+  `dicc_obtener` y aplica `evaluador_aplicar_binario` sin frame.
+
+### Restricciones del patrón inline
+
+- Solo aridad 2 (`yo, otro`).
+- Cuerpo es exactamente UN `retornar` con expresión binaria.
+- Operandos son `EXPR_ATRIBUTO` sobre los IDENT del primer y segundo
+  parámetro respectivamente.
+- Operadores soportados: `+`, `-`, `*`, `/`, `//`, `%`, `**`, `==`,
+  `!=`, `<`, `<=`, `>`, `>=`.
+- Si los atributos no están en la instancia (poco común), se cae al
+  frame normal — el dunder real reporta el error correcto.
+
+Casos NO inlinados (siguen por frame normal — sin regresión):
+- Cuerpo con múltiples sentencias.
+- Operandos que no son atributos directos (e.g. constructores como
+  `V(yo.a + otro.a, ...)`).
+- Llamadas a otros métodos.
+- Dunders con aridad ≠ 2 (`__cadena__`, `__longitud__`, etc.).
+
+### Tests y compatibilidad
+
+- 3 tests nuevos en
+  [tests/unit/test_bytecode_dunders.c](tests/unit/test_bytecode_dunders.c):
+  inline path con suma, comparación y multiplicación + verificación de
+  que cuerpos no triviales siguen funcionando.
+- 109/109 tests pasan (sin regresión).
+- API: el descriptor es interno; ningún cambio en API pública.
+
+### Direcciones para v1.6+
+
+El inline path actual cubre solo un patrón. Extensiones razonables:
+- Patrón unario: `retornar yo.A` (`__cadena__` que envuelve un atributo).
+- Patrón ternario: `retornar yo.A si cond sino yo.B`.
+- Cuerpo con UNA llamada: `retornar V(yo.A OP otro.B, ...)` —
+  aceleraría los casos "real" actuales (`Vector + Vector`) si se
+  detectara el patrón de constructor.
+
 ## [1.4.0] — 2026-05-01 — `nolocal` + cobertura de tests
 
 Cierra el modelo de closures con la declaración explícita `nolocal` y

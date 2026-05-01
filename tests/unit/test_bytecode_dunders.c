@@ -511,6 +511,56 @@ static void test_nolocal_validacion(void) {
         "no existe en ningun scope envolvente");
 }
 
+/* ───── v1.5: inline path para dunders triviales ───── */
+
+static void test_inline_path_trivial(void) {
+    /* Patrón `retornar yo.attr OP otro.attr` debe ejecutar el fast
+       path inline (saltando el frame prep). Resultado idéntico al
+       camino lento. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __sumar__(yo, otro):\n"
+                  "    retornar yo.a + otro.a\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "x = V(10, 0) + V(7, 0)",
+                  "x", "17");
+}
+
+static void test_inline_path_no_aplica(void) {
+    /* Cuerpo no trivial (construye Vector): NO debe afectar resultado.
+       El detector lo deja en DUNDER_INLINE_NONE y va por el frame normal. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __sumar__(yo, otro):\n"
+                  "    retornar V(yo.a + otro.a, yo.b + otro.b)\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "_v = V(1, 2) + V(3, 4)\n"
+                  "x = _v.a * 100 + _v.b",
+                  "x", "406");
+}
+
+static void test_inline_path_correctness(void) {
+    /* Verifica que TODOS los operadores triviales (aritméticos +
+       comparación) producen el mismo resultado vía inline path
+       que el frame normal. */
+    /* Comparación. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __menor__(yo, otro):\n"
+                  "    retornar yo.a < otro.a\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "x = V(3, 0) < V(7, 0)",
+                  "x", "verdadero");
+    /* Multiplicación. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __multiplicar__(yo, otro):\n"
+                  "    retornar yo.a * otro.a\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "x = V(6, 0) * V(7, 0)",
+                  "x", "42");
+}
+
 int main(void) {
     test_sumar();
     test_restar_multiplicar_dividir();
@@ -539,6 +589,9 @@ int main(void) {
     test_lado_derecho_sin_reflejado_da_error();
     test_nolocal_basico();
     test_nolocal_validacion();
+    test_inline_path_trivial();
+    test_inline_path_no_aplica();
+    test_inline_path_correctness();
 
     if (fallos == 0) {
         printf("dunders: todos los tests pasan\n");

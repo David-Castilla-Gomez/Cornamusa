@@ -1642,6 +1642,104 @@ bool compilador_compilar_programa(Compilador *c, Sent **sents, int n) {
 }
 
 /*
+ * v1.5: detector de "dunder inlinable". Si el cuerpo de la función
+ * encaja en un patrón trivial reconocido, llena `fn->inline_desc`
+ * para que la VM pueda saltar la creación de CallFrame al
+ * despachar el dunder.
+ *
+ * Patrones soportados:
+ *   `retornar yo.A OP otro.B`  →  DUNDER_INLINE_BIN_ATTR_OP_ATTR
+ *
+ * Restricciones:
+ *   - El cuerpo debe ser exactamente UN SENT_RETORNAR (en SENT_BLOQUE
+ *     de 1 elemento o directo).
+ *   - La expresión retornada debe ser EXPR_BINARIO con op aritmético
+ *     o de comparación.
+ *   - Los operandos deben ser EXPR_ATRIBUTO sobre IDENT `yo` (izq) y
+ *     IDENT del segundo parámetro (der). Caso especial: el segundo
+ *     parámetro es típicamente `otro` pero puede ser cualquier nombre.
+ *
+ * Sólo aplica a funciones de aridad 2 (yo + 1 arg). Las cadenas se
+ * duplican en heap; las libera `funcion_bc_liberar`.
+ */
+static void detectar_inline_dunder(FuncionBC *fn, const Sent *fn_def) {
+    fn->inline_desc.tipo = DUNDER_INLINE_NONE;
+    if (fn->aridad != 2) return;
+    if (!fn_def || fn_def->tipo != SENT_FUNCION) return;
+    Sent *cuerpo = fn_def->como.funcion.cuerpo;
+    if (!cuerpo || cuerpo->tipo != SENT_BLOQUE) return;
+    if (cuerpo->como.bloque.n_sentencias != 1) return;
+    Sent *body = cuerpo->como.bloque.sentencias[0];
+    if (!body || body->tipo != SENT_RETORNAR) return;
+    Expr *e = body->como.retornar.valor;
+    if (!e || e->tipo != EXPR_BINARIO) return;
+    Expr *izq = e->como.binario.izq;
+    Expr *der = e->como.binario.der;
+    if (!izq || izq->tipo != EXPR_ATRIBUTO) return;
+    if (!der || der->tipo != EXPR_ATRIBUTO) return;
+    /* izq.objeto debe ser ident `yo`. */
+    Expr *izq_obj = izq->como.atributo.objeto;
+    Expr *der_obj = der->como.atributo.objeto;
+    if (!izq_obj || izq_obj->tipo != EXPR_IDENT) return;
+    if (!der_obj || der_obj->tipo != EXPR_IDENT) return;
+    /* Slot 1 es `yo` por convención del scope. Slot 2 es el segundo
+       param (típicamente `otro`). Verificamos por nombre del primer
+       parámetro y del segundo. */
+    if (fn_def->como.funcion.n_parametros != 2) return;
+    const Parametro *p0 = &fn_def->como.funcion.parametros[0];
+    const Parametro *p1 = &fn_def->como.funcion.parametros[1];
+    if (izq_obj->como.ident.longitud != p0->longitud_nombre
+        || memcmp(izq_obj->como.ident.nombre, p0->nombre,
+                   (size_t)p0->longitud_nombre) != 0) {
+        return;
+    }
+    if (der_obj->como.ident.longitud != p1->longitud_nombre
+        || memcmp(der_obj->como.ident.nombre, p1->nombre,
+                   (size_t)p1->longitud_nombre) != 0) {
+        return;
+    }
+    /* Op debe ser aritmético/comparación (no `es`/`en`/lógicos). */
+    TipoToken op = e->como.binario.op;
+    switch (op) {
+        case TT_MAS:
+        case TT_MENOS:
+        case TT_ASTERISCO:
+        case TT_BARRA:
+        case TT_DOBLE_BARRA:
+        case TT_PORCENTAJE:
+        case TT_DOBLE_ASTERISCO:
+        case TT_IGUAL:
+        case TT_DISTINTO:
+        case TT_MENOR:
+        case TT_MENOR_IGUAL:
+        case TT_MAYOR:
+        case TT_MAYOR_IGUAL:
+            break;
+        default:
+            return;
+    }
+    /* Duplicar nombres de atributos en heap. */
+    int la = izq->como.atributo.longitud;
+    int lb = der->como.atributo.longitud;
+    char *attr_yo = (char *)malloc((size_t)la + 1);
+    char *attr_otro = (char *)malloc((size_t)lb + 1);
+    if (!attr_yo || !attr_otro) {
+        free(attr_yo); free(attr_otro);
+        return;
+    }
+    memcpy(attr_yo, izq->como.atributo.nombre, (size_t)la);
+    attr_yo[la] = '\0';
+    memcpy(attr_otro, der->como.atributo.nombre, (size_t)lb);
+    attr_otro[lb] = '\0';
+    fn->inline_desc.tipo = DUNDER_INLINE_BIN_ATTR_OP_ATTR;
+    fn->inline_desc.attr_yo = attr_yo;
+    fn->inline_desc.len_attr_yo = la;
+    fn->inline_desc.attr_otro = attr_otro;
+    fn->inline_desc.len_attr_otro = lb;
+    fn->inline_desc.op_token = (int)op;
+}
+
+/*
  * Helper compartido por funciones (`SENT_FUNCION`) y métodos de clase
  * (cuerpo de `SENT_CLASE`): compila el cuerpo de la función como una
  * `FuncionBC` independiente y emite **OP_CLOSURE** en el chunk actual,
@@ -1699,6 +1797,11 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
         funcion_bc_liberar(fn);
         return false;
     }
+
+    /* v1.5: detector de dunder inlinable. Si el cuerpo encaja en un
+       patrón trivial reconocido, llena `fn->inline_desc` para que la
+       VM pueda fast-pathear el dispatch. */
+    detectar_inline_dunder(fn, s);
 
     Valor v_plantilla = valor_plantilla(fn);
     int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);

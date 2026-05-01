@@ -1240,6 +1240,44 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                             vm->tope[-2].como.instancia->clase,
                             dunder, (int)strlen(dunder));
                         if (m) {
+                            /* v1.5: fast path inline para dunders triviales
+                               `retornar yo.A OP otro.B`. Salta el frame
+                               prep entero — speedup ~1.5-2x. */
+                            const DunderInlineDesc *desc = &m->plantilla->inline_desc;
+                            if (desc->tipo == DUNDER_INLINE_BIN_ATTR_OP_ATTR
+                                && vm->tope[-1].tipo == VAL_INSTANCIA) {
+                                Valor key_yo = valor_cadena_referencia(
+                                    desc->attr_yo, desc->len_attr_yo);
+                                Valor key_otro = valor_cadena_referencia(
+                                    desc->attr_otro, desc->len_attr_otro);
+                                Valor val_yo, val_otro;
+                                bool ok_yo = dicc_obtener(
+                                    vm->tope[-2].como.instancia->atributos,
+                                    &key_yo, &val_yo);
+                                bool ok_otro = dicc_obtener(
+                                    vm->tope[-1].como.instancia->atributos,
+                                    &key_otro, &val_otro);
+                                if (ok_yo && ok_otro) {
+                                    Valor b = sacar(vm);
+                                    Valor a = sacar(vm);
+                                    Valor r = evaluador_aplicar_binario(
+                                        &vm->error, (TipoToken)desc->op_token,
+                                        val_yo, val_otro, linea, 0);
+                                    valor_destruir(&a);
+                                    valor_destruir(&b);
+                                    if (vm->error.tuvo_error) {
+                                        valor_destruir(&r);
+                                        return VM_ERROR_RUNTIME;
+                                    }
+                                    empujar(vm, r);
+                                    break;
+                                }
+                                /* Atributo faltante: liberar lo clonado y
+                                   caer al frame normal (que dará el error
+                                   de atributo correcto). */
+                                if (ok_yo) valor_destruir(&val_yo);
+                                if (ok_otro) valor_destruir(&val_otro);
+                            }
                             if (ejecutar_dunder_binario(vm, &frame, m,
                                                           dunder,
                                                           (int)strlen(dunder)) != VM_OK) {
