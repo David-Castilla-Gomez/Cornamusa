@@ -6,6 +6,72 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.6.0] — 2026-05-01 — Inline path unario (`__cadena__` y `__longitud__`)
+
+Extiende la optimización de v1.5 al patrón unario `retornar yo.A`.
+Aplica a `__cadena__` y `__longitud__` cuando el cuerpo del dunder
+simplemente devuelve un atributo. La VM lee el atributo directo
+desde el diccionario de la instancia y empuja el resultado, sin
+crear `CallFrame`.
+
+### Patrón soportado
+
+```cornamusa
+clase Wrapper:
+    funcion __iniciar__(yo, t):
+        yo.t = t
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar yo.t       # ← detectado, fast path
+    fin funcion
+
+    funcion __longitud__(yo):
+        retornar yo.t       # ← idem
+    fin funcion
+fin clase
+
+w = Wrapper("hola")
+imprimir(w)             # invoca fast path inline para __cadena__
+imprimir(longitud(w))   # invoca fast path inline para __longitud__
+```
+
+### Implementación
+
+- Nuevo valor `DUNDER_INLINE_UNARIO_ATTR` en `TipoDunderInline`
+  ([src/chunk.h](src/chunk.h)).
+- Detector ampliado en
+  [src/compilador.c](src/compilador.c): si el cuerpo de un método
+  con aridad 1 es exactamente `retornar yo.A`, llena el descriptor.
+- Fast path en [src/vm.c](src/vm.c) en los handlers de `OP_FORMATO_F`
+  y `OP_LONGITUD`: tras encontrar el dunder, si está marcado como
+  unario inline, lee atributo via `dicc_obtener` y empuja sin frame.
+
+### Restricciones
+
+- Solo aridad 1 (`yo`).
+- Cuerpo es exactamente UN `retornar EXPR_ATRIBUTO` sobre `yo`.
+- Si el atributo no está en la instancia, cae al frame normal (sin
+  regresión).
+
+### Tests y compatibilidad
+
+- 3 tests nuevos en
+  [tests/unit/test_bytecode_dunders.c](tests/unit/test_bytecode_dunders.c):
+  `__cadena__` inline, `__longitud__` inline, cuerpo no trivial
+  fuera de patrón.
+- 109/109 tests pasan.
+- API: el descriptor reusa `DunderInlineDesc` ya existente con un
+  nuevo tipo enum. Sin cambios en API pública.
+
+### Aplazado a v1.7+
+
+El patrón con constructor (`retornar V(yo.A OP otro.B, yo.C OP2 otro.D)`)
+sería el siguiente paso lógico — aceleraría el caso real más común
+(`Vector + Vector`). Requiere recursión en el detector y materialización
+del constructor en VM, lo cual añade complejidad significativa. Queda
+documentado para iteraciones futuras.
+
 ## [1.5.0] — 2026-05-01 — Inline path para dunders triviales
 
 Primera optimización de rendimiento del modelo OOP. Tras profilear el

@@ -353,6 +353,11 @@ typedef struct {
 typedef enum {
     DUNDER_INLINE_NONE = 0,
     DUNDER_INLINE_BIN_ATTR_OP_ATTR,
+    /*
+     * v1.6: `retornar yo.A`. Aridad 1. Útil para `__cadena__`
+     * que envuelve un atributo cadena o `__longitud__` que delega.
+     */
+    DUNDER_INLINE_UNARIO_ATTR,
 } TipoDunderInline;
 
 typedef struct {

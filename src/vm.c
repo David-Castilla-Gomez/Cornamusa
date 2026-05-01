@@ -2241,6 +2241,24 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         vm->tope[-1].como.instancia->clase,
                         "__cadena__", 10);
                     if (m) {
+                        /* v1.6: fast path inline si __cadena__ es
+                           `retornar yo.A`. Lee atributo directo, push,
+                           sin frame. */
+                        const DunderInlineDesc *desc = &m->plantilla->inline_desc;
+                        if (desc->tipo == DUNDER_INLINE_UNARIO_ATTR) {
+                            Valor key = valor_cadena_referencia(
+                                desc->attr_yo, desc->len_attr_yo);
+                            Valor val;
+                            if (dicc_obtener(
+                                    vm->tope[-1].como.instancia->atributos,
+                                    &key, &val)) {
+                                Valor obj = sacar(vm);
+                                valor_destruir(&obj);
+                                empujar(vm, val);
+                                break;
+                            }
+                            /* atributo faltante: cae al frame normal. */
+                        }
                         if (ejecutar_dunder_unario(vm, &frame, m,
                                                      "__cadena__", 10) != VM_OK) {
                             return VM_ERROR_RUNTIME;
@@ -2268,6 +2286,22 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         vm->tope[-1].como.instancia->clase,
                         "__longitud__", 12);
                     if (m) {
+                        /* v1.6: fast path inline si __longitud__ es
+                           `retornar yo.A`. */
+                        const DunderInlineDesc *desc = &m->plantilla->inline_desc;
+                        if (desc->tipo == DUNDER_INLINE_UNARIO_ATTR) {
+                            Valor key = valor_cadena_referencia(
+                                desc->attr_yo, desc->len_attr_yo);
+                            Valor val;
+                            if (dicc_obtener(
+                                    vm->tope[-1].como.instancia->atributos,
+                                    &key, &val)) {
+                                Valor obj = sacar(vm);
+                                valor_destruir(&obj);
+                                empujar(vm, val);
+                                break;
+                            }
+                        }
                         if (ejecutar_dunder_unario(vm, &frame, m,
                                                      "__longitud__", 12) != VM_OK) {
                             return VM_ERROR_RUNTIME;

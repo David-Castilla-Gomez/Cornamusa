@@ -561,6 +561,54 @@ static void test_inline_path_correctness(void) {
                   "x", "42");
 }
 
+/* ───── v1.6: inline path unario (retornar yo.A) ───── */
+
+static void test_inline_path_unario_cadena(void) {
+    /* `__cadena__(yo): retornar yo.x` debe inline-arse: leer atributo
+       directamente sin frame, push como cadena. */
+    verificar_var(
+        "clase W:\n"
+        "  funcion __iniciar__(yo, t):\n"
+        "    yo.t = t\n"
+        "  fin funcion\n"
+        "  funcion __cadena__(yo):\n"
+        "    retornar yo.t\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "x = f\"{W(\"hola\")}\"",
+        "x", "hola");
+}
+
+static void test_inline_path_unario_longitud(void) {
+    verificar_var(
+        "clase W:\n"
+        "  funcion __iniciar__(yo, n):\n"
+        "    yo.n = n\n"
+        "  fin funcion\n"
+        "  funcion __longitud__(yo):\n"
+        "    retornar yo.n\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "x = longitud(W(42))",
+        "x", "42");
+}
+
+static void test_inline_path_unario_no_aplica(void) {
+    /* Cuerpo más complejo (`retornar yo.x + 1`) NO encaja en el
+       patrón unario y debe ir por el frame normal (sin regresión). */
+    verificar_var(
+        "clase W:\n"
+        "  funcion __iniciar__(yo, n):\n"
+        "    yo.n = n\n"
+        "  fin funcion\n"
+        "  funcion __longitud__(yo):\n"
+        "    retornar yo.n + 1\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "x = longitud(W(10))",
+        "x", "11");
+}
+
 int main(void) {
     test_sumar();
     test_restar_multiplicar_dividir();
@@ -592,6 +640,9 @@ int main(void) {
     test_inline_path_trivial();
     test_inline_path_no_aplica();
     test_inline_path_correctness();
+    test_inline_path_unario_cadena();
+    test_inline_path_unario_longitud();
+    test_inline_path_unario_no_aplica();
 
     if (fallos == 0) {
         printf("dunders: todos los tests pasan\n");

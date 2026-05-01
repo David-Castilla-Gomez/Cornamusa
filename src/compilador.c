@@ -1664,7 +1664,6 @@ bool compilador_compilar_programa(Compilador *c, Sent **sents, int n) {
  */
 static void detectar_inline_dunder(FuncionBC *fn, const Sent *fn_def) {
     fn->inline_desc.tipo = DUNDER_INLINE_NONE;
-    if (fn->aridad != 2) return;
     if (!fn_def || fn_def->tipo != SENT_FUNCION) return;
     Sent *cuerpo = fn_def->como.funcion.cuerpo;
     if (!cuerpo || cuerpo->tipo != SENT_BLOQUE) return;
@@ -1672,7 +1671,31 @@ static void detectar_inline_dunder(FuncionBC *fn, const Sent *fn_def) {
     Sent *body = cuerpo->como.bloque.sentencias[0];
     if (!body || body->tipo != SENT_RETORNAR) return;
     Expr *e = body->como.retornar.valor;
-    if (!e || e->tipo != EXPR_BINARIO) return;
+    if (!e) return;
+
+    /* v1.6: patrón unario `retornar yo.A`. Aridad 1, cuerpo es
+       EXPR_ATRIBUTO sobre IDENT del primer parámetro. */
+    if (fn->aridad == 1 && e->tipo == EXPR_ATRIBUTO) {
+        Expr *obj = e->como.atributo.objeto;
+        if (!obj || obj->tipo != EXPR_IDENT) return;
+        if (fn_def->como.funcion.n_parametros != 1) return;
+        const Parametro *p0 = &fn_def->como.funcion.parametros[0];
+        if (obj->como.ident.longitud != p0->longitud_nombre
+            || memcmp(obj->como.ident.nombre, p0->nombre,
+                       (size_t)p0->longitud_nombre) != 0) return;
+        int la = e->como.atributo.longitud;
+        char *attr = (char *)malloc((size_t)la + 1);
+        if (!attr) return;
+        memcpy(attr, e->como.atributo.nombre, (size_t)la);
+        attr[la] = '\0';
+        fn->inline_desc.tipo = DUNDER_INLINE_UNARIO_ATTR;
+        fn->inline_desc.attr_yo = attr;
+        fn->inline_desc.len_attr_yo = la;
+        return;
+    }
+
+    if (fn->aridad != 2) return;
+    if (e->tipo != EXPR_BINARIO) return;
     Expr *izq = e->como.binario.izq;
     Expr *der = e->como.binario.der;
     if (!izq || izq->tipo != EXPR_ATRIBUTO) return;
