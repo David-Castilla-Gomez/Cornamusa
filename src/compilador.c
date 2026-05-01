@@ -1662,16 +1662,208 @@ bool compilador_compilar_programa(Compilador *c, Sent **sents, int n) {
  * Sólo aplica a funciones de aridad 2 (yo + 1 arg). Las cadenas se
  * duplican en heap; las libera `funcion_bc_liberar`.
  */
+/*
+ * v1.7: detector para `__iniciar__` trivial con exactamente 2 args:
+ *   funcion __iniciar__(yo, p1, p2):
+ *     yo.A = p1
+ *     yo.B = p2
+ *   fin funcion
+ * Llena `fn->inline_desc` con tipo INIT_INLINE_TRIVIAL_2 si encaja.
+ *
+ * Restrictivo a propósito (solo 2 args) para limitar el espacio de
+ * estados a manejar en runtime. Cubre el caso `Vector` típico.
+ */
+static void detectar_init_inline(FuncionBC *fn, const Sent *fn_def) {
+    if (fn->aridad != 3) return;  /* yo + 2 params */
+    Sent *cuerpo = fn_def->como.funcion.cuerpo;
+    if (!cuerpo || cuerpo->tipo != SENT_BLOQUE) return;
+    if (cuerpo->como.bloque.n_sentencias != 2) return;
+    if (fn_def->como.funcion.n_parametros != 2) return;
+
+    Sent *s1 = cuerpo->como.bloque.sentencias[0];
+    Sent *s2 = cuerpo->como.bloque.sentencias[1];
+    if (!s1 || s1->tipo != SENT_ASIGNAR) return;
+    if (!s2 || s2->tipo != SENT_ASIGNAR) return;
+
+    /* Cada destino: EXPR_ATRIBUTO sobre IDENT yo. */
+    Expr *d1 = s1->como.asignar.destino;
+    Expr *d2 = s2->como.asignar.destino;
+    if (!d1 || d1->tipo != EXPR_ATRIBUTO) return;
+    if (!d2 || d2->tipo != EXPR_ATRIBUTO) return;
+    Expr *o1 = d1->como.atributo.objeto;
+    Expr *o2 = d2->como.atributo.objeto;
+    if (!o1 || o1->tipo != EXPR_IDENT) return;
+    if (!o2 || o2->tipo != EXPR_IDENT) return;
+
+    /* Slot 0 nombre = la propia función; slots 1+ = params. Verificamos
+       que `yo` es el primer parámetro (típicamente literal "yo"). */
+    const Parametro *p_yo = &fn_def->como.funcion.parametros[0];
+    const Parametro *p1 = &fn_def->como.funcion.parametros[1];
+    const Parametro *p2_p = NULL;
+    /* n_parametros = 2 → el segundo es índice [1] desde nuestra cuenta? */
+    /* Re-leyendo: parametros = lista de N params. p[0]=yo, p[1]=p1, p[2]=p2.
+       Pero ¿n_parametros incluye yo? Mirando contexto, sí lo incluye
+       porque la aridad coincide. */
+    /* fn->aridad == 3 implica n_parametros == 3 (yo + 2). */
+    if (fn_def->como.funcion.n_parametros < 3) return;
+    p1 = &fn_def->como.funcion.parametros[1];
+    p2_p = &fn_def->como.funcion.parametros[2];
+
+    /* Verificar que destino[i] es yo.* */
+    #define IDENT_MATCH(nodo, p) \
+        ((nodo)->como.ident.longitud == (p)->longitud_nombre \
+         && memcmp((nodo)->como.ident.nombre, (p)->nombre, \
+                    (size_t)(p)->longitud_nombre) == 0)
+
+    if (!IDENT_MATCH(o1, p_yo)) return;
+    if (!IDENT_MATCH(o2, p_yo)) return;
+
+    /* Cada valor: EXPR_IDENT del param correspondiente. */
+    Expr *v1 = s1->como.asignar.valor;
+    Expr *v2 = s2->como.asignar.valor;
+    if (!v1 || v1->tipo != EXPR_IDENT) return;
+    if (!v2 || v2->tipo != EXPR_IDENT) return;
+    if (!IDENT_MATCH(v1, p1)) return;
+    if (!IDENT_MATCH(v2, p2_p)) return;
+
+    #undef IDENT_MATCH
+
+    /* Patron OK: duplicar nombres de atributos y guardar. */
+    int la = d1->como.atributo.longitud;
+    int lb = d2->como.atributo.longitud;
+    char *a1 = (char *)malloc((size_t)la + 1);
+    char *a2 = (char *)malloc((size_t)lb + 1);
+    if (!a1 || !a2) { free(a1); free(a2); return; }
+    memcpy(a1, d1->como.atributo.nombre, (size_t)la); a1[la] = '\0';
+    memcpy(a2, d2->como.atributo.nombre, (size_t)lb); a2[lb] = '\0';
+    fn->inline_desc.tipo = INIT_INLINE_TRIVIAL_2;
+    fn->inline_desc.init_attr1 = a1;
+    fn->inline_desc.init_attr1_len = la;
+    fn->inline_desc.init_attr2 = a2;
+    fn->inline_desc.init_attr2_len = lb;
+}
+
+/*
+ * Detector de patrón binario simple: `yo.A OP otro.B`. Devuelve true
+ * si encaja y rellena los punteros (alocados en heap). Reusable para
+ * el caso `__sumar__` simple y para los args del constructor.
+ */
+static bool extraer_attr_op_attr(const Expr *e,
+                                   const Parametro *p_yo,
+                                   const Parametro *p_otro,
+                                   char **out_attr_yo, int *out_len_yo,
+                                   char **out_attr_otro, int *out_len_otro,
+                                   int *out_op) {
+    if (!e || e->tipo != EXPR_BINARIO) return false;
+    Expr *izq = e->como.binario.izq;
+    Expr *der = e->como.binario.der;
+    if (!izq || izq->tipo != EXPR_ATRIBUTO) return false;
+    if (!der || der->tipo != EXPR_ATRIBUTO) return false;
+    Expr *izq_obj = izq->como.atributo.objeto;
+    Expr *der_obj = der->como.atributo.objeto;
+    if (!izq_obj || izq_obj->tipo != EXPR_IDENT) return false;
+    if (!der_obj || der_obj->tipo != EXPR_IDENT) return false;
+    if (izq_obj->como.ident.longitud != p_yo->longitud_nombre
+        || memcmp(izq_obj->como.ident.nombre, p_yo->nombre,
+                   (size_t)p_yo->longitud_nombre) != 0) return false;
+    if (der_obj->como.ident.longitud != p_otro->longitud_nombre
+        || memcmp(der_obj->como.ident.nombre, p_otro->nombre,
+                   (size_t)p_otro->longitud_nombre) != 0) return false;
+    TipoToken op = e->como.binario.op;
+    switch (op) {
+        case TT_MAS: case TT_MENOS: case TT_ASTERISCO: case TT_BARRA:
+        case TT_DOBLE_BARRA: case TT_PORCENTAJE: case TT_DOBLE_ASTERISCO:
+        case TT_IGUAL: case TT_DISTINTO:
+        case TT_MENOR: case TT_MENOR_IGUAL:
+        case TT_MAYOR: case TT_MAYOR_IGUAL:
+            break;
+        default:
+            return false;
+    }
+    int la = izq->como.atributo.longitud;
+    int lb = der->como.atributo.longitud;
+    char *a1 = (char *)malloc((size_t)la + 1);
+    char *a2 = (char *)malloc((size_t)lb + 1);
+    if (!a1 || !a2) { free(a1); free(a2); return false; }
+    memcpy(a1, izq->como.atributo.nombre, (size_t)la); a1[la] = '\0';
+    memcpy(a2, der->como.atributo.nombre, (size_t)lb); a2[lb] = '\0';
+    *out_attr_yo = a1;
+    *out_len_yo = la;
+    *out_attr_otro = a2;
+    *out_len_otro = lb;
+    *out_op = (int)op;
+    return true;
+}
+
+/*
+ * v1.7: detector para `__sumar__/etc.` con constructor de 2 args:
+ *   funcion __sumar__(yo, otro):
+ *     retornar V(yo.A OP otro.B, yo.C OP2 otro.D)
+ *   fin funcion
+ */
+static bool detectar_dunder_ctor(FuncionBC *fn, const Sent *fn_def, Expr *e) {
+    if (fn->aridad != 2) return false;
+    if (fn_def->como.funcion.n_parametros != 2) return false;
+    if (!e || e->tipo != EXPR_LLAMADA) return false;
+    if (e->como.llamada.n_args != 2) return false;
+    Expr *callee = e->como.llamada.callee;
+    if (!callee || callee->tipo != EXPR_IDENT) return false;
+    const Parametro *p_yo = &fn_def->como.funcion.parametros[0];
+    const Parametro *p_otro = &fn_def->como.funcion.parametros[1];
+    /* Cada arg debe ser yo.A OP otro.B. */
+    char *a1y = NULL, *a1o = NULL;
+    char *a2y = NULL, *a2o = NULL;
+    int l1y = 0, l1o = 0, l2y = 0, l2o = 0;
+    int op1 = 0, op2 = 0;
+    if (!extraer_attr_op_attr(e->como.llamada.args[0], p_yo, p_otro,
+                                &a1y, &l1y, &a1o, &l1o, &op1)) {
+        return false;
+    }
+    if (!extraer_attr_op_attr(e->como.llamada.args[1], p_yo, p_otro,
+                                &a2y, &l2y, &a2o, &l2o, &op2)) {
+        free(a1y); free(a1o);
+        return false;
+    }
+    /* Duplicar nombre de clase. */
+    int lc = callee->como.ident.longitud;
+    char *cls = (char *)malloc((size_t)lc + 1);
+    if (!cls) { free(a1y); free(a1o); free(a2y); free(a2o); return false; }
+    memcpy(cls, callee->como.ident.nombre, (size_t)lc);
+    cls[lc] = '\0';
+    fn->inline_desc.tipo = DUNDER_INLINE_BIN_CTOR_2;
+    fn->inline_desc.attr_yo = a1y;
+    fn->inline_desc.len_attr_yo = l1y;
+    fn->inline_desc.attr_otro = a1o;
+    fn->inline_desc.len_attr_otro = l1o;
+    fn->inline_desc.op_token = op1;
+    fn->inline_desc.nombre_clase = cls;
+    fn->inline_desc.len_nombre_clase = lc;
+    fn->inline_desc.ctor_arg2_attr_yo = a2y;
+    fn->inline_desc.ctor_arg2_len_yo = l2y;
+    fn->inline_desc.ctor_arg2_attr_otro = a2o;
+    fn->inline_desc.ctor_arg2_len_otro = l2o;
+    fn->inline_desc.ctor_arg2_op = op2;
+    return true;
+}
+
 static void detectar_inline_dunder(FuncionBC *fn, const Sent *fn_def) {
     fn->inline_desc.tipo = DUNDER_INLINE_NONE;
     if (!fn_def || fn_def->tipo != SENT_FUNCION) return;
     Sent *cuerpo = fn_def->como.funcion.cuerpo;
     if (!cuerpo || cuerpo->tipo != SENT_BLOQUE) return;
+
+    /* v1.7: detectar __iniciar__ trivial (2 args). */
+    detectar_init_inline(fn, fn_def);
+    if (fn->inline_desc.tipo != DUNDER_INLINE_NONE) return;
+
     if (cuerpo->como.bloque.n_sentencias != 1) return;
     Sent *body = cuerpo->como.bloque.sentencias[0];
     if (!body || body->tipo != SENT_RETORNAR) return;
     Expr *e = body->como.retornar.valor;
     if (!e) return;
+
+    /* v1.7: detectar __sumar__/etc. con constructor (`retornar V(...)`). */
+    if (detectar_dunder_ctor(fn, fn_def, e)) return;
 
     /* v1.6: patrón unario `retornar yo.A`. Aridad 1, cuerpo es
        EXPR_ATRIBUTO sobre IDENT del primer parámetro. */

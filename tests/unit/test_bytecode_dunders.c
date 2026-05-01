@@ -609,6 +609,44 @@ static void test_inline_path_unario_no_aplica(void) {
         "x", "11");
 }
 
+/* ───── v1.7: inline path con constructor ───── */
+
+static void test_inline_path_constructor(void) {
+    /* `__sumar__: retornar V(yo.a + otro.a, yo.b + otro.b)` con
+       `__iniciar__` trivial activa el fast path super-inline. */
+    verificar_var(
+        "clase V:\n"
+        "  funcion __iniciar__(yo, a, b):\n"
+        "    yo.a = a\n"
+        "    yo.b = b\n"
+        "  fin funcion\n"
+        "  funcion __sumar__(yo, otro):\n"
+        "    retornar V(yo.a + otro.a, yo.b + otro.b)\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "_v = V(1, 2) + V(3, 4)\n"
+        "x = _v.a * 100 + _v.b",
+        "x", "406");
+}
+
+static void test_inline_path_constructor_init_no_aplica(void) {
+    /* Si `__iniciar__` NO es trivial, el fast path debe caer al
+       frame normal sin regresión. */
+    verificar_var(
+        "clase V:\n"
+        "  funcion __iniciar__(yo, a, b):\n"
+        "    yo.a = a + 0\n"   /* expresión, no asignación trivial */
+        "    yo.b = b\n"
+        "  fin funcion\n"
+        "  funcion __sumar__(yo, otro):\n"
+        "    retornar V(yo.a + otro.a, yo.b + otro.b)\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "_v = V(1, 2) + V(3, 4)\n"
+        "x = _v.a * 100 + _v.b",
+        "x", "406");
+}
+
 int main(void) {
     test_sumar();
     test_restar_multiplicar_dividir();
@@ -643,6 +681,8 @@ int main(void) {
     test_inline_path_unario_cadena();
     test_inline_path_unario_longitud();
     test_inline_path_unario_no_aplica();
+    test_inline_path_constructor();
+    test_inline_path_constructor_init_no_aplica();
 
     if (fallos == 0) {
         printf("dunders: todos los tests pasan\n");

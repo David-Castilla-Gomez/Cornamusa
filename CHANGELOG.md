@@ -6,6 +6,97 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.7.0] — 2026-05-01 — Inline path con constructor (cierre del experimento OOP)
+
+Última iteración de la serie de optimizaciones específicas de OOP
+iniciada en v1.5. Implementa el patrón más ambicioso (`retornar
+V(yo.A OP otro.B, yo.C OP2 otro.D)` con `__iniciar__` trivial) y
+reporta honestamente los resultados.
+
+### Patrón soportado
+
+```cornamusa
+clase V:
+    funcion __iniciar__(yo, a, b):    # ← detectado: INIT_INLINE_TRIVIAL_2
+        yo.a = a
+        yo.b = b
+    fin funcion
+
+    funcion __sumar__(yo, otro):       # ← detectado: DUNDER_INLINE_BIN_CTOR_2
+        retornar V(yo.a + otro.a, yo.b + otro.b)
+    fin funcion
+fin clase
+```
+
+Cuando AMBAS condiciones se cumplen, la VM ejecuta `v + w`
+literalmente sin crear ningún `CallFrame`: aloca la instancia, lee
+los 4 atributos, calcula los 2 args, asigna, push.
+
+### Resultado medido (honestidad sobre returns decrecientes)
+
+- v1.6 baseline (frame normal): mediana 0.1016s.
+- v1.7 con fast path constructor: mediana 0.0960s.
+- **Speedup ~1.06x — bordeando el ruido de medición.**
+
+Este es el tercer experimento consecutivo en la serie OOP-perf:
+- v1.5 (cache de lookup): ~5%, descartado.
+- v1.6 (inline unario): ~17% en bucles tight con `__cadena__`/`__longitud__`.
+- v1.7 (inline constructor): ~6%.
+
+**Lección aprendida**: el bytecode dispatch de Cornamusa con sus IC
+F10 (atributos cacheados) y opcodes especializados (OP_LLAMAR_CLASE)
+ya es muy eficiente. Las micro-optimizaciones específicas para OOP
+tienen returns decrecientes. Para acelerar OOP de verdad hace falta
+atacar el VM dispatch global o el allocator de instancias —
+optimizaciones VM-wide, no per-pattern.
+
+### Implementación
+
+- `TipoDunderInline`: nuevos valores `INIT_INLINE_TRIVIAL_2` y
+  `DUNDER_INLINE_BIN_CTOR_2` en
+  [src/chunk.h](src/chunk.h). Campos extras en `DunderInlineDesc`
+  para nombre de clase y arg2 del constructor.
+- Detector ampliado en
+  [src/compilador.c](src/compilador.c):
+  - `detectar_init_inline`: cuerpo es 2 asignaciones `yo.A = pK`.
+  - `detectar_dunder_ctor`: cuerpo es `retornar IDENT(yo.A OP otro.B,
+    yo.C OP2 otro.D)`.
+  - Helper `extraer_attr_op_attr` reutilizable para los args.
+- Fast path en
+  [src/vm.c](src/vm.c) slow path de operadores binarios:
+  resuelve la clase por nombre en globales, verifica que su
+  `__iniciar__` sea trivial, lee 4 atributos, calcula 2 args, crea
+  instancia y asigna. Si cualquier condición falla (clase no es VAL_CLASE,
+  init no trivial, atributos faltantes), cae al frame normal.
+
+### Restricciones del patrón
+
+- Constructor debe tener exactamente 2 args (después de `yo`).
+- `__iniciar__` debe ser exactamente `yo.A = p1; yo.B = p2`.
+- Ambos args del constructor deben ser `yo.X OP otro.Y`.
+- Los 4 atributos involucrados deben existir en las instancias en
+  runtime.
+- Operadores soportados: aritméticos y comparación.
+
+### Tests y compatibilidad
+
+- 2 tests nuevos en
+  [tests/unit/test_bytecode_dunders.c](tests/unit/test_bytecode_dunders.c):
+  fast path activo con `__iniciar__` trivial; fallback al frame
+  normal cuando `__iniciar__` no es trivial.
+- 109/109 tests pasan (sin regresión).
+
+### Direcciones para v1.8+
+
+Tras tres iteraciones, **es hora de pivotar**. Los siguientes pasos
+con mayor ROI documentado:
+
+1. **Threaded code dispatch (computed gotos)** — 10-15% global, no
+   específico de OOP. Beneficia TODO el código.
+2. **Pool de mp_int** — 1.2-1.5x en bignum-heavy.
+3. **Volver a features**: dunders de iteración, stdlib (archivos,
+   json), funcionales (mapear/filtrar).
+
 ## [1.6.0] — 2026-05-01 — Inline path unario (`__cadena__` y `__longitud__`)
 
 Extiende la optimización de v1.5 al patrón unario `retornar yo.A`.

@@ -1240,10 +1240,117 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                             vm->tope[-2].como.instancia->clase,
                             dunder, (int)strlen(dunder));
                         if (m) {
+                            const DunderInlineDesc *desc = &m->plantilla->inline_desc;
+                            /* v1.7: fast path super-inline para
+                               `__sumar__: retornar V(yo.A OP otro.B,
+                               yo.C OP2 otro.D)` cuando V también tiene
+                               __iniciar__ trivial. Aloca instancia,
+                               calcula attrs, set directos — sin frames. */
+                            if (desc->tipo == DUNDER_INLINE_BIN_CTOR_2
+                                && vm->tope[-1].tipo == VAL_INSTANCIA) {
+                                /* Resolver clase por nombre en globals. */
+                                Valor key_clase = valor_cadena_referencia(
+                                    desc->nombre_clase, desc->len_nombre_clase);
+                                Valor val_clase;
+                                if (dicc_obtener(vm->globales, &key_clase,
+                                                   &val_clase)
+                                    && val_clase.tipo == VAL_CLASE) {
+                                    Clase *cl_ctor = val_clase.como.clase;
+                                    /* Verificar que __iniciar__ es INIT_INLINE_TRIVIAL_2. */
+                                    Closure *init_m = clase_obtener_metodo(
+                                        cl_ctor, "__iniciar__", 11);
+                                    if (init_m
+                                        && init_m->plantilla->inline_desc.tipo
+                                            == INIT_INLINE_TRIVIAL_2) {
+                                        const DunderInlineDesc *idesc =
+                                            &init_m->plantilla->inline_desc;
+                                        /* Leer 4 atributos. */
+                                        Valor key_a = valor_cadena_referencia(
+                                            desc->attr_yo, desc->len_attr_yo);
+                                        Valor key_b = valor_cadena_referencia(
+                                            desc->attr_otro, desc->len_attr_otro);
+                                        Valor key_c = valor_cadena_referencia(
+                                            desc->ctor_arg2_attr_yo,
+                                            desc->ctor_arg2_len_yo);
+                                        Valor key_d = valor_cadena_referencia(
+                                            desc->ctor_arg2_attr_otro,
+                                            desc->ctor_arg2_len_otro);
+                                        Valor a, b, c, d;
+                                        bool ok =
+                                            dicc_obtener(
+                                                vm->tope[-2].como.instancia->atributos,
+                                                &key_a, &a)
+                                            && dicc_obtener(
+                                                vm->tope[-1].como.instancia->atributos,
+                                                &key_b, &b)
+                                            && dicc_obtener(
+                                                vm->tope[-2].como.instancia->atributos,
+                                                &key_c, &c)
+                                            && dicc_obtener(
+                                                vm->tope[-1].como.instancia->atributos,
+                                                &key_d, &d);
+                                        if (ok) {
+                                            /* Calcular arg1 = a OP b, arg2 = c OP2 d. */
+                                            Valor arg1 = evaluador_aplicar_binario(
+                                                &vm->error, (TipoToken)desc->op_token,
+                                                a, b, linea, 0);
+                                            if (vm->error.tuvo_error) {
+                                                valor_destruir(&arg1);
+                                                valor_destruir(&c);
+                                                valor_destruir(&d);
+                                                /* a, b ya fueron consumidos por aplicar_binario. */
+                                                valor_destruir(&val_clase);
+                                                return VM_ERROR_RUNTIME;
+                                            }
+                                            Valor arg2 = evaluador_aplicar_binario(
+                                                &vm->error, (TipoToken)desc->ctor_arg2_op,
+                                                c, d, linea, 0);
+                                            if (vm->error.tuvo_error) {
+                                                valor_destruir(&arg1);
+                                                valor_destruir(&arg2);
+                                                valor_destruir(&val_clase);
+                                                return VM_ERROR_RUNTIME;
+                                            }
+                                            /* Crear instancia + set atributos directos. */
+                                            Instancia *nueva = instancia_nueva(cl_ctor);
+                                            if (!nueva) {
+                                                valor_destruir(&arg1);
+                                                valor_destruir(&arg2);
+                                                valor_destruir(&val_clase);
+                                                VM_ERROR("memoria insuficiente");
+                                                return VM_ERROR_RUNTIME;
+                                            }
+                                            Valor key_init1 = valor_cadena_duplicar(
+                                                idesc->init_attr1, idesc->init_attr1_len);
+                                            Valor key_init2 = valor_cadena_duplicar(
+                                                idesc->init_attr2, idesc->init_attr2_len);
+                                            dicc_asignar(nueva->atributos,
+                                                          key_init1, arg1);
+                                            dicc_asignar(nueva->atributos,
+                                                          key_init2, arg2);
+                                            /* Pop operandos originales y push resultado. */
+                                            Valor old_b = sacar(vm);
+                                            Valor old_a = sacar(vm);
+                                            valor_destruir(&old_a);
+                                            valor_destruir(&old_b);
+                                            valor_destruir(&val_clase);
+                                            empujar(vm, valor_instancia(nueva));
+                                            break;
+                                        }
+                                        /* Atributo faltante: liberar y caer. */
+                                        if (a.tipo != VAL_NULO || ok) valor_destruir(&a);
+                                        valor_destruir(&b);
+                                        valor_destruir(&c);
+                                        valor_destruir(&d);
+                                    }
+                                    valor_destruir(&val_clase);
+                                }
+                                /* Si llegamos aquí, alguna condición falló;
+                                   caer al frame normal. */
+                            }
                             /* v1.5: fast path inline para dunders triviales
                                `retornar yo.A OP otro.B`. Salta el frame
                                prep entero — speedup ~1.5-2x. */
-                            const DunderInlineDesc *desc = &m->plantilla->inline_desc;
                             if (desc->tipo == DUNDER_INLINE_BIN_ATTR_OP_ATTR
                                 && vm->tope[-1].tipo == VAL_INSTANCIA) {
                                 Valor key_yo = valor_cadena_referencia(

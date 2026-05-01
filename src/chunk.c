@@ -206,6 +206,11 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->inline_desc.tipo = DUNDER_INLINE_NONE;
     f->inline_desc.attr_yo = NULL;
     f->inline_desc.attr_otro = NULL;
+    f->inline_desc.init_attr1 = NULL;
+    f->inline_desc.init_attr2 = NULL;
+    f->inline_desc.nombre_clase = NULL;
+    f->inline_desc.ctor_arg2_attr_yo = NULL;
+    f->inline_desc.ctor_arg2_attr_otro = NULL;
     return f;
 }
 
@@ -217,9 +222,14 @@ void funcion_bc_liberar(FuncionBC *f) {
     if (f->refcount > 0) return;
     chunk_destruir(&f->chunk);
     free(f->nombre);
-    /* v1.5: liberar descriptor inline si fue alocado. */
+    /* v1.5+: liberar descriptor inline. Cualquier campo no-NULL es heap. */
     if (f->inline_desc.attr_yo) free(f->inline_desc.attr_yo);
     if (f->inline_desc.attr_otro) free(f->inline_desc.attr_otro);
+    if (f->inline_desc.init_attr1) free(f->inline_desc.init_attr1);
+    if (f->inline_desc.init_attr2) free(f->inline_desc.init_attr2);
+    if (f->inline_desc.nombre_clase) free(f->inline_desc.nombre_clase);
+    if (f->inline_desc.ctor_arg2_attr_yo) free(f->inline_desc.ctor_arg2_attr_yo);
+    if (f->inline_desc.ctor_arg2_attr_otro) free(f->inline_desc.ctor_arg2_attr_otro);
     gc_desenlazar(&f->obj);
     free(f);
 }

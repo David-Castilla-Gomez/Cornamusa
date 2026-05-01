@@ -358,15 +358,54 @@ typedef enum {
      * que envuelve un atributo cadena o `__longitud__` que delega.
      */
     DUNDER_INLINE_UNARIO_ATTR,
+    /*
+     * v1.7: `__iniciar__` trivial con exactamente 2 atributos:
+     *   funcion __iniciar__(yo, p1, p2):
+     *     yo.A = p1
+     *     yo.B = p2
+     *   fin funcion
+     * Permite que el constructor inline sin frame.
+     */
+    INIT_INLINE_TRIVIAL_2,
+    /*
+     * v1.7: `__sumar__/__restar__/...` con constructor de 2 args:
+     *   funcion __sumar__(yo, otro):
+     *     retornar V(yo.A OP otro.B, yo.C OP2 otro.D)
+     *   fin funcion
+     * Combinado con INIT_INLINE_TRIVIAL_2 en la clase referenciada,
+     * permite ejecutar `v + w` sin crear ningún CallFrame.
+     */
+    DUNDER_INLINE_BIN_CTOR_2,
 } TipoDunderInline;
 
 typedef struct {
     TipoDunderInline tipo;
+    /* Compartido por BIN_ATTR_OP_ATTR y UNARIO_ATTR (y arg1 del CTOR_2): */
     char *attr_yo;
     int len_attr_yo;
     char *attr_otro;
     int len_attr_otro;
     int op_token;            /* TipoToken: TT_MAS, TT_MENOS, TT_MENOR, etc. */
+
+    /* INIT_INLINE_TRIVIAL_2: los 2 atributos asignados en orden. */
+    char *init_attr1;
+    int init_attr1_len;
+    char *init_attr2;
+    int init_attr2_len;
+
+    /* DUNDER_INLINE_BIN_CTOR_2:
+     *   - `nombre_clase`: nombre del constructor (resuelto en runtime
+     *     contra globals).
+     *   - arg1: usa los campos compartidos `attr_yo`/`attr_otro`/`op_token`.
+     *   - arg2: campos dedicados ctor_arg2_*.
+     */
+    char *nombre_clase;
+    int len_nombre_clase;
+    char *ctor_arg2_attr_yo;
+    int ctor_arg2_len_yo;
+    char *ctor_arg2_attr_otro;
+    int ctor_arg2_len_otro;
+    int ctor_arg2_op;
 } DunderInlineDesc;
 
 struct FuncionBC {
