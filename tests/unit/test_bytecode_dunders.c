@@ -385,6 +385,132 @@ static void test_cadena_dunder_atajo(void) {
                   "x", "<instancia de V>");
 }
 
+/* ───── v1.4: tests adicionales del review post-v1.2 ───── */
+
+static void test_herencia_de_dunder(void) {
+    /* OP_HEREDAR copia los métodos del padre al hijo, así que el dunder
+       definido en el padre debe funcionar al sumar instancias del hijo. */
+    verificar_var(
+        "clase Base:\n"
+        "  funcion __iniciar__(yo, x):\n"
+        "    yo.x = x\n"
+        "  fin funcion\n"
+        "  funcion __sumar__(yo, otro):\n"
+        "    retornar Base(yo.x + otro.x)\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "clase Hijo extiende Base:\n"
+        "fin clase\n"
+        "h1 = Hijo(10)\n"
+        "h2 = Hijo(20)\n"
+        "_r = h1 + h2\n"
+        "x = _r.x",
+        "x", "30");
+}
+
+static void test_super_dunder(void) {
+    /* `super.__sumar__(otro)` invoca el dunder del padre desde el hijo. */
+    verificar_var(
+        "clase Base:\n"
+        "  funcion __iniciar__(yo, x):\n"
+        "    yo.x = x\n"
+        "  fin funcion\n"
+        "  funcion __sumar__(yo, otro):\n"
+        "    retornar yo.x + otro.x\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "clase Hijo extiende Base:\n"
+        "  funcion __sumar__(yo, otro):\n"
+        "    retornar super.__sumar__(otro) * 10\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "h1 = Hijo(3)\n"
+        "h2 = Hijo(4)\n"
+        "x = h1 + h2",
+        "x", "70");  /* (3+4)*10 */
+}
+
+static void test_aridad_incorrecta(void) {
+    /* __sumar__ con aridad 1 (sin `otro`) → error claro al invocar. */
+    verificar_error(DEFINE_VEC
+                    "  funcion __sumar__(yo):\n"
+                    "    retornar 42\n"
+                    "  fin funcion\n"
+                    "fin clase\n"
+                    "x = V(1, 2) + V(3, 4)",
+                    "debe aceptar 2 argumentos");
+}
+
+static void test_dunder_con_error_runtime(void) {
+    /* __sumar__ que divide por cero: el error se propaga al caller
+       (programa termina), pero no debe corromper el VM. */
+    verificar_error(DEFINE_VEC
+                    "  funcion __sumar__(yo, otro):\n"
+                    "    retornar yo.a / 0\n"
+                    "  fin funcion\n"
+                    "fin clase\n"
+                    "x = V(1, 2) + V(3, 4)",
+                    "");  /* cualquier error es OK */
+}
+
+static void test_indice_clave_no_entera(void) {
+    /* __indice__(yo, clave) acepta clave de cualquier tipo — el dunder
+       decide la semántica. NO se aplica el chequeo de "clave debe ser
+       entero" del path nativo de listas. */
+    verificar_var(DEFINE_VEC
+                  "  funcion __indice__(yo, clave):\n"
+                  "    si clave == \"primero\":\n"
+                  "      retornar yo.a\n"
+                  "    fin si\n"
+                  "    retornar yo.b\n"
+                  "  fin funcion\n"
+                  "fin clase\n"
+                  "v = V(7, 11)\n"
+                  "x = v[\"primero\"] + v[\"segundo\"]",
+                  "x", "18");
+}
+
+static void test_lado_derecho_sin_reflejado_da_error(void) {
+    /* `5 + V(1, 2)` cuando V no tiene __sumar__ ni __sumar_derecho__
+       debe dar ErrorDeTipo, NO cortar silenciosamente. */
+    verificar_error(DEFINE_VEC "fin clase\n"
+                    "v = V(1, 2)\n"
+                    "x = 5 + v",
+                    "operador");
+}
+
+/* ───── v1.4: nolocal ───── */
+
+static void test_nolocal_basico(void) {
+    verificar_var(
+        "funcion contador():\n"
+        "  n = 0\n"
+        "  funcion incrementar():\n"
+        "    nolocal n\n"
+        "    n = n + 1\n"
+        "    retornar n\n"
+        "  fin funcion\n"
+        "  retornar incrementar\n"
+        "fin funcion\n"
+        "c = contador()\n"
+        "_a = c()\n"
+        "_b = c()\n"
+        "x = c()",
+        "x", "3");
+}
+
+static void test_nolocal_validacion(void) {
+    /* nolocal con nombre que no existe en padre → error de compilación
+       (que en `verificar_error` se reporta vía `c->error.mensaje`). */
+    verificar_error(
+        "funcion f():\n"
+        "  nolocal x\n"
+        "  imprimir(x)\n"
+        "fin funcion\n"
+        "f()",
+        "no existe en ningun scope envolvente");
+}
+
 int main(void) {
     test_sumar();
     test_restar_multiplicar_dividir();
@@ -405,6 +531,14 @@ int main(void) {
     test_longitud_dunder();
     test_longitud_nativa_aun_funciona();
     test_cadena_dunder_atajo();
+    test_herencia_de_dunder();
+    test_super_dunder();
+    test_aridad_incorrecta();
+    test_dunder_con_error_runtime();
+    test_indice_clave_no_entera();
+    test_lado_derecho_sin_reflejado_da_error();
+    test_nolocal_basico();
+    test_nolocal_validacion();
 
     if (fallos == 0) {
         printf("dunders: todos los tests pasan\n");

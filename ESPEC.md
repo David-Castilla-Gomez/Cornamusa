@@ -718,13 +718,13 @@ imprimir(area_circulo(2))   # 12.566... usando matematicas.PI, no el local
 
 ### 6.8 Closures, lambdas y upvalues
 
-Las funciones definidas dentro de otra función capturan las variables del scope enclosing como **upvalues**:
+Las funciones definidas dentro de otra función capturan las variables del scope enclosing como **upvalues**. **Nota importante**: a diferencia de Python, en Cornamusa la asignación a una variable existente en un scope envolvente YA va a ese scope por default (semántica Lua). `nolocal` es una declaración EXPLÍCITA que hace la intención clara y valida que el nombre exista en algún scope padre — sin ella el código sigue funcionando, pero con ella se cazan typos en compile-time:
 
 ```cornamusa
 funcion contador():
     n = 0
     funcion siguiente():
-        nolocal n             # sin esto, `n = n+1` es asignación a local nuevo
+        nolocal n             # explícito: 'n' es del scope envolvente.
         n = n + 1
         retornar n
     fin funcion
@@ -736,6 +736,11 @@ imprimir(c())   # 1
 imprimir(c())   # 2
 imprimir(c())   # 3
 ```
+
+`nolocal x, y, z` declara múltiples nombres a la vez. Es error de compilación:
+- Usar `nolocal` fuera de una función.
+- Usar `nolocal x` cuando `x` ya es local del scope actual.
+- Usar `nolocal x` cuando `x` no existe como local en ningún scope envolvente.
 
 `lambda` define una función anónima de una sola expresión:
 

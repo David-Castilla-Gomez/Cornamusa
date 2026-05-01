@@ -1,0 +1,89 @@
+# 30_closures_nolocal.cor — closures completas con `nolocal` (v1.4).
+#
+# Cornamusa v1.4 añade `nolocal` como declaración explícita de que
+# una variable pertenece a un scope envolvente (no se crea local
+# nueva). En Cornamusa la asignación a una variable existente en un
+# scope padre YA va a ese scope por default (semántica Lua), pero
+# `nolocal` la hace explícita y valida que el nombre exista en algún
+# padre — evita typos como `nolocal contador` cuando el padre
+# declaró `cuenta`.
+
+# 1. Contador clásico con estado encapsulado.
+funcion contador(inicial):
+    n = inicial
+    funcion incrementar():
+        nolocal n
+        n = n + 1
+        retornar n
+    fin funcion
+    retornar incrementar
+fin funcion
+
+c = contador(10)
+imprimir(c())   # 11
+imprimir(c())   # 12
+imprimir(c())   # 13
+
+# 2. Acumulador con cierre.
+funcion sumador():
+    total = 0
+    funcion mas(x):
+        nolocal total
+        total = total + x
+        retornar total
+    fin funcion
+    retornar mas
+fin funcion
+
+s = sumador()
+imprimir(s(5))    # 5
+imprimir(s(10))   # 15
+imprimir(s(100))  # 115
+
+# 3. Memoization simple usando dos variables nolocal.
+funcion memoizar(f):
+    cache = {}
+    funcion cacheado(x):
+        nolocal cache
+        si x en cache:
+            retornar cache[x]
+        fin si
+        resultado = f(x)
+        cache[x] = resultado
+        retornar resultado
+    fin funcion
+    retornar cacheado
+fin funcion
+
+funcion lento(n):
+    # Imagina algo costoso aquí.
+    retornar n * n + 1
+fin funcion
+
+rapido = memoizar(lento)
+imprimir(rapido(5))   # 26
+imprimir(rapido(5))   # 26 (desde cache)
+imprimir(rapido(10))  # 101
+
+# 4. Toggle con dos closures que comparten estado.
+funcion crear_toggle():
+    estado = falso
+    funcion conmutar():
+        nolocal estado
+        estado = no estado
+        retornar estado
+    fin funcion
+    funcion ver():
+        retornar estado
+    fin funcion
+    retornar [conmutar, ver]
+fin funcion
+
+t = crear_toggle()
+conmutar = t[0]
+ver = t[1]
+
+imprimir(ver())       # falso
+imprimir(conmutar())  # verdadero
+imprimir(conmutar())  # falso
+imprimir(ver())       # falso

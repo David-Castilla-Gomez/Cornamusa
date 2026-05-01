@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.3.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.4.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -49,6 +49,7 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **Entrada interactiva** (v1.1): `leer([prompt])` lee de stdin para programas interactivos.
 - ✅ **Dunders aritméticos y de coerción** (v1.2): `Vector + Vector` invoca `__sumar__`, `imprimir(obj)` usa `__cadena__`, `obj[k]` usa `__indice__`. 14 dunders soportados (aritméticos, comparación, indexación, representación).
 - ✅ **Dunders avanzados** (v1.3): operadores reflejados (`5 + V(...)` invoca `__sumar_derecho__`), `__llamar__` (instancias callable), `__longitud__` (`longitud(obj)` invoca el dunder), `cadena(obj)` también invoca `__cadena__`.
+- ✅ **Closures completas con `nolocal`** (v1.4): declaración explícita de variables de scope envolvente con validación temprana.
 - ✅ **Tests diferenciales** tree-walking vs bytecode + **benchmarks** en [`benchmarks/`](benchmarks/).
 - ✅ **Inline caching** estilo PEP 659 con quickening por reescritura de opcode (decisión [B8](decisiones/B8-inline-caching.md)). Especializaciones: `OP_OBTENER_GLOBAL_CACHE`, `OP_LLAMAR_{NATIVA,BC,CLASE,METODO_LIGADO}`, `OP_*_INT_INT` (suma/resta/mult + comparaciones), `OP_OBTENER_ATRIBUTO_INSTANCIA` (shape cache).
 - ✅ **Small-int tagging** (decisión [B9](decisiones/B9-small-int-tagging.md)): enteros que caben en 63 bits viven inline en `Valor` sin alocar `mp_int`. Operaciones SMALL+SMALL inline con detección de overflow vía `__builtin_*_overflow`. Aritmética bignum (libtommath) sigue disponible transparentemente para enteros grandes. ~2.7x geomedia sobre v0.10 (6x en `fibonacci_recursivo`).
@@ -97,7 +98,8 @@ Hoja de ruta resumida:
 | **v1.1** | **Conversores, `leer()`, f-cadenas con interpolación real** | ✅ |
 | **v1.2** | **Dunders aritméticos, comparación, `__cadena__`, indexación** | ✅ |
 | **v1.3** | **Dunders reflejados, `__llamar__`, `__longitud__`** | ✅ |
-| v1.4+ | `nolocal`, `mapear`/`filtrar`, stdlib expandida (archivos, json) | ⏳ |
+| **v1.4** | **`nolocal` + cobertura de tests OOP** | ✅ |
+| v1.5+ | dunders de iteración, `mapear`/`filtrar`, stdlib expandida (archivos, json) | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
@@ -148,6 +150,9 @@ cmake --build build -j
 
 **v1.3**:
 - [`29_oop_avanzado.cor`](examples/29_oop_avanzado.cor) — operadores reflejados, instancias callable (`Multiplicador`), `__longitud__` (`Pila`), `Contador` con estado interno
+
+**v1.4**:
+- [`30_closures_nolocal.cor`](examples/30_closures_nolocal.cor) — contador, sumador, memoización con cache, toggle compartido entre dos closures
 
 ## Documentación
 

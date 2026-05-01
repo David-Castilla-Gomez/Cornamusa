@@ -1555,9 +1555,71 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             return true;
         }
 
+        case SENT_NOLOCAL: {
+            /*
+             * v1.4: declara que las variables listadas pertenecen a un
+             * scope envolvente, NO al actual. En Cornamusa la
+             * asignación a una variable existente en un scope padre YA
+             * va a ese scope por default (semántica Lua), así que
+             * `nolocal` es principalmente:
+             *   1. Documentación explícita de la intención.
+             *   2. Validación temprana — error si el nombre no existe
+             *      como local en ningún padre.
+             *   3. Marca para evitar que una asignación POSTERIOR a un
+             *      `agregar_local` "shadow accidental" cree una local.
+             *      (En Cornamusa esto no ocurre por la regla actual,
+             *      pero registrar el marker hace que cualquier cambio
+             *      futuro al resolver mantenga la garantía.)
+             *
+             * Validación inmediata: cada nombre debe existir como local
+             * en algún scope envolvente (no en el actual).
+             */
+            if (!c->actual->es_funcion) {
+                error_compilacion(c, s->linea, s->columna,
+                    "ErrorDeSintaxis: `nolocal` solo se permite dentro de una funcion");
+                return false;
+            }
+            int n = s->como.global_o_nolocal.n_nombres;
+            for (int i = 0; i < n; i++) {
+                const Nombre *nm = &s->como.global_o_nolocal.nombres[i];
+                /* No debe ya ser local del scope actual. */
+                if (buscar_local(c->actual, nm->texto, nm->longitud) >= 0) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "ErrorDeSintaxis: '%.*s' es local del scope actual; "
+                        "no se puede declarar `nolocal`",
+                        nm->longitud, nm->texto);
+                    return false;
+                }
+                /* Debe encontrarse en algún padre. resolver_upvalue
+                 * busca recursivamente en padres y registra como
+                 * upvalue del scope actual; aprovechamos su efecto
+                 * lateral para que la asignación posterior tenga el
+                 * upvalue ya registrado. */
+                int upv = resolver_upvalue(c, c->actual,
+                                              nm->texto, nm->longitud,
+                                              s->linea);
+                if (upv < 0) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "ErrorDeNombre: `nolocal %.*s` pero el nombre no "
+                        "existe en ningun scope envolvente",
+                        nm->longitud, nm->texto);
+                    return false;
+                }
+                /* Registrar marker. Si excedemos el cap, es un error
+                 * raro (programas con muchas declaraciones nolocal). */
+                if (c->actual->n_nolocales >= COMPILADOR_NOLOCALES_MAX) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "demasiadas declaraciones `nolocal` en un mismo scope");
+                    return false;
+                }
+                c->actual->nolocales[c->actual->n_nolocales].nombre = nm->texto;
+                c->actual->nolocales[c->actual->n_nolocales].longitud_nombre = nm->longitud;
+                c->actual->n_nolocales++;
+            }
+            return true;
+        }
         /* Sin soporte aún. */
         case SENT_GLOBAL:
-        case SENT_NOLOCAL:
             error_compilacion(c, s->linea, s->columna,
                 "esta sentencia aun no esta implementada en bytecode v0.9");
             return false;

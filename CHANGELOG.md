@@ -6,6 +6,95 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.4.0] — 2026-05-01 — `nolocal` + cobertura de tests
+
+Cierra el modelo de closures con la declaración explícita `nolocal` y
+añade tests adicionales recomendados por la revisión post-v1.2 sobre
+herencia de dunders, `super.dunder`, aridad incorrecta y casos edge.
+
+### `nolocal` (declaración de variable de scope envolvente)
+
+```cornamusa
+funcion contador(inicial):
+    n = inicial
+    funcion incrementar():
+        nolocal n
+        n = n + 1
+        retornar n
+    fin funcion
+    retornar incrementar
+fin funcion
+
+c = contador(10)
+imprimir(c())   # 11
+imprimir(c())   # 12
+```
+
+**Diferencia con Python**: en Cornamusa la asignación a una variable
+existente en un scope envolvente YA va a ese scope por default
+(semántica Lua, no Python). `nolocal` no cambia el comportamiento;
+es **declaración explícita** que valida que el nombre exista en
+algún scope padre y documenta la intención del autor.
+
+Ventajas:
+- **Validación temprana**: `nolocal contador` cuando el padre tiene
+  `cuenta` falla en compile-time, no en runtime.
+- **Lectura más clara**: marca explícitamente "esta variable es del
+  scope envolvente, no se va a crear local nueva".
+
+Reglas:
+- Solo se permite dentro de una función (no en el scope raíz).
+- El nombre NO debe ya ser local del scope actual.
+- El nombre DEBE existir como local en algún scope envolvente.
+- Múltiples nombres separados por coma: `nolocal a, b, c`.
+
+Implementación:
+- El lexer y parser ya soportaban `nolocal` desde v0.x (lista de
+  `Nombre`s reservada). v1.4 implementa el handler en
+  [src/compilador.c](src/compilador.c) caso `SENT_NOLOCAL`.
+- Nuevo array `nolocales[]` en `ScopeCompilador` (en
+  [src/compilador.h](src/compilador.h)) que registra los nombres
+  declarados.
+- Sin nuevos opcodes — el efecto se obtiene reutilizando
+  `resolver_upvalue` y `OP_ASIGNAR_UPVALUE` que ya existían.
+
+### Tests adicionales (recomendaciones del review post-v1.2)
+
+8 tests nuevos en [tests/unit/test_bytecode_dunders.c](tests/unit/test_bytecode_dunders.c):
+
+- `test_herencia_de_dunder`: `Hijo extiende Base` hereda `__sumar__`.
+- `test_super_dunder`: `super.__sumar__(otro)` desde un Hijo invoca
+  el dunder del padre.
+- `test_aridad_incorrecta`: `__sumar__(yo)` (aridad 1) → ErrorDeTipo
+  con mensaje claro al invocar.
+- `test_dunder_con_error_runtime`: `__sumar__` que divide por cero —
+  el error se propaga limpiamente, sin corromper la VM.
+- `test_indice_clave_no_entera`: `obj["clave"]` con `__indice__`
+  definido pasa la cadena al dunder sin chequeo de tipo del path
+  nativo de listas.
+- `test_lado_derecho_sin_reflejado_da_error`: `5 + V(...)` sin
+  `__sumar__` ni `__sumar_derecho__` da ErrorDeTipo.
+- `test_nolocal_basico` y `test_nolocal_validacion`: contador
+  clásico + validación temprana.
+
+### Ejemplo
+
+[examples/30_closures_nolocal.cor](examples/30_closures_nolocal.cor):
+contador, sumador, memoización con `cache`, toggle con dos closures
+que comparten estado.
+
+### Compatibilidad
+
+- Sintaxis: sin cambios. `nolocal` ya estaba reservada como palabra
+  clave; programas v1.3 que (por error) usaron `nolocal` como
+  identificador habrían fallado a parsear ya en v1.3.
+- Comportamiento observable: programas v1.3 funcionan idéntico. Los
+  que NO usaban `nolocal` siguen funcionando (la regla por default
+  ya hacía closure-write). Los que SÍ la usaban antes (poco probable)
+  ahora obtienen validación.
+
+108/108 tests pasan.
+
 ## [1.3.0] — 2026-05-01 — Dunders avanzados (reflejados, __llamar__, __longitud__)
 
 Cierra el modelo OOP de Cornamusa. v1.2 implementó los dunders básicos

@@ -344,6 +344,18 @@ set_tests_properties(bc_run_29_oop_avanzado PROPERTIES
     PASS_REGULAR_EXPRESSION "contador interno: 3"
 )
 
+# v1.4: nolocal + closures completas.
+add_test(
+    NAME bc_run_30_closures_nolocal
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/30_closures_nolocal.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_30_closures_nolocal PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "115"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

@@ -80,6 +80,20 @@ typedef struct {
  */
 #define COMPILADOR_UPVALUES_MAX 256
 
+/*
+ * Marcador de declaración `nolocal x` en el scope actual (v1.4).
+ * Cuando una sentencia `nolocal x, y` se compila, registra cada
+ * nombre aquí. La asignación posterior a `x` resolverá vía
+ * OP_ASIGNAR_UPVALUE (buscando la variable en scopes envolventes)
+ * en lugar de crear una local nueva.
+ */
+#define COMPILADOR_NOLOCALES_MAX 64
+
+typedef struct {
+    const char *nombre;
+    int longitud_nombre;
+} NolocalMarker;
+
 typedef struct ScopeCompilador {
     Chunk *chunk;             /* chunk donde se emite el código */
     bool es_funcion;          /* false en el scope top-level */
@@ -92,6 +106,12 @@ typedef struct ScopeCompilador {
 
     BucleAbierto bucles[COMPILADOR_BUCLES_MAX];
     int n_bucles;
+
+    /* v1.4: nombres declarados como `nolocal` en este scope. Antes de
+       crear una local nueva por asignación implícita, el compilador
+       consulta esta lista. */
+    NolocalMarker nolocales[COMPILADOR_NOLOCALES_MAX];
+    int n_nolocales;
 
     /* Pointer a la `FuncionBC` que estamos compilando (para llenar la
        metadata `info_upvalues` a medida que el scope captura). NULL en
