@@ -35,6 +35,7 @@ typedef enum {
     BLOQUE_CLASE,
     BLOQUE_INTENTAR,
     BLOQUE_CON,         /* v1.13: `con expr [como nombre]: ... fin con` */
+    BLOQUE_COINCIDIR,   /* v1.15: `coincidir expr: ... fin coincidir` */
 } TipoBloque;
 
 typedef struct {

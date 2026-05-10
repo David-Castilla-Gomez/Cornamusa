@@ -1,0 +1,134 @@
+# 38_coincidir.cor — pattern matching con `coincidir`/`cuando` (v1.15).
+#
+# Sintaxis:
+#   coincidir <expr>:
+#       cuando <patron> [si <guarda>]:
+#           cuerpo
+#       cuando ...
+#   fin coincidir
+#
+# Patrones soportados (v1.15):
+#   - Wildcard `_`: matchea cualquier valor sin bindear.
+#   - Literal: entero, decimal, cadena, booleano, nulo (con `-` opcional).
+#   - Bind: identificador → crea local con el valor del sujeto.
+#   - Guarda: `cuando v si v > 0:` refina el match con una expresión booleana.
+#
+# Sin fall-through entre cláusulas (matchea la primera y sale).
+
+# ─── 1. Despachador de comandos ──────────────────────────────────
+funcion ejecutar_comando(cmd):
+    coincidir cmd:
+        cuando "ayuda":
+            imprimir("  ayuda: muestra esta lista")
+            imprimir("  salir: termina el programa")
+            imprimir("  estado: muestra el estado")
+        cuando "salir":
+            imprimir("  hasta luego!")
+        cuando "estado":
+            imprimir("  todo bien")
+        cuando _:
+            imprimir(f"  comando desconocido: '{cmd}'")
+    fin coincidir
+fin funcion
+
+imprimir("=== Comandos ===")
+para c en ["ayuda", "salir", "estado", "viajar"]:
+    imprimir(f"> {c}")
+    ejecutar_comando(c)
+fin para
+imprimir("---")
+
+# ─── 2. Clasificador numérico con guardas ────────────────────────
+funcion clasificar(n):
+    coincidir n:
+        cuando 0:
+            retornar "cero"
+        cuando v si v > 0 y v < 10:
+            retornar f"pequeño positivo ({v})"
+        cuando v si v >= 10 y v < 100:
+            retornar f"mediano ({v})"
+        cuando v si v >= 100:
+            retornar f"grande ({v})"
+        cuando v si v < 0:
+            retornar f"negativo ({v})"
+        cuando _:
+            retornar "indefinido"
+    fin coincidir
+fin funcion
+
+imprimir("=== Clasificador ===")
+para n en [0, 5, 42, 500, -3]:
+    imprimir(f"  {n}: {clasificar(n)}")
+fin para
+imprimir("---")
+
+# ─── 3. Estados de un job ────────────────────────────────────────
+clase Job:
+    funcion __iniciar__(yo, id, estado):
+        yo.id = id
+        yo.estado = estado
+    fin funcion
+fin clase
+
+funcion describir(job):
+    coincidir job.estado:
+        cuando "pendiente":
+            retornar f"job #{job.id} esperando"
+        cuando "ejecutando":
+            retornar f"job #{job.id} en marcha"
+        cuando "completado":
+            retornar f"job #{job.id} listo"
+        cuando "fallido":
+            retornar f"job #{job.id} cayó"
+        cuando otro:
+            retornar f"job #{job.id} con estado raro: {otro}"
+    fin coincidir
+fin funcion
+
+imprimir("=== Jobs ===")
+trabajos = [
+    Job(1, "pendiente"),
+    Job(2, "ejecutando"),
+    Job(3, "completado"),
+    Job(4, "raro"),
+]
+para j en trabajos:
+    imprimir(describir(j))
+fin para
+imprimir("---")
+
+# ─── 4. Anidación: tipo + valor ──────────────────────────────────
+funcion procesar(t, v):
+    coincidir t:
+        cuando "entero":
+            coincidir v:
+                cuando 0:
+                    retornar "entero cero"
+                cuando v2 si v2 > 0:
+                    retornar f"entero positivo: {v2}"
+                cuando _:
+                    retornar f"entero negativo: {v}"
+            fin coincidir
+        cuando "cadena":
+            si longitud(v) == 0:
+                retornar "cadena vacía"
+            sino:
+                retornar f"cadena: '{v}' ({longitud(v)} chars)"
+            fin si
+        cuando _:
+            retornar f"tipo {t} no soportado"
+    fin coincidir
+fin funcion
+
+imprimir("=== Procesador ===")
+casos = [
+    ("entero", 0),
+    ("entero", 42),
+    ("entero", -1),
+    ("cadena", "hola"),
+    ("cadena", ""),
+    ("booleano", verdadero),
+]
+para par en casos:
+    imprimir(f"  {procesar(par[0], par[1])}")
+fin para

@@ -107,6 +107,7 @@ typedef enum {
     /* Reservadas para futuro: el lexer las reconoce, el parser las
        rechaza con mensaje específico hasta su versión de implementación */
     TT_PRODUCIR, TT_ASINCRONO, TT_ESPERAR, TT_CON, TT_BORRAR, TT_COINCIDIR,
+    TT_CUANDO,             /* v1.15: clausula de `coincidir` */
 
     /* ─── Especiales ─── */
     TT_FIN_ARCHIVO,        /* marca de fin de fuente */

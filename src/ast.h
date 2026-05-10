@@ -309,7 +309,41 @@ typedef enum {
     SENT_DESDE_IMPORTAR, /* `desde X.Y importar A [como A2], B, * ` */
     SENT_GLOBAL,         /* `global a, b, c` */
     SENT_NOLOCAL,        /* `nolocal a, b, c` */
+    SENT_COINCIDIR,      /* `coincidir expr: cuando ... fin coincidir` (v1.15) */
 } TipoSent;
+
+/*
+ * Patrones de `coincidir` (v1.15). En esta versión inicial solo
+ * literal/bind/wildcard. Tuplas/listas estructurales se aplazan.
+ */
+typedef enum {
+    PATRON_WILDCARD,     /* `_`: matches todo, no bindea */
+    PATRON_LITERAL,      /* literal entero/decimal/cadena/booleano/nulo */
+    PATRON_BIND,         /* identificador: bindea el valor a un local */
+} TipoPatron;
+
+typedef struct Patron {
+    TipoPatron tipo;
+    int linea, columna;
+    union {
+        Expr *literal;             /* PATRON_LITERAL */
+        struct {
+            const char *nombre;
+            int longitud;
+        } bind;                    /* PATRON_BIND */
+    } como;
+} Patron;
+
+/*
+ * Una cláusula `cuando` de un `coincidir`:
+ *   cuando <patron> [si <guarda>]: <cuerpo>
+ */
+typedef struct {
+    Patron *patron;
+    Expr *guarda;          /* NULL si no hay `si <guarda>` */
+    Sent *cuerpo;          /* SENT_BLOQUE */
+    int linea, columna;
+} ClausulaCuando;
 
 /*
  * Un parámetro de función o lambda. Por ESPEC §5:
@@ -464,6 +498,12 @@ struct Sent {
             Nombre *nombres;            /* lista de identificadores */
             int n_nombres;
         } global_o_nolocal;             /* compartido por SENT_GLOBAL y SENT_NOLOCAL */
+
+        struct {
+            Expr *sujeto;
+            ClausulaCuando *clausulas;
+            int n_clausulas;
+        } coincidir;
     } como;
 };
 
@@ -501,6 +541,14 @@ Sent *sent_desde_importar(Arena *a, Nombre *segmentos_modulo, int n_seg,
                            bool importa_todo, int linea, int col);
 Sent *sent_global(Arena *a, Nombre *nombres, int n_nombres, int linea, int col);
 Sent *sent_nolocal(Arena *a, Nombre *nombres, int n_nombres, int linea, int col);
+Sent *sent_coincidir(Arena *a, Expr *sujeto,
+                     ClausulaCuando *clausulas, int n_clausulas,
+                     int linea, int col);
+
+/* Constructores de patrones (v1.15). */
+Patron *patron_wildcard(Arena *a, int linea, int col);
+Patron *patron_literal(Arena *a, Expr *lit, int linea, int col);
+Patron *patron_bind(Arena *a, const char *nombre, int len, int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);

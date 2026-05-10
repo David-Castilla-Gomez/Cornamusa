@@ -652,6 +652,48 @@ Sent *sent_nolocal(Arena *a, Nombre *nombres, int n_nombres, int linea, int col)
     return s;
 }
 
+Sent *sent_coincidir(Arena *a, Expr *sujeto,
+                     ClausulaCuando *clausulas, int n_clausulas,
+                     int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_COINCIDIR, linea, col);
+    if (s) {
+        s->como.coincidir.sujeto = sujeto;
+        s->como.coincidir.clausulas = clausulas;
+        s->como.coincidir.n_clausulas = n_clausulas;
+    }
+    return s;
+}
+
+/* ───── Patrones (v1.15) ───── */
+
+static Patron *nuevo_patron(Arena *a, TipoPatron tipo, int linea, int col) {
+    Patron *p = (Patron *)arena_alocar_cero(a, sizeof(Patron));
+    if (!p) return NULL;
+    p->tipo = tipo;
+    p->linea = linea;
+    p->columna = col;
+    return p;
+}
+
+Patron *patron_wildcard(Arena *a, int linea, int col) {
+    return nuevo_patron(a, PATRON_WILDCARD, linea, col);
+}
+
+Patron *patron_literal(Arena *a, Expr *lit, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_LITERAL, linea, col);
+    if (p) p->como.literal = lit;
+    return p;
+}
+
+Patron *patron_bind(Arena *a, const char *nombre, int len, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_BIND, linea, col);
+    if (p) {
+        p->como.bind.nombre = nombre;
+        p->como.bind.longitud = len;
+    }
+    return p;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * Sentencias — pretty-printer
  *
@@ -908,6 +950,38 @@ static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
             wb_escribir(eb, ")");
             break;
         }
+
+        case SENT_COINCIDIR:
+            wb_escribir(eb, "(coincidir ");
+            expr_a_buffer(s->como.coincidir.sujeto, eb);
+            for (int i = 0; i < s->como.coincidir.n_clausulas; i++) {
+                ClausulaCuando *cw = &s->como.coincidir.clausulas[i];
+                wb_escribir(eb, " (cuando ");
+                switch (cw->patron->tipo) {
+                    case PATRON_WILDCARD:
+                        wb_escribir(eb, "_");
+                        break;
+                    case PATRON_LITERAL:
+                        expr_a_buffer(cw->patron->como.literal, eb);
+                        break;
+                    case PATRON_BIND:
+                        wb_escribir(eb, "(bind ");
+                        wb_escribir_lexema(eb, cw->patron->como.bind.nombre,
+                                            cw->patron->como.bind.longitud);
+                        wb_escribir(eb, ")");
+                        break;
+                }
+                if (cw->guarda) {
+                    wb_escribir(eb, " (si ");
+                    expr_a_buffer(cw->guarda, eb);
+                    wb_escribir(eb, ")");
+                }
+                wb_escribir(eb, " ");
+                sent_a_buffer(cw->cuerpo, eb);
+                wb_escribir(eb, ")");
+            }
+            wb_escribir(eb, ")");
+            break;
     }
 }
 

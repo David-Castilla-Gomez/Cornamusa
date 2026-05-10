@@ -675,6 +675,7 @@ static TipoToken buscar_keyword(const char *texto, int len) {
             if (COINCIDE("como"))      return TT_COMO;
             if (COINCIDE("con"))       return TT_CON;
             if (COINCIDE("continuar")) return TT_CONTINUAR;
+            if (COINCIDE("cuando"))    return TT_CUANDO;
             break;
         case 'd':
             if (COINCIDE("desde"))     return TT_DESDE;
@@ -1007,6 +1008,7 @@ const char *tipo_token_nombre(TipoToken t) {
         case TT_CON:                 return "TT_CON";
         case TT_BORRAR:              return "TT_BORRAR";
         case TT_COINCIDIR:           return "TT_COINCIDIR";
+        case TT_CUANDO:              return "TT_CUANDO";
 
         case TT_FIN_ARCHIVO:         return "TT_FIN_ARCHIVO";
         case TT_ERROR:               return "TT_ERROR";

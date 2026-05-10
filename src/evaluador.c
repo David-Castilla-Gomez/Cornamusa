@@ -1850,6 +1850,7 @@ void evaluador_ejecutar_sent(Evaluador *ev, const Sent *s) {
         case SENT_DESDE_IMPORTAR:
         case SENT_GLOBAL:
         case SENT_NOLOCAL:
+        case SENT_COINCIDIR:
             sent_set_error(ev, s,
                 "esta forma de sentencia no esta implementada en v0.4");
             return;

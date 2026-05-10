@@ -6,6 +6,102 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.15.0] — 2026-05-10 — Pattern matching (`coincidir`/`cuando`)
+
+Llega la sentencia `coincidir/cuando` (`match/case` de Python). Más
+clara que cadenas largas de `si/sino si` para despachar por valor.
+Esta versión cubre los patrones comunes: literales, bind y wildcard,
+con guardas booleanas opcionales.
+
+### Sintaxis
+
+```cornamusa
+coincidir <expr>:
+    cuando <patron> [si <guarda>]:
+        <cuerpo>
+    cuando ...
+fin coincidir
+```
+
+### Patrones soportados en v1.15
+
+| Patrón | Sintaxis | Comportamiento |
+|---|---|---|
+| Wildcard | `_` | Matchea cualquier valor sin bindear. |
+| Literal | `0`, `-1`, `3.14`, `"hola"`, `verdadero`, `falso`, `nulo` | Compara con `==`. Acepta `-`/`+` unario antes de números. |
+| Bind | `nombre` | Crea local `nombre` con el valor del sujeto. Siempre matchea. |
+| Guarda | `cuando <patron> si <expr>:` | Refina el match: solo entra al cuerpo si `expr` es verdadera. |
+
+Sin fall-through entre cláusulas: el primer `cuando` que matchea
+ejecuta su cuerpo y sale. Si ninguno matchea, el `coincidir` no hace
+nada (sin error).
+
+### Ejemplos
+
+```cornamusa
+# Despachador de comandos.
+funcion ejecutar(cmd):
+    coincidir cmd:
+        cuando "ayuda":  mostrar_ayuda()
+        cuando "salir":  terminar()
+        cuando _:        imprimir(f"desconocido: {cmd}")
+    fin coincidir
+fin funcion
+
+# Clasificador con guardas.
+funcion clasificar(n):
+    coincidir n:
+        cuando 0:                retornar "cero"
+        cuando v si v < 0:       retornar f"negativo: {v}"
+        cuando v si v > 100:     retornar "grande"
+        cuando _:                retornar "normal"
+    fin coincidir
+fin funcion
+```
+
+### Implementación
+
+- **Lexer** ([src/lexer.c](src/lexer.c)): `cuando` reservada como
+  `TT_CUANDO`. `coincidir` ya estaba en el lexer desde Fase 0.
+- **AST** ([src/ast.h](src/ast.h)): nuevo `SENT_COINCIDIR` y tipos
+  `Patron`/`ClausulaCuando`. `TipoPatron` con tres variantes
+  (WILDCARD, LITERAL, BIND).
+- **Parser** ([src/parser.c](src/parser.c)): `parsear_coincidir`
+  recolecta cláusulas; `parsear_patron` distingue `_` / identificador
+  / literal con `-` opcional.
+- **Compilador** ([src/compilador.c](src/compilador.c)):
+  `compilar_coincidir` desugar a if/else chain. Eval sujeto a slot
+  anónimo, por cada cláusula emite check de patrón + guarda + cuerpo
+  + salto al fin. Sin nuevos opcodes — reusa `OP_OBTENER_LOCAL`,
+  `OP_IGUAL`, `OP_SALTAR_SI_FALSO`, `OP_SALTAR`.
+- **Evaluador tree-walking**: rechaza con el mensaje habitual ("no
+  implementado en v0.4"). Coherente con `clase`/`intentar`/etc.
+
+### Limitaciones intencionales
+
+- **Sin patrones estructurales** en v1.15: `cuando (x, y):` o
+  `cuando [a, b]:` no soportados. Se aplazan a v1.15.x cuando haya
+  demanda real (requieren chequeo de longitud + tipo + recursión).
+- **Sin OR-patterns**: `cuando 1 | 2 | 3:` no disponible. Repetir
+  cláusulas o usar guardas.
+- **Sin type-match**: `cuando Foo(...)` no disponible. Usar
+  `instancia_de(obj, Foo)` con guarda: `cuando obj si instancia_de(obj, Foo):`.
+- **Bind no rollback**: si la guarda falla tras un bind, el local
+  queda definido (con el valor del sujeto). Sombra entre cláusulas
+  funciona normalmente.
+
+### Tests
+
+16 tests en
+[tests/unit/test_bytecode_coincidir.c](tests/unit/test_bytecode_coincidir.c)
+cubriendo todos los patrones, guardas, anidación, sintaxis errónea.
+Total: **128 verde**.
+
+Ejemplo:
+[examples/38_coincidir.cor](examples/38_coincidir.cor) con cuatro
+casos de uso: despachador de comandos, clasificador numérico, estado
+de jobs, procesador con anidación.
+
 ## [1.14.0] — 2026-05-10 — Pulido
 
 Tres mejoras menores que cierran limitaciones documentadas, más una

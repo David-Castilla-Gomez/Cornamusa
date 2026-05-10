@@ -993,6 +993,7 @@ static Sent *parsear_funcion(Parser *p);
 static Sent *parsear_clase(Parser *p);
 static Sent *parsear_intentar(Parser *p);
 static Sent *parsear_con(Parser *p);
+static Sent *parsear_coincidir(Parser *p);
 static Sent *parsear_lanzar(Parser *p);
 static Sent *parsear_importar(Parser *p);
 static Sent *parsear_desde_importar(Parser *p);
@@ -1030,6 +1031,7 @@ static bool en_inicio_de_termino(Parser *p) {
         || p->actual.tipo == TT_SINO
         || p->actual.tipo == TT_ATRAPAR
         || p->actual.tipo == TT_FINALMENTE
+        || p->actual.tipo == TT_CUANDO  /* v1.15: cuerpo de cuando termina al siguiente cuando */
         || p->actual.tipo == TT_FIN_ARCHIVO;
 }
 
@@ -1067,6 +1069,7 @@ static const char *etiqueta_para_bloque(TipoBloque t) {
         case BLOQUE_CLASE:     return "clase";
         case BLOQUE_INTENTAR:  return "intentar";
         case BLOQUE_CON:       return "con";
+        case BLOQUE_COINCIDIR: return "coincidir";
     }
     return "?";
 }
@@ -1080,6 +1083,7 @@ static TipoToken token_para_bloque(TipoBloque t) {
         case BLOQUE_CLASE:     return TT_CLASE;
         case BLOQUE_INTENTAR:  return TT_INTENTAR;
         case BLOQUE_CON:       return TT_CON;
+        case BLOQUE_COINCIDIR: return TT_COINCIDIR;
     }
     return TT_ERROR;
 }
@@ -1433,6 +1437,7 @@ Sent *parser_parsear_sentencia(Parser *p) {
         case TT_CLASE:     return parsear_clase(p);
         case TT_INTENTAR:  return parsear_intentar(p);
         case TT_CON:       return parsear_con(p);
+        case TT_COINCIDIR: return parsear_coincidir(p);
         case TT_LANZAR:    return parsear_lanzar(p);
         case TT_IMPORTAR:  return parsear_importar(p);
         case TT_DESDE:     return parsear_desde_importar(p);
@@ -1924,6 +1929,160 @@ static Sent *parsear_con(Parser *p) {
     bloque_arr[1] = s_entrar;
     bloque_arr[2] = s_intentar;
     return sent_bloque(p->arena, bloque_arr, 3, linea, col);
+}
+
+/*
+ * SENT_COINCIDIR v1.15: `coincidir expr: cuando ... fin coincidir`.
+ *
+ * Patrones soportados (versión inicial):
+ *   - Wildcard: `_`
+ *   - Bind: identificador → crea local con ese nombre.
+ *   - Literal: entero, decimal, cadena, f-cadena, booleano, nulo.
+ *     Acepta unario `-` o `+` antes (para `-1`, `-3.14`).
+ *
+ * Cláusula `cuando <patron> [si <guarda>]: cuerpo`. La guarda es una
+ * expresión booleana opcional que refina el match: solo entra al
+ * cuerpo si el patrón matchea Y la guarda es verdadera.
+ *
+ * El cuerpo de cada `cuando` se parsea hasta el siguiente `cuando`,
+ * `fin`, `sino` o EOF. Sin fall-through entre cláusulas.
+ *
+ * Aplazadas a v1.15+: tuplas `(p1, p2)`, listas `[p1, p2]`, OR-
+ * patterns `p1 | p2`, type-match `Foo(p1, p2)`.
+ */
+static Patron *parsear_patron(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+
+    /* Wildcard `_`. Convención: identificador exactamente igual a `_`. */
+    if (p->actual.tipo == TT_IDENT
+        && p->actual.longitud == 1 && p->actual.inicio[0] == '_') {
+        avanzar(p);
+        return patron_wildcard(p->arena, linea, col);
+    }
+
+    /* Bind: identificador (no `_`). */
+    if (p->actual.tipo == TT_IDENT) {
+        const char *nombre = p->actual.inicio;
+        int len = p->actual.longitud;
+        avanzar(p);
+        return patron_bind(p->arena, nombre, len, linea, col);
+    }
+
+    /* Literal: aceptamos los token-types que producen expresiones
+       literales atómicas, opcionalmente precedidos por `-` o `+`
+       unario. */
+    bool negar = false;
+    if (p->actual.tipo == TT_MENOS) {
+        negar = true;
+        avanzar(p);
+    } else if (p->actual.tipo == TT_MAS) {
+        avanzar(p);
+    }
+    Expr *e = NULL;
+    Token t = p->actual;
+    switch (t.tipo) {
+        case TT_ENTERO:
+            avanzar(p);
+            e = expr_literal_entero(p->arena, t.inicio, t.longitud,
+                                      t.linea, t.columna);
+            break;
+        case TT_DECIMAL:
+            avanzar(p);
+            e = expr_literal_decimal(p->arena, t.inicio, t.longitud,
+                                       t.linea, t.columna);
+            break;
+        case TT_CADENA:
+            avanzar(p);
+            e = expr_literal_cadena(p->arena, t.inicio, t.longitud,
+                                      t.linea, t.columna);
+            break;
+        case TT_VERDADERO:
+            avanzar(p);
+            e = expr_literal_booleano(p->arena, true, t.linea, t.columna);
+            break;
+        case TT_FALSO:
+            avanzar(p);
+            e = expr_literal_booleano(p->arena, false, t.linea, t.columna);
+            break;
+        case TT_NULO:
+            avanzar(p);
+            e = expr_literal_nulo(p->arena, t.linea, t.columna);
+            break;
+        default:
+            error_en(p, &t, "patron invalido en 'cuando'");
+            return NULL;
+    }
+    if (e == NULL) return NULL;
+    if (negar) {
+        e = expr_unario(p->arena, TT_MENOS, e, linea, col);
+        if (e == NULL) return NULL;
+    }
+    return patron_literal(p->arena, e, linea, col);
+}
+
+static Sent *parsear_coincidir(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'coincidir' */
+
+    Expr *sujeto = parser_parsear_expr(p);
+    if (sujeto == NULL) return NULL;
+    if (!consumir(p, TT_DOS_PUNTOS,
+            "se esperaba ':' tras la expresion de 'coincidir'")) {
+        return NULL;
+    }
+
+    if (!empujar_bloque(p, BLOQUE_COINCIDIR, linea)) return NULL;
+
+    /* Recolectar cláusulas `cuando`. */
+    ClausulaCuando *clausulas = NULL;
+    int n = 0, cap = 0;
+    while (check(p, TT_CUANDO)) {
+        if (n >= cap) {
+            cap = cap == 0 ? 4 : cap * 2;
+            ClausulaCuando *nuevo = (ClausulaCuando *)arena_alocar(p->arena,
+                sizeof(ClausulaCuando) * (size_t)cap);
+            if (nuevo == NULL) { salir_bloque(p); return NULL; }
+            if (n > 0) memcpy(nuevo, clausulas,
+                              sizeof(ClausulaCuando) * (size_t)n);
+            clausulas = nuevo;
+        }
+        ClausulaCuando *cw = &clausulas[n];
+        cw->linea = p->actual.linea;
+        cw->columna = p->actual.columna;
+        avanzar(p); /* 'cuando' */
+
+        cw->patron = parsear_patron(p);
+        if (cw->patron == NULL) { salir_bloque(p); return NULL; }
+
+        cw->guarda = NULL;
+        if (consumir_si(p, TT_SI)) {
+            cw->guarda = parser_parsear_expr(p);
+            if (cw->guarda == NULL) { salir_bloque(p); return NULL; }
+        }
+
+        if (!consumir(p, TT_DOS_PUNTOS,
+                "se esperaba ':' tras el patron de 'cuando'")) {
+            salir_bloque(p);
+            return NULL;
+        }
+        cw->cuerpo = parsear_cuerpo_bloque(p);
+        if (cw->cuerpo == NULL) { salir_bloque(p); return NULL; }
+        n++;
+    }
+
+    salir_bloque(p);
+
+    if (n == 0) {
+        error_en(p, &p->actual,
+            "'coincidir' debe tener al menos una clausula 'cuando'");
+        return NULL;
+    }
+
+    if (!consumir_fin(p, BLOQUE_COINCIDIR, linea)) return NULL;
+
+    return sent_coincidir(p->arena, sujeto, clausulas, n, linea, col);
 }
 
 static Sent *parsear_lanzar(Parser *p) {

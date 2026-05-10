@@ -107,8 +107,11 @@ Todas las palabras clave son **ASCII puro, sin tildes ni `ñ`, en minúscula** (
 | `falso` | booleano falso |
 | `nulo` | ausencia de valor |
 
+#### Implementadas en versiones recientes
+`con` (v1.13, context managers), `coincidir`/`cuando` (v1.15, pattern matching).
+
 #### Reservadas para futuro
-`producir`, `asincrono`, `esperar`, `con`, `borrar`, `coincidir` (match-case).
+`producir`, `asincrono`, `esperar`, `borrar`.
 
 ### 2.4 Operadores y puntuación
 
@@ -956,9 +959,9 @@ fin intentar
 
 ### Reservas para v1.x (no implementadas en v0.11.4)
 
-1. **F-strings con expresiones**. El parser acepta `f"hola {nombre}"`, pero la VM aún no las interpola. Llegarán en v1.1+.
-2. **`con` (context managers)**. Reservada como keyword. Implementación pendiente.
-3. **Pattern matching (`coincidir`)**. Reservada como keyword. Diseño pendiente.
+1. **F-strings con expresiones**. ✅ Implementadas en v1.1.0. Triples en v1.14.0.
+2. **`con` (context managers)**. ✅ Implementada en v1.13.0.
+3. **Pattern matching (`coincidir`)**. ✅ Implementada en v1.15.0 (literales, bind, wildcard, guardas). Patrones estructurales pendientes.
 4. **`borrar` (`del` de Python)**. Reservada.
 5. **Generadores (`producir` ≈ `yield`)**. Reservada.
 6. **Async/await (`asincrono`/`esperar`)**. Reservadas. v2.0+.

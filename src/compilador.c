@@ -1185,6 +1185,114 @@ static bool compilar_si(Compilador *c, const Sent *s) {
 }
 
 /*
+ * SENT_COINCIDIR v1.15: desugar a if/else chain.
+ *
+ * Layout del bytecode emitido:
+ *
+ *     [eval sujeto]                     ; tope=sujeto
+ *     ; sujeto pasa a un local anónimo (slot S).
+ *     para cada cláusula i con patron P_i, guarda G_i, cuerpo B_i:
+ *         test_match P_i contra slot S:
+ *             - WILDCARD: no test (siempre match).
+ *             - LITERAL:  push slot S, push lit, OP_IGUAL, OP_SALTAR_SI_FALSO L_no.
+ *             - BIND:     push slot S, agregar_local(nombre).
+ *         si G_i: eval G, OP_SALTAR_SI_FALSO L_no.
+ *         compilar B_i.
+ *         OP_SALTAR L_fin.
+ *         L_no: OP_DESCARTAR (limpia booleano del SALTAR_SI_FALSO).
+ *     L_fin:
+ *         OP_DESCARTAR (libera el sujeto del slot S).
+ *
+ * Nota: los locals creados por PATRON_BIND no se "rollback" al fallar
+ * la guarda — el slot vive hasta el fin del scope. Si dos cláusulas
+ * usan el mismo nombre de bind, la segunda sombra la primera.
+ */
+static bool compilar_coincidir(Compilador *c, const Sent *s) {
+    int n = s->como.coincidir.n_clausulas;
+    if (n > 256) {
+        error_compilacion(c, s->linea, s->columna,
+            "demasiadas clausulas 'cuando' en 'coincidir' (>256)");
+        return false;
+    }
+
+    /* Eval sujeto y dejarlo como local anónimo. */
+    if (!compilador_compilar_expr(c, s->como.coincidir.sujeto)) return false;
+    int slot_sujeto = agregar_local(c, "", 0, s->linea);
+    if (slot_sujeto < 0) return false;
+
+    int saltos_fin[256];
+    int n_saltos_fin = 0;
+
+    for (int i = 0; i < n; i++) {
+        ClausulaCuando *cw = &s->como.coincidir.clausulas[i];
+        Patron *pat = cw->patron;
+        int salto_no_match = -1;
+
+        switch (pat->tipo) {
+            case PATRON_WILDCARD:
+                /* Siempre match. No emit nada. */
+                break;
+            case PATRON_LITERAL:
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                    (uint8_t)slot_sujeto, cw->linea);
+                if (!compilador_compilar_expr(c, pat->como.literal)) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_IGUAL, cw->linea);
+                salto_no_match = emitir_salto(c, OP_SALTAR_SI_FALSO, cw->linea);
+                /* TRUE branch: descartar el booleano y caer al cuerpo. */
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+                break;
+            case PATRON_BIND: {
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                    (uint8_t)slot_sujeto, cw->linea);
+                int slot_bind = agregar_local(c, pat->como.bind.nombre,
+                                                pat->como.bind.longitud,
+                                                cw->linea);
+                if (slot_bind < 0) return false;
+                /* OP_OBTENER_LOCAL puso una copia del sujeto en el tope.
+                   agregar_local registra un nuevo slot en ese tope. No
+                   emitir nada más: el local ya tiene el valor. */
+                break;
+            }
+        }
+
+        /* Guarda opcional. */
+        int salto_guarda_falso = -1;
+        if (cw->guarda) {
+            if (!compilador_compilar_expr(c, cw->guarda)) return false;
+            salto_guarda_falso = emitir_salto(c, OP_SALTAR_SI_FALSO, cw->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+        }
+
+        /* Cuerpo. */
+        if (!compilador_compilar_sent(c, cw->cuerpo)) return false;
+
+        /* Salto al fin del coincidir. */
+        saltos_fin[n_saltos_fin++] = emitir_salto(c, OP_SALTAR, cw->linea);
+
+        /* Aterrizajes de no-match. */
+        if (salto_no_match >= 0) {
+            parchear_salto(c, salto_no_match, cw->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+        }
+        if (salto_guarda_falso >= 0) {
+            parchear_salto(c, salto_guarda_falso, cw->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+        }
+    }
+
+    /* Parchear todos los saltos al fin. */
+    for (int i = 0; i < n_saltos_fin; i++) {
+        parchear_salto(c, saltos_fin[i], s->linea);
+    }
+    /* Descartar el local del sujeto: el slot quedará reservado hasta
+       el fin del scope, pero su valor se libera. Para liberarlo
+       tendríamos que emit OP_DESCARTAR + decrementar n_locales — pero
+       eso interferiría con los slots BIND añadidos. Aceptamos que el
+       sujeto vive hasta el fin del scope (igual que los BIND). */
+    return true;
+}
+
+/*
  * SENT_MIENTRAS:
  *
  * inicio_cond:
@@ -1307,6 +1415,9 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
 
         case SENT_SI:
             return compilar_si(c, s);
+
+        case SENT_COINCIDIR:
+            return compilar_coincidir(c, s);
 
         case SENT_MIENTRAS:
             return compilar_mientras(c, s);
