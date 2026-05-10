@@ -842,9 +842,48 @@ static Valor nativa_quitar(EvalError *err, int n_args, Valor *args,
         return error_nativa(err, linea, columna,
             "ErrorDeTipo: quitar() requiere 1 o 2 argumentos, recibio %d", n_args);
     }
+    /* v1.16.1: además de listas, soporta diccionarios y conjuntos. */
+    if (args[0].tipo == VAL_DICCIONARIO) {
+        if (n_args != 2) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: quitar(dicc, clave) requiere 2 argumentos");
+        }
+        if (!valor_es_hashable(&args[1])) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: '%s' no es hashable como clave",
+                valor_nombre_tipo(&args[1]));
+        }
+        Valor extraido;
+        if (!dicc_quitar(args[0].como.dicc, &args[1], &extraido)) {
+            char clave_buf[256];
+            valor_a_repr(&args[1], clave_buf, sizeof(clave_buf));
+            return error_nativa(err, linea, columna,
+                "ErrorDeClave: clave %s no presente en diccionario",
+                clave_buf);
+        }
+        return extraido;
+    }
+    if (args[0].tipo == VAL_CONJUNTO) {
+        if (n_args != 2) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: quitar(conjunto, elemento) requiere 2 argumentos");
+        }
+        if (!valor_es_hashable(&args[1])) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: '%s' no es hashable como elemento de conjunto",
+                valor_nombre_tipo(&args[1]));
+        }
+        if (!conj_quitar(args[0].como.conjunto, &args[1])) {
+            char buf[256];
+            valor_a_repr(&args[1], buf, sizeof(buf));
+            return error_nativa(err, linea, columna,
+                "ErrorDeClave: elemento %s no presente en conjunto", buf);
+        }
+        return valor_nulo();
+    }
     if (args[0].tipo != VAL_LISTA) {
         return error_nativa(err, linea, columna,
-            "ErrorDeTipo: quitar() requiere una lista, no '%s'",
+            "ErrorDeTipo: quitar() requiere una lista, diccionario o conjunto, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
     Lista *l = args[0].como.lista;
@@ -1680,7 +1719,16 @@ static void jo_escape_cadena(JsonOut *o, const char *s, int n) {
     jo_append_char(o, '"');
 }
 
-static bool js_serializar(JsonOut *o, const Valor *v, char *err, int err_cap) {
+/* v1.16.1: emite indentación según `nivel` (cuenta de aperturas
+   anidadas) e `indent` (espacios por nivel). NO emite si indent=0. */
+static void jo_indent(JsonOut *o, int indent, int nivel) {
+    if (indent <= 0) return;
+    jo_append_char(o, '\n');
+    for (int i = 0; i < nivel * indent; i++) jo_append_char(o, ' ');
+}
+
+static bool js_serializar(JsonOut *o, const Valor *v, int indent, int nivel,
+                            char *err, int err_cap) {
     if (o->oom) { snprintf(err, err_cap, "memoria insuficiente"); return false; }
     switch (v->tipo) {
         case VAL_NULO: jo_append_str(o, "null"); return true;
@@ -1733,22 +1781,28 @@ static bool js_serializar(JsonOut *o, const Valor *v, char *err, int err_cap) {
             jo_escape_cadena(o, v->como.cadena.texto, v->como.cadena.longitud);
             return true;
         case VAL_LISTA: {
-            jo_append_char(o, '[');
             Lista *l = v->como.lista;
+            jo_append_char(o, '[');
             for (int i = 0; i < l->cuenta; i++) {
                 if (i > 0) jo_append_char(o, ',');
-                if (!js_serializar(o, &l->elementos[i], err, err_cap)) return false;
+                jo_indent(o, indent, nivel + 1);
+                if (!js_serializar(o, &l->elementos[i], indent, nivel + 1,
+                                    err, err_cap)) return false;
             }
+            if (l->cuenta > 0) jo_indent(o, indent, nivel);
             jo_append_char(o, ']');
             return true;
         }
         case VAL_TUPLA: {
-            jo_append_char(o, '[');
             Tupla *t = v->como.tupla;
+            jo_append_char(o, '[');
             for (int i = 0; i < t->cuenta; i++) {
                 if (i > 0) jo_append_char(o, ',');
-                if (!js_serializar(o, &t->elementos[i], err, err_cap)) return false;
+                jo_indent(o, indent, nivel + 1);
+                if (!js_serializar(o, &t->elementos[i], indent, nivel + 1,
+                                    err, err_cap)) return false;
             }
+            if (t->cuenta > 0) jo_indent(o, indent, nivel);
             jo_append_char(o, ']');
             return true;
         }
@@ -1764,13 +1818,17 @@ static bool js_serializar(JsonOut *o, const Valor *v, char *err, int err_cap) {
                     return false;
                 }
                 if (impreso > 0) jo_append_char(o, ',');
+                jo_indent(o, indent, nivel + 1);
                 jo_escape_cadena(o,
                     d->entradas[i].clave.como.cadena.texto,
                     d->entradas[i].clave.como.cadena.longitud);
                 jo_append_char(o, ':');
-                if (!js_serializar(o, &d->entradas[i].valor, err, err_cap)) return false;
+                if (indent > 0) jo_append_char(o, ' ');
+                if (!js_serializar(o, &d->entradas[i].valor, indent, nivel + 1,
+                                    err, err_cap)) return false;
                 impreso++;
             }
+            if (impreso > 0) jo_indent(o, indent, nivel);
             jo_append_char(o, '}');
             return true;
         }
@@ -1784,10 +1842,23 @@ static bool js_serializar(JsonOut *o, const Valor *v, char *err, int err_cap) {
 
 static Valor nativa_json_serializar(EvalError *err, int n_args, Valor *args,
                                       int linea, int columna) {
-    if (n_args != 1) {
+    if (n_args < 1 || n_args > 2) {
         return error_nativa(err, linea, columna,
-            "ErrorDeTipo: json_serializar() requiere 1 argumento, recibio %d",
+            "ErrorDeTipo: json_serializar() acepta 1 o 2 argumentos, recibio %d",
             n_args);
+    }
+    /* v1.16.1: segundo argumento opcional `indentar` para pretty-print.
+       0 = compacto (default, comportamiento v1.9). >0 = espacios por
+       nivel. Negativo o no-entero: ErrorDeTipo. */
+    int indent = 0;
+    if (n_args == 2) {
+        int64_t k;
+        if (!valor_entero_a_i64(&args[1], &k) || k < 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: json_serializar() requiere entero >= 0 como 'indentar'");
+        }
+        if (k > 32) k = 32;  /* clamp razonable */
+        indent = (int)k;
     }
     JsonOut o;
     jo_iniciar(&o);
@@ -1797,7 +1868,7 @@ static Valor nativa_json_serializar(EvalError *err, int n_args, Valor *args,
     }
     char err_local[256];
     err_local[0] = '\0';
-    if (!js_serializar(&o, &args[0], err_local, sizeof(err_local))) {
+    if (!js_serializar(&o, &args[0], indent, 0, err_local, sizeof(err_local))) {
         free(o.buf);
         return error_nativa(err, linea, columna, "%s", err_local);
     }

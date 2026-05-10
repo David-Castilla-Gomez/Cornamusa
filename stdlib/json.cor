@@ -40,6 +40,13 @@ funcion parsear(texto):
     retornar json_parsear(texto)
 fin funcion
 
+# Serializa `valor` a JSON. Por defecto compacto (sin espacios extra).
 funcion serializar(valor):
     retornar json_serializar(valor)
+fin funcion
+
+# Pretty-print con indentación (v1.16.1). `indent` es el número de
+# espacios por nivel de anidación. Tipo común: indent=2 o indent=4.
+funcion serializar_indentado(valor, indent):
+    retornar json_serializar(valor, indent)
 fin funcion

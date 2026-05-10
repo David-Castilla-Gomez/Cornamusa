@@ -6,6 +6,79 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.16.1] — 2026-05-10 — Patches: JSON pretty-print + `quitar` extendido
+
+Patches menores que cierran limitaciones documentadas.
+
+### JSON pretty-print
+
+`json.serializar(obj, indent)` ahora acepta un segundo argumento
+opcional con el número de espacios por nivel de anidación. Útil para
+configs y logs legibles:
+
+```cornamusa
+importar json
+
+cfg = {
+    "version": "1.16.1",
+    "tags": ["lenguaje", "castellano"],
+    "config": {"debug": falso, "puerto": 8080}
+}
+
+# Compacto (default v1.9):
+imprimir(json.serializar(cfg))
+# {"version":"1.16.1","tags":["lenguaje","castellano"],"config":{"debug":false,"puerto":8080}}
+
+# Indentado:
+imprimir(json.serializar_indentado(cfg, 2))
+# {
+#   "version": "1.16.1",
+#   "tags": [
+#     "lenguaje",
+#     "castellano"
+#   ],
+#   "config": {
+#     "debug": false,
+#     "puerto": 8080
+#   }
+# }
+```
+
+`indent=0` mantiene compatibilidad exacta con v1.9. `indent < 0` o no
+entero produce `ErrorDeTipo` atrapable. Clamp a 32 espacios por nivel
+para evitar abuso.
+
+### `quitar` extendido a diccionarios y conjuntos
+
+ESPEC §4.1 documentaba `quitar(lista_o_dicc_o_conj, clave_o_indice)`,
+pero la implementación de v0.5 solo cubría listas. v1.16.1 cierra
+esto:
+
+```cornamusa
+d = {"a": 1, "b": 2}
+v = quitar(d, "a")          # v = 1, d = {"b": 2}
+
+s = conjunto([1, 2, 3])
+quitar(s, 2)                # s ahora tiene {1, 3}
+
+# Errores atrapables:
+intentar:
+    quitar(d, "no_existe")
+atrapar ErrorDeClave como e:
+    imprimir(f"capturado: {e}")
+fin intentar
+```
+
+Para diccionario retorna el valor extraído (igual que `dict.pop` de
+Python). Para conjunto retorna `nulo` (no hay valor asociado). Si la
+clave/elemento no está, `ErrorDeClave` atrapable.
+
+### Tests
+
+10 tests nuevos en
+[tests/unit/test_bytecode_v161.c](tests/unit/test_bytecode_v161.c)
+para JSON indent y `quitar` extendido. Total: **132 verde**.
+
 ## [1.16.0] — 2026-05-10 — Patrones estructurales en `coincidir`
 
 Extiende v1.15 con patrones de tupla y lista, soportando anidación
