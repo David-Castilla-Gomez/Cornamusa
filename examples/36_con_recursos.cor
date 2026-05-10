@@ -1,0 +1,136 @@
+# 36_con_recursos.cor — context managers con `con` (v1.13).
+#
+# La keyword `con` ejecuta `__entrar__` antes del cuerpo y `__salir__`
+# después, **incluso si el cuerpo lanza una excepción**. Útil para
+# recursos que deben liberarse: locks, transacciones, conexiones,
+# archivos temporales.
+#
+# Sintaxis:
+#   con <expr> [como <nombre>]:
+#       cuerpo
+#   fin con
+#
+# Equivale a:
+#   _ctx = <expr>
+#   <nombre> = _ctx.__entrar__()
+#   intentar:
+#       cuerpo
+#   finalmente:
+#       _ctx.__salir__()
+#   fin intentar
+#
+# Limitación v1.13: `__salir__` se invoca sin argumentos (no recibe la
+# excepción). Versiones futuras pasarán (tipo, valor, traceback).
+
+# ─── 1. Lock simulado ────────────────────────────────────────────
+clase Lock:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+        yo.tomado = falso
+    fin funcion
+
+    funcion __entrar__(yo):
+        si yo.tomado:
+            lanzar ErrorDeValor(f"lock '{yo.nombre}' ya tomado")
+        fin si
+        yo.tomado = verdadero
+        imprimir(f"  [adquirido {yo.nombre}]")
+        retornar yo
+    fin funcion
+
+    funcion __salir__(yo):
+        yo.tomado = falso
+        imprimir(f"  [liberado {yo.nombre}]")
+    fin funcion
+fin clase
+
+imprimir("=== Lock con cuerpo normal ===")
+mutex = Lock("base_datos")
+con mutex como m:
+    imprimir(f"  trabajando bajo {m.nombre}")
+fin con
+imprimir(f"  estado final: tomado = {mutex.tomado}")
+imprimir("---")
+
+imprimir("=== Lock con cuerpo que lanza ===")
+intentar:
+    con mutex como m:
+        imprimir(f"  trabajando bajo {m.nombre}")
+        lanzar ErrorDeValor("explotó el cálculo")
+    fin con
+atrapar ErrorDeValor como e:
+    imprimir(f"  capturado: {e}")
+fin intentar
+# El lock DEBE estar liberado pese a la excepción.
+imprimir(f"  estado final: tomado = {mutex.tomado}")
+imprimir("---")
+
+# ─── 2. Transacción simulada (commit / rollback) ────────────────
+clase Transaccion:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+        yo.operaciones = []
+        yo.activa = falso
+    fin funcion
+
+    funcion __entrar__(yo):
+        yo.activa = verdadero
+        imprimir(f"  BEGIN {yo.nombre}")
+        retornar yo
+    fin funcion
+
+    funcion __salir__(yo):
+        # En una transacción real distinguiríamos commit (sin error)
+        # de rollback (con error). Como `__salir__` no recibe el
+        # estado de excepción en v1.13, asumimos commit.
+        yo.activa = falso
+        imprimir(f"  COMMIT {yo.nombre}: {longitud(yo.operaciones)} operacion(es)")
+    fin funcion
+
+    funcion ejecutar(yo, op):
+        agregar(yo.operaciones, op)
+        imprimir(f"  ejecuto: {op}")
+    fin funcion
+fin clase
+
+imprimir("=== Transacción ===")
+con Transaccion("config") como tx:
+    tx.ejecutar("INSERT cfg.debug = falso")
+    tx.ejecutar("INSERT cfg.puerto = 8080")
+fin con
+imprimir("---")
+
+# ─── 3. Anidación: lock + transacción ────────────────────────────
+imprimir("=== Anidados ===")
+db_lock = Lock("db")
+con db_lock:
+    con Transaccion("cuenta") como tx:
+        tx.ejecutar("UPDATE saldo SET saldo = 100")
+    fin con
+fin con
+imprimir("---")
+
+# ─── 4. Sin alias: el resultado de __entrar__ se descarta ───────
+clase TimerSimple:
+    funcion __iniciar__(yo):
+        yo.entradas = 0
+    fin funcion
+
+    funcion __entrar__(yo):
+        yo.entradas = yo.entradas + 1
+        imprimir(f"  timer iniciado (entrada #{yo.entradas})")
+    fin funcion
+
+    funcion __salir__(yo):
+        imprimir(f"  timer detenido")
+    fin funcion
+fin clase
+
+imprimir("=== Sin alias ===")
+t = TimerSimple()
+con t:
+    imprimir("  cronometrando")
+fin con
+imprimir("---")
+
+imprimir("listo")

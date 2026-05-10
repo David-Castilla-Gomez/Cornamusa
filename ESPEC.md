@@ -423,6 +423,21 @@ dunder se invoca una vez y el iterable resultante se recorre con la
 maquinaria existente. Errores: clase sin `__iterar__` o `__iterar__`
 que retorna no-iterable → `ErrorDeTipo` atrapable.
 
+**Añadidos en v1.13**:
+
+| Dunder | Operador / built-in | Aridad |
+|---|---|---|
+| `__entrar__` | inicio del bloque `con` | 1 (yo) |
+| `__salir__` | fin del bloque `con` (siempre, vía `finalmente`) | 1 (yo) |
+
+`__entrar__` se invoca al entrar al bloque. Su valor de retorno se
+liga al alias `como x` si lo hay; si no, se descarta. `__salir__`
+se invoca al salir del bloque, sea por flujo normal, `retornar`,
+`romper`, `continuar` o excepción no atrapada. En v1.13 `__salir__`
+no recibe información de la excepción — la firma extendida
+`__salir__(yo, tipo_exc, valor_exc, traceback)` queda para versiones
+posteriores.
+
 Reglas:
 - El dunder normal solo se invoca si el operando IZQUIERDO es VAL_INSTANCIA y la clase lo define. Si izq no maneja, se busca el dunder reflejado en el lado DERECHO (solo aritméticos).
 - En reflejado, el receptor (`yo`) es el operando DERECHO y el primer argumento (`otro`) es el IZQUIERDO.

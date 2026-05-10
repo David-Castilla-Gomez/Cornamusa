@@ -34,6 +34,7 @@ typedef enum {
     BLOQUE_FUNCION,
     BLOQUE_CLASE,
     BLOQUE_INTENTAR,
+    BLOQUE_CON,         /* v1.13: `con expr [como nombre]: ... fin con` */
 } TipoBloque;
 
 typedef struct {

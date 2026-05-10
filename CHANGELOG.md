@@ -6,6 +6,94 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.13.0] — 2026-05-10 — Context managers (`con`)
+
+Llega la keyword `con` (`with` de Python) y los dunders
+`__entrar__`/`__salir__`. Garantiza limpieza determinista de
+recursos: locks, transacciones, conexiones, cualquier cosa que
+necesite "abrir y siempre cerrar".
+
+### Sintaxis
+
+```cornamusa
+con archivos.bloqueo("config.lock") como bloqueo:
+    # Cuerpo. Si lanza excepción, __salir__() se ejecuta antes de propagar.
+    procesar()
+fin con
+# Aquí el lock está garantizado liberado.
+```
+
+Equivale a:
+
+```cornamusa
+__cm_<linea>_<col> = archivos.bloqueo("config.lock")
+bloqueo = __cm_<linea>_<col>.__entrar__()
+intentar:
+    procesar()
+finalmente:
+    __cm_<linea>_<col>.__salir__()
+fin intentar
+```
+
+### Implementación: desugar en el parser
+
+Sin nuevos opcodes ni cambios al compilador o VM. La función
+`parsear_con()` en [src/parser.c](src/parser.c) construye el AST
+equivalente de tres sentencias dentro de un `sent_bloque`:
+
+1. Asignación del context manager a un nombre interno único
+   (`__cm_<linea>_<columna>`) — colisión imposible con
+   identificadores idiomáticos.
+2. Llamada a `__entrar__`, opcionalmente asignada al alias.
+3. `intentar/finalmente` con el cuerpo del usuario y la llamada a
+   `__salir__` en `finalmente`.
+
+Esto reusa toda la maquinaria existente. Las excepciones del cuerpo
+se propagan tras `__salir__` (semántica idéntica a Python). Si
+`__entrar__` lanza, `__salir__` NO se ejecuta — no entramos al
+contexto.
+
+### Cambio colateral: `OP_OBTENER_ATTR` ahora es atrapable
+
+Al escribir tests para `con`, descubrimos que acceder a un atributo
+inexistente (`obj.metodo_que_no_existe`) producía un error no
+atrapable. Fix: las tres ramas de error de `OP_OBTENER_ATTR`
+(módulo sin atributo, tipo sin atributos, instancia sin atributo)
+usan ahora `RAISE_OR_DIE()`, consistente con el patrón de v1.10.
+Esto significa:
+
+```cornamusa
+intentar:
+    valor = obj.atributo_inexistente
+atrapar Excepcion como e:
+    imprimir(f"capturado: {e}")
+fin intentar
+```
+
+ahora funciona como se espera.
+
+### Limitaciones intencionales
+
+- `__salir__` se invoca sin argumentos. Los context managers que
+  necesitan distinguir "cuerpo terminó normal" vs "cuerpo lanzó"
+  deberán esperar a v1.14+ con la firma extendida
+  `__salir__(yo, tipo_exc, valor_exc, traceback)`.
+- Sin lista de contextos: `con A, B:` no soportado. Encadenar
+  manualmente con `con A: con B:`.
+- Sin `archivos.abrir(ruta, modo)` que retorne handler. Eso requiere
+  un nuevo tipo de Valor (file handle) — aplazado a v1.13.x con la
+  introducción de `VAL_HANDLE_ARCHIVO` o equivalente.
+
+### Tests
+
+8 tests en [tests/unit/test_bytecode_con.c](tests/unit/test_bytecode_con.c):
+con/sin alias, cuerpo lanza, `__entrar__` lanza (no llama a
+`__salir__`), anidación con orden LIFO, errores cuando faltan
+dunders, expresión compleja como context. Total: **124 verde**.
+
+Ejemplo: [examples/36_con_recursos.cor](examples/36_con_recursos.cor)
+con Lock simulado, Transacción y anidación.
+
 ## [1.12.0] — 2026-05-10 — Dunder `__iterar__`
 
 Cualquier clase que defina `__iterar__` puede usarse en `para x en

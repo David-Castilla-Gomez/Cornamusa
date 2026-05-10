@@ -2907,7 +2907,8 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                                  nombre->como.cadena.longitud,
                                  nombre->como.cadena.texto);
                         valor_destruir(&obj);
-                        return VM_ERROR_RUNTIME;
+                        RAISE_OR_DIE();
+                        break;
                     }
                     valor_destruir(&obj);
                     empujar(vm, v);
@@ -2917,7 +2918,8 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     VM_ERROR("ErrorDeTipo: '%s' no tiene atributos accesibles",
                              valor_nombre_tipo(&obj));
                     valor_destruir(&obj);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
                 /* Lookup: primero atributos de instancia (overrides),
                    después métodos de la clase (creando MetodoLigado). */
@@ -2966,7 +2968,8 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                          nombre->como.cadena.longitud,
                          nombre->como.cadena.texto);
                 valor_destruir(&obj);
-                return VM_ERROR_RUNTIME;
+                RAISE_OR_DIE();
+                break;
             }
             case OP_ASIGNAR_ATRIBUTO: {
                 uint8_t idx = LEER_BYTE();

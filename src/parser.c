@@ -987,6 +987,7 @@ static Sent *parsear_para(Parser *p);
 static Sent *parsear_funcion(Parser *p);
 static Sent *parsear_clase(Parser *p);
 static Sent *parsear_intentar(Parser *p);
+static Sent *parsear_con(Parser *p);
 static Sent *parsear_lanzar(Parser *p);
 static Sent *parsear_importar(Parser *p);
 static Sent *parsear_desde_importar(Parser *p);
@@ -1060,6 +1061,7 @@ static const char *etiqueta_para_bloque(TipoBloque t) {
         case BLOQUE_FUNCION:   return "funcion";
         case BLOQUE_CLASE:     return "clase";
         case BLOQUE_INTENTAR:  return "intentar";
+        case BLOQUE_CON:       return "con";
     }
     return "?";
 }
@@ -1072,6 +1074,7 @@ static TipoToken token_para_bloque(TipoBloque t) {
         case BLOQUE_FUNCION:   return TT_FUNCION;
         case BLOQUE_CLASE:     return TT_CLASE;
         case BLOQUE_INTENTAR:  return TT_INTENTAR;
+        case BLOQUE_CON:       return TT_CON;
     }
     return TT_ERROR;
 }
@@ -1424,6 +1427,7 @@ Sent *parser_parsear_sentencia(Parser *p) {
         case TT_FUNCION:   return parsear_funcion(p);
         case TT_CLASE:     return parsear_clase(p);
         case TT_INTENTAR:  return parsear_intentar(p);
+        case TT_CON:       return parsear_con(p);
         case TT_LANZAR:    return parsear_lanzar(p);
         case TT_IMPORTAR:  return parsear_importar(p);
         case TT_DESDE:     return parsear_desde_importar(p);
@@ -1791,6 +1795,130 @@ static Sent *parsear_intentar(Parser *p) {
 
     return sent_intentar(p->arena, cuerpo, atrapadores, n_atrapadores,
                          sino, finalmente, linea, col);
+}
+
+/*
+ * SENT_CON v1.13: `con expr [como nombre]: cuerpo fin con`.
+ *
+ * Desugar AST a un bloque equivalente sin nuevos opcodes ni nuevo
+ * tipo de Sent:
+ *
+ *     __cm_<linea>_<col> = expr
+ *     [nombre = __cm_<linea>_<col>.__entrar__()]    # o llamada descarta
+ *     intentar:
+ *         cuerpo
+ *     finalmente:
+ *         __cm_<linea>_<col>.__salir__()
+ *     fin intentar
+ *
+ * El nombre `__cm_<l>_<c>` es único por call-site y comienza con `__`,
+ * lo que lo aleja de los identificadores idiomáticos del usuario sin
+ * impedir uso intencional. Si el alias está, se asigna; si no, se
+ * descarta el resultado de `__entrar__`. Si el cuerpo lanza una
+ * excepción, `finalmente` ejecuta `__salir__` antes de propagar.
+ *
+ * Limitaciones intencionales de v1.13:
+ *   - `__salir__()` se invoca sin argumentos. La excepción no se pasa
+ *     al dunder. Los context managers que necesitan ver la excepción
+ *     deberán esperar a v1.14+ junto con la firma extendida
+ *     `__salir__(yo, tipo_exc, valor_exc, traceback)`.
+ *   - Sin lista de contextos: `con A, B:` no soportado en este
+ *     release. Encadenar manualmente con `con A: con B:`.
+ */
+static Sent *parsear_con(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'con' */
+
+    Expr *contexto = parser_parsear_expr(p);
+    if (contexto == NULL) return NULL;
+
+    const char *alias_texto = NULL;
+    int alias_len = 0;
+    if (consumir_si(p, TT_COMO)) {
+        if (!check(p, TT_IDENT)) {
+            error_en(p, &p->actual,
+                "se esperaba un nombre tras 'como' en 'con'");
+            return NULL;
+        }
+        alias_texto = p->actual.inicio;
+        alias_len = p->actual.longitud;
+        avanzar(p);
+    }
+
+    if (!consumir(p, TT_DOS_PUNTOS,
+            "se esperaba ':' tras la cabecera de 'con'")) {
+        return NULL;
+    }
+
+    if (!empujar_bloque(p, BLOQUE_CON, linea)) return NULL;
+
+    Sent *cuerpo = parsear_cuerpo_bloque(p);
+    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
+
+    salir_bloque(p);
+
+    if (!consumir_fin(p, BLOQUE_CON, linea)) return NULL;
+
+    /* Construir el nombre interno único `__cm_<linea>_<col>`. */
+    char nombre_buf[64];
+    int n_nombre = snprintf(nombre_buf, sizeof(nombre_buf),
+                             "__cm_%d_%d", linea, col);
+    if (n_nombre <= 0 || n_nombre >= (int)sizeof(nombre_buf)) {
+        error_en(p, &p->actual,
+            "no se pudo generar nombre interno para 'con'");
+        return NULL;
+    }
+    char *nombre_arena = (char *)arena_alocar(p->arena, (size_t)n_nombre + 1);
+    if (nombre_arena == NULL) return NULL;
+    memcpy(nombre_arena, nombre_buf, (size_t)n_nombre + 1);
+
+    /* Sentencia 1: `__cm_X = contexto`. */
+    Expr *id_cm_lhs = expr_ident(p->arena, nombre_arena, n_nombre, linea, col);
+    Sent *s_asig_cm = sent_asignar(p->arena, id_cm_lhs, contexto, linea, col);
+    if (s_asig_cm == NULL) return NULL;
+
+    /* Sentencia 2: `alias = __cm_X.__entrar__()` o llamada descartada. */
+    Expr *id_cm_get = expr_ident(p->arena, nombre_arena, n_nombre, linea, col);
+    Expr *attr_entrar = expr_atributo(p->arena, id_cm_get,
+                                        "__entrar__", 10, linea, col);
+    Expr *llamada_entrar = expr_llamada(p->arena, attr_entrar, NULL, 0,
+                                          linea, col);
+    Sent *s_entrar;
+    if (alias_texto != NULL) {
+        Expr *id_alias = expr_ident(p->arena, alias_texto, alias_len,
+                                      linea, col);
+        s_entrar = sent_asignar(p->arena, id_alias, llamada_entrar,
+                                  linea, col);
+    } else {
+        s_entrar = sent_expr(p->arena, llamada_entrar, linea, col);
+    }
+    if (s_entrar == NULL) return NULL;
+
+    /* Sentencia 3: `intentar cuerpo finalmente __cm_X.__salir__()`. */
+    Expr *id_cm_salir = expr_ident(p->arena, nombre_arena, n_nombre,
+                                     linea, col);
+    Expr *attr_salir = expr_atributo(p->arena, id_cm_salir,
+                                       "__salir__", 9, linea, col);
+    Expr *llamada_salir = expr_llamada(p->arena, attr_salir, NULL, 0,
+                                         linea, col);
+    Sent *cuerpo_finalmente_unica = sent_expr(p->arena, llamada_salir,
+                                                linea, col);
+    Sent **arr_fin = (Sent **)arena_alocar(p->arena, sizeof(Sent *));
+    if (arr_fin == NULL) return NULL;
+    arr_fin[0] = cuerpo_finalmente_unica;
+    Sent *finalmente_block = sent_bloque(p->arena, arr_fin, 1, linea, col);
+    Sent *s_intentar = sent_intentar(p->arena, cuerpo, NULL, 0, NULL,
+                                       finalmente_block, linea, col);
+    if (s_intentar == NULL) return NULL;
+
+    /* Envolver las 3 sentencias en un bloque. */
+    Sent **bloque_arr = (Sent **)arena_alocar(p->arena, sizeof(Sent *) * 3);
+    if (bloque_arr == NULL) return NULL;
+    bloque_arr[0] = s_asig_cm;
+    bloque_arr[1] = s_entrar;
+    bloque_arr[2] = s_intentar;
+    return sent_bloque(p->arena, bloque_arr, 3, linea, col);
 }
 
 static Sent *parsear_lanzar(Parser *p) {
