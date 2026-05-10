@@ -6,6 +6,105 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.12.0] — 2026-05-10 — Dunder `__iterar__`
+
+Cualquier clase que defina `__iterar__` puede usarse en `para x en
+obj`. Cierra el OOP idiomático: pilas, colas, rangos custom, árboles
+recorridos, etc., son ahora directamente iterables sin código
+auxiliar.
+
+### Sintaxis
+
+```cornamusa
+clase Pila:
+    funcion __iniciar__(yo):
+        yo.items = []
+    fin funcion
+
+    funcion meter(yo, x):
+        agregar(yo.items, x)
+    fin funcion
+
+    funcion __iterar__(yo):
+        # Recorrido LIFO: del último al primero.
+        resultado = []
+        i = longitud(yo.items) - 1
+        mientras i >= 0:
+            agregar(resultado, yo.items[i])
+            i = i - 1
+        fin mientras
+        retornar resultado
+    fin funcion
+fin clase
+
+p = Pila()
+p.meter(1); p.meter(2); p.meter(3)
+para x en p:
+    imprimir(x)  # 3, 2, 1
+fin para
+```
+
+### Diseño: materialización, no streaming
+
+`__iterar__` debe retornar **un iterable nativo** (lista, tupla,
+conjunto, dicc, rango, cadena). La VM materializa al inicio del
+bucle: el dunder se invoca una vez, y el iterador resultante recorre
+ese valor con la maquinaria existente.
+
+Ventajas:
+- **Implementación trivial**: una sola modificación a `OP_ITER_INICIAR`
+  con la técnica del rewind IP (retroceder 1 byte antes del dispatch
+  para que el opcode se re-ejecute con el TOS reemplazado).
+- **Sin nuevos opcodes**: `OP_ITER_SIGUIENTE` no cambia.
+- **Encadenamiento gratis**: si `__iterar__` retorna otra instancia
+  con `__iterar__`, la VM dispatcha hasta encontrar iterable nativo.
+- **Errores atrapables**: clase sin `__iterar__` o `__iterar__` que
+  retorna no-iterable producen `ErrorDeTipo` capturable.
+
+Limitación intencional: no hay iteración lazy (`__siguiente__`). Para
+colecciones gigantes el dunder materializa toda la secuencia en
+memoria. Si llega demanda real (generadores, streams sobre archivos
+grandes) se añadirá `__siguiente__` en una versión futura, probablemente
+junto con `producir` (v1.15+).
+
+### Implementación: rewind IP en OP_ITER_INICIAR
+
+```c
+case OP_ITER_INICIAR: {
+    if (vm->tope[-1].tipo == VAL_INSTANCIA) {
+        Closure *m = clase_obtener_metodo(...->clase, "__iterar__", 10);
+        if (m) {
+            frame->ip--;  /* re-ejecutar este opcode tras el dunder */
+            ResultadoVM rc = ejecutar_dunder_unario(vm, &frame, m, ...);
+            if (rc != VM_OK) RAISE_OR_DIE();
+            break;
+        }
+        /* VAL_INSTANCIA sin __iterar__: ErrorDeTipo claro y atrapable. */
+        ...
+    }
+    /* Path nativo (pre-v1.12). */
+    ...
+}
+```
+
+El rewind funciona porque `OP_RETORNAR` del dunder pop su frame y
+deja el valor de retorno en el TOS, mientras el `frame->ip` del
+caller apunta al byte que retrocedimos (el propio `OP_ITER_INICIAR`).
+La segunda pasada del opcode ve el iterable nativo retornado por el
+dunder y va por el camino normal — sin recursión ni sub-loops.
+
+### Tests
+
+13 tests en
+[tests/unit/test_bytecode_iteradores.c](tests/unit/test_bytecode_iteradores.c):
+listas, tuplas, rangos, cadenas, encadenamiento, anidación, iteración
+sobre snapshot, errores. Total tests: **122 verde**.
+
+Ejemplo:
+[examples/35_iteradores.cor](examples/35_iteradores.cor) con Pila
+LIFO, Cola FIFO, RangoPar, árbol binario in-order y errores
+atrapables.
+
 ## [1.11.0] — 2026-05-10 — Funcionales y reflexión
 
 Cierra el menú histórico de built-ins reservados en

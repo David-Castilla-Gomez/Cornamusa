@@ -1,0 +1,193 @@
+# 35_iteradores.cor — clases iterables con __iterar__ (v1.12).
+#
+# Cornamusa v1.12 añade el dunder `__iterar__`: cualquier clase que lo
+# defina puede usarse en `para x en obj`. El dunder debe retornar un
+# iterable nativo (lista, tupla, conjunto, dicc, rango, cadena); la VM
+# materializa al inicio del bucle. Iteración lazy con `__siguiente__`
+# se aplazó a v1.13+.
+
+# ─── Pila LIFO ────────────────────────────────────────────────────
+clase Pila:
+    funcion __iniciar__(yo):
+        yo.items = []
+    fin funcion
+
+    funcion meter(yo, x):
+        agregar(yo.items, x)
+    fin funcion
+
+    funcion sacar(yo):
+        ultimo = yo.items[longitud(yo.items) - 1]
+        quitar(yo.items, longitud(yo.items) - 1)
+        retornar ultimo
+    fin funcion
+
+    funcion __longitud__(yo):
+        retornar longitud(yo.items)
+    fin funcion
+
+    funcion __iterar__(yo):
+        # Recorrido LIFO: del último al primero.
+        resultado = []
+        i = longitud(yo.items) - 1
+        mientras i >= 0:
+            agregar(resultado, yo.items[i])
+            i = i - 1
+        fin mientras
+        retornar resultado
+    fin funcion
+fin clase
+
+p = Pila()
+p.meter("primero")
+p.meter("segundo")
+p.meter("tercero")
+
+imprimir("=== Pila LIFO ===")
+imprimir(f"longitud: {longitud(p)}")
+para item en p:
+    imprimir(f"  -> {item}")
+fin para
+imprimir("---")
+
+# ─── Cola FIFO con __iterar__ delegando ──────────────────────────
+clase Cola:
+    funcion __iniciar__(yo):
+        yo.items = []
+    fin funcion
+
+    funcion encolar(yo, x):
+        agregar(yo.items, x)
+    fin funcion
+
+    funcion __iterar__(yo):
+        # FIFO: orden natural. Devolvemos la lista directamente
+        # (es snapshot inmutable a efectos del bucle).
+        retornar yo.items
+    fin funcion
+fin clase
+
+c = Cola()
+c.encolar("A")
+c.encolar("B")
+c.encolar("C")
+
+imprimir("=== Cola FIFO ===")
+para item en c:
+    imprimir(f"  -> {item}")
+fin para
+imprimir("---")
+
+# ─── Range custom (encadenamiento de iterables) ──────────────────
+clase RangoPar:
+    funcion __iniciar__(yo, tope):
+        yo.tope = tope
+    fin funcion
+
+    funcion __iterar__(yo):
+        # Solo enteros pares en [0, tope).
+        resultado = []
+        para i en rango(yo.tope):
+            si i % 2 == 0:
+                agregar(resultado, i)
+            fin si
+        fin para
+        retornar resultado
+    fin funcion
+fin clase
+
+imprimir("=== Pares < 10 ===")
+para n en RangoPar(10):
+    imprimir(f"  {n}")
+fin para
+imprimir("---")
+
+# ─── Árbol binario con __iterar__ in-order ───────────────────────
+clase Nodo:
+    funcion __iniciar__(yo, valor):
+        yo.valor = valor
+        yo.izq = nulo
+        yo.der = nulo
+    fin funcion
+
+    funcion insertar(yo, v):
+        si v < yo.valor:
+            si yo.izq == nulo:
+                yo.izq = Nodo(v)
+            sino:
+                yo.izq.insertar(v)
+            fin si
+        sino:
+            si yo.der == nulo:
+                yo.der = Nodo(v)
+            sino:
+                yo.der.insertar(v)
+            fin si
+        fin si
+    fin funcion
+
+    funcion en_orden(yo, salida):
+        si yo.izq != nulo:
+            yo.izq.en_orden(salida)
+        fin si
+        agregar(salida, yo.valor)
+        si yo.der != nulo:
+            yo.der.en_orden(salida)
+        fin si
+    fin funcion
+
+    funcion __iterar__(yo):
+        salida = []
+        yo.en_orden(salida)
+        retornar salida
+    fin funcion
+fin clase
+
+raiz = Nodo(5)
+raiz.insertar(3)
+raiz.insertar(8)
+raiz.insertar(1)
+raiz.insertar(4)
+raiz.insertar(7)
+raiz.insertar(9)
+
+imprimir("=== Árbol binario in-order ===")
+para v en raiz:
+    imprimir(f"  {v}")
+fin para
+imprimir("---")
+
+# ─── Manejo de errores ──────────────────────────────────────────
+imprimir("=== Errores atrapables ===")
+
+clase SinDunder:
+    funcion __iniciar__(yo):
+        yo.x = 1
+    fin funcion
+fin clase
+
+intentar:
+    para a en SinDunder():
+        imprimir(a)
+    fin para
+atrapar ErrorDeTipo como e:
+    imprimir(f"  ! sin __iterar__: {e}")
+fin intentar
+
+clase IterMal:
+    funcion __iniciar__(yo):
+        yo.x = 1
+    fin funcion
+
+    funcion __iterar__(yo):
+        retornar 42
+    fin funcion
+fin clase
+
+intentar:
+    para a en IterMal():
+        imprimir(a)
+    fin para
+atrapar ErrorDeTipo como e:
+    imprimir(f"  ! __iterar__ retorna entero: {e}")
+fin intentar

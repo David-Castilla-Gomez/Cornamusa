@@ -2425,13 +2425,52 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
 
             /* ─── Iteradores ─── */
             case OP_ITER_INICIAR: {
-                /* Pop iterable, push iterador. */
+                /* v1.12: si TOS es VAL_INSTANCIA con `__iterar__`,
+                 * despachamos el dunder con un truco de rewind IP:
+                 * retrocedemos 1 byte (sobre el propio OP_ITER_INICIAR)
+                 * antes de despachar. El dispatcher empuja un frame
+                 * para el dunder; cuando este retorne, su valor de
+                 * retorno (que DEBE ser un iterable nativo: lista,
+                 * tupla, conjunto, dicc, rango o cadena) queda en TOS,
+                 * y el IP apunta otra vez al opcode que ya procesará
+                 * normalmente el iterable nativo. Dos pasadas, una
+                 * sola línea de bytecode.
+                 *
+                 * Restricción intencional de v1.12: `__iterar__` debe
+                 * retornar un iterable nativo (no otra instancia con
+                 * `__siguiente__`). El usuario materializa explícitamente
+                 * con una lista. Iteración lazy con `__siguiente__` se
+                 * deja para v1.13+ si surge demanda. */
+                if (vm->tope[-1].tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        vm->tope[-1].como.instancia->clase,
+                        "__iterar__", 10);
+                    if (m) {
+                        frame->ip--;  /* re-ejecutar este opcode tras el dunder */
+                        ResultadoVM rc = ejecutar_dunder_unario(
+                            vm, &frame, m, "__iterar__", 10);
+                        if (rc != VM_OK) RAISE_OR_DIE();
+                        break;
+                    }
+                    /* VAL_INSTANCIA sin __iterar__: ErrorDeTipo claro,
+                       no decir "no soporta 'instancia'". */
+                    VM_ERROR("ErrorDeTipo: la clase '%.*s' no define '__iterar__'",
+                             vm->tope[-1].como.instancia->clase->longitud_nombre,
+                             vm->tope[-1].como.instancia->clase->nombre);
+                    Valor descartar = sacar(vm);
+                    valor_destruir(&descartar);
+                    RAISE_OR_DIE();
+                    break;
+                }
+
+                /* Path nativo (pre-v1.12). */
                 Valor it_v = sacar(vm);
                 if (!valor_es_iterable(&it_v)) {
                     VM_ERROR("ErrorDeTipo: 'para' no soporta iterar sobre '%s'",
                              valor_nombre_tipo(&it_v));
                     valor_destruir(&it_v);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
                 Iterador *iter = iter_nuevo(&it_v);
                 valor_destruir(&it_v);

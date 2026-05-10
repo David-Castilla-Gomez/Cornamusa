@@ -370,8 +370,10 @@ Esta es la lista **real** de built-ins disponibles en v1.1.0 (registrados en `sr
 
 - `abrir(ruta, modo)` → context manager con `__entrar__`/`__salir__`
   (planeado para v1.13 con keyword `con`).
-- `iterar`, `siguiente` → cuando los dunders `__iterar__`/`__siguiente__`
-  se implementen para `para ... en` sobre instancias custom (v1.12).
+- `siguiente` → iteración lazy con dunder `__siguiente__`. **`__iterar__`
+  ya funciona en v1.12** (clases iterables con `para x en obj`); el
+  dunder debe retornar un iterable nativo. La iteración lazy con
+  `__siguiente__` se aplazó a una versión futura.
 - `resumen` → reservado, sin diseño cerrado.
 
 Hasta entonces, escribir `abrir(...)` o cualquier nombre aplazado da
@@ -408,6 +410,18 @@ La filosofía de Cornamusa (decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md))
 | `__restar_derecho__` | `5 - V(...)` etc. | 2 |
 | `__multiplicar_derecho__` | `3 * V(...)` etc. | 2 |
 | `__dividir_derecho__`, `__dividir_entero_derecho__`, `__modulo_derecho__`, `__potencia_derecho__` | reflejados aritméticos | 2 |
+
+**Añadidos en v1.12**:
+
+| Dunder | Operador / built-in | Aridad |
+|---|---|---|
+| `__iterar__` | `para x en obj` | 1 (yo) |
+
+`__iterar__` debe retornar un iterable nativo (lista, tupla, conjunto,
+dicc, rango, cadena). La VM materializa al inicio del bucle: el
+dunder se invoca una vez y el iterable resultante se recorre con la
+maquinaria existente. Errores: clase sin `__iterar__` o `__iterar__`
+que retorna no-iterable → `ErrorDeTipo` atrapable.
 
 Reglas:
 - El dunder normal solo se invoca si el operando IZQUIERDO es VAL_INSTANCIA y la clase lo define. Si izq no maneja, se busca el dunder reflejado en el lado DERECHO (solo aritméticos).
