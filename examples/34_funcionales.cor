@@ -1,0 +1,98 @@
+# 34_funcionales.cor — patrones funcionales y reflexión (v1.11).
+#
+# Demuestra los nuevos built-ins de v1.11:
+#   - Aggregación e introspección global: absoluto, redondear,
+#     instancia_de, subclase_de, id, repr.
+#   - Módulo `funcionales` con map/filter/reduce/enumerate y
+#     suma/minimo/maximo.
+
+importar funcionales
+
+# ─── 1. Numéricos sobre lista heterogénea ─────────────────────────
+ventas = [-12.5, 30.0, -7.25, 45.75, 18.0, -3.5]
+imprimir("=== Ventas (positivas y negativas) ===")
+imprimir(f"  total bruto = {redondear(funcionales.suma(ventas), 2)}")
+
+# Convertir todo a positivo con `mapear` + `absoluto`.
+absolutos = funcionales.mapear(absoluto, ventas)
+imprimir(f"  magnitudes  = {absolutos}")
+
+# Sólo las pérdidas.
+perdidas = funcionales.filtrar(lambda v: v < 0, ventas)
+imprimir(f"  perdidas    = {perdidas}")
+
+# Magnitud máxima (ignorando signo).
+peor = funcionales.maximo(absolutos)
+imprimir(f"  peor caso   = {peor}")
+imprimir("---")
+
+# ─── 2. Pipeline funcional clásico ────────────────────────────────
+nums = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+
+# Suma de cuadrados de los pares: filter → map → reduce.
+pares = funcionales.filtrar(lambda x: x % 2 == 0, nums)
+cuadrados = funcionales.mapear(lambda x: x * x, pares)
+total = funcionales.reducir(lambda a, x: a + x, cuadrados, 0)
+imprimir(f"suma cuadrados pares de {nums} = {total}")  # 220
+imprimir("---")
+
+# ─── 3. Enumerar para mostrar índices ─────────────────────────────
+nombres = ["Alicia", "Bruno", "Carla"]
+imprimir("=== Lista de invitados ===")
+para par en funcionales.enumerar(nombres):
+    imprimir(f"  {par[0]+1}. {par[1]}")
+fin para
+imprimir("---")
+
+# ─── 4. Reflexión sobre tipos ─────────────────────────────────────
+clase Animal:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+    fin funcion
+
+    funcion sonido(yo):
+        retornar "...ruido genérico..."
+    fin funcion
+fin clase
+
+clase Perro extiende Animal:
+    funcion sonido(yo):
+        retornar "guau!"
+    fin funcion
+fin clase
+
+clase Gato extiende Animal:
+    funcion sonido(yo):
+        retornar "miau"
+    fin funcion
+fin clase
+
+zoologico = [Perro("Toby"), Gato("Mishi"), Perro("Rex"), Animal("X")]
+
+# Contar perros usando `instancia_de` con la cadena de superclases.
+perros = funcionales.filtrar(lambda a: instancia_de(a, Perro), zoologico)
+imprimir(f"hay {longitud(perros)} perros en el zoo")
+
+# Todos son Animal (vía herencia o directamente).
+todos_animales = funcionales.todos(lambda a: instancia_de(a, Animal), zoologico)
+imprimir(f"todos son Animal: {todos_animales}")
+
+# Identidad: dos invocaciones a sonido sobre el mismo perro lo confirman.
+toby = zoologico[0]
+imprimir(f"id(toby) == id(zoologico[0]): {id(toby) == id(zoologico[0])}")
+imprimir(f"id(zoologico[0]) == id(zoologico[2]): {id(zoologico[0]) == id(zoologico[2])}")
+
+# Subclase chequeo.
+imprimir(f"Perro es subclase de Animal: {subclase_de(Perro, Animal)}")
+imprimir(f"Animal es subclase de Perro: {subclase_de(Animal, Perro)}")
+imprimir("---")
+
+# ─── 5. repr para depuración ─────────────────────────────────────
+# `repr` distingue cadena de número en log, útil cuando las
+# variables tienen tipos heterogéneos.
+campos = [42, "42", 42.0, verdadero]
+imprimir("=== Tipos en log ===")
+para par en funcionales.enumerar(campos):
+    valor = par[1]
+    imprimir(f"  campo[{par[0]}]: {repr(valor)}  (tipo {tipo(valor)})")
+fin para

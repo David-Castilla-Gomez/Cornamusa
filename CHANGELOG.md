@@ -6,6 +6,109 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.11.0] — 2026-05-10 — Funcionales y reflexión
+
+Cierra el menú histórico de built-ins reservados en
+[ESPEC §4.2](ESPEC.md#42-built-ins-planeados-no-en-v110): nueve nuevas
+operaciones distribuidas entre el módulo `funcionales` (Cornamusa
+puro) y seis built-ins en C. Sin sintaxis nueva — todo es valor
+agregado a la stdlib.
+
+### Nuevo módulo `funcionales`
+
+```cornamusa
+importar funcionales
+
+dobles = funcionales.mapear(lambda x: x * 2, [1, 2, 3])           # [2, 4, 6]
+pares  = funcionales.filtrar(lambda x: x % 2 == 0, rango(10))     # [0, 2, 4, 6, 8]
+total  = funcionales.reducir(lambda a, x: a + x, [1, 2, 3, 4], 0) # 10
+
+para par en funcionales.enumerar(["a", "b"]):
+    imprimir(par[0], par[1])              # 0 a / 1 b
+fin para
+
+imprimir(funcionales.suma([1, 2, 3]))      # 6
+imprimir(funcionales.minimo([3, 1, 2]))    # 1
+imprimir(funcionales.maximo([3, 1, 2]))    # 3
+imprimir(funcionales.cualquiera(lambda x: x > 5, [1, 2, 6]))  # verdadero
+imprimir(funcionales.todos(lambda x: x > 0, [1, 2, 3]))       # verdadero
+```
+
+`enumerar_desde(xs, inicio)` y `suma_desde(xs, inicial)` son las
+variantes con punto de partida explícito (los argumentos por defecto
+todavía no funcionan en bytecode). Las funciones de orden superior
+viven en [stdlib/funcionales.cor](stdlib/funcionales.cor) escritas en
+Cornamusa puro: la firma actual de `FnNativa` no permite invocar
+callables Cornamusa desde C, pero el bucle `para ... en` resuelve la
+llamada en cada iteración sin sobrecoste.
+
+### Built-ins globales nuevos en C
+
+```cornamusa
+imprimir(absoluto(-5))           # 5
+imprimir(absoluto(-3.14))        # 3.14
+imprimir(absoluto(-(2 ** 100)))  # bignum exacto
+
+imprimir(redondear(3.7))         # 4
+imprimir(redondear(2.5))         # 3   (half-away-from-zero, no banker's)
+imprimir(redondear(-2.5))        # -3
+imprimir(redondear(3.14159, 2))  # 3.14
+
+imprimir(repr("hola"))           # "hola"  (con comillas, distingue de cadena())
+imprimir(repr([1, "x"]))         # [1, "x"]
+```
+
+### Reflexión sobre clases
+
+```cornamusa
+clase Animal:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+    fin funcion
+fin clase
+
+clase Perro extiende Animal: ... fin clase
+
+p = Perro("Toby")
+imprimir(instancia_de(p, Perro))     # verdadero
+imprimir(instancia_de(p, Animal))    # verdadero (vía herencia)
+imprimir(instancia_de(5, Animal))    # falso
+imprimir(subclase_de(Perro, Animal)) # verdadero
+imprimir(subclase_de(Animal, Animal)) # verdadero (reflexivo)
+
+# Identidad por referencia
+otro = p
+imprimir(id(p) == id(otro))     # verdadero
+imprimir(id(p) == id(Perro("Toby")))  # falso (otra instancia)
+```
+
+`instancia_de` walks la cadena de superclases. Para tipos primitivos
+(entero, cadena, etc.) retorna `falso` — usar `tipo(x) == "entero"`
+para chequear primitivos. `id` retorna el puntero del objeto cast a
+entero (estable durante la vida del objeto, no entre ejecuciones).
+
+### Limitaciones documentadas
+
+- Argumentos por defecto siguen sin funcionar en bytecode (heredado
+  de v0.7). Las firmas opcionales se exponen como funciones distintas
+  (`enumerar` / `enumerar_desde`).
+- `mapear`/`filtrar`/`reducir` tienen overhead por invocación
+  (cada elemento dispara un frame de bytecode). Para hot loops de
+  millones de elementos un `para ... en` directo es más rápido.
+- `redondear` con bignum convierte a double (puede perder precisión
+  > 2^53). Ortogonalidad con `entero(decimal)`.
+- `id` para tipos por valor (entero, decimal, cadena, etc.) retorna
+  un valor derivado del contenido — no es identidad de referencia
+  estable como en Python para inmutables.
+
+### Tests
+
+35 tests unit nuevos en
+[tests/unit/test_bytecode_funcionales.c](tests/unit/test_bytecode_funcionales.c)
+para los seis built-ins C. Las funciones `funcionales.*` se cubren
+end-to-end vía [examples/34_funcionales.cor](examples/34_funcionales.cor).
+Total tests: 120 (estable desde v1.10).
+
 ## [1.10.0] — 2026-05-01 — Errores atrapables en built-ins
 
 Cierra una **limitación documentada desde v1.1**: los errores de

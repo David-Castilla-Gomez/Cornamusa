@@ -340,13 +340,42 @@ Esta es la lista **real** de built-ins disponibles en v1.1.0 (registrados en `sr
 | `obtener_argv()` | Lista de cadenas con los argumentos del programa (incluido el nombre del .cor en posición 0). Expuesta también via `sistema.argv` (importar `sistema`). |
 | `salir(codigo=0)` | Termina el proceso inmediatamente con el código indicado. No retorna. |
 
+#### Numéricos y reflexión (v1.11)
+| Cornamusa | Equivalente Python | Descripción |
+|---|---|---|
+| `absoluto(n)` | `abs(n)` | Valor absoluto de entero (incluido bignum), decimal o booleano. |
+| `redondear(n)`, `redondear(n, k)` | `round(n)` (half-away-from-zero) | A entero (1 arg) o a decimal con `k` cifras (2 args). |
+| `instancia_de(obj, clase)` | `isinstance(obj, clase)` | Verdadero si `obj` es instancia de `clase` o subclase. Tipos primitivos siempre falso. |
+| `subclase_de(A, B)` | `issubclass(A, B)` | Verdadero si A == B o A hereda de B. Reflexivo. |
+| `id(obj)` | `id(obj)` | Entero único de la identidad del objeto. |
+| `repr(obj)` | `repr(obj)` | Cadena con la representación literal (con comillas para cadenas). |
+
 ### 4.2 Built-ins planeados (no en v1.1.0)
 
-Los siguientes nombres aparecen en código de ejemplos y mensajes pero **aún no están registrados como built-ins**. Su sintaxis ya está reservada en la especificación para forward-compatibility:
+**Implementados en v1.11**:
 
-`enumerar`, `mapear`, `filtrar`, `reducir`, `suma`, `mínimo`/`minimo`, `máximo`/`maximo`, `absoluto`, `redondear`, `abrir`, `iterar`, `siguiente`, `instancia_de`, `subclase_de`, `id`, `resumen`, `repr`.
+- `absoluto`, `redondear`, `instancia_de`, `subclase_de`, `id`, `repr` —
+  built-ins globales en C. Ver §4.1.
+- `mapear`, `filtrar`, `reducir`, `enumerar`, `enumerar_desde`, `suma`,
+  `suma_desde`, `mínimo`/`minimo`, `máximo`/`maximo`, `cualquiera`,
+  `todos` — viven en el módulo importable `funcionales` (Cornamusa
+  puro). Ejemplo:
 
-Llegarán a la stdlib según demanda en versiones v1.x posteriores. Mientras tanto, escribir uno de estos nombres da `ErrorDeNombre` igual que cualquier identificador no definido.
+  ```cornamusa
+  importar funcionales
+  total = funcionales.reducir(lambda a, x: a + x, [1, 2, 3], 0)
+  ```
+
+**Aplazados a v1.13+** (requieren cambios al runtime o a la sintaxis):
+
+- `abrir(ruta, modo)` → context manager con `__entrar__`/`__salir__`
+  (planeado para v1.13 con keyword `con`).
+- `iterar`, `siguiente` → cuando los dunders `__iterar__`/`__siguiente__`
+  se implementen para `para ... en` sobre instancias custom (v1.12).
+- `resumen` → reservado, sin diseño cerrado.
+
+Hasta entonces, escribir `abrir(...)` o cualquier nombre aplazado da
+`ErrorDeNombre` igual que cualquier identificador no definido.
 
 ### 4.3 Métodos especiales (dunders)
 

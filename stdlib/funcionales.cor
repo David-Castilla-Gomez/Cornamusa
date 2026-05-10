@@ -1,0 +1,151 @@
+# Cornamusa stdlib: funcionales.cor
+#
+# Funciones de orden superior sobre iterables: `mapear`, `filtrar`,
+# `reducir`, `enumerar`, `cualquiera`, `todos`. Patrón funcional
+# clásico. Las cuatro primeras corresponden a `map`, `filter`,
+# `reduce`, `enumerate` de otros lenguajes.
+#
+# Implementadas en Cornamusa puro (no built-ins) porque las nativas C
+# no pueden invocar callables Cornamusa con la firma actual de
+# `FnNativa`. La VM resuelve la llamada en el bucle `para`, así que
+# este módulo sólo reordena código que el usuario escribiría a mano.
+#
+# Uso:
+#   importar funcionales
+#
+#   dobles = funcionales.mapear(lambda x: x * 2, [1, 2, 3])     # [2, 4, 6]
+#   pares  = funcionales.filtrar(lambda x: x % 2 == 0, rango(10))
+#   total  = funcionales.reducir(lambda a, x: a + x, [1, 2, 3], 0)  # 6
+#
+#   para i, x en funcionales.enumerar(["a", "b", "c"]):
+#       imprimir(i, x)
+#   fin para
+#
+# `f`/`p` deben ser callables (funciones, lambdas, closures, métodos
+# ligados o instancias con `__llamar__`). Pueden lanzar excepciones,
+# que se propagan al llamador sin envoltorio.
+
+# Aplica `f` a cada elemento de `xs` y retorna una lista nueva con
+# los resultados. `xs` puede ser cualquier iterable.
+funcion mapear(f, xs):
+    resultado = []
+    para x en xs:
+        agregar(resultado, f(x))
+    fin para
+    retornar resultado
+fin funcion
+
+# Retorna lista nueva con los elementos de `xs` para los que `p(x)`
+# es verdadero.
+funcion filtrar(p, xs):
+    resultado = []
+    para x en xs:
+        si p(x):
+            agregar(resultado, x)
+        fin si
+    fin para
+    retornar resultado
+fin funcion
+
+# Pliega `xs` con `f`: f(f(f(inicial, xs[0]), xs[1]), xs[2])...
+# Si `xs` es vacío retorna `inicial`.
+funcion reducir(f, xs, inicial):
+    acc = inicial
+    para x en xs:
+        acc = f(acc, x)
+    fin para
+    retornar acc
+fin funcion
+
+# Genera lista de tuplas (índice, elemento), índice desde 0.
+# Para empezar en otro índice usa `enumerar_desde(xs, inicio)`.
+# (Los argumentos por defecto aún no están soportados en el motor
+# bytecode — futuro.)
+funcion enumerar(xs):
+    retornar enumerar_desde(xs, 0)
+fin funcion
+
+funcion enumerar_desde(xs, inicio):
+    resultado = []
+    i = inicio
+    para x en xs:
+        agregar(resultado, (i, x))
+        i = i + 1
+    fin para
+    retornar resultado
+fin funcion
+
+# Verdadero si `p(x)` lo es para algún elemento. Cortocircuita.
+funcion cualquiera(p, xs):
+    para x en xs:
+        si p(x):
+            retornar verdadero
+        fin si
+    fin para
+    retornar falso
+fin funcion
+
+# Verdadero si `p(x)` lo es para todos los elementos. Cortocircuita
+# en cuanto encuentra uno falso. Vacío → verdadero (vacuamente cierto).
+funcion todos(p, xs):
+    para x en xs:
+        si no p(x):
+            retornar falso
+        fin si
+    fin para
+    retornar verdadero
+fin funcion
+
+# ─── Agregaciones ─────────────────────────────────────────────────
+# `suma`, `minimo`, `maximo` operan con los operadores `+`, `<`, `>`
+# que la VM despacha — funcionan sobre enteros, decimales y cualquier
+# clase con dunders aritméticos sin necesidad de soporte específico.
+
+# Suma todos los elementos de `xs`. Empieza en 0 (entero), así que
+# para sumar cadenas usa `suma_desde(xs, "")`.
+funcion suma(xs):
+    retornar suma_desde(xs, 0)
+fin funcion
+
+funcion suma_desde(xs, inicial):
+    total = inicial
+    para x en xs:
+        total = total + x
+    fin para
+    retornar total
+fin funcion
+
+# Mínimo y máximo de un iterable no vacío. ErrorDeValor si está vacío.
+funcion minimo(xs):
+    primero = verdadero
+    actual = nulo
+    para x en xs:
+        si primero:
+            actual = x
+            primero = falso
+        sino si x < actual:
+            actual = x
+        fin si
+    fin para
+    si primero:
+        lanzar ErrorDeValor("minimo() de iterable vacio")
+    fin si
+    retornar actual
+fin funcion
+
+funcion maximo(xs):
+    primero = verdadero
+    actual = nulo
+    para x en xs:
+        si primero:
+            actual = x
+            primero = falso
+        sino si x > actual:
+            actual = x
+        fin si
+    fin para
+    si primero:
+        lanzar ErrorDeValor("maximo() de iterable vacio")
+    fin si
+    retornar actual
+fin funcion

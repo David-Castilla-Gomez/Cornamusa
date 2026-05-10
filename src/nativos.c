@@ -1,6 +1,7 @@
 #include "nativos.h"
 
 #include <stdarg.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -2127,6 +2128,302 @@ static Valor nativa_salir(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Numéricos (v1.11): absoluto, redondear
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * absoluto(n) → |n|. Soporta entero (SMALL/BIG, signo flip exacto),
+ * decimal (fabs), booleano (entero 0/1). Para otros tipos: ErrorDeTipo.
+ *
+ * NaN se preserva como decimal (consistente con `cadena()` en NaN).
+ * No invoca dunder `__absoluto__` todavía (pendiente para v1.12+).
+ */
+static Valor nativa_absoluto(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: absoluto() requiere 1 argumento, recibio %d", n_args);
+    }
+    const Valor *v = &args[0];
+    if (v->tipo == VAL_ENTERO_SMALL) {
+        int64_t n = v->como.entero_small;
+        if (n == INT64_MIN) {
+            /* Imposible en práctica: SMALL_INT_MIN = -2^62, pero por
+               ortogonalidad si llegase n = INT64_MIN, promovemos a BIG. */
+            mp_int *r = (mp_int *)malloc(sizeof(mp_int));
+            if (!r || mp_init(r) != MP_OKAY) {
+                free(r);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            mp_set_i64(r, n);
+            if (mp_neg(r, r) != MP_OKAY) {
+                mp_clear(r); free(r);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            return valor_entero_de_mp_normalizado(r);
+        }
+        return valor_entero_de_i64(n < 0 ? -n : n);
+    }
+    if (v->tipo == VAL_ENTERO) {
+        mp_int *r = (mp_int *)malloc(sizeof(mp_int));
+        if (!r || mp_init(r) != MP_OKAY) {
+            free(r);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        if (mp_abs(v->como.entero, r) != MP_OKAY) {
+            mp_clear(r); free(r);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        return valor_entero_de_mp_normalizado(r);
+    }
+    if (v->tipo == VAL_DECIMAL) {
+        double d = v->como.decimal;
+        return valor_decimal(d < 0.0 ? -d : d);
+    }
+    if (v->tipo == VAL_BOOLEANO) {
+        return valor_entero_de_i64(v->como.booleano ? 1 : 0);
+    }
+    return error_nativa(err, linea, columna,
+        "ErrorDeTipo: absoluto() no acepta '%s'", valor_nombre_tipo(v));
+}
+
+/*
+ * redondear(n) → entero más próximo (half-away-from-zero, como Python 2).
+ * redondear(n, k) → decimal con k decimales (k entero >=0).
+ *
+ * Soporta entero (no-op para 1 arg, redondea a 10^(-k)? — nope, k>=0
+ * sobre entero es no-op), decimal y booleano. Otros: ErrorDeTipo.
+ *
+ * Half-away-from-zero (no banker's): redondear(0.5) = 1, redondear(-0.5)
+ * = -1. Es lo que el alumno espera; banker's es sorpresa.
+ */
+static Valor nativa_redondear(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna) {
+    if (n_args < 1 || n_args > 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: redondear() acepta 1 o 2 argumentos, recibio %d", n_args);
+    }
+    const Valor *v = &args[0];
+
+    int decimales = 0;
+    if (n_args == 2) {
+        int64_t k;
+        if (!valor_entero_a_i64(&args[1], &k) || k < 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: redondear() requiere entero >= 0 como segundo argumento");
+        }
+        if (k > 30) k = 30;  /* clamp; doubles solo tienen ~15-17 digitos */
+        decimales = (int)k;
+    }
+
+    /* Enteros: redondear es no-op para k>=0. */
+    if (valor_es_entero(v)) {
+        if (n_args == 1) {
+            Valor r = valor_clonar(v);
+            if (r.tipo == VAL_NULO && v->tipo != VAL_NULO) {
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            return r;
+        }
+        /* Con `decimales`, devolver decimal por consistencia con Python. */
+        int64_t n;
+        double d;
+        if (valor_entero_a_i64(v, &n)) {
+            d = (double)n;
+        } else {
+            /* Bignum: convertir a double (puede perder precisión). */
+            bool propio = false;
+            mp_int *m = valor_entero_a_mp_int(v, &propio);
+            if (!m) return error_nativa(err, linea, columna, "memoria insuficiente");
+            d = mp_get_double(m);
+            if (propio) { mp_clear(m); free(m); }
+        }
+        return valor_decimal(d);
+    }
+
+    if (v->tipo == VAL_BOOLEANO) {
+        if (n_args == 1) return valor_entero_de_i64(v->como.booleano ? 1 : 0);
+        return valor_decimal(v->como.booleano ? 1.0 : 0.0);
+    }
+
+    if (v->tipo == VAL_DECIMAL) {
+        double d = v->como.decimal;
+        if (d != d) {  /* NaN */
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: no se puede redondear NaN");
+        }
+        if (n_args == 1) {
+            /* Half-away-from-zero a entero. */
+            double rounded = (d >= 0.0) ? (double)(int64_t)(d + 0.5)
+                                         : (double)(int64_t)(d - 0.5);
+            /* Rango chequeo: idéntico a `entero(decimal)`. */
+            if (rounded > 9.2233720368547748e18 || rounded < -9.2233720368547758e18) {
+                return error_nativa(err, linea, columna,
+                    "ErrorDeValor: decimal fuera del rango de entero");
+            }
+            return valor_entero_de_i64((int64_t)rounded);
+        }
+        /* Con decimales: pow(10, k) escalado. */
+        double escala = 1.0;
+        for (int i = 0; i < decimales; i++) escala *= 10.0;
+        double r = (d >= 0.0) ? ((double)(int64_t)(d * escala + 0.5)) / escala
+                              : ((double)(int64_t)(d * escala - 0.5)) / escala;
+        return valor_decimal(r);
+    }
+
+    return error_nativa(err, linea, columna,
+        "ErrorDeTipo: redondear() no acepta '%s'", valor_nombre_tipo(v));
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Reflexión (v1.11): instancia_de, subclase_de, id, repr
+ * ────────────────────────────────────────────────────────────────── */
+
+/*
+ * instancia_de(obj, clase) → booleano. Verdadero si `obj` es VAL_INSTANCIA
+ * y su clase coincide con `clase` o es subclase de ella (vía la cadena
+ * de superclases).
+ *
+ * Para tipos primitivos (entero, decimal, cadena, etc.), `obj` no es
+ * VAL_INSTANCIA y por tanto retorna falso. Usar `tipo(x) == "entero"`
+ * para chequear primitivos.
+ *
+ * `clase` debe ser VAL_CLASE; si no, ErrorDeTipo.
+ */
+static Valor nativa_instancia_de(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: instancia_de() requiere 2 argumentos, recibio %d", n_args);
+    }
+    if (args[1].tipo != VAL_CLASE) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: instancia_de() requiere una clase como segundo argumento, no '%s'",
+            valor_nombre_tipo(&args[1]));
+    }
+    if (args[0].tipo != VAL_INSTANCIA) {
+        return valor_booleano(false);
+    }
+    Clase *objetivo = args[1].como.clase;
+    Clase *actual = args[0].como.instancia->clase;
+    while (actual != NULL) {
+        if (actual == objetivo) return valor_booleano(true);
+        actual = actual->superclase;
+    }
+    return valor_booleano(false);
+}
+
+/*
+ * subclase_de(A, B) → booleano. Verdadero si A == B o A hereda
+ * (directa o indirectamente) de B. Ambos deben ser VAL_CLASE.
+ */
+static Valor nativa_subclase_de(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: subclase_de() requiere 2 argumentos, recibio %d", n_args);
+    }
+    if (args[0].tipo != VAL_CLASE) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: subclase_de() requiere una clase como primer argumento, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    if (args[1].tipo != VAL_CLASE) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: subclase_de() requiere una clase como segundo argumento, no '%s'",
+            valor_nombre_tipo(&args[1]));
+    }
+    Clase *objetivo = args[1].como.clase;
+    Clase *actual = args[0].como.clase;
+    while (actual != NULL) {
+        if (actual == objetivo) return valor_booleano(true);
+        actual = actual->superclase;
+    }
+    return valor_booleano(false);
+}
+
+/*
+ * id(obj) → entero único de la identidad del objeto.
+ *
+ * Para tipos por referencia (lista, dicc, conjunto, tupla, instancia,
+ * clase, closure, módulo, excepción, método ligado), retorna el puntero
+ * al objeto convertido a entero. Dos referencias al mismo objeto dan
+ * el mismo `id`. Tras GC el puntero puede reusarse — `id` solo es
+ * estable durante la vida del objeto.
+ *
+ * Para tipos por valor (entero, decimal, booleano, cadena, nulo) NO
+ * hay identidad estable: dos `5` distintos pueden tener punteros
+ * distintos o iguales. Por simplicidad, hash el contenido para que
+ * `id(x) == id(x)` sea siempre verdadero, pero `id(5) == id(5)` no
+ * está garantizado a través de re-evaluaciones.
+ *
+ * Implementación pragmática: para por-valor, retornar 0 (todos iguales)
+ * habría sido legal pero confuso; para por-ref retornar el puntero.
+ * Hoy: retornamos el puntero del campo correspondiente, o un hash del
+ * contenido para tipos inline.
+ */
+static Valor nativa_id(EvalError *err, int n_args, Valor *args,
+                        int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: id() requiere 1 argumento, recibio %d", n_args);
+    }
+    const Valor *v = &args[0];
+    int64_t pid = 0;
+    switch (v->tipo) {
+        case VAL_LISTA:         pid = (int64_t)(uintptr_t)v->como.lista; break;
+        case VAL_DICCIONARIO:   pid = (int64_t)(uintptr_t)v->como.dicc; break;
+        case VAL_CONJUNTO:      pid = (int64_t)(uintptr_t)v->como.conjunto; break;
+        case VAL_TUPLA:         pid = (int64_t)(uintptr_t)v->como.tupla; break;
+        case VAL_INSTANCIA:     pid = (int64_t)(uintptr_t)v->como.instancia; break;
+        case VAL_CLASE:         pid = (int64_t)(uintptr_t)v->como.clase; break;
+        case VAL_FUNCION_BC:    pid = (int64_t)(uintptr_t)v->como.closure; break;
+        case VAL_PLANTILLA_BC:  pid = (int64_t)(uintptr_t)v->como.plantilla; break;
+        case VAL_MODULO:        pid = (int64_t)(uintptr_t)v->como.modulo; break;
+        case VAL_EXCEPCION:     pid = (int64_t)(uintptr_t)v->como.excepcion; break;
+        case VAL_METODO_LIGADO: pid = (int64_t)(uintptr_t)v->como.metodo_ligado; break;
+        case VAL_NATIVA:        pid = (int64_t)(uintptr_t)v->como.nativa.fn; break;
+        case VAL_ENTERO:        pid = (int64_t)(uintptr_t)v->como.entero; break;
+        case VAL_ENTERO_SMALL:  pid = (int64_t)v->como.entero_small; break;
+        case VAL_DECIMAL: {
+            /* Bit-pattern del double — id consistente para mismo valor. */
+            int64_t bits;
+            memcpy(&bits, &v->como.decimal, sizeof(bits));
+            pid = bits;
+            break;
+        }
+        case VAL_BOOLEANO:      pid = v->como.booleano ? 1 : 0; break;
+        case VAL_CADENA:        pid = (int64_t)(uintptr_t)v->como.cadena.texto; break;
+        case VAL_RANGO:         pid = (int64_t)(uintptr_t)v->como.rango.inicio; break;
+        case VAL_FUNCION:       pid = (int64_t)(uintptr_t)v->como.funcion.def; break;
+        case VAL_ITERADOR:      pid = (int64_t)(uintptr_t)v->como.iterador; break;
+        case VAL_NULO:          pid = 0; break;
+    }
+    return valor_entero_de_i64(pid);
+}
+
+/*
+ * repr(x) → cadena. Llama a `valor_a_repr` que añade comillas a las
+ * cadenas y formatea anidadas con repr. Equivalente a `cadena(x)`
+ * salvo en cadenas y dentro de listas (entonces sí se ve la diferencia).
+ *
+ * Útil para depuración y reportes: `imprimir(repr(s))` muestra la
+ * cadena entre comillas, distinguiéndola de números o de listas.
+ */
+static Valor nativa_repr(EvalError *err, int n_args, Valor *args,
+                          int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: repr() requiere 1 argumento, recibio %d", n_args);
+    }
+    char buffer[4096];
+    int n = valor_a_repr(&args[0], buffer, sizeof(buffer));
+    if (n < 0) n = 0;
+    if (n >= (int)sizeof(buffer)) n = (int)sizeof(buffer) - 1;
+    return valor_cadena_duplicar(buffer, n);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
@@ -2186,6 +2483,13 @@ static const EntradaNativa NATIVAS[] = {
     /* JSON (v1.9). */
     {"json_parsear",     12, nativa_json_parsear},
     {"json_serializar",  15, nativa_json_serializar},
+    /* Numéricos y reflexión (v1.11). */
+    {"absoluto",         8,  nativa_absoluto},
+    {"redondear",        9,  nativa_redondear},
+    {"instancia_de",    12,  nativa_instancia_de},
+    {"subclase_de",     11,  nativa_subclase_de},
+    {"id",               2,  nativa_id},
+    {"repr",             4,  nativa_repr},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))
