@@ -306,6 +306,12 @@ static int token_a_opcode_binario(TipoToken op) {
  */
 static Valor cadena_desde_lexema(const char *lex, int len) {
     if (len < 2) return valor_cadena_referencia("", 0);
+    /* v1.14: cadenas triples (`"""..."""` o `'''...'''`) — detectar
+       6+ caracteres con prefijo de tres delimitadores iguales. */
+    if (len >= 6 && (lex[0] == '"' || lex[0] == '\'')
+                  && lex[1] == lex[0] && lex[2] == lex[0]) {
+        return valor_cadena_desde_escapes(lex + 3, len - 6);
+    }
     return valor_cadena_desde_escapes(lex + 1, len - 2);
 }
 
@@ -1361,11 +1367,13 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
 
         case SENT_LANZAR: {
             if (s->como.lanzar.valor == NULL) {
-                /* Re-raise (v0.8.3): solo válido dentro de un atrapar
-                   con alias. Emitimos OBTENER_LOCAL del alias top + LANZAR. */
+                /* Re-raise: válido dentro de cualquier `atrapar` (con
+                   o sin alias — v1.14). Lee el slot interno donde el
+                   compilador guardó la excepción al hacer match y
+                   re-emite OP_LANZAR. */
                 if (c->n_atrapadores_activos == 0) {
                     error_compilacion(c, s->linea, s->columna,
-                        "'lanzar' sin valor solo es valido dentro de 'atrapar Tipo como e:'");
+                        "'lanzar' sin valor solo es valido dentro de 'atrapar'");
                     return false;
                 }
                 int slot = c->atrapador_alias_slots[c->n_atrapadores_activos - 1];
@@ -2370,27 +2378,34 @@ static bool compilar_intentar(Compilador *c, const Sent *s) {
            conceptual; locals con el mismo nombre se sombrean de modo
            que `buscar_local` (que itera de n_locales-1 hacia abajo)
            encuentra siempre el más reciente. */
-        int alias_slot = -1;
+        /* v1.14: incluso sin alias, asignamos la excepción a un local
+           con nombre vacío. Permite que `lanzar` sin valor (re-raise)
+           funcione dentro de cualquier `atrapar`, no solo los que
+           tienen alias. `buscar_local` con len > 0 nunca encuentra un
+           slot anónimo, así que no hay shadowing. */
+        const char *nombre_local;
+        int len_nombre_local;
         if (atr->alias.texto != NULL) {
-            int slot = agregar_local(c, atr->alias.texto,
-                                          atr->alias.longitud,
-                                          atr->linea);
-            if (slot < 0) return false;
-            alias_slot = slot;
-            /* OLD convention: la excepción está en el tope cuando se
-               agregar_local. Cada atrapador resetea n_locales al
-               handler-entry, así que el slot es consistente. */
-            /* Push al stack de atrapadores activos para `lanzar` re-raise. */
-            if (c->n_atrapadores_activos >= COMPILADOR_ATRAPADORES_MAX) {
-                error_compilacion(c, atr->linea, atr->columna,
-                    "anidamiento de atrapadores excede %d",
-                    COMPILADOR_ATRAPADORES_MAX);
-                return false;
-            }
-            c->atrapador_alias_slots[c->n_atrapadores_activos++] = alias_slot;
+            nombre_local = atr->alias.texto;
+            len_nombre_local = atr->alias.longitud;
         } else {
-            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, atr->linea);
+            nombre_local = "";   /* slot anónimo, no buscable por nombre */
+            len_nombre_local = 0;
         }
+        int alias_slot = agregar_local(c, nombre_local, len_nombre_local,
+                                            atr->linea);
+        if (alias_slot < 0) return false;
+        /* La excepción está en el tope cuando se agregar_local; cada
+           atrapador resetea n_locales al handler-entry, así que el
+           slot es consistente. Push al stack de atrapadores activos
+           para `lanzar` sin valor (re-raise). */
+        if (c->n_atrapadores_activos >= COMPILADOR_ATRAPADORES_MAX) {
+            error_compilacion(c, atr->linea, atr->columna,
+                "anidamiento de atrapadores excede %d",
+                COMPILADOR_ATRAPADORES_MAX);
+            return false;
+        }
+        c->atrapador_alias_slots[c->n_atrapadores_activos++] = alias_slot;
 
         /* Compilar cuerpo del atrapar. */
         if (!compilador_compilar_sent(c, atr->cuerpo)) return false;

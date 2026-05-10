@@ -245,14 +245,19 @@ static Expr *parsear_f_cadena(Parser *p) {
     char delim = t.inicio[1];
     bool es_triple = (t.longitud >= 6 && t.inicio[2] == delim
                                        && t.inicio[3] == delim);
+    /* v1.14: f-cadenas triples soportadas. La diferencia con la
+       simple es solo el offset/longitud del cuerpo. La lógica de
+       interpolación `{expr}` no cambia: las triples permiten saltos
+       de línea literales y comillas sueltas dentro. */
+    const char *cuerpo;
+    int cuerpo_len;
     if (es_triple) {
-        error_en(p, &t,
-            "f-cadenas triples (f\"\"\"...\"\"\") aún no soportadas en v1.1");
-        return NULL;
+        cuerpo = t.inicio + 4;             /* skip f""" o f''' */
+        cuerpo_len = t.longitud - 7;       /* skip prefijo (4) + sufijo (3) */
+    } else {
+        cuerpo = t.inicio + 2;             /* skip f" o f' */
+        cuerpo_len = t.longitud - 3;       /* skip prefijo (2) + sufijo (1) */
     }
-    /* Cuerpo entre comillas: skip 'f' + delim al inicio, delim al final. */
-    const char *cuerpo = t.inicio + 2;
-    int cuerpo_len = t.longitud - 3;
     if (cuerpo_len < 0) cuerpo_len = 0;
 
     /* Buffers temporales en heap (la arena no permite resize). Se

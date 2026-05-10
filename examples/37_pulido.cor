@@ -1,0 +1,83 @@
+# 37_pulido.cor — pulido de v1.14.
+#
+# Tres mejoras menores que cierran limitaciones documentadas:
+#   1. `lanzar` sin valor (re-raise) en cualquier `atrapar`.
+#   2. Slicing de cadenas con UTF-8: `s[i:j]`, `s[i:j:k]`.
+#   3. F-cadenas triples y cadenas triples para texto multilínea.
+
+# ─── 1. Re-raise (lanzar sin valor) ──────────────────────────────
+imprimir("=== Re-raise: log + propagar ===")
+
+funcion procesar_pago(monto):
+    intentar:
+        si monto < 0:
+            lanzar ErrorDeValor("monto negativo")
+        fin si
+        retornar monto * 1.10  # con IVA
+    atrapar ErrorDeValor:
+        # Logueamos antes de propagar. Sin alias, gracias a v1.14.
+        imprimir(f"  [auditoria] pago invalido: monto={monto}")
+        lanzar
+    fin intentar
+fin funcion
+
+intentar:
+    procesar_pago(-100)
+atrapar ErrorDeValor como e:
+    imprimir(f"  manejado en main: {e}")
+fin intentar
+imprimir("---")
+
+# ─── 2. Slicing de cadenas ───────────────────────────────────────
+imprimir("=== Slicing de cadenas ===")
+
+frase = "El veloz murciélago hindú"
+imprimir(f"  longitud (code points): {longitud(frase)}")
+imprimir(f"  primeros 8: {frase[:8]}")
+imprimir(f"  últimos 5:  {frase[-5:]}")
+imprimir(f"  invertida:  {frase[::-1]}")
+imprimir(f"  cada otra:  {frase[::2]}")
+
+# Útil para procesar texto: extraer extensión, prefijos, etc.
+ruta = "config_v2.json"
+ext = ruta[-5:]
+nombre = ruta[:-5]
+imprimir(f"  archivo {ruta} → nombre={nombre}, ext={ext}")
+imprimir("---")
+
+# ─── 3. F-cadenas triples para reportes ─────────────────────────
+imprimir("=== F-cadenas triples ===")
+
+usuario = {"nombre": "Sara", "edad": 28, "rol": "admin"}
+saldo = 1234.56
+
+reporte = f"""
+─── Reporte de cuenta ───
+Usuario: {usuario['nombre']}
+Edad:    {usuario['edad']}
+Rol:     {usuario['rol']}
+Saldo:   {redondear(saldo, 2)} euros
+─────────────────────────"""
+
+imprimir(reporte)
+imprimir("---")
+
+# ─── 4. Combinándolo todo: helper de extracción ──────────────────
+imprimir("=== Combinado: extractor de fragmentos ===")
+
+funcion extraer_seguro(texto, ini, hasta):
+    intentar:
+        retornar texto[ini:hasta]
+    atrapar Excepcion:
+        imprimir(f"  [warn] slicing fallo en ({ini}, {hasta})")
+        lanzar
+    fin intentar
+fin funcion
+
+intentar:
+    parte = extraer_seguro("hola mundo", 0, 4)
+    imprimir(f"  parte: {parte}")
+    parte_mala = extraer_seguro("hola mundo", "no", 4)  # tipo invalido
+atrapar ErrorDeTipo como e:
+    imprimir(f"  capturado: {e}")
+fin intentar

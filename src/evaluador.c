@@ -677,11 +677,19 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
                                             e->como.literal.longitud);
         case EXPR_LITERAL_CADENA: {
             /* El lexema incluye comillas: las quitamos y delegamos al
-             * helper que procesa los escapes mínimos. */
+             * helper que procesa los escapes mínimos. v1.14: triples
+             * (`"""..."""` o `'''...'''`) detectadas como prefijo de
+             * tres delimitadores iguales. */
             const char *lex = e->como.literal.lexema;
             int len = e->como.literal.longitud;
             if (len < 2) return valor_cadena_referencia("", 0);
-            Valor v = valor_cadena_desde_escapes(lex + 1, len - 2);
+            int comillas = 1;
+            if (len >= 6 && (lex[0] == '"' || lex[0] == '\'')
+                          && lex[1] == lex[0] && lex[2] == lex[0]) {
+                comillas = 3;
+            }
+            Valor v = valor_cadena_desde_escapes(lex + comillas,
+                                                   len - 2 * comillas);
             if (v.tipo == VAL_NULO) return error_en(ev, e, "memoria insuficiente");
             return v;
         }

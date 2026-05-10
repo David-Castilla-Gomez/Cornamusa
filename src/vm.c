@@ -1706,6 +1706,16 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 cerrar_upvalues_hasta(vm, frame->base_pila);
                 /* Pop el CallFrame. */
                 vm->n_frames--;
+                /* v1.14: limpiar handlers cuyo frame_idx era > el nuevo
+                   n_frames. Cubre el caso de `retornar` (o `romper`/
+                   `continuar` que escapen) desde dentro de un `intentar`
+                   sin pasar por OP_INTENTAR_FIN — el handler quedaría
+                   registrado y atraparía erróneamente excepciones del
+                   caller. */
+                while (vm->n_handlers > 0
+                    && vm->handlers[vm->n_handlers - 1].frame_idx > vm->n_frames) {
+                    vm->n_handlers--;
+                }
                 if (vm->n_frames == 0) {
                     if (resultado_out) {
                         *resultado_out = r;
@@ -2316,12 +2326,13 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 Valor inicio_v = sacar(vm);
                 Valor obj      = sacar(vm);
 
-                if (obj.tipo != VAL_LISTA) {
-                    VM_ERROR("ErrorDeTipo: '%s' no soporta slicing en bytecode v0.6.2",
+                if (obj.tipo != VAL_LISTA && obj.tipo != VAL_CADENA) {
+                    VM_ERROR("ErrorDeTipo: '%s' no soporta slicing",
                              valor_nombre_tipo(&obj));
                     valor_destruir(&obj); valor_destruir(&inicio_v);
                     valor_destruir(&fin_v); valor_destruir(&paso_v);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
 
                 long paso = 1;
@@ -2330,7 +2341,8 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         VM_ERROR("ErrorDeTipo: paso de rebanada debe ser entero");
                         valor_destruir(&obj); valor_destruir(&inicio_v);
                         valor_destruir(&fin_v); valor_destruir(&paso_v);
-                        return VM_ERROR_RUNTIME;
+                        RAISE_OR_DIE();
+                        break;
                     }
                     if (paso_v.tipo == VAL_BOOLEANO) {
                         paso = paso_v.como.booleano ? 1 : 0;
@@ -2343,11 +2355,51 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         VM_ERROR("ErrorDeValor: el paso de una rebanada no puede ser 0");
                         valor_destruir(&obj); valor_destruir(&inicio_v);
                         valor_destruir(&fin_v); valor_destruir(&paso_v);
-                        return VM_ERROR_RUNTIME;
+                        RAISE_OR_DIE();
+                        break;
                     }
                 }
 
-                int total = obj.como.lista->cuenta;
+                /* `total` está en code points para cadena, en elementos
+                   para lista. La aritmética de inicio/fin/clamp es
+                   idéntica una vez fijado total. */
+                int total;
+                int *offsets_cp = NULL;  /* solo para cadena */
+                if (obj.tipo == VAL_CADENA) {
+                    /* Construir tabla offsets[i] = byte offset del code
+                       point i. offsets[total] = longitud en bytes (final). */
+                    int slen = obj.como.cadena.longitud;
+                    /* Cota superior: cada code point ocupa al menos 1 byte. */
+                    offsets_cp = (int *)malloc(sizeof(int) * (size_t)(slen + 1));
+                    if (!offsets_cp) {
+                        VM_ERROR("memoria insuficiente al rebanar cadena");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    int n_cp = 0;
+                    int pos = 0;
+                    while (pos < slen) {
+                        offsets_cp[n_cp++] = pos;
+                        utf8proc_int32_t cp;
+                        utf8proc_ssize_t consumido = utf8proc_iterate(
+                            (const utf8proc_uint8_t *)(obj.como.cadena.texto + pos),
+                            (utf8proc_ssize_t)(slen - pos), &cp);
+                        if (consumido <= 0) {
+                            free(offsets_cp);
+                            VM_ERROR("ErrorDeValor: cadena con UTF-8 invalido");
+                            valor_destruir(&obj); valor_destruir(&inicio_v);
+                            valor_destruir(&fin_v); valor_destruir(&paso_v);
+                            RAISE_OR_DIE();
+                            break;
+                        }
+                        pos += (int)consumido;
+                    }
+                    offsets_cp[n_cp] = slen;
+                    total = n_cp;
+                } else {
+                    total = obj.como.lista->cuenta;
+                }
 
                 long inicio;
                 if (inicio_v.tipo == VAL_NULO) {
@@ -2363,9 +2415,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     if (inicio < 0) inicio += total;
                 } else {
                     VM_ERROR("ErrorDeTipo: inicio de rebanada debe ser entero");
+                    free(offsets_cp);
                     valor_destruir(&obj); valor_destruir(&inicio_v);
                     valor_destruir(&fin_v); valor_destruir(&paso_v);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
 
                 long fin;
@@ -2382,9 +2436,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     if (fin < 0) fin += total;
                 } else {
                     VM_ERROR("ErrorDeTipo: fin de rebanada debe ser entero");
+                    free(offsets_cp);
                     valor_destruir(&obj); valor_destruir(&inicio_v);
                     valor_destruir(&fin_v); valor_destruir(&paso_v);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
 
                 /* Clamp silencioso (semántica Python). */
@@ -2398,6 +2454,50 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     if (inicio >= total) inicio = total - 1;
                     if (fin < -1) fin = -1;
                     if (fin >= total) fin = total - 1;
+                }
+
+                if (obj.tipo == VAL_CADENA) {
+                    /* Construir la cadena resultado copiando los bytes
+                       de los code points seleccionados. Para paso=1 se
+                       puede hacer en una sola memcpy contigua; para
+                       otros pasos hay que iterar y copiar segmento por
+                       segmento. */
+                    int cap_bytes = obj.como.cadena.longitud + 1;
+                    char *buf = (char *)malloc((size_t)cap_bytes);
+                    if (!buf) {
+                        free(offsets_cp);
+                        VM_ERROR("memoria insuficiente al rebanar cadena");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    int n_bytes = 0;
+                    if (paso > 0) {
+                        for (long i = inicio; i < fin; i += paso) {
+                            int b0 = offsets_cp[i];
+                            int b1 = offsets_cp[i + 1];
+                            int seg = b1 - b0;
+                            memcpy(buf + n_bytes, obj.como.cadena.texto + b0,
+                                    (size_t)seg);
+                            n_bytes += seg;
+                        }
+                    } else {
+                        for (long i = inicio; i > fin; i += paso) {
+                            int b0 = offsets_cp[i];
+                            int b1 = offsets_cp[i + 1];
+                            int seg = b1 - b0;
+                            memcpy(buf + n_bytes, obj.como.cadena.texto + b0,
+                                    (size_t)seg);
+                            n_bytes += seg;
+                        }
+                    }
+                    free(offsets_cp);
+                    Valor r = valor_cadena_duplicar(buf, n_bytes);
+                    free(buf);
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    empujar(vm, r);
+                    break;
                 }
 
                 Lista *resultado = lista_nueva(0);

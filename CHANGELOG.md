@@ -6,6 +6,94 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.14.0] — 2026-05-10 — Pulido
+
+Tres mejoras menores que cierran limitaciones documentadas, más una
+corrección de bug preexistente expuesto durante el trabajo.
+
+### Re-raise sin alias
+
+`lanzar` sin valor (re-raise) ahora funciona en cualquier `atrapar`,
+no solo los que tienen alias `como e`. El compilador asigna la
+excepción a un local con nombre vacío cuando el atrapar no nombra el
+alias, manteniendo el slot accesible para `lanzar`.
+
+```cornamusa
+intentar:
+    procesar(arg)
+atrapar ErrorDeIO:
+    imprimir("[log] fallo de I/O")
+    lanzar       # re-propaga al caller, sin necesidad de `como e`
+fin intentar
+```
+
+### Slicing de cadenas (UTF-8)
+
+`s[i:j]`, `s[i:j:k]` con índices y paso negativos. Los índices son
+**code points**, no bytes — funciona correctamente con caracteres
+multibyte:
+
+```cornamusa
+"café"[3:]        # "é"        (un solo code point)
+"Año"[::-1]            # "oñA"
+"Hola mundo"[5:]       # "mundo"
+"abc"[10:20]           # ""         (clamp Python-style)
+```
+
+Implementación: en `OP_REBANADA` para `VAL_CADENA`, una pasada por
+la cadena con `utf8proc_iterate` construye una tabla `offsets[i]`
+con la posición en bytes del code point `i`. La aritmética de
+`inicio`/`fin`/`paso`/`clamp` reusa la del slicing de listas. El
+resultado es una cadena nueva con los bytes seleccionados.
+
+### F-cadenas triples y cadenas triples
+
+`f"""..."""` y `f'''...'''` funcionan ahora (antes daban
+`ErrorDeSintaxis: aún no soportadas`). Las cadenas triples sin `f`
+también respetan los delimitadores (antes el compilador se confundía
+y dejaba comillas residuales).
+
+```cornamusa
+reporte = f"""
+Usuario: {usuario}
+Saldo:   {redondear(saldo, 2)} EUR
+"""
+```
+
+Implementación: el lexer ya tokenizaba las triples; solo había que
+ajustar los offsets de cuerpo en `parsear_f_cadena()` y
+`cadena_desde_lexema()`/evaluador para detectar el prefijo de tres
+delimitadores.
+
+### Fix: handler leak en `retornar` dentro de `intentar`
+
+Bug preexistente expuesto al añadir slicing+re-raise: si una función
+`retornar` desde dentro de un `intentar` (sin pasar por
+`OP_INTENTAR_FIN`), el `HandlerFrame` quedaba registrado en
+`vm->handlers`. La próxima excepción que aterrizase en el caller
+disparaba ese handler obsoleto con un frame ya inexistente,
+ejecutando el cuerpo del atrapar dos veces.
+
+Fix en `OP_RETORNAR`: tras pop el frame, descartar todos los handlers
+cuyo `frame_idx > vm->n_frames`. Una sola línea, propagación
+limpia. También cubre `romper`/`continuar` que escapen de un
+`intentar`.
+
+Cambio colateral: varios errores de `OP_REBANADA` que antes eran
+`return VM_ERROR_RUNTIME` directo ahora usan `RAISE_OR_DIE()` —
+slicing inválido es atrapable.
+
+### Tests
+
+18 tests nuevos en
+[tests/unit/test_bytecode_pulido.c](tests/unit/test_bytecode_pulido.c)
+cubriendo las cuatro mejoras + el regression test del handler leak.
+Total: **127 verde**.
+
+Ejemplo: [examples/37_pulido.cor](examples/37_pulido.cor) con un
+helper de slicing seguro que combina re-raise, slicing UTF-8 y
+f-cadenas triples para reportes.
+
 ## [1.13.0] — 2026-05-10 — Context managers (`con`)
 
 Llega la keyword `con` (`with` de Python) y los dunders
