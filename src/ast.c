@@ -694,6 +694,24 @@ Patron *patron_bind(Arena *a, const char *nombre, int len, int linea, int col) {
     return p;
 }
 
+Patron *patron_tupla(Arena *a, Patron **elementos, int n, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_TUPLA, linea, col);
+    if (p) {
+        p->como.estructural.elementos = elementos;
+        p->como.estructural.n = n;
+    }
+    return p;
+}
+
+Patron *patron_lista(Arena *a, Patron **elementos, int n, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_LISTA, linea, col);
+    if (p) {
+        p->como.estructural.elementos = elementos;
+        p->como.estructural.n = n;
+    }
+    return p;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * Sentencias — pretty-printer
  *
@@ -957,19 +975,30 @@ static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
             for (int i = 0; i < s->como.coincidir.n_clausulas; i++) {
                 ClausulaCuando *cw = &s->como.coincidir.clausulas[i];
                 wb_escribir(eb, " (cuando ");
-                switch (cw->patron->tipo) {
-                    case PATRON_WILDCARD:
-                        wb_escribir(eb, "_");
-                        break;
-                    case PATRON_LITERAL:
-                        expr_a_buffer(cw->patron->como.literal, eb);
-                        break;
-                    case PATRON_BIND:
-                        wb_escribir(eb, "(bind ");
-                        wb_escribir_lexema(eb, cw->patron->como.bind.nombre,
-                                            cw->patron->como.bind.longitud);
-                        wb_escribir(eb, ")");
-                        break;
+                {
+                    /* Pretty-print del patrón. Para v1.16 estructurales,
+                       solo nombre y conteo (no recurrimos por simplicidad). */
+                    const Patron *pp = cw->patron;
+                    switch (pp->tipo) {
+                        case PATRON_WILDCARD:
+                            wb_escribir(eb, "_");
+                            break;
+                        case PATRON_LITERAL:
+                            expr_a_buffer(pp->como.literal, eb);
+                            break;
+                        case PATRON_BIND:
+                            wb_escribir(eb, "(bind ");
+                            wb_escribir_lexema(eb, pp->como.bind.nombre,
+                                                pp->como.bind.longitud);
+                            wb_escribir(eb, ")");
+                            break;
+                        case PATRON_TUPLA:
+                            wb_escribir(eb, "(tupla %d)", pp->como.estructural.n);
+                            break;
+                        case PATRON_LISTA:
+                            wb_escribir(eb, "(lista %d)", pp->como.estructural.n);
+                            break;
+                    }
                 }
                 if (cw->guarda) {
                     wb_escribir(eb, " (si ");

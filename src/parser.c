@@ -1950,6 +1950,42 @@ static Sent *parsear_con(Parser *p) {
  * Aplazadas a v1.15+: tuplas `(p1, p2)`, listas `[p1, p2]`, OR-
  * patterns `p1 | p2`, type-match `Foo(p1, p2)`.
  */
+/* Forward decl: la lista de patrones recurre por sub-patrones. */
+static Patron *parsear_patron(Parser *p);
+
+/* Parsea una secuencia de patrones separados por coma hasta el
+   delimitador de cierre indicado (TT_PARENT_DER o TT_CORCH_DER).
+   Acepta coma final opcional. Devuelve `*n_out` con la cuenta. */
+static Patron **parsear_lista_patrones(Parser *p, TipoToken cierre, int *n_out) {
+    Patron **elementos = NULL;
+    int n = 0, cap = 0;
+    if (!check(p, cierre)) {
+        do {
+            if (check(p, cierre)) break;  /* coma final OK */
+            if (n >= cap) {
+                cap = cap == 0 ? 4 : cap * 2;
+                Patron **nuevo = (Patron **)arena_alocar(p->arena,
+                    sizeof(Patron *) * (size_t)cap);
+                if (nuevo == NULL) return NULL;
+                if (n > 0) memcpy(nuevo, elementos,
+                                  sizeof(Patron *) * (size_t)n);
+                elementos = nuevo;
+            }
+            Patron *sub = parsear_patron(p);
+            if (sub == NULL) return NULL;
+            elementos[n++] = sub;
+        } while (consumir_si(p, TT_COMA));
+    }
+    if (!consumir(p, cierre,
+            cierre == TT_PARENT_DER
+                ? "se esperaba ')' al final del patron de tupla"
+                : "se esperaba ']' al final del patron de lista")) {
+        return NULL;
+    }
+    *n_out = n;
+    return elementos;
+}
+
 static Patron *parsear_patron(Parser *p) {
     int linea = p->actual.linea;
     int col = p->actual.columna;
@@ -1967,6 +2003,27 @@ static Patron *parsear_patron(Parser *p) {
         int len = p->actual.longitud;
         avanzar(p);
         return patron_bind(p->arena, nombre, len, linea, col);
+    }
+
+    /* Tupla `(p1, p2, ...)` (v1.16). */
+    if (p->actual.tipo == TT_PARENT_IZQ) {
+        avanzar(p);
+        int n = 0;
+        Patron **elems = parsear_lista_patrones(p, TT_PARENT_DER, &n);
+        if (n > 0 && elems == NULL) return NULL;  /* error */
+        if (elems == NULL && n == 0) {
+            /* Tupla vacía válida (matchea `()`). */
+        }
+        return patron_tupla(p->arena, elems, n, linea, col);
+    }
+
+    /* Lista `[p1, p2, ...]` (v1.16). */
+    if (p->actual.tipo == TT_CORCH_IZQ) {
+        avanzar(p);
+        int n = 0;
+        Patron **elems = parsear_lista_patrones(p, TT_CORCH_DER, &n);
+        if (n > 0 && elems == NULL) return NULL;
+        return patron_lista(p->arena, elems, n, linea, col);
     }
 
     /* Literal: aceptamos los token-types que producen expresiones

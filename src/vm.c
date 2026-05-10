@@ -2717,6 +2717,26 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 break;
             }
 
+            /* v1.16: tests de tipo para pattern matching estructural.
+               CONSUMEN el TOS y empujan booleano — esto deja el stack
+               balanceado entre paths match (bool descartado y caen al
+               siguiente test) y no-match (bool queda en stack y se
+               descarta en el aterrizaje). */
+            case OP_ES_TUPLA: {
+                Valor v = sacar(vm);
+                bool es = (v.tipo == VAL_TUPLA);
+                valor_destruir(&v);
+                empujar(vm, valor_booleano(es));
+                break;
+            }
+            case OP_ES_LISTA: {
+                Valor v = sacar(vm);
+                bool es = (v.tipo == VAL_LISTA);
+                valor_destruir(&v);
+                empujar(vm, valor_booleano(es));
+                break;
+            }
+
             case OP_IMPRIMIR: {
                 uint8_t n = LEER_BYTE();
                 /* v1.2: el compilador emite OP_FORMATO_F + OP_ASEGURAR_CADENA

@@ -6,6 +6,121 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.16.0] — 2026-05-10 — Patrones estructurales en `coincidir`
+
+Extiende v1.15 con patrones de tupla y lista, soportando anidación
+arbitraria. Con esto `coincidir` se vuelve una herramienta de
+**desestructuración + dispatch** que era difícil de escribir con
+`si/sino` y `[i]`.
+
+### Sintaxis
+
+```cornamusa
+coincidir punto:
+    cuando (0, 0):              imprimir("origen")
+    cuando (a, 0):              imprimir(f"eje X en {a}")
+    cuando (0, b):              imprimir(f"eje Y en {b}")
+    cuando (a, b) si a == b:    imprimir(f"diagonal en {a}")
+    cuando (a, b):              imprimir(f"({a}, {b})")
+    cuando _:                   imprimir("?")
+fin coincidir
+```
+
+### Lo que hay de nuevo
+
+| Patrón | Sintaxis | Cuándo matchea |
+|---|---|---|
+| Tupla | `(p1, p2, ..., pn)` | TOS es `VAL_TUPLA` con cuenta `n` y cada elemento matchea su sub-patrón. |
+| Lista | `[p1, p2, ..., pn]` | TOS es `VAL_LISTA` con cuenta `n` y cada elemento matchea. |
+
+Tupla NO matchea lista y viceversa: el tipo se chequea estricto.
+Sub-patrones pueden ser literal/bind/wildcard/tupla/lista anidados —
+hasta 16 niveles de profundidad.
+
+### Ejemplos prácticos
+
+**Análisis de comandos como listas:**
+```cornamusa
+coincidir comando:
+    cuando []:                       retornar "vacío"
+    cuando ["ayuda"]:                retornar "muestra ayuda"
+    cuando ["sumar", a, b]:          retornar f"sumar = {a + b}"
+    cuando ["mult", a, b, c]:        retornar f"mult = {a * b * c}"
+    cuando _:                        retornar "desconocido"
+fin coincidir
+```
+
+**Mensajes etiquetados con anidación:**
+```cornamusa
+coincidir msg:
+    cuando ("login", (usuario, password)):  ...
+    cuando ("data", [a, b, c]):             ...
+    cuando ("ping", _):                     retornar "pong"
+fin coincidir
+```
+
+**Tree walker:**
+```cornamusa
+funcion evaluar(expr, env):
+    coincidir expr:
+        cuando ("num", n):          retornar n
+        cuando ("var", nombre):     retornar env[nombre]
+        cuando ("suma", a, b):      retornar evaluar(a, env) + evaluar(b, env)
+        cuando ("mult", a, b):      retornar evaluar(a, env) * evaluar(b, env)
+    fin coincidir
+fin funcion
+```
+
+### Implementación: pasada doble + cleanup determinista
+
+El compilador genera bytecode en dos fases:
+
+1. **Verify** ([src/compilador.c](src/compilador.c) `emitir_verify`):
+   verifica recursivamente tipo, longitud y literales. Sin tocar
+   locales — cada test fallido emite un salto a `L_no_match` con UN
+   booleano FALSE en stack y nada más.
+2. **Bind** (`emitir_binds`): solo se ejecuta si la verify pasó.
+   Recorre el patrón y emite `OP_OBTENER_LOCAL slot_sujeto + cadena
+   de OP_INDICE` por cada `bind`, asignando el resultado a un local.
+
+Esta separación garantiza un stack invariante simple: en cualquier
+salto a `L_no_match`, el stack es `pre-cláusula + 1 bool false`. Un
+único `OP_DESCARTAR` aterriza todos los saltos.
+
+Tras el cuerpo (o tras un fallo de guarda), se emiten N
+`OP_DESCARTAR` (uno por bind creado) y se restaura
+`c->n_locales = n_locales_pre` para que la cláusula siguiente vea el
+estado limpio.
+
+### Nuevos opcodes
+
+- `OP_ES_TUPLA` y `OP_ES_LISTA`: peek/consume el TOS, push booleano
+  según el tipo. Necesarios para verify del patrón estructural.
+
+### Limitaciones
+
+- **Sin OR-patterns** (`cuando 1 | 2 | 3:`). Workaround: cláusulas
+  duplicadas o guarda `cuando v si v == 1 o v == 2 o v == 3:`.
+- **Sin patrón star** (`cuando [primero, *resto]:`). Workaround: bind
+  + slicing manual.
+- **Sin type-match** (`cuando Foo(x, y):`). Workaround: guarda con
+  `instancia_de`.
+- **Profundidad de anidación**: 16 niveles. Suficiente para casos
+  prácticos.
+
+### Tests
+
+15 tests nuevos en
+[tests/unit/test_bytecode_coincidir_estructural.c](tests/unit/test_bytecode_coincidir_estructural.c)
+cubriendo tuplas/listas básicas, aridad, tipos, anidación heterogénea,
+guardas estructurales, secuencias en bucles. Todos los 16 tests de
+v1.15 siguen verde. Total: **130 verde**.
+
+Ejemplo:
+[examples/39_coincidir_estructural.cor](examples/39_coincidir_estructural.cor)
+con coordenadas, comandos, mensajes etiquetados y un evaluador AST
+recursivo.
+
 ## [1.15.0] — 2026-05-10 — Pattern matching (`coincidir`/`cuando`)
 
 Llega la sentencia `coincidir/cuando` (`match/case` de Python). Más

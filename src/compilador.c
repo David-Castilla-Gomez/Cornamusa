@@ -1185,28 +1185,163 @@ static bool compilar_si(Compilador *c, const Sent *s) {
 }
 
 /*
- * SENT_COINCIDIR v1.15: desugar a if/else chain.
+ * SENT_COINCIDIR v1.15+v1.16: desugar a if/else chain en dos pasadas.
  *
- * Layout del bytecode emitido:
+ * Estrategia de match:
+ *   - El sujeto raíz vive en un slot de local anónimo (`slot_sujeto`).
+ *   - Pasada 1 (`emitir_verify`): verifica tipo, longitud y literales
+ *     recursivamente. Sin tocar locales. Cada test fallido emite un
+ *     salto a la lista `saltos[]` con UN bool false en stack, NADA más.
+ *   - Pasada 2 (`emitir_binds`): tras verify exitoso, emite las
+ *     asignaciones de los binds. Cada bind navega el sujeto vía cadena
+ *     de OP_INDICE desde slot_sujeto siguiendo el path almacenado.
  *
- *     [eval sujeto]                     ; tope=sujeto
- *     ; sujeto pasa a un local anónimo (slot S).
- *     para cada cláusula i con patron P_i, guarda G_i, cuerpo B_i:
- *         test_match P_i contra slot S:
- *             - WILDCARD: no test (siempre match).
- *             - LITERAL:  push slot S, push lit, OP_IGUAL, OP_SALTAR_SI_FALSO L_no.
- *             - BIND:     push slot S, agregar_local(nombre).
- *         si G_i: eval G, OP_SALTAR_SI_FALSO L_no.
- *         compilar B_i.
- *         OP_SALTAR L_fin.
- *         L_no: OP_DESCARTAR (limpia booleano del SALTAR_SI_FALSO).
- *     L_fin:
- *         OP_DESCARTAR (libera el sujeto del slot S).
+ * Esta separación garantiza stack invariante: el aterrizaje L_no solo
+ * descarta UN bool; sin locales zombies entre cláusulas.
  *
- * Nota: los locals creados por PATRON_BIND no se "rollback" al fallar
- * la guarda — el slot vive hasta el fin del scope. Si dos cláusulas
- * usan el mismo nombre de bind, la segunda sombra la primera.
+ * Ventajas: anidación arbitraria de tuplas/listas funciona sin
+ * complejidad adicional. La pasada de binds solo se ejecuta si toda
+ * la verify pasó.
  */
+#define MATCH_MAX_SALTOS 64
+#define MATCH_MAX_PROFUNDIDAD 16
+
+/* Indices_path: cadena de índices desde slot_sujeto. p.ej. para acceder
+   a S[1][0], path = [1, 0]. Vacío para el sujeto mismo. */
+
+/* Emite código que navega de slot_sujeto a S[indices[0]][indices[1]]...
+   y deja el resultado en el TOS. */
+static void emitir_navegar(Compilador *c, int slot_sujeto,
+                             const int *indices, int n_indices, int linea) {
+    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                        (uint8_t)slot_sujeto, linea);
+    for (int i = 0; i < n_indices; i++) {
+        chunk_emitir_constante(c->actual->chunk,
+                                 valor_entero_de_long((long)indices[i]), linea);
+        chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
+    }
+}
+
+static bool emitir_verify(Compilador *c, const Patron *pat,
+                            int slot_sujeto,
+                            int *indices, int n_indices,
+                            int *saltos, int *n_saltos);
+
+static bool emitir_verify(Compilador *c, const Patron *pat,
+                            int slot_sujeto,
+                            int *indices, int n_indices,
+                            int *saltos, int *n_saltos) {
+    int pl = pat->linea;
+    switch (pat->tipo) {
+        case PATRON_WILDCARD:
+        case PATRON_BIND:
+            /* Verify pass: ambos siempre matchean. Nada que comprobar. */
+            return true;
+
+        case PATRON_LITERAL:
+            emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+            if (!compilador_compilar_expr(c, pat->como.literal)) return false;
+            chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
+            if (*n_saltos >= MATCH_MAX_SALTOS) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' demasiado complejo (>%d sub-tests)",
+                    MATCH_MAX_SALTOS);
+                return false;
+            }
+            saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+            return true;
+
+        case PATRON_TUPLA:
+        case PATRON_LISTA: {
+            if (n_indices >= MATCH_MAX_PROFUNDIDAD) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' anidado demasiado profundo (>%d niveles)",
+                    MATCH_MAX_PROFUNDIDAD);
+                return false;
+            }
+            int n = pat->como.estructural.n;
+            OpCode op_es = (pat->tipo == PATRON_TUPLA) ? OP_ES_TUPLA : OP_ES_LISTA;
+
+            /* 1. Verificar tipo. */
+            emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+            chunk_emitir_byte(c->actual->chunk, (uint8_t)op_es, pl);
+            if (*n_saltos >= MATCH_MAX_SALTOS) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' demasiado complejo (>%d sub-tests)",
+                    MATCH_MAX_SALTOS);
+                return false;
+            }
+            saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+
+            /* 2. Verificar longitud. */
+            emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+            chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, pl);
+            chunk_emitir_constante(c->actual->chunk,
+                                     valor_entero_de_long((long)n), pl);
+            chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
+            if (*n_saltos >= MATCH_MAX_SALTOS) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' demasiado complejo (>%d sub-tests)",
+                    MATCH_MAX_SALTOS);
+                return false;
+            }
+            saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+
+            /* 3. Recursar por cada elemento (extender path). */
+            /* MATCH_MAX_PROFUNDIDAD acota el path; usamos array fijo. */
+            int nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+            for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
+            for (int i = 0; i < n; i++) {
+                nuevo_path[n_indices] = i;
+                if (!emitir_verify(c, pat->como.estructural.elementos[i],
+                                    slot_sujeto, nuevo_path, n_indices + 1,
+                                    saltos, n_saltos)) return false;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool emitir_binds(Compilador *c, const Patron *pat,
+                           int slot_sujeto,
+                           int *indices, int n_indices) {
+    int pl = pat->linea;
+    switch (pat->tipo) {
+        case PATRON_WILDCARD:
+        case PATRON_LITERAL:
+            return true;
+
+        case PATRON_BIND: {
+            emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+            int slot = agregar_local(c, pat->como.bind.nombre,
+                                          pat->como.bind.longitud, pl);
+            if (slot < 0) return false;
+            return true;
+        }
+
+        case PATRON_TUPLA:
+        case PATRON_LISTA: {
+            int n = pat->como.estructural.n;
+            /* MATCH_MAX_PROFUNDIDAD acota el path; usamos array fijo. */
+            int nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+            for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
+            for (int i = 0; i < n; i++) {
+                nuevo_path[n_indices] = i;
+                if (!emitir_binds(c, pat->como.estructural.elementos[i],
+                                    slot_sujeto, nuevo_path, n_indices + 1)) {
+                    return false;
+                }
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
 static bool compilar_coincidir(Compilador *c, const Sent *s) {
     int n = s->como.coincidir.n_clausulas;
     if (n > 256) {
@@ -1225,37 +1360,28 @@ static bool compilar_coincidir(Compilador *c, const Sent *s) {
 
     for (int i = 0; i < n; i++) {
         ClausulaCuando *cw = &s->como.coincidir.clausulas[i];
-        Patron *pat = cw->patron;
-        int salto_no_match = -1;
 
-        switch (pat->tipo) {
-            case PATRON_WILDCARD:
-                /* Siempre match. No emit nada. */
-                break;
-            case PATRON_LITERAL:
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                                    (uint8_t)slot_sujeto, cw->linea);
-                if (!compilador_compilar_expr(c, pat->como.literal)) return false;
-                chunk_emitir_byte(c->actual->chunk, OP_IGUAL, cw->linea);
-                salto_no_match = emitir_salto(c, OP_SALTAR_SI_FALSO, cw->linea);
-                /* TRUE branch: descartar el booleano y caer al cuerpo. */
-                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
-                break;
-            case PATRON_BIND: {
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                                    (uint8_t)slot_sujeto, cw->linea);
-                int slot_bind = agregar_local(c, pat->como.bind.nombre,
-                                                pat->como.bind.longitud,
-                                                cw->linea);
-                if (slot_bind < 0) return false;
-                /* OP_OBTENER_LOCAL puso una copia del sujeto en el tope.
-                   agregar_local registra un nuevo slot en ese tope. No
-                   emitir nada más: el local ya tiene el valor. */
-                break;
-            }
+        /* Snapshot del compilador antes de la cláusula. Los binds y
+           los temporales se rebobinan al fin de la cláusula para que
+           la siguiente vea el estado pre-cláusula. */
+        int n_locales_pre = c->actual->n_locales;
+
+        /* Pasada 1: verify. Cada test fallido deja UN bool false en
+           stack y salta. Sin tocar locales. */
+        int saltos_no_match[MATCH_MAX_SALTOS];
+        int n_saltos_no_match = 0;
+        if (!emitir_verify(c, cw->patron, slot_sujeto,
+                             NULL, 0,
+                             saltos_no_match, &n_saltos_no_match)) {
+            return false;
         }
 
-        /* Guarda opcional. */
+        /* Pasada 2: binds. Solo se ejecuta si la verify pasó. Aquí sí
+           se crean locales (cada bind hace OP_OBTENER_LOCAL+OP_INDICE
+           y agregar_local sobre el TOS resultante). */
+        if (!emitir_binds(c, cw->patron, slot_sujeto, NULL, 0)) return false;
+
+        /* Guarda opcional. La guarda puede usar los binds. */
         int salto_guarda_falso = -1;
         if (cw->guarda) {
             if (!compilador_compilar_expr(c, cw->guarda)) return false;
@@ -1266,17 +1392,43 @@ static bool compilar_coincidir(Compilador *c, const Sent *s) {
         /* Cuerpo. */
         if (!compilador_compilar_sent(c, cw->cuerpo)) return false;
 
+        /* Cleanup: descartar los locales creados por los binds (en
+           runtime). Restaurar `c->n_locales` para que la siguiente
+           cláusula vea el estado correcto. */
+        int n_binds = c->actual->n_locales - n_locales_pre;
+        for (int j = 0; j < n_binds; j++) {
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+        }
+        c->actual->n_locales = n_locales_pre;
+
         /* Salto al fin del coincidir. */
+        if (n_saltos_fin >= 256) {
+            error_compilacion(c, cw->linea, cw->columna,
+                "demasiados saltos en 'coincidir'");
+            return false;
+        }
         saltos_fin[n_saltos_fin++] = emitir_salto(c, OP_SALTAR, cw->linea);
 
-        /* Aterrizajes de no-match. */
-        if (salto_no_match >= 0) {
-            parchear_salto(c, salto_no_match, cw->linea);
+        /* Aterrizaje no-match: parcheamos todos los saltos al mismo
+           punto. Verify NO creó locales en runtime, así que UN
+           OP_DESCARTAR (del bool false) limpia.
+           Tampoco la guarda crea locales — su salto deja el bool.
+           Importante: c->n_locales está en n_locales_pre, igual que
+           el stack runtime en este punto. */
+        if (n_saltos_no_match > 0) {
+            for (int j = 0; j < n_saltos_no_match; j++) {
+                parchear_salto(c, saltos_no_match[j], cw->linea);
+            }
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
         }
         if (salto_guarda_falso >= 0) {
             parchear_salto(c, salto_guarda_falso, cw->linea);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+            /* Si la guarda falla, los binds creados antes deben también
+               descartarse en runtime. Igual que el cleanup post-cuerpo. */
+            for (int j = 0; j < n_binds; j++) {
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+            }
         }
     }
 
@@ -1284,11 +1436,11 @@ static bool compilar_coincidir(Compilador *c, const Sent *s) {
     for (int i = 0; i < n_saltos_fin; i++) {
         parchear_salto(c, saltos_fin[i], s->linea);
     }
-    /* Descartar el local del sujeto: el slot quedará reservado hasta
-       el fin del scope, pero su valor se libera. Para liberarlo
-       tendríamos que emit OP_DESCARTAR + decrementar n_locales — pero
-       eso interferiría con los slots BIND añadidos. Aceptamos que el
-       sujeto vive hasta el fin del scope (igual que los BIND). */
+    /* Descartar el slot del sujeto del stack runtime y rebobinar el
+       compilador. Crítico: si `coincidir` está dentro de un bucle, el
+       slot acumularía un valor por iteración. */
+    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+    c->actual->n_locales--;
     return true;
 }
 

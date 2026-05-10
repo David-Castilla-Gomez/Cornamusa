@@ -313,13 +313,17 @@ typedef enum {
 } TipoSent;
 
 /*
- * Patrones de `coincidir` (v1.15). En esta versión inicial solo
- * literal/bind/wildcard. Tuplas/listas estructurales se aplazan.
+ * Patrones de `coincidir` (v1.15+).
+ *
+ * v1.15: literal, bind, wildcard.
+ * v1.16: tupla, lista (estructurales con anidación).
  */
 typedef enum {
     PATRON_WILDCARD,     /* `_`: matches todo, no bindea */
     PATRON_LITERAL,      /* literal entero/decimal/cadena/booleano/nulo */
     PATRON_BIND,         /* identificador: bindea el valor a un local */
+    PATRON_TUPLA,        /* `(p1, p2, ...)`: matchea tupla con misma aridad y patrones */
+    PATRON_LISTA,        /* `[p1, p2, ...]`: matchea lista con misma longitud y patrones */
 } TipoPatron;
 
 typedef struct Patron {
@@ -331,6 +335,10 @@ typedef struct Patron {
             const char *nombre;
             int longitud;
         } bind;                    /* PATRON_BIND */
+        struct {
+            struct Patron **elementos;
+            int n;
+        } estructural;             /* PATRON_TUPLA, PATRON_LISTA */
     } como;
 } Patron;
 
@@ -545,10 +553,12 @@ Sent *sent_coincidir(Arena *a, Expr *sujeto,
                      ClausulaCuando *clausulas, int n_clausulas,
                      int linea, int col);
 
-/* Constructores de patrones (v1.15). */
+/* Constructores de patrones (v1.15-v1.16). */
 Patron *patron_wildcard(Arena *a, int linea, int col);
 Patron *patron_literal(Arena *a, Expr *lit, int linea, int col);
 Patron *patron_bind(Arena *a, const char *nombre, int len, int linea, int col);
+Patron *patron_tupla(Arena *a, Patron **elementos, int n, int linea, int col);
+Patron *patron_lista(Arena *a, Patron **elementos, int n, int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);

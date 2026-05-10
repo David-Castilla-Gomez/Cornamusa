@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.15.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.16.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -110,7 +110,8 @@ Hoja de ruta resumida:
 | **v1.13** | **Context managers — `con expr [como x]:` con dunders `__entrar__`/`__salir__`** | ✅ |
 | **v1.14** | **Pulido: re-raise sin alias, slicing de cadenas (UTF-8), f-cadenas triples, fix handler-leak en `retornar` dentro de `intentar`** | ✅ |
 | **v1.15** | **Pattern matching — `coincidir/cuando` con literales, bind y guardas** | ✅ |
-| v1.16+ | generadores (`producir`), patterns estructurales (tuplas/listas en `cuando`), `formato`, `fechas`, `__siguiente__` lazy | ⏳ |
+| **v1.16** | **Patrones estructurales — `cuando (x, y):` y `cuando [a, b]:` con anidación arbitraria** | ✅ |
+| v1.17+ | generadores (`producir`), `formato`, `fechas`, `__siguiente__` lazy, OR-patterns | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

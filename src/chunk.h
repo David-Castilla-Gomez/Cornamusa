@@ -254,6 +254,16 @@ typedef enum {
      */
     OP_LONGITUD,
 
+    /* ---- Pattern matching (v1.16) ---- */
+    /*
+     * Test de tipo de TOS. NO consumen el valor (peek).
+     * Empujan booleano al stack: verdadero si TOS es del tipo, falso
+     * si no. Usados por el compilador de `coincidir` para verificar
+     * patrones estructurales antes de extraer elementos.
+     */
+    OP_ES_TUPLA,
+    OP_ES_LISTA,
+
     /* ---- Retorno ---- */
     OP_RETORNAR,
 } OpCode;

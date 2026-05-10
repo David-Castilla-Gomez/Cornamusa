@@ -1,0 +1,126 @@
+# 39_coincidir_estructural.cor — patrones estructurales (v1.16).
+#
+# v1.16 amplía v1.15 con patrones de tupla y lista, con anidación
+# arbitraria. Esto convierte `coincidir` en una herramienta de
+# desestructuración + dispatch que era difícil expresar con `si/sino`.
+
+# ─── 1. Coordenadas en el plano ──────────────────────────────────
+funcion describir_punto(p):
+    coincidir p:
+        cuando (0, 0):
+            retornar "origen"
+        cuando (a, 0):
+            retornar f"sobre eje X en x={a}"
+        cuando (0, b):
+            retornar f"sobre eje Y en y={b}"
+        cuando (a, b) si a == b:
+            retornar f"sobre diagonal y=x con valor {a}"
+        cuando (a, b):
+            retornar f"punto ({a}, {b})"
+        cuando _:
+            retornar "(no es par)"
+    fin coincidir
+fin funcion
+
+imprimir("=== Puntos ===")
+para p en [(0, 0), (5, 0), (0, 3), (4, 4), (1, 2), (-1, 7)]:
+    imprimir(f"  {p} → {describir_punto(p)}")
+fin para
+imprimir("---")
+
+# ─── 2. Análisis de comandos como listas ─────────────────────────
+funcion ejecutar(comando):
+    coincidir comando:
+        cuando []:
+            retornar "comando vacío"
+        cuando ["ayuda"]:
+            retornar "muestra ayuda"
+        cuando ["sumar", a, b]:
+            retornar f"sumar = {a + b}"
+        cuando ["mult", a, b, c]:
+            retornar f"mult = {a * b * c}"
+        cuando [op]:
+            retornar f"operación '{op}' sin args"
+        cuando [op, _]:
+            retornar f"operación '{op}' con un arg (ignorado)"
+        cuando _:
+            retornar "comando desconocido"
+    fin coincidir
+fin funcion
+
+imprimir("=== Comandos ===")
+casos = [
+    [],
+    ["ayuda"],
+    ["sumar", 3, 5],
+    ["mult", 2, 3, 4],
+    ["debug"],
+    ["debug", "verbose"],
+    ["x", "y", "z", "w"],
+]
+para c en casos:
+    imprimir(f"  {c} → {ejecutar(c)}")
+fin para
+imprimir("---")
+
+# ─── 3. Mensajes etiquetados con anidación ───────────────────────
+funcion procesar_msg(msg):
+    coincidir msg:
+        cuando ("login", (usuario, password)):
+            retornar f"login intent: {usuario}"
+        cuando ("logout", usuario):
+            retornar f"logout: {usuario}"
+        cuando ("ping", _):
+            retornar "pong"
+        cuando ("data", [primero, segundo, tercero]):
+            retornar f"datos: 3 items: {primero}, {segundo}, {tercero}"
+        cuando (etiqueta, _):
+            retornar f"msg desconocido: {etiqueta}"
+    fin coincidir
+fin funcion
+
+imprimir("=== Mensajes ===")
+mensajes = [
+    ("login", ("ana", "secret123")),
+    ("logout", "ana"),
+    ("ping", nulo),
+    ("data", [10, 20, 30]),
+    ("custom", verdadero),
+]
+para m en mensajes:
+    imprimir(f"  → {procesar_msg(m)}")
+fin para
+imprimir("---")
+
+# ─── 4. Tree walker simplificado ─────────────────────────────────
+# Representamos un AST como tuplas etiquetadas:
+#   ("num", n)         — número literal
+#   ("var", nombre)    — variable
+#   ("suma", a, b)     — suma de dos sub-árboles
+#   ("mult", a, b)     — multiplicación
+
+funcion evaluar(expr, env):
+    coincidir expr:
+        cuando ("num", n):
+            retornar n
+        cuando ("var", nombre):
+            retornar env[nombre]
+        cuando ("suma", a, b):
+            retornar evaluar(a, env) + evaluar(b, env)
+        cuando ("mult", a, b):
+            retornar evaluar(a, env) * evaluar(b, env)
+        cuando _:
+            lanzar ErrorDeValor(f"expr no soportada: {expr}")
+    fin coincidir
+fin funcion
+
+# Evaluar (x + 3) * (x - 1) con x = 4.
+# Pero `-` lo expandimos a + (-1)*x ... mejor un caso simpler:
+# (x + 3) * 2 con x = 5 → 8 * 2 = 16.
+expr = ("mult",
+         ("suma", ("var", "x"), ("num", 3)),
+         ("num", 2))
+env = {"x": 5}
+
+imprimir("=== Evaluador AST ===")
+imprimir(f"  resultado = {evaluar(expr, env)}")
