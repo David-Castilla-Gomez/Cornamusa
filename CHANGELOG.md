@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.16.3] — 2026-05-11 — Type-match y `como nombre` en `coincidir`
+
+Cierra la story de pattern matching para v1.x. Ahora `coincidir`
+cubre TODOS los patrones idiomáticos: literal, bind, wildcard, OR,
+tupla, lista (con star), guarda **y type-match**. Cornamusa equivale
+funcionalmente a `match/case` de Python 3.10+.
+
+### Sintaxis nueva
+
+**Type-match**: `cuando NombreClase():` matchea cualquier instancia
+de la clase (vía cadena de superclases). Sin destructuring posicional
+(Cornamusa no tiene atributos posicionales como dataclasses).
+
+```cornamusa
+clase Animal:
+    funcion __iniciar__(yo, n): yo.nombre = n fin funcion
+fin clase
+
+clase Perro extiende Animal: ... fin clase
+clase Gato extiende Animal:  ... fin clase
+
+funcion describir(a):
+    coincidir a:
+        cuando Perro() como p:    retornar f"Perro {p.nombre}"
+        cuando Gato() como g:     retornar f"Gato {g.nombre}"
+        cuando Animal() como x:   retornar f"Animal {x.nombre}"
+        cuando _:                 retornar "no es un animal"
+    fin coincidir
+fin funcion
+```
+
+**`como <nombre>`** tras el patrón bindea el sujeto entero a un local.
+Compatible con cualquier patrón:
+
+```cornamusa
+cuando 5 como n:                  imprimir(f"cinco con n={n}")
+cuando Foo() como obj:            obj.metodo()
+cuando (x, y) como par:           imprimir(f"par={par}")
+cuando Perro() como p si ...:     ...  # se evalúa con `p` ya bindeado
+```
+
+### Implementación
+
+**PATRON_TIPO** ([src/compilador.c](src/compilador.c) `emitir_verify`):
+emite una llamada al built-in `instancia_de(sujeto, NombreClase)` y
+salta a no_match si el resultado es falso. Reusa
+`OP_OBTENER_GLOBAL` + `OP_LLAMAR` — cero opcodes nuevos. Si el
+usuario sombrea `instancia_de`, el patrón usa esa versión (consistente
+con el resto del lenguaje).
+
+**`como` en ClausulaCuando**: tras `emitir_binds`, si hay
+`bind_completo_texto`, emit `OP_OBTENER_LOCAL slot_sujeto +
+agregar_local(nombre)`. Funciona como un bind extra sobre el sujeto
+entero.
+
+### Bug fix: aterrizajes de cláusula con guarda + bind_completo
+
+Bug introducido durante v1.16.3 y arreglado en el mismo release: cuando
+una cláusula tenía verify + guarda + binds (incluido bind_completo),
+el aterrizaje no_match caía erróneamente en el aterrizaje
+guarda_falso (que descartaba binds inexistentes en runtime → stack
+underflow → crash silencioso).
+
+Fix: si ambos aterrizajes están presentes, emitir un `OP_SALTAR`
+entre ellos a un punto post-aterrizajes común. Si solo uno está
+presente, el caso degenera al simple.
+
+### Limitaciones
+
+- **Sin destructuring posicional** (`cuando Foo(x, y):`): Cornamusa
+  no tiene atributos posicionales. Para extraer atributos usar
+  `como v` y luego `v.campo` en el cuerpo o guarda.
+- **`__match_args__`** (Python 3.10) no soportado.
+
+### Tests
+
+10 tests nuevos en
+[tests/unit/test_bytecode_v163.c](tests/unit/test_bytecode_v163.c)
+cubriendo type-match básico, herencia, orden de cláusulas, no-instancia,
+bind con `como`, combinaciones con guarda, integración en bucles,
+rechazo de `Foo(args)`. Total: **136 verde**.
+
+Ejemplo:
+[examples/41_type_match.cor](examples/41_type_match.cor) con jerarquía
+animal, refinamiento por guarda, y despachador de eventos UI.
+
 ## [1.16.2] — 2026-05-11 — OR-patterns y star-pattern en `coincidir`
 
 Cierra la mayoría de los patterns idiomáticos de matching. Ahora

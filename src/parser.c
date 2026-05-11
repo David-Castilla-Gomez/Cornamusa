@@ -2033,11 +2033,21 @@ static Patron *parsear_patron_simple(Parser *p) {
         return patron_wildcard(p->arena, linea, col);
     }
 
-    /* Bind: identificador (no `_`). */
+    /* IDENT: puede ser bind, o type-match si va seguido de `()` (v1.16.3). */
     if (p->actual.tipo == TT_IDENT) {
         const char *nombre = p->actual.inicio;
         int len = p->actual.longitud;
         avanzar(p);
+        if (check(p, TT_PARENT_IZQ)) {
+            avanzar(p);
+            /* v1.16.3 solo `Foo()` sin args. Destructuring posicional
+               requiere atributos posicionales que Cornamusa no tiene. */
+            if (!consumir(p, TT_PARENT_DER,
+                    "v1.16.3 solo soporta 'Foo()' sin args en patron de tipo")) {
+                return NULL;
+            }
+            return patron_tipo(p->arena, nombre, len, linea, col);
+        }
         return patron_bind(p->arena, nombre, len, linea, col);
     }
 
@@ -2198,6 +2208,22 @@ static Sent *parsear_coincidir(Parser *p) {
 
         cw->patron = parsear_patron(p);
         if (cw->patron == NULL) { salir_bloque(p); return NULL; }
+
+        /* v1.16.3: `como <ident>` opcional tras el patrón — bindea el
+           sujeto entero. Útil con type-match: `cuando Foo() como v:`. */
+        cw->bind_completo_texto = NULL;
+        cw->bind_completo_longitud = 0;
+        if (consumir_si(p, TT_COMO)) {
+            if (!check(p, TT_IDENT)) {
+                error_en(p, &p->actual,
+                    "se esperaba un nombre tras 'como' en 'cuando'");
+                salir_bloque(p);
+                return NULL;
+            }
+            cw->bind_completo_texto = p->actual.inicio;
+            cw->bind_completo_longitud = p->actual.longitud;
+            avanzar(p);
+        }
 
         cw->guarda = NULL;
         if (consumir_si(p, TT_SI)) {

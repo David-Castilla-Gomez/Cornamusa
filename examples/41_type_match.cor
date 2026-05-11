@@ -1,0 +1,122 @@
+# 41_type_match.cor — type-match en `coincidir` (v1.16.3).
+#
+# Sintaxis: `cuando NombreClase():` matchea cualquier instancia de la
+# clase (vía cadena de superclases). Combinable con `como nombre` para
+# bindear el sujeto.
+#
+# Limitación v1.16.3: `Foo(x, y)` con args no soportado (Cornamusa no
+# tiene atributos posicionales). Para extraer atributos usar `como v`
+# y luego `v.campo`.
+
+# ─── 1. Jerarquía animal ─────────────────────────────────────────
+clase Animal:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+    fin funcion
+fin clase
+
+clase Perro extiende Animal:
+    funcion __iniciar__(yo, nombre, raza):
+        yo.nombre = nombre
+        yo.raza = raza
+    fin funcion
+fin clase
+
+clase Gato extiende Animal:
+    funcion __iniciar__(yo, nombre, dueño):
+        yo.nombre = nombre
+        yo.dueño = dueño
+    fin funcion
+fin clase
+
+funcion describir(a):
+    coincidir a:
+        cuando Perro() como p:
+            retornar f"Perro {p.nombre} ({p.raza})"
+        cuando Gato() como g:
+            retornar f"Gato {g.nombre}, dueño={g.dueño}"
+        cuando Animal() como animal:
+            retornar f"Animal genérico {animal.nombre}"
+        cuando _:
+            retornar "no es un animal"
+    fin coincidir
+fin funcion
+
+imprimir("=== Animales ===")
+animales = [
+    Perro("Toby", "Pug"),
+    Gato("Mishi", "Ana"),
+    Animal("Bicho"),
+    42,
+]
+para a en animales:
+    imprimir(f"  {describir(a)}")
+fin para
+imprimir("---")
+
+# ─── 2. Tipo + guarda: refinamiento ──────────────────────────────
+funcion clasificar(a):
+    coincidir a:
+        cuando Perro() como p si p.raza == "Pug":
+            retornar f"Pug: {p.nombre}"
+        cuando Perro() como p:
+            retornar f"Perro de otra raza: {p.nombre}"
+        cuando Animal() como x:
+            retornar f"Otro animal: {x.nombre}"
+        cuando _:
+            retornar "?"
+    fin coincidir
+fin funcion
+
+imprimir("=== Refinamiento con guarda ===")
+para a en [Perro("Toby", "Pug"), Perro("Rex", "Labrador"), Gato("Mishi", "Ana")]:
+    imprimir(f"  {clasificar(a)}")
+fin para
+imprimir("---")
+
+# ─── 3. Despachador de eventos ───────────────────────────────────
+clase EventoClick:
+    funcion __iniciar__(yo, px, pz):
+        yo.px = px
+        yo.pz = pz
+    fin funcion
+fin clase
+
+clase EventoTecla:
+    funcion __iniciar__(yo, codigo):
+        yo.codigo = codigo
+    fin funcion
+fin clase
+
+clase EventoCerrar:
+    funcion __iniciar__(yo):
+        yo.causa = "usuario"
+    fin funcion
+fin clase
+
+funcion manejar(evento):
+    coincidir evento:
+        cuando EventoClick() como e:
+            retornar f"click en ({e.px}, {e.pz})"
+        cuando EventoTecla() como e si e.codigo == 27:
+            retornar "ESC: cerrando"
+        cuando EventoTecla() como e:
+            retornar f"tecla código {e.codigo}"
+        cuando EventoCerrar():
+            retornar "ventana cerrada"
+        cuando _:
+            retornar "evento desconocido"
+    fin coincidir
+fin funcion
+
+imprimir("=== Eventos UI ===")
+eventos = [
+    EventoClick(100, 200),
+    EventoTecla(65),
+    EventoTecla(27),
+    EventoCerrar(),
+    "evento raro",
+]
+para e en eventos:
+    imprimir(f"  → {manejar(e)}")
+fin para

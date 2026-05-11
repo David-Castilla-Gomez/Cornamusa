@@ -1412,6 +1412,48 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             error_compilacion(c, pl, 0,
                 "patron '*' solo permitido como elemento de lista");
             return false;
+
+        case PATRON_TIPO: {
+            /* `Foo()`: matchea si sujeto es instancia de Foo (vía
+               cadena de superclases). Reusa el built-in `instancia_de`
+               emitiendo:
+                   push instancia_de (global)
+                   push sujeto navegado
+                   push Foo (global)
+                   OP_LLAMAR 2
+                   OP_SALTAR_SI_FALSO no_match
+                   OP_DESCARTAR
+               Si el usuario sombrea `instancia_de` con su propio
+               binding, el patrón usará esa versión. */
+            int idx_inst = agregar_nombre_global(c, "instancia_de", 12);
+            int idx_clase = agregar_nombre_global(c, pat->como.bind.nombre,
+                                                     pat->como.bind.longitud);
+            if (idx_inst < 0 || idx_inst > 255
+                || idx_clase < 0 || idx_clase > 255) {
+                error_compilacion(c, pl, 0,
+                    "demasiadas constantes en 'coincidir' (>255)");
+                return false;
+            }
+            /* OP_OBTENER_GLOBAL: 6 bytes (opcode + name_idx + 4 zeros). */
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
+                                (uint8_t)idx_inst, pl);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+            emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
+                                (uint8_t)idx_clase, pl);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+            chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 2, pl);
+            if (*n_saltos >= MATCH_MAX_SALTOS) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' demasiado complejo");
+                return false;
+            }
+            saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+            return true;
+        }
     }
     return false;
 }
@@ -1424,8 +1466,10 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
         case PATRON_WILDCARD:
         case PATRON_LITERAL:
         case PATRON_OR:
-            /* OR-patron: alternativas son literales/wildcard solo. No
-               crea binds en v1.16.2. */
+        case PATRON_TIPO:
+            /* OR/TIPO: no crean binds en su sub-pattern (TIPO solo
+               valida tipo; el binding del sujeto se hace con `como`
+               en la cláusula). */
             return true;
 
         case PATRON_BIND: {
@@ -1539,6 +1583,16 @@ static bool compilar_coincidir(Compilador *c, const Sent *s) {
            y agregar_local sobre el TOS resultante). */
         if (!emitir_binds(c, cw->patron, slot_sujeto, NULL, 0)) return false;
 
+        /* v1.16.3: `como <nombre>` opcional — bindea el sujeto entero. */
+        if (cw->bind_completo_texto != NULL) {
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_sujeto, cw->linea);
+            int slot_bc = agregar_local(c, cw->bind_completo_texto,
+                                              cw->bind_completo_longitud,
+                                              cw->linea);
+            if (slot_bc < 0) return false;
+        }
+
         /* Guarda opcional. La guarda puede usar los binds. */
         int salto_guarda_falso = -1;
         if (cw->guarda) {
@@ -1567,23 +1621,35 @@ static bool compilar_coincidir(Compilador *c, const Sent *s) {
         }
         saltos_fin[n_saltos_fin++] = emitir_salto(c, OP_SALTAR, cw->linea);
 
-        /* Aterrizaje no-match: parcheamos todos los saltos al mismo
-           punto. Verify NO creó locales en runtime, así que UN
-           OP_DESCARTAR (del bool false) limpia.
-           Tampoco la guarda crea locales — su salto deja el bool.
-           Importante: c->n_locales está en n_locales_pre, igual que
-           el stack runtime en este punto. */
-        if (n_saltos_no_match > 0) {
+        /* Aterrizajes de fallo. Dos casos:
+           - no_match (verify): stack tiene UN bool false, NO hay binds.
+           - guarda_falso: stack tiene UN bool false Y los binds creados
+             antes de evaluar la guarda.
+           Si ambos están presentes, el primero NO debe caer en el
+           segundo (descartaría binds inexistentes). Añadimos un salto
+           entre ellos a un punto post-aterrizajes. */
+        int salto_post = -1;
+        if (n_saltos_no_match > 0 && salto_guarda_falso >= 0) {
+            /* Caso ambos. */
             for (int j = 0; j < n_saltos_no_match; j++) {
                 parchear_salto(c, saltos_no_match[j], cw->linea);
             }
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
-        }
-        if (salto_guarda_falso >= 0) {
+            salto_post = emitir_salto(c, OP_SALTAR, cw->linea);
             parchear_salto(c, salto_guarda_falso, cw->linea);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
-            /* Si la guarda falla, los binds creados antes deben también
-               descartarse en runtime. Igual que el cleanup post-cuerpo. */
+            for (int j = 0; j < n_binds; j++) {
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+            }
+            parchear_salto(c, salto_post, cw->linea);
+        } else if (n_saltos_no_match > 0) {
+            for (int j = 0; j < n_saltos_no_match; j++) {
+                parchear_salto(c, saltos_no_match[j], cw->linea);
+            }
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
+        } else if (salto_guarda_falso >= 0) {
+            parchear_salto(c, salto_guarda_falso, cw->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
             for (int j = 0; j < n_binds; j++) {
                 chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, cw->linea);
             }

@@ -730,6 +730,16 @@ Patron *patron_star_bind(Arena *a, const char *nombre, int len, int linea, int c
     return p;
 }
 
+Patron *patron_tipo(Arena *a, const char *nombre, int len, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_TIPO, linea, col);
+    if (p) {
+        /* Reusamos el union .bind para el nombre de la clase. */
+        p->como.bind.nombre = nombre;
+        p->como.bind.longitud = len;
+    }
+    return p;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * Sentencias — pretty-printer
  *
@@ -1025,6 +1035,18 @@ static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
                                                 pp->como.bind.longitud);
                             wb_escribir(eb, ")");
                             break;
+                        case PATRON_TIPO:
+                            wb_escribir(eb, "(tipo ");
+                            wb_escribir_lexema(eb, pp->como.bind.nombre,
+                                                pp->como.bind.longitud);
+                            wb_escribir(eb, ")");
+                            break;
+                    }
+                    if (cw->bind_completo_texto != NULL) {
+                        wb_escribir(eb, " (como ");
+                        wb_escribir_lexema(eb, cw->bind_completo_texto,
+                                            cw->bind_completo_longitud);
+                        wb_escribir(eb, ")");
                     }
                 }
                 if (cw->guarda) {

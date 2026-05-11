@@ -326,6 +326,7 @@ typedef enum {
     PATRON_LISTA,        /* `[p1, p2, ...]`: matchea lista con misma longitud y patrones */
     PATRON_OR,           /* `p1 | p2 | ...`: matchea si alguno coincide (v1.16.2) */
     PATRON_STAR_BIND,    /* `*nombre` dentro de una lista; captura el resto (v1.16.2) */
+    PATRON_TIPO,         /* `Foo()`: matchea si sujeto es instancia de Foo (v1.16.3) */
 } TipoPatron;
 
 typedef struct Patron {
@@ -346,10 +347,16 @@ typedef struct Patron {
 
 /*
  * Una cláusula `cuando` de un `coincidir`:
- *   cuando <patron> [si <guarda>]: <cuerpo>
+ *   cuando <patron> [como <nombre>] [si <guarda>]: <cuerpo>
+ *
+ * `bind_completo_texto/longitud` reservan un binding del sujeto entero,
+ * útil con type-match: `cuando Vector() como v: ... v.x ...`.
+ * texto NULL si no hay `como`.
  */
 typedef struct {
     Patron *patron;
+    const char *bind_completo_texto;
+    int bind_completo_longitud;
     Expr *guarda;          /* NULL si no hay `si <guarda>` */
     Sent *cuerpo;          /* SENT_BLOQUE */
     int linea, columna;
@@ -563,6 +570,7 @@ Patron *patron_tupla(Arena *a, Patron **elementos, int n, int linea, int col);
 Patron *patron_lista(Arena *a, Patron **elementos, int n, int linea, int col);
 Patron *patron_or(Arena *a, Patron **alternativas, int n, int linea, int col);
 Patron *patron_star_bind(Arena *a, const char *nombre, int len, int linea, int col);
+Patron *patron_tipo(Arena *a, const char *nombre, int len, int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);
