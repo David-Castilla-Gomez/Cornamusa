@@ -1950,15 +1950,21 @@ static Sent *parsear_con(Parser *p) {
  * Aplazadas a v1.15+: tuplas `(p1, p2)`, listas `[p1, p2]`, OR-
  * patterns `p1 | p2`, type-match `Foo(p1, p2)`.
  */
-/* Forward decl: la lista de patrones recurre por sub-patrones. */
+/* Forward decl: la lista de patrones recurre por sub-patrones.
+   `parsear_patron_simple` parsea UN patrón sin OR. `parsear_patron`
+   maneja `p1 | p2 | ...` envolviendo en PATRON_OR si hay alternativas. */
 static Patron *parsear_patron(Parser *p);
+static Patron *parsear_patron_simple(Parser *p);
 
 /* Parsea una secuencia de patrones separados por coma hasta el
    delimitador de cierre indicado (TT_PARENT_DER o TT_CORCH_DER).
-   Acepta coma final opcional. Devuelve `*n_out` con la cuenta. */
+   Acepta coma final opcional. Devuelve `*n_out` con la cuenta.
+   v1.16.2: dentro de listas (cierre == TT_CORCH_DER), acepta `*ident`
+   como elemento star-bind. Solo uno permitido por lista. */
 static Patron **parsear_lista_patrones(Parser *p, TipoToken cierre, int *n_out) {
     Patron **elementos = NULL;
     int n = 0, cap = 0;
+    bool vio_star = false;
     if (!check(p, cierre)) {
         do {
             if (check(p, cierre)) break;  /* coma final OK */
@@ -1971,7 +1977,35 @@ static Patron **parsear_lista_patrones(Parser *p, TipoToken cierre, int *n_out) 
                                   sizeof(Patron *) * (size_t)n);
                 elementos = nuevo;
             }
-            Patron *sub = parsear_patron(p);
+            Patron *sub;
+            /* Detección de `*nombre` star-bind (v1.16.2). */
+            if (check(p, TT_ASTERISCO)) {
+                if (cierre != TT_CORCH_DER) {
+                    error_en(p, &p->actual,
+                        "patron '*nombre' solo permitido dentro de '[...]' en v1.16.2");
+                    return NULL;
+                }
+                if (vio_star) {
+                    error_en(p, &p->actual,
+                        "solo un '*nombre' permitido por patron de lista");
+                    return NULL;
+                }
+                int slinea = p->actual.linea;
+                int scol = p->actual.columna;
+                avanzar(p);  /* `*` */
+                if (!check(p, TT_IDENT)) {
+                    error_en(p, &p->actual,
+                        "se esperaba un nombre tras '*' en patron");
+                    return NULL;
+                }
+                const char *nombre = p->actual.inicio;
+                int len = p->actual.longitud;
+                avanzar(p);
+                sub = patron_star_bind(p->arena, nombre, len, slinea, scol);
+                vio_star = true;
+            } else {
+                sub = parsear_patron(p);
+            }
             if (sub == NULL) return NULL;
             elementos[n++] = sub;
         } while (consumir_si(p, TT_COMA));
@@ -1986,7 +2020,9 @@ static Patron **parsear_lista_patrones(Parser *p, TipoToken cierre, int *n_out) 
     return elementos;
 }
 
-static Patron *parsear_patron(Parser *p) {
+/* Parsea UN patrón sin operador `|`. Llamado desde `parsear_patron`
+   (que maneja OR) y desde sub-patrones de tupla/lista. */
+static Patron *parsear_patron_simple(Parser *p) {
     int linea = p->actual.linea;
     int col = p->actual.columna;
 
@@ -2076,6 +2112,56 @@ static Patron *parsear_patron(Parser *p) {
         if (e == NULL) return NULL;
     }
     return patron_literal(p->arena, e, linea, col);
+}
+
+/* Parsea un patrón con OR: `p1 | p2 | ...`. Si solo hay uno, retorna
+   el patrón directamente. Si hay varios, los envuelve en PATRON_OR.
+   Restricción v1.16.2: las alternativas de OR deben ser literales o
+   wildcard — no binds ni estructurales — para evitar la complejidad
+   de bindings inconsistentes entre alternativas. */
+static Patron *parsear_patron(Parser *p) {
+    Patron *primero = parsear_patron_simple(p);
+    if (primero == NULL) return NULL;
+    if (!check(p, TT_BARRA_VERT)) return primero;
+
+    /* Hay al menos una alternativa más. */
+    int linea = primero->linea;
+    int col = primero->columna;
+    Patron **alts = NULL;
+    int n = 0, cap = 0;
+
+    /* Validar que el primero es literal o wildcard. */
+    if (primero->tipo != PATRON_LITERAL && primero->tipo != PATRON_WILDCARD) {
+        error_en(p, &p->actual,
+            "OR-patron solo admite literales o '_' como alternativas en v1.16.2");
+        return NULL;
+    }
+
+    cap = 4;
+    alts = (Patron **)arena_alocar(p->arena, sizeof(Patron *) * (size_t)cap);
+    if (alts == NULL) return NULL;
+    alts[n++] = primero;
+
+    while (consumir_si(p, TT_BARRA_VERT)) {
+        Patron *sub = parsear_patron_simple(p);
+        if (sub == NULL) return NULL;
+        if (sub->tipo != PATRON_LITERAL && sub->tipo != PATRON_WILDCARD) {
+            error_en(p, &p->actual,
+                "OR-patron solo admite literales o '_' como alternativas en v1.16.2");
+            return NULL;
+        }
+        if (n >= cap) {
+            int nuevo_cap = cap * 2;
+            Patron **nuevo = (Patron **)arena_alocar(p->arena,
+                sizeof(Patron *) * (size_t)nuevo_cap);
+            if (nuevo == NULL) return NULL;
+            memcpy(nuevo, alts, sizeof(Patron *) * (size_t)n);
+            alts = nuevo;
+            cap = nuevo_cap;
+        }
+        alts[n++] = sub;
+    }
+    return patron_or(p->arena, alts, n, linea, col);
 }
 
 static Sent *parsear_coincidir(Parser *p) {

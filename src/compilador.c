@@ -1252,6 +1252,75 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
             return true;
 
+        case PATRON_OR: {
+            /* `p1 | p2 | ... | pn`: matchea si alguno coincide.
+               Restricción del parser: cada alternativa es LITERAL o
+               WILDCARD. Como WILDCARD siempre matchea, su sola
+               presencia hace que el OR completo matchee — el resto
+               se ignora. Aquí solo manejamos LITERAL en sub-patrones
+               (un WILDCARD lo trataríamos como "no test" pero el
+               parser podría haberlo simplificado al construir; igual
+               cubrimos el caso por defensa). */
+            int n = pat->como.estructural.n;
+            /* Si hay un WILDCARD, no hay test. */
+            for (int i = 0; i < n; i++) {
+                if (pat->como.estructural.elementos[i]->tipo == PATRON_WILDCARD) {
+                    return true;
+                }
+            }
+            /* Emitir cadena de tests: si alguno coincide, saltar a
+               un punto común (L_match_ok) que cae al siguiente código.
+               Si todos fallan, el último deja bool false en stack y
+               salta al no_match estándar.
+
+               Layout:
+                 test_1: navegar; push lit_1; OP_IGUAL;
+                         SALTAR_SI_FALSO L_falla_1;
+                         OP_DESCARTAR; OP_SALTAR L_match_ok.
+                 L_falla_1: OP_DESCARTAR.
+                 test_2: ...
+                 test_n: navegar; push lit_n; OP_IGUAL;
+                         SALTAR_SI_FALSO L_no_match (en saltos[]).
+                         OP_DESCARTAR.
+                 L_match_ok: (caída natural). */
+            int saltos_match_ok[MATCH_MAX_SALTOS];
+            int n_saltos_match_ok = 0;
+            for (int i = 0; i < n; i++) {
+                Patron *alt = pat->como.estructural.elementos[i];
+                emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                if (!compilador_compilar_expr(c, alt->como.literal)) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
+                if (i == n - 1) {
+                    /* Último: si false, fall through al no_match común. */
+                    if (*n_saltos >= MATCH_MAX_SALTOS) {
+                        error_compilacion(c, pl, 0,
+                            "OR-patron con demasiadas alternativas");
+                        return false;
+                    }
+                    saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+                } else {
+                    int salto_falla = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+                    if (n_saltos_match_ok >= MATCH_MAX_SALTOS) {
+                        error_compilacion(c, pl, 0,
+                            "OR-patron con demasiadas alternativas");
+                        return false;
+                    }
+                    saltos_match_ok[n_saltos_match_ok++] =
+                        emitir_salto(c, OP_SALTAR, pl);
+                    /* Aterrizaje de falla del test i: descartar bool false. */
+                    parchear_salto(c, salto_falla, pl);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+                }
+            }
+            /* L_match_ok: parchear todos los saltos_match_ok aquí. */
+            for (int i = 0; i < n_saltos_match_ok; i++) {
+                parchear_salto(c, saltos_match_ok[i], pl);
+            }
+            return true;
+        }
+
         case PATRON_TUPLA:
         case PATRON_LISTA: {
             if (n_indices >= MATCH_MAX_PROFUNDIDAD) {
@@ -1262,6 +1331,21 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             }
             int n = pat->como.estructural.n;
             OpCode op_es = (pat->tipo == PATRON_TUPLA) ? OP_ES_TUPLA : OP_ES_LISTA;
+
+            /* v1.16.2: detectar PATRON_STAR_BIND. Solo permitido en
+               PATRON_LISTA. Solo uno por lista (lo garantiza el parser). */
+            int star_idx = -1;
+            for (int i = 0; i < n; i++) {
+                if (pat->como.estructural.elementos[i]->tipo == PATRON_STAR_BIND) {
+                    if (pat->tipo != PATRON_LISTA) {
+                        error_compilacion(c, pl, 0,
+                            "patron '*' solo permitido en patron de lista");
+                        return false;
+                    }
+                    star_idx = i;
+                    break;
+                }
+            }
 
             /* 1. Verificar tipo. */
             emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
@@ -1278,9 +1362,17 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             /* 2. Verificar longitud. */
             emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
             chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, pl);
-            chunk_emitir_constante(c->actual->chunk,
-                                     valor_entero_de_long((long)n), pl);
-            chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
+            if (star_idx < 0) {
+                /* Sin star: longitud == n exacto. */
+                chunk_emitir_constante(c->actual->chunk,
+                                         valor_entero_de_long((long)n), pl);
+                chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
+            } else {
+                /* Con star: longitud >= n - 1 (todos los fijos). */
+                chunk_emitir_constante(c->actual->chunk,
+                                         valor_entero_de_long((long)(n - 1)), pl);
+                chunk_emitir_byte(c->actual->chunk, OP_MAYOR_IGUAL, pl);
+            }
             if (*n_saltos >= MATCH_MAX_SALTOS) {
                 error_compilacion(c, pl, 0,
                     "patron 'cuando' demasiado complejo (>%d sub-tests)",
@@ -1290,18 +1382,36 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
 
-            /* 3. Recursar por cada elemento (extender path). */
-            /* MATCH_MAX_PROFUNDIDAD acota el path; usamos array fijo. */
+            /* 3. Recursar por cada elemento (extender path).
+               - Antes del star (o todos si no hay star): índice positivo i.
+               - El star NO se chequea en verify.
+               - Después del star: índice negativo -(n - i). */
             int nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
             for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
             for (int i = 0; i < n; i++) {
-                nuevo_path[n_indices] = i;
-                if (!emitir_verify(c, pat->como.estructural.elementos[i],
-                                    slot_sujeto, nuevo_path, n_indices + 1,
+                Patron *sub = pat->como.estructural.elementos[i];
+                if (sub->tipo == PATRON_STAR_BIND) continue;  /* verify skip */
+                int idx_runtime;
+                if (star_idx < 0 || i < star_idx) {
+                    idx_runtime = i;
+                } else {
+                    /* i > star_idx; índice negativo desde el fin. */
+                    idx_runtime = -(n - i);
+                }
+                nuevo_path[n_indices] = idx_runtime;
+                if (!emitir_verify(c, sub, slot_sujeto,
+                                    nuevo_path, n_indices + 1,
                                     saltos, n_saltos)) return false;
             }
             return true;
         }
+
+        case PATRON_STAR_BIND:
+            /* Solo se invoca desde dentro de PATRON_LISTA (verify pass
+               salta los star). Si llegamos aquí, es un error de uso. */
+            error_compilacion(c, pl, 0,
+                "patron '*' solo permitido como elemento de lista");
+            return false;
     }
     return false;
 }
@@ -1313,6 +1423,9 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
     switch (pat->tipo) {
         case PATRON_WILDCARD:
         case PATRON_LITERAL:
+        case PATRON_OR:
+            /* OR-patron: alternativas son literales/wildcard solo. No
+               crea binds en v1.16.2. */
             return true;
 
         case PATRON_BIND: {
@@ -1326,18 +1439,63 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
         case PATRON_TUPLA:
         case PATRON_LISTA: {
             int n = pat->como.estructural.n;
-            /* MATCH_MAX_PROFUNDIDAD acota el path; usamos array fijo. */
+            /* Detectar star idx (solo en PATRON_LISTA por construcción). */
+            int star_idx = -1;
+            for (int i = 0; i < n; i++) {
+                if (pat->como.estructural.elementos[i]->tipo == PATRON_STAR_BIND) {
+                    star_idx = i;
+                    break;
+                }
+            }
+
             int nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
             for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
             for (int i = 0; i < n; i++) {
-                nuevo_path[n_indices] = i;
-                if (!emitir_binds(c, pat->como.estructural.elementos[i],
-                                    slot_sujeto, nuevo_path, n_indices + 1)) {
+                Patron *sub = pat->como.estructural.elementos[i];
+                if (sub->tipo == PATRON_STAR_BIND) {
+                    /* Star: emitir slice y bindear. */
+                    int cola_count = n - star_idx - 1;
+                    /* Push sujeto navegado (a la lista padre del star). */
+                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                    /* inicio = star_idx. */
+                    chunk_emitir_constante(c->actual->chunk,
+                                             valor_entero_de_long((long)star_idx), pl);
+                    /* fin = len - cola_count. Si cola_count=0, fin = len. */
+                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                    chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, pl);
+                    if (cola_count > 0) {
+                        chunk_emitir_constante(c->actual->chunk,
+                                                 valor_entero_de_long((long)cola_count), pl);
+                        chunk_emitir_byte(c->actual->chunk, OP_RESTAR, pl);
+                    }
+                    /* paso = nulo (default). */
+                    chunk_emitir_byte(c->actual->chunk, OP_NULO, pl);
+                    chunk_emitir_byte(c->actual->chunk, OP_REBANADA, pl);
+                    /* Bindear. Si nombre = "_", aún creamos el local
+                       (más simple). */
+                    int slot = agregar_local(c, sub->como.bind.nombre,
+                                                  sub->como.bind.longitud, pl);
+                    if (slot < 0) return false;
+                    continue;
+                }
+                int idx_runtime;
+                if (star_idx < 0 || i < star_idx) {
+                    idx_runtime = i;
+                } else {
+                    idx_runtime = -(n - i);
+                }
+                nuevo_path[n_indices] = idx_runtime;
+                if (!emitir_binds(c, sub, slot_sujeto,
+                                    nuevo_path, n_indices + 1)) {
                     return false;
                 }
             }
             return true;
         }
+
+        case PATRON_STAR_BIND:
+            /* Defensa: solo invocado desde dentro de PATRON_LISTA. */
+            return true;
     }
     return false;
 }

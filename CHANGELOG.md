@@ -6,6 +6,101 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.16.2] — 2026-05-11 — OR-patterns y star-pattern en `coincidir`
+
+Cierra la mayoría de los patterns idiomáticos de matching. Ahora
+`coincidir` cubre prácticamente lo mismo que `match/case` de Python
+3.10+.
+
+### OR-patterns: `cuando 1 | 2 | 3:`
+
+```cornamusa
+funcion describir_codigo(codigo):
+    coincidir codigo:
+        cuando 200 | 201 | 204:           retornar "éxito"
+        cuando 301 | 302 | 304:           retornar "redirect"
+        cuando 400 | 401 | 403 | 404:     retornar "error de cliente"
+        cuando 500 | 502 | 503:           retornar "error de servidor"
+        cuando _:                         retornar f"otro: {codigo}"
+    fin coincidir
+fin funcion
+```
+
+**Restricción intencional**: las alternativas solo pueden ser
+literales o `_`. No se permite `cuando a | b:` (bindings entre
+alternativas requieren bookkeeping para garantizar consistencia, lo
+dejamos para una versión futura si surge demanda).
+
+### Star-pattern: `cuando [a, *resto, b]:`
+
+```cornamusa
+funcion partir(xs):
+    coincidir xs:
+        cuando [primero, *medio, ultimo]:
+            retornar f"primero={primero}, medio={medio}, ultimo={ultimo}"
+        cuando [unico]:
+            retornar f"un solo elem: {unico}"
+        cuando _:
+            retornar "vacía"
+    fin coincidir
+fin funcion
+
+partir([1, 2, 3, 4, 5])  # → "primero=1, medio=[2, 3, 4], ultimo=5"
+partir([1, 2])           # → "primero=1, medio=[], ultimo=2"  (star captura []!)
+partir([42])             # → "un solo elem: 42"
+```
+
+Combinable con OR y patrones estructurales anidados:
+
+```cornamusa
+funcion ejecutar(args):
+    coincidir args:
+        cuando []:                  retornar "uso: ..."
+        cuando ["ayuda"]:           retornar "muestra ayuda"
+        cuando ["sumar", *nums]:    retornar f"suma = {funcionales.suma(nums)}"
+        cuando [cmd, *resto]:       retornar f"'{cmd}' no soportado"
+    fin coincidir
+fin funcion
+```
+
+**Restricción intencional**:
+- `*nombre` solo permitido dentro de `[...]` (no en tuplas).
+  Workaround: usar lista en su lugar, o bindear y manipular en el cuerpo.
+- Solo **un** `*nombre` por lista (el parser rechaza con mensaje claro).
+- `*_` también funciona (descartar el resto).
+
+### Implementación
+
+**OR-patterns** ([src/compilador.c](src/compilador.c) `emitir_verify`
+caso `PATRON_OR`): cadena de tests donde cada test no-final salta a
+`L_match_ok` si verdadero, descartando el bool. El último test sale al
+no_match común si falla. Sin nuevos opcodes.
+
+**Star-pattern** ([src/compilador.c](src/compilador.c) `emitir_verify`
+y `emitir_binds` casos `PATRON_LISTA` extendidos):
+- Verify: `OP_LONGITUD >= n - 1` (en lugar de `==`).
+- Sub-elementos antes del star: índice positivo `i`.
+- Sub-elementos después del star: índice negativo `-(n - i)` —
+  `OP_INDICE` ya acepta negativos (Python-style).
+- Star bind: emit `OP_REBANADA` con `[s : len - cola]` para capturar
+  el slice. Resultado bindeado al nombre con `agregar_local`.
+
+Reusa `OP_MAYOR_IGUAL`, `OP_RESTAR`, `OP_REBANADA`, `OP_LONGITUD` —
+todos existentes. Cero opcodes nuevos.
+
+### Tests
+
+14 tests nuevos en
+[tests/unit/test_bytecode_v162.c](tests/unit/test_bytecode_v162.c):
+OR con literales/cadenas/negativos/no-match/rechazo de bind; star
+head/tail/medio/captura-vacío/lista-corta/rechazo-tupla/rechazo-dos;
+integración en bucle. Total: **133 verde**.
+
+Ejemplo:
+[examples/40_or_y_star.cor](examples/40_or_y_star.cor) con 6 casos:
+clasificador de caracteres, códigos HTTP, head/tail, primero/medio/
+último, parser de comandos, y combinación de OR + star + estructural.
+
 ## [1.16.1] — 2026-05-10 — Patches: JSON pretty-print + `quitar` extendido
 
 Patches menores que cierran limitaciones documentadas.

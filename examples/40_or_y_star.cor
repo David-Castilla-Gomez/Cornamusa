@@ -1,0 +1,149 @@
+# 40_or_y_star.cor — OR-patterns y star-pattern en `coincidir` (v1.16.2).
+#
+# v1.16.2 amplía pattern matching con:
+#   - OR-patterns: `cuando 1 | 2 | 3:` matchea si alguno coincide.
+#     (Solo literales/wildcard como alternativas.)
+#   - Star-pattern: `cuando [primero, *resto, ultimo]:` captura el
+#     "medio" como lista.
+
+# ─── 1. Clasificador con OR-patterns ─────────────────────────────
+funcion clasificar_caracter(c):
+    coincidir c:
+        cuando "a" | "e" | "i" | "o" | "u":
+            retornar "vocal"
+        cuando "y":
+            retornar "vocal débil"
+        cuando " " | "\t" | "\n":
+            retornar "espacio"
+        cuando _:
+            retornar "consonante u otro"
+    fin coincidir
+fin funcion
+
+imprimir("=== OR-patterns: caracteres ===")
+para c en ["a", "y", " ", "b", "ñ"]:
+    imprimir(f"  '{c}' → {clasificar_caracter(c)}")
+fin para
+imprimir("---")
+
+# ─── 2. Estados HTTP comunes ─────────────────────────────────────
+funcion describir_codigo(codigo):
+    coincidir codigo:
+        cuando 200 | 201 | 204:
+            retornar "éxito"
+        cuando 301 | 302 | 304:
+            retornar "redirect"
+        cuando 400 | 401 | 403 | 404:
+            retornar "error de cliente"
+        cuando 500 | 502 | 503:
+            retornar "error de servidor"
+        cuando _:
+            retornar f"otro: {codigo}"
+    fin coincidir
+fin funcion
+
+imprimir("=== OR-patterns: HTTP ===")
+para c en [200, 301, 404, 500, 418]:
+    imprimir(f"  {c}: {describir_codigo(c)}")
+fin para
+imprimir("---")
+
+# ─── 3. Star-pattern: head/tail ──────────────────────────────────
+funcion head_tail(xs):
+    coincidir xs:
+        cuando []:
+            retornar "lista vacía"
+        cuando [primero, *resto]:
+            retornar f"head={primero}, tail={resto}"
+    fin coincidir
+fin funcion
+
+imprimir("=== Star: head/tail ===")
+para xs en [[], [42], [1, 2, 3]]:
+    imprimir(f"  {xs} → {head_tail(xs)}")
+fin para
+imprimir("---")
+
+# ─── 4. Star en medio: primero/medio/último ──────────────────────
+funcion partir(xs):
+    coincidir xs:
+        cuando [primero, *medio, ultimo]:
+            retornar f"primero={primero}, medio={medio}, ultimo={ultimo}"
+        cuando [unico]:
+            retornar f"un solo elem: {unico}"
+        cuando _:
+            retornar "vacía"
+    fin coincidir
+fin funcion
+
+imprimir("=== Star en medio ===")
+para xs en [[], [1], [1, 2], [1, 2, 3], [1, 2, 3, 4, 5]]:
+    imprimir(f"  {xs} → {partir(xs)}")
+fin para
+imprimir("---")
+
+# ─── 5. Parser de comandos con prefijo + args ────────────────────
+funcion ejecutar(args):
+    coincidir args:
+        cuando []:
+            retornar "uso: ejecutar <comando> [args...]"
+        cuando ["ayuda"]:
+            retornar "muestra esta ayuda"
+        cuando ["sumar", *nums]:
+            total = 0
+            para n en nums:
+                total = total + n
+            fin para
+            retornar f"suma = {total}"
+        cuando ["concat", *partes]:
+            r = ""
+            para p en partes:
+                r = r + p
+            fin para
+            retornar f"resultado = '{r}'"
+        cuando [cmd, *resto]:
+            retornar f"comando '{cmd}' no soportado (args: {resto})"
+    fin coincidir
+fin funcion
+
+imprimir("=== Parser de comandos ===")
+casos = [
+    [],
+    ["ayuda"],
+    ["sumar", 1, 2, 3, 4, 5],
+    ["sumar"],
+    ["concat", "hola", " ", "mundo"],
+    ["debug", "verbose", "level=3"],
+]
+para c en casos:
+    imprimir(f"  {c} → {ejecutar(c)}")
+fin para
+imprimir("---")
+
+# ─── 6. Combinación: OR + star + estructural ─────────────────────
+funcion clasificar_paquete(p):
+    coincidir p:
+        cuando ("info" | "debug", _):
+            retornar "log: ignorado"
+        cuando ("data", [primero, *resto]):
+            retornar f"datos: {longitud(resto) + 1} items, primero={primero}"
+        cuando ("error" | "fatal", mensaje):
+            retornar f"alerta: {mensaje}"
+        cuando _:
+            retornar "paquete desconocido"
+    fin coincidir
+fin funcion
+
+imprimir("=== Combinado ===")
+paquetes = [
+    ("info", "iniciando"),
+    ("debug", "trace"),
+    ("data", [10, 20, 30]),
+    ("data", [99]),
+    ("error", "disco lleno"),
+    ("fatal", "panic"),
+    ("custom", verdadero),
+]
+para p en paquetes:
+    imprimir(f"  {p} → {clasificar_paquete(p)}")
+fin para

@@ -324,6 +324,8 @@ typedef enum {
     PATRON_BIND,         /* identificador: bindea el valor a un local */
     PATRON_TUPLA,        /* `(p1, p2, ...)`: matchea tupla con misma aridad y patrones */
     PATRON_LISTA,        /* `[p1, p2, ...]`: matchea lista con misma longitud y patrones */
+    PATRON_OR,           /* `p1 | p2 | ...`: matchea si alguno coincide (v1.16.2) */
+    PATRON_STAR_BIND,    /* `*nombre` dentro de una lista; captura el resto (v1.16.2) */
 } TipoPatron;
 
 typedef struct Patron {
@@ -338,7 +340,7 @@ typedef struct Patron {
         struct {
             struct Patron **elementos;
             int n;
-        } estructural;             /* PATRON_TUPLA, PATRON_LISTA */
+        } estructural;             /* PATRON_TUPLA, PATRON_LISTA, PATRON_OR */
     } como;
 } Patron;
 
@@ -559,6 +561,8 @@ Patron *patron_literal(Arena *a, Expr *lit, int linea, int col);
 Patron *patron_bind(Arena *a, const char *nombre, int len, int linea, int col);
 Patron *patron_tupla(Arena *a, Patron **elementos, int n, int linea, int col);
 Patron *patron_lista(Arena *a, Patron **elementos, int n, int linea, int col);
+Patron *patron_or(Arena *a, Patron **alternativas, int n, int linea, int col);
+Patron *patron_star_bind(Arena *a, const char *nombre, int len, int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);

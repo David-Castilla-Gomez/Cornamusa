@@ -712,6 +712,24 @@ Patron *patron_lista(Arena *a, Patron **elementos, int n, int linea, int col) {
     return p;
 }
 
+Patron *patron_or(Arena *a, Patron **alternativas, int n, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_OR, linea, col);
+    if (p) {
+        p->como.estructural.elementos = alternativas;
+        p->como.estructural.n = n;
+    }
+    return p;
+}
+
+Patron *patron_star_bind(Arena *a, const char *nombre, int len, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_STAR_BIND, linea, col);
+    if (p) {
+        p->como.bind.nombre = nombre;
+        p->como.bind.longitud = len;
+    }
+    return p;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * Sentencias — pretty-printer
  *
@@ -997,6 +1015,15 @@ static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
                             break;
                         case PATRON_LISTA:
                             wb_escribir(eb, "(lista %d)", pp->como.estructural.n);
+                            break;
+                        case PATRON_OR:
+                            wb_escribir(eb, "(or %d)", pp->como.estructural.n);
+                            break;
+                        case PATRON_STAR_BIND:
+                            wb_escribir(eb, "(*bind ");
+                            wb_escribir_lexema(eb, pp->como.bind.nombre,
+                                                pp->como.bind.longitud);
+                            wb_escribir(eb, ")");
                             break;
                     }
                 }
