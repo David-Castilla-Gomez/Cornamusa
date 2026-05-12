@@ -1,0 +1,212 @@
+# Cornamusa stdlib: formato.cor
+#
+# Funciones de formato y presentación de valores. Pensadas para
+# reportes, logs y outputs amigables.
+#
+# Uso:
+#   importar formato
+#   imprimir(formato.rellenar("nombre:", 12))
+#   imprimir(formato.con_decimales(3.14159, 2))
+#
+# Nota v1.18: el módulo es self-contained (NO importa `cadenas`) para
+# evitar un bug preexistente del runtime cuando dos módulos importan
+# el mismo sub-módulo. Helpers locales prefijados `_` reproducen las
+# funciones necesarias.
+
+# Repite `s` `n` veces (igual que cadenas.repetir, inline para evitar
+# import). v1.19+: cuando el bug de re-import se arregle, deferimos
+# a cadenas.repetir.
+funcion _repetir(s, n):
+    r = ""
+    para i en rango(n):
+        r = r + s
+    fin para
+    retornar r
+fin funcion
+
+# Une elementos de una lista con un separador (igual que cadenas.unir).
+funcion _unir(partes, sep):
+    n = longitud(partes)
+    si n == 0:
+        retornar ""
+    fin si
+    resultado = partes[0]
+    para i en rango(1, n):
+        resultado = resultado + sep + partes[i]
+    fin para
+    retornar resultado
+fin funcion
+
+# Busca el primer índice de `sub` en `s`, -1 si no aparece.
+funcion _indice_de(s, sub):
+    ns = longitud(s)
+    nb = longitud(sub)
+    si nb == 0:
+        retornar 0
+    fin si
+    si nb > ns:
+        retornar -1
+    fin si
+    i = 0
+    mientras i <= ns - nb:
+        coincide = verdadero
+        para j en rango(nb):
+            si s[i + j] != sub[j]:
+                coincide = falso
+            fin si
+        fin para
+        si coincide:
+            retornar i
+        fin si
+        i = i + 1
+    fin mientras
+    retornar -1
+fin funcion
+
+# Rellena `s` con `caracter` a la derecha hasta alcanzar `ancho`.
+funcion rellenar(s, ancho, caracter=" "):
+    s_str = cadena(s)
+    n = longitud(s_str)
+    si n >= ancho:
+        retornar s_str
+    fin si
+    retornar s_str + _repetir(caracter, ancho - n)
+fin funcion
+
+# Alinea `s` a la derecha rellenando con `caracter` a la izquierda.
+funcion alinear_derecha(s, ancho, caracter=" "):
+    s_str = cadena(s)
+    n = longitud(s_str)
+    si n >= ancho:
+        retornar s_str
+    fin si
+    retornar _repetir(caracter, ancho - n) + s_str
+fin funcion
+
+# Centra `s` rellenando ambos lados. Si el padding es impar, el extra
+# va a la derecha.
+funcion centrar(s, ancho, caracter=" "):
+    s_str = cadena(s)
+    n = longitud(s_str)
+    si n >= ancho:
+        retornar s_str
+    fin si
+    total = ancho - n
+    izq = total // 2
+    der = total - izq
+    retornar _repetir(caracter, izq) + s_str + _repetir(caracter, der)
+fin funcion
+
+# Devuelve `n` como cadena con `decimales` cifras decimales fijas.
+funcion con_decimales(n, decimales=2):
+    si decimales < 0:
+        lanzar ErrorDeValor("con_decimales requiere decimales >= 0")
+    fin si
+    r = redondear(n, decimales)
+    s = cadena(r)
+    pos = _indice_de(s, ".")
+    si decimales == 0:
+        si pos < 0:
+            retornar s
+        fin si
+        retornar s[:pos]
+    fin si
+    si pos < 0:
+        retornar s + "." + _repetir("0", decimales)
+    fin si
+    cifras_actuales = longitud(s) - pos - 1
+    si cifras_actuales < decimales:
+        retornar s + _repetir("0", decimales - cifras_actuales)
+    fin si
+    retornar s
+fin funcion
+
+# Formatea un número con separador cada 3 dígitos. Funciona con
+# enteros y decimales (los decimales conservan su parte fraccional).
+funcion numero_con_separador(n, separador="_"):
+    s = cadena(n)
+    signo = ""
+    si longitud(s) > 0 y s[0] == "-":
+        signo = "-"
+        s = s[1:]
+    fin si
+    # Separar parte entera de la fraccional si hay punto.
+    pos = _indice_de(s, ".")
+    fraccional = ""
+    si pos >= 0:
+        fraccional = s[pos:]
+        s = s[:pos]
+    fin si
+    nlen = longitud(s)
+    si nlen <= 3:
+        retornar signo + s + fraccional
+    fin si
+    grupos = []
+    i = nlen
+    mientras i > 3:
+        agregar(grupos, s[i - 3:i])
+        i = i - 3
+    fin mientras
+    agregar(grupos, s[:i])
+    invertir(grupos)
+    retornar signo + _unir(grupos, separador) + fraccional
+fin funcion
+
+# Formatea un decimal como porcentaje. `0.345` → `"34.50%"`.
+funcion porcentaje(d, decimales=2):
+    retornar con_decimales(d * 100, decimales) + "%"
+fin funcion
+
+# Convierte un entero positivo a hexadecimal.
+funcion como_hex(n, prefijo="0x"):
+    si n < 0:
+        lanzar ErrorDeValor("como_hex requiere n >= 0 en v1.18")
+    fin si
+    si n == 0:
+        retornar prefijo + "0"
+    fin si
+    digitos = "0123456789abcdef"
+    s = ""
+    valor = n
+    mientras valor > 0:
+        s = digitos[valor % 16] + s
+        valor = valor // 16
+    fin mientras
+    retornar prefijo + s
+fin funcion
+
+# Convierte un entero positivo a binario.
+funcion como_binario(n, prefijo="0b"):
+    si n < 0:
+        lanzar ErrorDeValor("como_binario requiere n >= 0 en v1.18")
+    fin si
+    si n == 0:
+        retornar prefijo + "0"
+    fin si
+    s = ""
+    valor = n
+    mientras valor > 0:
+        si valor % 2 == 0:
+            s = "0" + s
+        sino:
+            s = "1" + s
+        fin si
+        valor = valor // 2
+    fin mientras
+    retornar prefijo + s
+fin funcion
+
+# Repite `caracter` `ancho` veces (útil para separadores).
+funcion linea(caracter="-", ancho=60):
+    retornar _repetir(caracter, ancho)
+fin funcion
+
+# Construye una fila tabular con anchos de columna.
+funcion fila(valores, anchos, separador=" | "):
+    partes = []
+    n = longitud(valores)
+    para i en rango(n):
+        agregar(partes, rellenar(cadena(valores[i]), anchos[i]))
+    fin para
+    retornar _unir(partes, separador)
+fin funcion

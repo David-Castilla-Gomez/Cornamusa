@@ -78,6 +78,169 @@ funcion termina_con(s, sufijo):
     retornar verdadero
 fin funcion
 
+# Devuelve la posición de la primera ocurrencia de `sub` en `s`, o -1
+# si no aparece. Posiciones son índices de code points (UTF-8).
+funcion indice_de(s, sub):
+    ns = longitud(s)
+    nb = longitud(sub)
+    si nb == 0:
+        retornar 0
+    fin si
+    si nb > ns:
+        retornar -1
+    fin si
+    i = 0
+    mientras i <= ns - nb:
+        coincide = verdadero
+        para j en rango(nb):
+            si s[i + j] != sub[j]:
+                coincide = falso
+            fin si
+        fin para
+        si coincide:
+            retornar i
+        fin si
+        i = i + 1
+    fin mientras
+    retornar -1
+fin funcion
+
+# Verdadero si `s` contiene `sub`.
+funcion contiene(s, sub):
+    retornar indice_de(s, sub) >= 0
+fin funcion
+
+# Divide `s` en sub-cadenas usando `sep` como separador. Sep vacío
+# divide en cada carácter. Retorna lista no-vacía (al menos un
+# elemento, incluso si `s` está vacía).
+funcion separar(s, sep):
+    partes = []
+    ns = longitud(s)
+    nsep = longitud(sep)
+    si nsep == 0:
+        # Caso degenerado: split en cada caracter.
+        para k en rango(ns):
+            agregar(partes, s[k])
+        fin para
+        retornar partes
+    fin si
+    inicio = 0
+    i = 0
+    coincide = falso
+    mientras i <= ns - nsep:
+        coincide = verdadero
+        para j en rango(nsep):
+            si s[i + j] != sep[j]:
+                coincide = falso
+            fin si
+        fin para
+        si coincide:
+            agregar(partes, s[inicio:i])
+            i = i + nsep
+            inicio = i
+        sino:
+            i = i + 1
+        fin si
+    fin mientras
+    agregar(partes, s[inicio:])
+    retornar partes
+fin funcion
+
+# Reemplaza todas las ocurrencias de `viejo` con `nuevo` en `s`.
+# Si `viejo` está vacío, devuelve `s` sin cambios.
+funcion reemplazar(s, viejo, nuevo):
+    si longitud(viejo) == 0:
+        retornar s
+    fin si
+    partes = separar(s, viejo)
+    retornar unir(partes, nuevo)
+fin funcion
+
+# Convierte ASCII A-Z a a-z. Caracteres no-ASCII se preservan.
+funcion minusculas_ascii(s):
+    resultado = ""
+    n = longitud(s)
+    para i en rango(n):
+        c = s[i]
+        # Comparación de cadenas (1-char). 'A' = 65, 'Z' = 90.
+        si c >= "A" y c <= "Z":
+            # Construir cadena con código (offset +32).
+            # Workaround sin built-in chr/ord: lookup table.
+            resultado = resultado + _ascii_a_min(c)
+        sino:
+            resultado = resultado + c
+        fin si
+    fin para
+    retornar resultado
+fin funcion
+
+# Convierte ASCII a-z a A-Z. Caracteres no-ASCII se preservan.
+funcion mayusculas_ascii(s):
+    resultado = ""
+    n = longitud(s)
+    para i en rango(n):
+        c = s[i]
+        si c >= "a" y c <= "z":
+            resultado = resultado + _ascii_a_may(c)
+        sino:
+            resultado = resultado + c
+        fin si
+    fin para
+    retornar resultado
+fin funcion
+
+# Helpers internos: traducen char a char con offset ±32.
+# Sin built-in `chr/ord`, usamos tabla.
+_TABLA_MIN = "abcdefghijklmnopqrstuvwxyz"
+_TABLA_MAY = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+
+funcion _ascii_a_min(c):
+    para i en rango(26):
+        si c == _TABLA_MAY[i]:
+            retornar _TABLA_MIN[i]
+        fin si
+    fin para
+    retornar c
+fin funcion
+
+funcion _ascii_a_may(c):
+    para i en rango(26):
+        si c == _TABLA_MIN[i]:
+            retornar _TABLA_MAY[i]
+        fin si
+    fin para
+    retornar c
+fin funcion
+
+# Quita espacios en blanco (ASCII: espacio, tab, \n, \r) del inicio
+# y final de `s`. La versión Unicode-aware llegará con un built-in
+# en versiones futuras.
+funcion recortar(s):
+    retornar recortar_derecha(recortar_izquierda(s))
+fin funcion
+
+funcion recortar_izquierda(s):
+    n = longitud(s)
+    i = 0
+    mientras i < n y _es_blanco(s[i]):
+        i = i + 1
+    fin mientras
+    retornar s[i:]
+fin funcion
+
+funcion recortar_derecha(s):
+    n = longitud(s)
+    i = n
+    mientras i > 0 y _es_blanco(s[i - 1]):
+        i = i - 1
+    fin mientras
+    retornar s[:i]
+fin funcion
+
+funcion _es_blanco(c):
+    retornar c == " " o c == "\t" o c == "\n" o c == "\r"
+fin funcion
+
 # Cuenta las apariciones (no solapadas) de `sub` en `s`.
 #
 # Nota técnica v0.9.1: declaramos `coincide` antes del bucle `mientras`

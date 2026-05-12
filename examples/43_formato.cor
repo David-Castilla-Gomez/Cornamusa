@@ -1,0 +1,81 @@
+# 43_formato.cor — stdlib `formato` y `cadenas` extendida (v1.18).
+#
+# Funciones útiles para reportes legibles: padding, alineación,
+# números con separador, porcentajes, hex/binario, tablas.
+
+importar cadenas
+importar formato
+
+# ─── 1. Cadenas extendidas ───────────────────────────────────────
+imprimir("=== cadenas.* (extendido) ===")
+texto = "  Hola, mundo  "
+imprimir("  recortar:        '" + cadenas.recortar(texto) + "'")
+imprimir("  recortar_izq:    '" + cadenas.recortar_izquierda(texto) + "'")
+imprimir("  recortar_der:    '" + cadenas.recortar_derecha(texto) + "'")
+imprimir("  minusculas:      '" + cadenas.minusculas_ascii(texto) + "'")
+imprimir("  mayusculas:      '" + cadenas.mayusculas_ascii(texto) + "'")
+imprimir("  indice_de mun:   " + cadena(cadenas.indice_de(texto, "mun")))
+imprimir("  contiene mun:    " + cadena(cadenas.contiene(texto, "mun")))
+imprimir("---")
+
+frase = "uno,dos,tres,cuatro"
+partes = cadenas.separar(frase, ",")
+imprimir("  separar:         " + cadena(partes))
+imprimir("  unir:            '" + cadenas.unir(partes, " | ") + "'")
+imprimir("  reemplazar:      '" + cadenas.reemplazar(frase, ",", " > ") + "'")
+imprimir("---")
+
+# ─── 2. Padding y alineación ─────────────────────────────────────
+imprimir("=== Padding ===")
+imprimir("|" + formato.rellenar("izq", 10) + "|")
+imprimir("|" + formato.alinear_derecha("der", 10) + "|")
+imprimir("|" + formato.centrar("centro", 10, "·") + "|")
+imprimir("|" + formato.rellenar("", 10, "-") + "|")
+imprimir("---")
+
+# ─── 3. Números formateados ──────────────────────────────────────
+imprimir("=== Números ===")
+imprimir("  con_decimales(3.14159, 2) = " + formato.con_decimales(3.14159, 2))
+imprimir("  con_decimales(3, 4)       = " + formato.con_decimales(3, 4))
+imprimir("  con_decimales(2.5, 0)     = " + formato.con_decimales(2.5, 0))
+imprimir("  separador 1234567         = " + formato.numero_con_separador(1234567))
+imprimir("  separador -987654321      = " + formato.numero_con_separador(-987654321))
+imprimir("  porcentaje 0.857          = " + formato.porcentaje(0.857))
+imprimir("  como_hex(255)             = " + formato.como_hex(255))
+imprimir("  como_hex(4096)            = " + formato.como_hex(4096))
+imprimir("  como_binario(10)          = " + formato.como_binario(10))
+imprimir("---")
+
+# ─── 4. Tabla tabular ────────────────────────────────────────────
+imprimir("=== Tabla de empleados ===")
+cabecera = ["Nombre", "Edad", "Salario"]
+anchos = [10, 5, 10]
+imprimir(formato.fila(cabecera, anchos))
+imprimir(formato.linea("-", 32))
+
+filas_datos = [
+    ["Ana",     28,    35000],
+    ["Bruno",   42,    52500],
+    ["Carla",   31,    41200],
+    ["David",   55,    72800],
+]
+para fila en filas_datos:
+    sn = formato.rellenar(fila[0], anchos[0])
+    se = formato.alinear_derecha(cadena(fila[1]), anchos[1])
+    ss = formato.alinear_derecha(formato.numero_con_separador(fila[2]), anchos[2])
+    imprimir(sn + " | " + se + " | " + ss)
+fin para
+imprimir("---")
+
+# ─── 5. Reporte combinado ────────────────────────────────────────
+imprimir(formato.centrar(" REPORTE TRIMESTRAL ", 40, "="))
+ventas = [12500.50, 18750.00, 15200.75, 9800.25]
+total = 0.0
+para v en ventas:
+    total = total + v
+fin para
+promedio = total / longitud(ventas)
+imprimir("  Ventas:  " + formato.numero_con_separador(redondear(total, 2)) + " EUR")
+imprimir("  Media:   " + formato.con_decimales(promedio, 2) + " EUR")
+imprimir("  Crec:    " + formato.porcentaje(0.085))
+imprimir(formato.linea("=", 40))

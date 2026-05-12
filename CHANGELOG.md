@@ -6,6 +6,76 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.18.0] — 2026-05-12 — Stdlib `formato` y `cadenas` extendida
+
+Stdlib más amplia para reportes legibles y manipulación de cadenas.
+Sin cambios al runtime — todo escrito en Cornamusa puro.
+
+### Nuevo módulo `formato`
+
+```cornamusa
+importar formato
+
+formato.rellenar("izq", 10)            # "izq       "
+formato.alinear_derecha("der", 10)     # "       der"
+formato.centrar("centro", 10, "·")     # "··centro··"
+formato.con_decimales(3.14159, 2)      # "3.14"
+formato.numero_con_separador(1234567)  # "1_234_567"
+formato.porcentaje(0.857)              # "85.70%"
+formato.como_hex(255)                  # "0xff"
+formato.como_binario(10)               # "0b1010"
+formato.linea("-", 30)                 # "------------------------------"
+formato.fila(["a", 1, 2.5], [5, 3, 5]) # "a     | 1   | 2.5  "
+```
+
+Todas las funciones de padding aceptan `caracter` opcional (default
+espacio). `con_decimales`, `numero_con_separador`, `porcentaje`,
+`como_hex`, `como_binario` aceptan defaults para parámetros opcionales
+(usando v1.17). `numero_con_separador` ahora maneja decimales:
+`56251.5` → `"56_251.5"`.
+
+### `cadenas` extendida
+
+Funciones nuevas en [stdlib/cadenas.cor](stdlib/cadenas.cor):
+
+```cornamusa
+importar cadenas
+
+cadenas.indice_de("hola mundo", "mun")    # 5
+cadenas.contiene("hola mundo", "mun")     # verdadero
+cadenas.separar("a,b,c", ",")             # ["a", "b", "c"]
+cadenas.separar("hola", "")               # ["h", "o", "l", "a"]
+cadenas.reemplazar("ho la ho", "ho", "X") # "X la X"
+cadenas.recortar("  espacios  ")          # "espacios"
+cadenas.recortar_izquierda("  left")      # "left"
+cadenas.recortar_derecha("right  ")       # "right"
+cadenas.minusculas_ascii("Hola Mundo")    # "hola mundo"
+cadenas.mayusculas_ascii("Hola Mundo")    # "HOLA MUNDO"
+```
+
+Las funciones de case son **ASCII-only** (`A`–`Z` ↔ `a`–`z`).
+Caracteres no-ASCII se preservan sin cambios. La versión Unicode-aware
+requiere `utf8proc` exposed como built-in, planeado para versiones
+futuras.
+
+### Bug conocido y workaround
+
+Durante el desarrollo de v1.18 detectamos un bug preexistente del
+runtime: si dos módulos importan el mismo sub-módulo (e.g.
+`formato.cor` y el programa principal ambos importan `cadenas`),
+ocurre un error `Pila vacia (bug del compilador)`. Para evitarlo, el
+módulo `formato` es **self-contained**: incluye helpers locales
+prefijados `_` que duplican el código de `_repetir`, `_unir`,
+`_indice_de`. Cuando el bug del runtime se arregle, `formato`
+delegará en `cadenas` sin duplicación.
+
+### Tests
+
+Sin tests unit dedicados (los tests unit corren sin acceso a stdlib).
+El ejemplo
+[examples/43_formato.cor](examples/43_formato.cor) ejercita TODO el
+nuevo código de `formato` y `cadenas`. Total: **138 verde**.
+
 ## [1.17.0] — 2026-05-12 — Argumentos por defecto en bytecode
 
 Cierra una limitación heredada desde v0.7: el motor bytecode rechazaba
