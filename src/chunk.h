@@ -432,6 +432,12 @@ struct FuncionBC {
     /* v1.5: descriptor de inline dunder. tipo=DUNDER_INLINE_NONE si
        no aplica (caso default). */
     DunderInlineDesc inline_desc;
+    /* v1.17: cantidad de parámetros con valor por defecto. Los
+       defaults SIEMPRE están en cola (parser lo valida). El compilador
+       emite las expresiones de default antes de OP_CLOSURE; al ejecutar
+       OP_CLOSURE, la VM pop estos N valores y los guarda en
+       `closure->defaults`. */
+    int n_defaults;
 };
 
 /*
@@ -501,6 +507,10 @@ struct Closure {
      * top-level del programa principal).
      */
     Diccionario *globales_definicion;
+    /* v1.17: valores de default evaluados al crear este closure. NULL
+       si plantilla->n_defaults == 0. Array de longitud
+       plantilla->n_defaults; cada Valor es dueño (clonar para usar). */
+    Valor *defaults;
 };
 
 Closure *closure_nuevo(FuncionBC *fn);

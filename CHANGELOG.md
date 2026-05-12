@@ -6,6 +6,116 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.17.0] — 2026-05-12 — Argumentos por defecto en bytecode
+
+Cierra una limitación heredada desde v0.7: el motor bytecode rechazaba
+`funcion f(a, b=valor):` con un error "aun no estan en bytecode". El
+evaluador tree-walking ya los soportaba — esta asimetría obligaba a
+duplicar funciones en stdlib (`enumerar`/`enumerar_desde`,
+`suma`/`suma_desde`). v1.17 unifica ambos motores.
+
+### Sintaxis
+
+```cornamusa
+funcion saludar(nombre, saludo="Hola", signo="!"):
+    retornar f"{saludo}, {nombre}{signo}"
+fin funcion
+
+saludar("Ana")                # "Hola, Ana!"
+saludar("Bob", "Buenas")      # "Buenas, Bob!"
+saludar("Carla", "Hey", ".")  # "Hey, Carla."
+
+# Lambda también
+escalar = lambda n, factor=2: n * factor
+escalar(5)      # 10
+escalar(5, 10)  # 50
+```
+
+### Semántica: capturados al `def`, no al call
+
+Los defaults se evalúan **una sola vez** cuando se crea la función
+(Python-like). Mutables compartidos entre llamadas:
+
+```cornamusa
+N = 10
+funcion f(z, base=N):
+    retornar z + base
+fin funcion
+N = 999
+f(5)  # 15, no 1004 — el default ya está capturado
+```
+
+```cornamusa
+funcion log(item, acc=[]):
+    agregar(acc, item)
+    retornar acc
+fin funcion
+log("a")  # ["a"]
+log("b")  # ["a", "b"] — mismo objeto reusado (igual que Python)
+```
+
+### Implementación
+
+- **`FuncionBC`** ([src/chunk.h](src/chunk.h)): nuevo campo
+  `n_defaults` que el compilador setea al construir la plantilla.
+- **`Closure`** ([src/chunk.h](src/chunk.h)): nuevo array
+  `Valor *defaults` con `n_defaults` valores, evaluados al crear el
+  closure.
+- **Compilador** ([src/compilador.c](src/compilador.c)): tras
+  `funcion_bc_nueva`, emite las expresiones de default en orden ANTES
+  de `OP_CLOSURE`. Sin nuevos opcodes.
+- **VM `OP_CLOSURE`** ([src/vm.c](src/vm.c)): pop `n_defaults` valores
+  y los guarda en `cl->defaults`.
+- **VM `ejecutar_llamar_bc` / `ejecutar_llamar_clase` /
+  `ejecutar_llamar_metodo_ligado`**: si `n_args < aridad` y la
+  función tiene defaults suficientes, completa con `valor_clonar`
+  desde el array.
+- **Validación**: el parser ya rechazaba parámetros con default antes
+  del primero sin default; el compilador refuerza esto en v1.17.
+
+### Cambio colateral: errores de aridad atrapables
+
+Antes de v1.17, `f(1)` cuando `f` espera 2 args producía un error de
+runtime no atrapable. Ahora las llamadas con aridad incorrecta
+(faltan args y no hay defaults, o sobran args) usan `RAISE_OR_DIE()`,
+consistente con el patrón de v1.10/v1.13.
+
+```cornamusa
+intentar:
+    saludar()  # falta `nombre`
+atrapar ErrorDeTipo como e:
+    imprimir(f"capturado: {e}")
+fin intentar
+```
+
+### Stdlib actualizada
+
+`enumerar(xs)` y `suma(xs)` ahora usan defaults:
+
+```cornamusa
+importar funcionales
+funcionales.enumerar([10, 20, 30])         # [(0, 10), (1, 20), (2, 30)]
+funcionales.enumerar([10, 20], 100)         # [(100, 10), (101, 20)]
+funcionales.suma([1, 2, 3])                # 6
+funcionales.suma(["a", "b"], "")           # "ab"
+funcionales.suma([[1], [2]], [])           # [1, 2]
+```
+
+`enumerar_desde` y `suma_desde` se mantienen como aliases deprecated
+por compatibilidad con código v1.11-v1.16.
+
+### Tests
+
+12 tests nuevos en
+[tests/unit/test_bytecode_defaults.c](tests/unit/test_bytecode_defaults.c)
+cubriendo simple, múltiples, captura de scope al def, expresiones
+complejas, defaults mutables compartidos, lambdas, validación,
+aridad atrapable, métodos con default. Total: **137 verde**.
+
+Ejemplo: [examples/42_defaults.cor](examples/42_defaults.cor) con
+saludador, captura al def, defaults mutables, factory con `Pedido`,
+lambdas y errores atrapables.
+
 ## [1.16.3] — 2026-05-11 — Type-match y `como nombre` en `coincidir`
 
 Cierra la story de pattern matching para v1.x. Ahora `coincidir`

@@ -1,0 +1,92 @@
+# 42_defaults.cor — argumentos por defecto (v1.17).
+#
+# v1.17 cierra la asimetría heredada de v0.7: ahora el motor bytecode
+# soporta `funcion f(a, b=valor):` igual que el tree-walking. Los
+# defaults se evalúan UNA VEZ al definir la función (Python-like) y
+# se almacenan con cada closure.
+#
+# Validación: parámetros con default deben ir AL FINAL (no se permite
+# `funcion f(a=1, b):`). Errores de aridad ahora son ATRAPABLES.
+
+# ─── 1. Saludador con default ────────────────────────────────────
+funcion saludar(nombre, saludo="Hola", signo="!"):
+    retornar f"{saludo}, {nombre}{signo}"
+fin funcion
+
+imprimir(saludar("Ana"))
+imprimir(saludar("Bob", "Buenas"))
+imprimir(saludar("Carla", "Hey", "."))
+imprimir("---")
+
+# ─── 2. Defaults se capturan al definir, no al llamar ───────────
+N_inicial = 10
+funcion calcular(n, base=N_inicial):
+    retornar n + base
+fin funcion
+
+# Cambiar N_inicial NO afecta a calcular (default ya capturado).
+N_inicial = 999
+imprimir(calcular(5))           # 15, no 1004
+imprimir(calcular(5, 100))      # 105
+imprimir("---")
+
+# ─── 3. Lista mutable como default: comportamiento Python-like ──
+# CUIDADO: el mismo objeto se reutiliza entre llamadas.
+funcion agregar_log(item, log=[]):
+    agregar(log, item)
+    retornar log
+fin funcion
+
+l1 = agregar_log("a")
+l2 = agregar_log("b")
+imprimir(f"l1={l1}, l2={l2}")  # AMBOS son ["a", "b"]
+imprimir("(comportamiento esperado: defaults mutables son compartidos)")
+imprimir("---")
+
+# ─── 4. Patrón factory con defaults ─────────────────────────────
+clase Pedido:
+    funcion __iniciar__(yo, item, cantidad=1, prioridad="normal"):
+        yo.item = item
+        yo.cantidad = cantidad
+        yo.prioridad = prioridad
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"Pedido({yo.item} x{yo.cantidad}, {yo.prioridad})"
+    fin funcion
+fin clase
+
+p1 = Pedido("libro")
+p2 = Pedido("manzana", 5)
+p3 = Pedido("urgente_caso", 1, "alta")
+para p en [p1, p2, p3]:
+    imprimir(f"  {p}")
+fin para
+imprimir("---")
+
+# ─── 5. Lambdas con default ─────────────────────────────────────
+escalar = lambda n, factor=2: n * factor
+imprimir(escalar(5))         # 10
+imprimir(escalar(5, 10))     # 50
+
+# Default puede usar otra global.
+PI = 3.14159
+area_circulo = lambda r, pi_local=PI: pi_local * r * r
+imprimir(redondear(area_circulo(5), 4))  # 78.5398
+imprimir("---")
+
+# ─── 6. Errores de aridad ahora atrapables ──────────────────────
+imprimir("=== Errores atrapables ===")
+intentar:
+    saludar()  # falta `nombre` que no tiene default
+atrapar ErrorDeTipo como e:
+    imprimir(f"  capturado: {e}")
+fin intentar
+
+intentar:
+    saludar("Ana", "x", "y_extra", "demasiado")
+atrapar ErrorDeTipo como e:
+    imprimir(f"  capturado: {e}")
+fin intentar
+
+imprimir("listo")

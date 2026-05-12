@@ -710,10 +710,27 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
     Closure *cl = base_nuevo->como.closure;
     FuncionBC *fn = cl->plantilla;
     if (n_args != fn->aridad) {
-        llamar_set_error(vm, frame,
-            "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
-            fn->longitud_nombre, fn->nombre, fn->aridad, n_args);
-        return VM_ERROR_RUNTIME;
+        /* v1.17: si faltan args y la función tiene defaults para
+           ellos, los completamos. n_args debe estar en
+           [aridad - n_defaults, aridad]. */
+        int min_aridad = fn->aridad - fn->n_defaults;
+        if (n_args >= min_aridad && n_args < fn->aridad && cl->defaults) {
+            int n_faltantes = fn->aridad - n_args;
+            /* Los defaults son los últimos n_defaults parámetros.
+               El primer faltante es el parámetro de índice n_args
+               (0-indexado), cuyo default está en
+               cl->defaults[n_args - min_aridad]. */
+            for (int i = 0; i < n_faltantes; i++) {
+                int def_idx = (n_args - min_aridad) + i;
+                empujar(vm, valor_clonar(&cl->defaults[def_idx]));
+            }
+            n_args = fn->aridad;
+        } else {
+            llamar_set_error(vm, frame,
+                "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                fn->longitud_nombre, fn->nombre, fn->aridad, n_args);
+            return VM_ERROR_RUNTIME;
+        }
     }
     if (vm->n_frames >= VM_FRAMES_MAX) {
         llamar_set_error(vm, frame,
@@ -779,14 +796,20 @@ static ResultadoVM ejecutar_llamar_clase(VM *vm, CallFrame **frame_inout,
     }
     Closure *cl = met_v.como.closure;
     FuncionBC *fn = cl->plantilla;
+    /* v1.17: aceptar n_args + 1 dentro de [aridad - n_defaults, aridad]. */
     if (n_args + 1 != fn->aridad) {
-        valor_destruir(&met_v);
-        instancia_liberar(inst);
-        llamar_set_error(vm, frame,
-            "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
-            cl_class->longitud_nombre, cl_class->nombre,
-            fn->aridad - 1, n_args);
-        return VM_ERROR_RUNTIME;
+        int min_aridad = fn->aridad - fn->n_defaults;
+        if (n_args + 1 >= min_aridad && n_args + 1 < fn->aridad && cl->defaults) {
+            /* Defaults completarán los faltantes en ejecutar_llamar_bc. */
+        } else {
+            valor_destruir(&met_v);
+            instancia_liberar(inst);
+            llamar_set_error(vm, frame,
+                "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                cl_class->longitud_nombre, cl_class->nombre,
+                fn->aridad - 1, n_args);
+            return VM_ERROR_RUNTIME;
+        }
     }
     if (vm->n_frames >= VM_FRAMES_MAX) {
         valor_destruir(&met_v);
@@ -812,6 +835,18 @@ static ResultadoVM ejecutar_llamar_clase(VM *vm, CallFrame **frame_inout,
     *base_nuevo = met_v;
     base_nuevo[1] = valor_instancia(inst);
     valor_destruir(&old);
+
+    /* v1.17: si faltan args, completar con defaults. n_args + 1 son
+       los args en stack ahora (instancia + usuarios). */
+    int total_actual = (int)n_args + 1;
+    if (total_actual < fn->aridad) {
+        int min_aridad_w_yo = fn->aridad - fn->n_defaults;
+        int n_faltantes = fn->aridad - total_actual;
+        for (int i = 0; i < n_faltantes; i++) {
+            int def_idx = (total_actual - min_aridad_w_yo) + i;
+            empujar(vm, valor_clonar(&cl->defaults[def_idx]));
+        }
+    }
 
     CallFrame *nf = &vm->frames[vm->n_frames++];
     nf->chunk = &fn->chunk;
@@ -1230,11 +1265,17 @@ static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout
     MetodoLigado *bm = base_nuevo->como.metodo_ligado;
     Closure *cl = bm->metodo;
     FuncionBC *fn = cl->plantilla;
+    /* v1.17: aceptar n_args + 1 dentro del rango con defaults. */
     if (n_args + 1 != fn->aridad) {
-        llamar_set_error(vm, frame,
-            "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
-            fn->longitud_nombre, fn->nombre, fn->aridad - 1, n_args);
-        return VM_ERROR_RUNTIME;
+        int min_aridad = fn->aridad - fn->n_defaults;
+        if (n_args + 1 >= min_aridad && n_args + 1 < fn->aridad && cl->defaults) {
+            /* OK, completaremos con defaults abajo. */
+        } else {
+            llamar_set_error(vm, frame,
+                "ErrorDeTipo: %.*s() esperaba %d argumentos, recibio %d",
+                fn->longitud_nombre, fn->nombre, fn->aridad - 1, n_args);
+            return VM_ERROR_RUNTIME;
+        }
     }
     if (vm->n_frames >= VM_FRAMES_MAX) {
         llamar_set_error(vm, frame,
@@ -1256,6 +1297,17 @@ static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout
     *base_nuevo = valor_closure(cl);
     base_nuevo[1] = receptor;
     valor_destruir(&bound_old);
+
+    /* v1.17: completar con defaults si faltan. */
+    int total_actual = (int)n_args + 1;
+    if (total_actual < fn->aridad) {
+        int min_aridad_w_yo = fn->aridad - fn->n_defaults;
+        int n_faltantes = fn->aridad - total_actual;
+        for (int i = 0; i < n_faltantes; i++) {
+            int def_idx = (total_actual - min_aridad_w_yo) + i;
+            empujar(vm, valor_clonar(&cl->defaults[def_idx]));
+        }
+    }
 
     CallFrame *nf = &vm->frames[vm->n_frames++];
     nf->chunk = &fn->chunk;
@@ -3315,6 +3367,10 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                  * Lee la plantilla del pool de constantes y crea una
                  * Closure NUEVA con upvalues conectados al stack.
                  * Operandos: [byte fn_idx] [n_upvalues * (is_local, index)].
+                 *
+                 * v1.17: justo antes de OP_CLOSURE el compilador empujó
+                 * `fn->n_defaults` valores (uno por parámetro con
+                 * default). Pop esos valores y guárdalos en el closure.
                  */
                 uint8_t fn_idx = LEER_BYTE();
                 Valor plantilla_v = frame->chunk->constantes[fn_idx];
@@ -3327,6 +3383,18 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 if (!cl) {
                     VM_ERROR("memoria insuficiente al crear closure");
                     return VM_ERROR_RUNTIME;
+                }
+                /* v1.17: pop defaults (último pushed → último param). */
+                if (fn->n_defaults > 0) {
+                    cl->defaults = (Valor *)malloc(sizeof(Valor) * (size_t)fn->n_defaults);
+                    if (!cl->defaults) {
+                        closure_liberar(cl);
+                        VM_ERROR("memoria insuficiente al guardar defaults");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    for (int i = fn->n_defaults - 1; i >= 0; i--) {
+                        cl->defaults[i] = sacar(vm);
+                    }
                 }
                 /* v0.9.0: cierre de globales — la función "captura" el
                    diccionario de globales del scope de su creación.
@@ -3411,7 +3479,9 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 }
                 if (ejecutar_llamar_bc(vm, &frame, base_nuevo, n_args)
                     != VM_OK) {
-                    return VM_ERROR_RUNTIME;
+                    /* v1.17: error de aridad atrapable. */
+                    RAISE_OR_DIE();
+                    break;
                 }
                 break;
             }
@@ -3470,8 +3540,11 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         break;
                     case VAL_FUNCION_BC:
                         if (ejecutar_llamar_bc(vm, &frame, base_nuevo,
-                                                 n_args) != VM_OK)
-                            return VM_ERROR_RUNTIME;
+                                                 n_args) != VM_OK) {
+                            /* v1.17: error de aridad atrapable. */
+                            RAISE_OR_DIE();
+                            break;
+                        }
                         promote = OP_LLAMAR_BC;
                         break;
                     case VAL_CLASE:

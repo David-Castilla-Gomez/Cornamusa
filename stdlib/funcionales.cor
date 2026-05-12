@@ -57,15 +57,10 @@ funcion reducir(f, xs, inicial):
     retornar acc
 fin funcion
 
-# Genera lista de tuplas (índice, elemento), índice desde 0.
-# Para empezar en otro índice usa `enumerar_desde(xs, inicio)`.
-# (Los argumentos por defecto aún no están soportados en el motor
-# bytecode — futuro.)
-funcion enumerar(xs):
-    retornar enumerar_desde(xs, 0)
-fin funcion
-
-funcion enumerar_desde(xs, inicio):
+# Genera lista de tuplas (índice, elemento). `inicio` es 0 por defecto;
+# pasar otro valor para empezar en una posición distinta.
+# (v1.17: argumentos por defecto soportados en bytecode.)
+funcion enumerar(xs, inicio=0):
     resultado = []
     i = inicio
     para x en xs:
@@ -73,6 +68,12 @@ funcion enumerar_desde(xs, inicio):
         i = i + 1
     fin para
     retornar resultado
+fin funcion
+
+# Alias deprecated v1.17: usa `enumerar(xs, inicio)`. Se mantendrá un
+# tiempo por compatibilidad con código v1.11-v1.16.
+funcion enumerar_desde(xs, inicio):
+    retornar enumerar(xs, inicio)
 fin funcion
 
 # Verdadero si `p(x)` lo es para algún elemento. Cortocircuita.
@@ -101,18 +102,19 @@ fin funcion
 # que la VM despacha — funcionan sobre enteros, decimales y cualquier
 # clase con dunders aritméticos sin necesidad de soporte específico.
 
-# Suma todos los elementos de `xs`. Empieza en 0 (entero), así que
-# para sumar cadenas usa `suma_desde(xs, "")`.
-funcion suma(xs):
-    retornar suma_desde(xs, 0)
-fin funcion
-
-funcion suma_desde(xs, inicial):
+# Suma todos los elementos de `xs`. `inicial` por defecto es 0; para
+# sumar cadenas o concatenar listas pasa `inicial=""` o `inicial=[]`.
+funcion suma(xs, inicial=0):
     total = inicial
     para x en xs:
         total = total + x
     fin para
     retornar total
+fin funcion
+
+# Alias deprecated v1.17: usa `suma(xs, inicial)`.
+funcion suma_desde(xs, inicial):
+    retornar suma(xs, inicial)
 fin funcion
 
 # Mínimo y máximo de un iterable no vacío. ErrorDeValor si está vacío.

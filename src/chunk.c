@@ -213,6 +213,7 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->inline_desc.nombre_clase = NULL;
     f->inline_desc.ctor_arg2_attr_yo = NULL;
     f->inline_desc.ctor_arg2_attr_otro = NULL;
+    f->n_defaults = 0;     /* v1.17: el compilador lo setea si hay defaults */
     return f;
 }
 
@@ -278,6 +279,7 @@ Closure *closure_nuevo(FuncionBC *fn) {
     c->refcount = 1;
     c->clase_definicion = NULL;   /* set por OP_METODO si llega a ser método */
     c->globales_definicion = NULL; /* set por OP_CLOSURE para cerrar globales */
+    c->defaults = NULL;            /* v1.17: set por OP_CLOSURE si fn tiene defaults */
     if (fn->n_upvalues > 0) {
         c->upvalues = (Upvalue **)calloc((size_t)fn->n_upvalues,
                                             sizeof(Upvalue *));
@@ -311,6 +313,12 @@ void closure_liberar(Closure *c) {
     }
     if (c->globales_definicion) {
         dicc_liberar(c->globales_definicion);
+    }
+    if (c->defaults) {
+        for (int i = 0; i < c->plantilla->n_defaults; i++) {
+            valor_destruir(&c->defaults[i]);
+        }
+        free(c->defaults);
     }
     gc_desenlazar(&c->obj);
     free(c);

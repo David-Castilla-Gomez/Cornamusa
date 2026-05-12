@@ -764,10 +764,16 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         case EXPR_LAMBDA: {
             int n_params = e->como.lambda.n_parametros;
             Parametro *params = e->como.lambda.parametros;
+            /* v1.17: contar defaults y validar que estén en cola. */
+            int n_defaults_lam = 0;
+            bool vio_default = false;
             for (int i = 0; i < n_params; i++) {
                 if (params[i].valor_defecto != NULL) {
+                    vio_default = true;
+                    n_defaults_lam++;
+                } else if (vio_default) {
                     error_compilacion(c, e->linea, e->columna,
-                        "valores por defecto en parametros aun no estan en bytecode v0.6.2");
+                        "parametro sin valor por defecto despues de uno con default");
                     return false;
                 }
             }
@@ -800,12 +806,19 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 return false;
             }
 
+            /* v1.17: registrar n_defaults antes de promover a constante. */
+            fn->n_defaults = n_defaults_lam;
+
             Valor v_plantilla = valor_plantilla(fn);
             int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);
             if (fn_idx < 0 || fn_idx > 255) {
                 error_compilacion(c, e->linea, e->columna,
                     "demasiadas constantes para v0.6 (operando byte)");
                 return false;
+            }
+            /* v1.17: emitir expresiones de default antes de OP_CLOSURE. */
+            for (int i = n_params - n_defaults_lam; i < n_params; i++) {
+                if (!compilador_compilar_expr(c, params[i].valor_defecto)) return false;
             }
             chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
                                 (uint8_t)fn_idx, e->linea);
@@ -2464,10 +2477,16 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     int n_params = s->como.funcion.n_parametros;
     Parametro *params = s->como.funcion.parametros;
 
+    /* v1.17: validar defaults — solo permitidos en la cola. Contar n_defaults. */
+    int n_defaults = 0;
+    bool vio_default = false;
     for (int i = 0; i < n_params; i++) {
         if (params[i].valor_defecto != NULL) {
+            vio_default = true;
+            n_defaults++;
+        } else if (vio_default) {
             error_compilacion(c, s->linea, s->columna,
-                "valores por defecto en parametros aun no estan en bytecode v0.7");
+                "parametro sin valor por defecto despues de uno con default");
             return false;
         }
     }
@@ -2513,12 +2532,23 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
        VM pueda fast-pathear el dispatch. */
     detectar_inline_dunder(fn, s);
 
+    /* v1.17: registrar n_defaults en la plantilla. La VM lo lee al
+       procesar OP_CLOSURE para saber cuántos valores pop del stack. */
+    fn->n_defaults = n_defaults;
+
     Valor v_plantilla = valor_plantilla(fn);
     int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);
     if (fn_idx < 0 || fn_idx > 255) {
         error_compilacion(c, s->linea, s->columna,
             "demasiadas constantes para v0.7 (operando byte)");
         return false;
+    }
+    /* v1.17: antes de OP_CLOSURE, emitir las expresiones de default en
+       orden (primer default → primero en stack). Las evalúan en el
+       scope donde se DEFINE la función (Python-like: defaults se
+       capturan al `def`, no al call). */
+    for (int i = n_params - n_defaults; i < n_params; i++) {
+        if (!compilador_compilar_expr(c, params[i].valor_defecto)) return false;
     }
     chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
                         (uint8_t)fn_idx, s->linea);
