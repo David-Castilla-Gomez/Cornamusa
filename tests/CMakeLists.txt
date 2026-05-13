@@ -407,6 +407,19 @@ set_tests_properties(bc_run_43_formato PROPERTIES
     PASS_REGULAR_EXPRESSION "REPORTE TRIMESTRAL"
 )
 
+# v1.19: stdlib fechas con built-ins de tiempo (tiempo_actual,
+# tiempo_descomponer, tiempo_componer, tiempo_formato).
+add_test(
+    NAME bc_run_44_fechas
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/44_fechas.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_44_fechas PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "2400 → bisiesto"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

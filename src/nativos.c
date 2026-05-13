@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "evaluador.h"
 #include "memoria.h"
@@ -2495,6 +2496,165 @@ static Valor nativa_repr(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Tiempo (v1.19): tiempo_actual, tiempo_descomponer, tiempo_componer,
+ * tiempo_formato.
+ *
+ * Trabajan con segundos Unix epoch (1970-01-01 00:00:00 UTC). Las
+ * funciones de descomposición/composición usan local time (zona del
+ * sistema). Para UTC los usuarios deben restar/sumar el offset
+ * manualmente (futuro: opcional arg `utc=verdadero`).
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor nativa_tiempo_actual(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_actual() no acepta argumentos");
+    }
+    time_t t = time(NULL);
+    if (t == (time_t)-1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeSistema: time() fallo");
+    }
+    return valor_entero_de_i64((int64_t)t);
+}
+
+/* Helper: crea tupla (año, mes, día, hora, min, seg, día_semana, día_año).
+   día_semana: 0=lunes ... 6=domingo (ISO).
+   día_año: 1-366. */
+static Valor tupla_de_tm(struct tm *tm) {
+    Tupla *t = tupla_nueva(8);
+    if (!t) return valor_nulo();
+    /* C struct tm: wday: 0=sunday..6=saturday; yday: 0-365.
+       Convertimos a ISO: wday 0=lunes..6=domingo; yday 1-366. */
+    int wday_iso = (tm->tm_wday + 6) % 7;
+    t->elementos[0] = valor_entero_de_i64((int64_t)(tm->tm_year + 1900));
+    t->elementos[1] = valor_entero_de_i64((int64_t)(tm->tm_mon + 1));
+    t->elementos[2] = valor_entero_de_i64((int64_t)tm->tm_mday);
+    t->elementos[3] = valor_entero_de_i64((int64_t)tm->tm_hour);
+    t->elementos[4] = valor_entero_de_i64((int64_t)tm->tm_min);
+    t->elementos[5] = valor_entero_de_i64((int64_t)tm->tm_sec);
+    t->elementos[6] = valor_entero_de_i64((int64_t)wday_iso);
+    t->elementos[7] = valor_entero_de_i64((int64_t)(tm->tm_yday + 1));
+    return valor_tupla(t);
+}
+
+static Valor nativa_tiempo_descomponer(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_descomponer() requiere 1 argumento (ts entero)");
+    }
+    int64_t ts;
+    if (!valor_entero_a_i64(&args[0], &ts)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_descomponer() requiere un entero");
+    }
+    time_t t = (time_t)ts;
+    struct tm tm_local;
+#if defined(_WIN32) || defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
+    if (localtime_s(&tm_local, &t) != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: timestamp invalido para localtime");
+    }
+#else
+    struct tm *tm_ptr = localtime_r(&t, &tm_local);
+    if (!tm_ptr) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: timestamp invalido para localtime");
+    }
+#endif
+    Valor r = tupla_de_tm(&tm_local);
+    if (r.tipo == VAL_NULO) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    return r;
+}
+
+static Valor nativa_tiempo_componer(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 6) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_componer() requiere 6 argumentos (año, mes, día, hora, min, seg)");
+    }
+    int64_t comps[6];
+    for (int i = 0; i < 6; i++) {
+        if (!valor_entero_a_i64(&args[i], &comps[i])) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: tiempo_componer() requiere enteros en todos los args");
+        }
+    }
+    struct tm tm_in;
+    memset(&tm_in, 0, sizeof(tm_in));
+    tm_in.tm_year = (int)comps[0] - 1900;
+    tm_in.tm_mon  = (int)comps[1] - 1;
+    tm_in.tm_mday = (int)comps[2];
+    tm_in.tm_hour = (int)comps[3];
+    tm_in.tm_min  = (int)comps[4];
+    tm_in.tm_sec  = (int)comps[5];
+    tm_in.tm_isdst = -1;   /* deja a mktime decidir DST */
+    time_t t = mktime(&tm_in);
+    if (t == (time_t)-1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: componentes de tiempo invalidos");
+    }
+    return valor_entero_de_i64((int64_t)t);
+}
+
+static Valor nativa_tiempo_formato(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_formato() requiere 2 argumentos (ts, formato)");
+    }
+    int64_t ts;
+    if (!valor_entero_a_i64(&args[0], &ts)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_formato() requiere entero como primer argumento");
+    }
+    if (args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_formato() requiere cadena como segundo argumento");
+    }
+    /* Asegurar terminación nul para strftime. */
+    int flen = args[1].como.cadena.longitud;
+    char fmt[256];
+    if (flen >= (int)sizeof(fmt)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: formato de tiempo demasiado largo (>%d)",
+            (int)sizeof(fmt) - 1);
+    }
+    memcpy(fmt, args[1].como.cadena.texto, (size_t)flen);
+    fmt[flen] = '\0';
+
+    time_t t = (time_t)ts;
+    struct tm tm_local;
+#if defined(_WIN32) || defined(_MSC_VER) || defined(__MINGW32__) || defined(__MINGW64__)
+    if (localtime_s(&tm_local, &t) != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: timestamp invalido");
+    }
+#else
+    struct tm *tm_ptr = localtime_r(&t, &tm_local);
+    if (!tm_ptr) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: timestamp invalido");
+    }
+#endif
+    char buf[1024];
+    size_t n = strftime(buf, sizeof(buf), fmt, &tm_local);
+    if (n == 0 && flen > 0) {
+        /* strftime devuelve 0 si el buffer es insuficiente O si el
+           formato produce cadena vacía. Distinguir: si el formato no
+           es vacío, asumimos overflow. */
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: salida de formato excede %d bytes", (int)sizeof(buf) - 1);
+    }
+    return valor_cadena_duplicar(buf, (int)n);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
@@ -2561,6 +2721,11 @@ static const EntradaNativa NATIVAS[] = {
     {"subclase_de",     11,  nativa_subclase_de},
     {"id",               2,  nativa_id},
     {"repr",             4,  nativa_repr},
+    /* Tiempo (v1.19). */
+    {"tiempo_actual",       13, nativa_tiempo_actual},
+    {"tiempo_descomponer",  18, nativa_tiempo_descomponer},
+    {"tiempo_componer",     15, nativa_tiempo_componer},
+    {"tiempo_formato",      14, nativa_tiempo_formato},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

@@ -1,0 +1,98 @@
+# 44_fechas.cor — stdlib `fechas` (v1.19).
+#
+# Operaciones con timestamps Unix: descomposición, construcción,
+# formateo, aritmética de duraciones, validación.
+
+importar fechas
+importar formato
+
+# ─── 1. Fecha y hora actual ──────────────────────────────────────
+imprimir(formato.centrar(" FECHA ACTUAL ", 40, "="))
+ahora = fechas.ahora()
+imprimir("  legible:    " + fechas.legible(ahora))
+imprimir("  ISO 8601:   " + fechas.iso8601(ahora))
+imprimir("  solo fecha: " + fechas.solo_fecha(ahora))
+imprimir("  solo hora:  " + fechas.solo_hora(ahora))
+imprimir("  custom:     " + fechas.formato(ahora, "%H:%M del %d/%m/%Y"))
+imprimir("---")
+
+# ─── 2. Componentes legibles ─────────────────────────────────────
+imprimir("=== Componentes ===")
+c = fechas.componentes(ahora)
+imprimir("  año:        " + cadena(c["año"]))
+imprimir("  mes:        " + cadena(c["mes"]) + " (" + fechas.nombre_mes(c["mes"]) + ")")
+imprimir("  día:        " + cadena(c["dia"]))
+imprimir("  hora:       " + cadena(c["hora"]))
+imprimir("  minuto:     " + cadena(c["minuto"]))
+imprimir("  segundo:    " + cadena(c["segundo"]))
+imprimir("  día semana: " + cadena(c["dia_semana"]) + " (" + fechas.nombre_dia(c["dia_semana"]) + ")")
+imprimir("  día del año: " + cadena(c["dia_año"]))
+imprimir("---")
+
+# ─── 3. Construir timestamps ─────────────────────────────────────
+imprimir("=== Construir ===")
+fin_de_año = fechas.construir(2026, 12, 31, 23, 59, 59)
+imprimir("  31 Dic 2026 23:59:59: " + fechas.iso8601(fin_de_año))
+imprimir("  faltan: " + cadena(fechas.diferencia_dias(fin_de_año, ahora)) + " días")
+imprimir("---")
+
+# ─── 4. Aritmética ───────────────────────────────────────────────
+imprimir("=== Aritmética de fechas ===")
+mañana = fechas.sumar_dias(ahora, 1)
+hace_semana = fechas.sumar_dias(ahora, -7)
+en_2_horas = fechas.sumar_horas(ahora, 2)
+imprimir("  ahora:        " + fechas.legible(ahora))
+imprimir("  mañana:       " + fechas.legible(mañana))
+imprimir("  hace 7 días:  " + fechas.legible(hace_semana))
+imprimir("  en 2 horas:   " + fechas.legible(en_2_horas))
+imprimir("---")
+
+# ─── 5. Calendario del mes ───────────────────────────────────────
+imprimir("=== Calendario de " + fechas.nombre_mes(c["mes"]) + " " + cadena(c["año"]) + " ===")
+ndias = fechas.dias_en_mes(c["año"], c["mes"])
+imprimir("  días en el mes: " + cadena(ndias))
+para d en rango(1, ndias + 1):
+    ts_d = fechas.construir(c["año"], c["mes"], d)
+    cd = fechas.componentes(ts_d)
+    dia_sem = fechas.nombre_dia(cd["dia_semana"])
+    marca = ""
+    si d == c["dia"]:
+        marca = " ← HOY"
+    fin si
+    si d <= 5 o d == c["dia"]:
+        imprimir("    " + formato.alinear_derecha(cadena(d), 2) + " " + formato.rellenar(dia_sem, 12) + marca)
+    fin si
+fin para
+imprimir("    ...")
+imprimir("---")
+
+# ─── 6. Cronometrar ──────────────────────────────────────────────
+imprimir("=== Cronometrar trabajo ===")
+inicio = fechas.ahora()
+
+# Trabajo simulado: calcular fibonacci(20).
+funcion fib(n):
+    si n < 2:
+        retornar n
+    fin si
+    retornar fib(n - 1) + fib(n - 2)
+fin funcion
+
+resultado = fib(20)
+final = fechas.ahora()
+elapsed = final - inicio
+imprimir("  fib(20) = " + cadena(resultado))
+imprimir("  tiempo: " + cadena(elapsed) + " segundos")
+imprimir("---")
+
+# ─── 7. Validación de años bisiestos ────────────────────────────
+imprimir("=== Años bisiestos (regla Gregoriana) ===")
+años = [2020, 2024, 2025, 2026, 2000, 1900, 2100, 2400]
+para a en años:
+    bisiesto = fechas.es_bisiesto(a)
+    marca = "→ bisiesto"
+    si no bisiesto:
+        marca = "→ normal"
+    fin si
+    imprimir("  " + cadena(a) + " " + marca)
+fin para

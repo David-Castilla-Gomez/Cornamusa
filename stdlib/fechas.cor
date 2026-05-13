@@ -1,0 +1,164 @@
+# Cornamusa stdlib: fechas.cor
+#
+# Operaciones con fechas y horas. Wrap sobre los built-ins
+# `tiempo_actual`, `tiempo_descomponer`, `tiempo_componer` y
+# `tiempo_formato`. Internamente las fechas se manejan como
+# **timestamps Unix** (segundos desde 1970-01-01 00:00:00 UTC) —
+# valores enteros.
+#
+# Las funciones de descomposición y formateo usan la zona horaria
+# **local del sistema**. La aritmética sobre timestamps es simple
+# suma/resta de segundos.
+#
+# Uso:
+#   importar fechas
+#
+#   ahora = fechas.ahora()
+#   imprimir(fechas.formato(ahora, "%Y-%m-%d %H:%M:%S"))
+#
+#   c = fechas.componentes(ahora)
+#   imprimir(f"Año: {c['año']}, mes: {c['mes']}")
+#
+#   inicio = fechas.construir(2026, 1, 1)
+#   transcurrido = ahora - inicio
+#   dias = transcurrido // 86400
+#   imprimir(f"Llevamos {dias} días en 2026")
+
+# Timestamp Unix actual (segundos desde 1970-01-01).
+funcion ahora():
+    retornar tiempo_actual()
+fin funcion
+
+# Descompone un timestamp en un diccionario con campos legibles.
+# Retorna: {año, mes (1-12), día (1-31), hora (0-23), minuto (0-59),
+# segundo (0-60), dia_semana (0=lunes...6=domingo), dia_año (1-366)}.
+funcion componentes(ts):
+    t = tiempo_descomponer(ts)
+    retornar {
+        "año":         t[0],
+        "mes":         t[1],
+        "dia":         t[2],
+        "hora":        t[3],
+        "minuto":      t[4],
+        "segundo":     t[5],
+        "dia_semana":  t[6],
+        "dia_año":     t[7]
+    }
+fin funcion
+
+# Construye un timestamp Unix desde componentes. Los campos opcionales
+# se asumen 0 (medianoche) si no se pasan.
+funcion construir(año, mes, dia, hora=0, minuto=0, segundo=0):
+    retornar tiempo_componer(año, mes, dia, hora, minuto, segundo)
+fin funcion
+
+# Formatea un timestamp usando el spec strftime de C.
+# Spec más comunes:
+#   %Y → año 4 dígitos        %m → mes 01-12       %d → día 01-31
+#   %H → hora 00-23           %M → minuto 00-59    %S → segundo 00-60
+#   %A → nombre del día       %B → nombre del mes  %j → día del año
+#   %Z → nombre de zona       %% → literal %
+# La localización (idioma de %A y %B) depende del locale del sistema.
+funcion formato(ts, spec):
+    retornar tiempo_formato(ts, spec)
+fin funcion
+
+# Formato ISO-8601 estándar: "YYYY-MM-DDTHH:MM:SS".
+funcion iso8601(ts):
+    retornar tiempo_formato(ts, "%Y-%m-%dT%H:%M:%S")
+fin funcion
+
+# Formato legible corto: "YYYY-MM-DD HH:MM:SS".
+funcion legible(ts):
+    retornar tiempo_formato(ts, "%Y-%m-%d %H:%M:%S")
+fin funcion
+
+# Solo fecha: "YYYY-MM-DD".
+funcion solo_fecha(ts):
+    retornar tiempo_formato(ts, "%Y-%m-%d")
+fin funcion
+
+# Solo hora: "HH:MM:SS".
+funcion solo_hora(ts):
+    retornar tiempo_formato(ts, "%H:%M:%S")
+fin funcion
+
+# ─── Aritmética de duraciones ───────────────────────────────────
+# Todas en segundos (timestamps son enteros).
+
+SEGUNDO = 1
+MINUTO = 60
+HORA = 3600
+DIA = 86400
+SEMANA = 604800
+
+# Suma `n` días al timestamp.
+funcion sumar_dias(ts, n):
+    retornar ts + n * DIA
+fin funcion
+
+# Suma `n` horas al timestamp.
+funcion sumar_horas(ts, n):
+    retornar ts + n * HORA
+fin funcion
+
+# Diferencia en segundos entre dos timestamps (a - b).
+funcion diferencia_seg(a, b):
+    retornar a - b
+fin funcion
+
+# Diferencia en días (truncada hacia cero).
+funcion diferencia_dias(a, b):
+    retornar (a - b) // DIA
+fin funcion
+
+# ─── Verificaciones ─────────────────────────────────────────────
+
+# Verdadero si el año es bisiesto (regla Gregoriana).
+funcion es_bisiesto(año):
+    si año % 400 == 0:
+        retornar verdadero
+    fin si
+    si año % 100 == 0:
+        retornar falso
+    fin si
+    retornar año % 4 == 0
+fin funcion
+
+# Número de días en un mes dado un año (para manejar febrero bisiesto).
+funcion dias_en_mes(año, mes):
+    si mes == 1 o mes == 3 o mes == 5 o mes == 7 o mes == 8 o mes == 10 o mes == 12:
+        retornar 31
+    fin si
+    si mes == 4 o mes == 6 o mes == 9 o mes == 11:
+        retornar 30
+    fin si
+    si mes == 2:
+        si es_bisiesto(año):
+            retornar 29
+        fin si
+        retornar 28
+    fin si
+    lanzar ErrorDeValor(f"mes invalido: {mes}")
+fin funcion
+
+# Nombre del día de la semana en español (0=lunes ... 6=domingo).
+funcion nombre_dia(d):
+    nombres = ["lunes", "martes", "miércoles", "jueves",
+               "viernes", "sábado", "domingo"]
+    si d < 0 o d > 6:
+        lanzar ErrorDeValor(f"dia_semana invalido: {d}")
+    fin si
+    retornar nombres[d]
+fin funcion
+
+# Nombre del mes en español (1-12).
+funcion nombre_mes(m):
+    nombres = ["enero", "febrero", "marzo", "abril",
+               "mayo", "junio", "julio", "agosto",
+               "septiembre", "octubre", "noviembre", "diciembre"]
+    si m < 1 o m > 12:
+        lanzar ErrorDeValor(f"mes invalido: {m}")
+    fin si
+    retornar nombres[m - 1]
+fin funcion

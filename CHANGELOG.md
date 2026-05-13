@@ -6,6 +6,106 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.19.0] — 2026-05-13 — Stdlib `fechas`
+
+Operaciones con fechas y horas: timestamps Unix, descomposición y
+composición, formateo, aritmética, validaciones del calendario
+Gregoriano. Nuevo módulo `fechas` sobre 4 built-ins C.
+
+### Built-ins nuevos en C
+
+```cornamusa
+ts = tiempo_actual()                          # entero ts Unix (segundos)
+c = tiempo_descomponer(ts)                    # tupla (año, mes, dia, hora,
+                                              #         min, seg, dia_sem, dia_año)
+ts = tiempo_componer(año, mes, dia, h, m, s)  # entero ts desde componentes
+s = tiempo_formato(ts, "%Y-%m-%d")            # cadena con strftime spec
+```
+
+`tiempo_descomponer` y `tiempo_formato` usan **zona horaria local del
+sistema**. `tiempo_componer` interpreta los componentes como local time
+y devuelve el ts UTC equivalente.
+
+Convenciones:
+- `mes`: 1-12 (no 0-11 como C `struct tm`).
+- `dia`: 1-31.
+- `hora`/`min`/`seg`: 0-23/0-59/0-60.
+- `dia_semana`: 0=lunes, 1=martes, ..., 6=domingo (ISO 8601, no
+  como C que usa 0=domingo).
+- `dia_año`: 1-366.
+
+### Módulo `stdlib/fechas.cor`
+
+API amigable sobre los built-ins:
+
+```cornamusa
+importar fechas
+
+ahora = fechas.ahora()
+imprimir(fechas.legible(ahora))       # "2026-05-13 16:25:57"
+imprimir(fechas.iso8601(ahora))       # "2026-05-13T16:25:57"
+imprimir(fechas.solo_fecha(ahora))    # "2026-05-13"
+
+# Componentes como dict.
+c = fechas.componentes(ahora)
+imprimir(f"{fechas.nombre_dia(c['dia_semana'])} {c['dia']} de {fechas.nombre_mes(c['mes'])}")
+# → "miércoles 13 de mayo"
+
+# Aritmética.
+mañana    = fechas.sumar_dias(ahora, 1)
+hace_sem  = fechas.sumar_dias(ahora, -7)
+en_2_hrs  = fechas.sumar_horas(ahora, 2)
+delta     = fechas.diferencia_dias(b, a)
+
+# Validación.
+fechas.es_bisiesto(2024)              # verdadero
+fechas.dias_en_mes(2024, 2)           # 29
+fechas.dias_en_mes(2026, 4)           # 30
+
+# Constantes para aritmética.
+fechas.SEGUNDO, fechas.MINUTO, fechas.HORA, fechas.DIA, fechas.SEMANA
+```
+
+`fechas.construir(año, mes, dia, hora=0, minuto=0, segundo=0)` usa
+defaults v1.17 — solo año/mes/día son obligatorios.
+
+`nombre_dia` y `nombre_mes` devuelven texto en **español** (no
+dependen del locale del sistema, a diferencia de `%A`/`%B` de
+strftime).
+
+### Implementación
+
+`src/nativos.c`: 4 funciones nuevas usando `time.h` (POSIX/C99). En
+Windows/MinGW usan `localtime_s`; en POSIX `localtime_r`. `mktime`
+con `tm_isdst = -1` deja que el sistema decida DST. Pre-existing
+helper `tupla_de_tm` convierte `struct tm` a tupla Cornamusa con
+ajustes de convenciones (mes +1, día_semana ISO, día_año +1).
+
+### Tests
+
+12 tests unit en
+[tests/unit/test_bytecode_tiempo.c](tests/unit/test_bytecode_tiempo.c)
+para los 4 built-ins: tipos, aridad, roundtrip
+componer↔descomponer, formato ISO/fecha/hora/literal `%%`, errores
+atrapables. Total: **142 verde**.
+
+Ejemplo:
+[examples/44_fechas.cor](examples/44_fechas.cor) con fecha actual,
+componentes legibles, construir timestamps, aritmética, calendario
+del mes y validación de años bisiestos.
+
+### Limitaciones
+
+- Sin **milisegundos**: `tiempo_actual()` retorna segundos. Para
+  cronometrar operaciones rápidas el granularidad es 1s. Versión
+  futura con `tiempo_ns()` basado en `clock_gettime`/`QueryPerformanceCounter`.
+- Sin **UTC explícito**: todo usa local time. Para UTC el usuario
+  debe gestionar offset manualmente. Versión futura: parámetro
+  `utc=verdadero`.
+- Sin **parsear fechas**: la inversa de `tiempo_formato` (parsear
+  cadena → ts) no está. Usar `fechas.construir` con componentes
+  numéricos.
+
 ## [1.18.1] — 2026-05-13 — Fix: re-import de módulos
 
 Arregla un bug preexistente del runtime descubierto durante el
