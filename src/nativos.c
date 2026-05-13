@@ -2760,6 +2760,218 @@ static Valor nativa_proceso_ejecutar(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Regex (v1.28) — motor en src/regex.c. El módulo `regex.cor` envuelve.
+ * ────────────────────────────────────────────────────────────────── */
+
+#include "regex.h"
+
+static Valor nativa_regex_coincide(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_coincide(patron, texto) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_coincide() requiere cadenas");
+    }
+    /* Asegurar terminación NUL en patrón. */
+    int plen = args[0].como.cadena.longitud;
+    char *patron = (char *)malloc((size_t)plen + 1);
+    if (!patron) return error_nativa(err, linea, columna, "memoria insuficiente");
+    memcpy(patron, args[0].como.cadena.texto, (size_t)plen);
+    patron[plen] = '\0';
+    char err_buf[256] = {0};
+    int fin = 0;
+    int texto_len = args[1].como.cadena.longitud;
+    bool ok = regex_coincidir(patron,
+                                args[1].como.cadena.texto,
+                                texto_len,
+                                &fin, err_buf, sizeof(err_buf));
+    free(patron);
+    if (!ok && err_buf[0]) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: patron regex invalido: %s", err_buf);
+    }
+    /* Cornamusa: `regex_coincide` exige fullmatch (consumir todo el
+       texto). Es lo más intuitivo y consistente con Python `re.fullmatch`. */
+    return valor_booleano(ok && fin == texto_len);
+}
+
+static Valor nativa_regex_buscar(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_buscar(patron, texto) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_buscar() requiere cadenas");
+    }
+    int plen = args[0].como.cadena.longitud;
+    char *patron = (char *)malloc((size_t)plen + 1);
+    if (!patron) return error_nativa(err, linea, columna, "memoria insuficiente");
+    memcpy(patron, args[0].como.cadena.texto, (size_t)plen);
+    patron[plen] = '\0';
+    char err_buf[256] = {0};
+    int inicio = -1, fin = -1;
+    bool ok = regex_buscar(patron,
+                              args[1].como.cadena.texto,
+                              args[1].como.cadena.longitud,
+                              &inicio, &fin, err_buf, sizeof(err_buf));
+    free(patron);
+    if (!ok && err_buf[0]) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: patron regex invalido: %s", err_buf);
+    }
+    if (!ok) return valor_nulo();
+    /* Retornar tupla (inicio, fin). */
+    Tupla *t = tupla_nueva(2);
+    if (!t) return error_nativa(err, linea, columna, "memoria insuficiente");
+    t->elementos[0] = valor_entero_de_i64((int64_t)inicio);
+    t->elementos[1] = valor_entero_de_i64((int64_t)fin);
+    return valor_tupla(t);
+}
+
+/* Callback para regex_todos: añade par (inicio, fin) a una lista. */
+typedef struct {
+    Lista *lista;
+    const char *texto;
+} TodosCtx;
+
+static bool todos_callback(int inicio, int fin, void *datos) {
+    TodosCtx *ctx = (TodosCtx *)datos;
+    /* Empujar subcadena texto[inicio..fin] como elemento. */
+    int sublen = fin - inicio;
+    Valor sub = valor_cadena_duplicar(ctx->texto + inicio, sublen);
+    lista_agregar(ctx->lista, sub);
+    return true;
+}
+
+static Valor nativa_regex_todos(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_todos(patron, texto) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_todos() requiere cadenas");
+    }
+    int plen = args[0].como.cadena.longitud;
+    char *patron = (char *)malloc((size_t)plen + 1);
+    if (!patron) return error_nativa(err, linea, columna, "memoria insuficiente");
+    memcpy(patron, args[0].como.cadena.texto, (size_t)plen);
+    patron[plen] = '\0';
+    Lista *l = lista_nueva(0);
+    if (!l) { free(patron); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+    TodosCtx ctx = { l, args[1].como.cadena.texto };
+    char err_buf[256] = {0};
+    int rc = regex_todos(patron,
+                            args[1].como.cadena.texto,
+                            args[1].como.cadena.longitud,
+                            todos_callback, &ctx,
+                            err_buf, sizeof(err_buf));
+    free(patron);
+    if (rc < 0) {
+        lista_liberar(l);
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: patron regex invalido: %s", err_buf);
+    }
+    return valor_lista(l);
+}
+
+/* Reemplaza ocurrencias del patrón con `rep` literal. NO soporta
+   backreferences `\1` en v1.28.0 — el rep es literal. */
+static Valor nativa_regex_reemplazar(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_reemplazar(patron, texto, rep) requiere 3 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA
+        || args[2].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: regex_reemplazar() requiere cadenas");
+    }
+    int plen = args[0].como.cadena.longitud;
+    char *patron = (char *)malloc((size_t)plen + 1);
+    if (!patron) return error_nativa(err, linea, columna, "memoria insuficiente");
+    memcpy(patron, args[0].como.cadena.texto, (size_t)plen);
+    patron[plen] = '\0';
+    const char *texto = args[1].como.cadena.texto;
+    int tlen = args[1].como.cadena.longitud;
+    const char *rep = args[2].como.cadena.texto;
+    int rlen = args[2].como.cadena.longitud;
+
+    /* Estrategia: avanzar linealmente, buscar match desde i hasta el
+       final, copiar texto previo + reemplazo + saltar al fin del match.
+       Si match vacío, avanzar 1 carácter para evitar loop infinito. */
+    size_t out_cap = (size_t)tlen + 1;
+    size_t out_len = 0;
+    char *out = (char *)malloc(out_cap);
+    if (!out) { free(patron); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+    int i = 0;
+    char err_buf[256] = {0};
+    while (i <= tlen) {
+        int ini = -1, fin = -1;
+        bool encontrado = regex_buscar(patron, texto + i, tlen - i,
+                                          &ini, &fin, err_buf, sizeof(err_buf));
+        if (!encontrado && err_buf[0]) {
+            free(out); free(patron);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: patron regex invalido: %s", err_buf);
+        }
+        if (!encontrado) {
+            /* Copiar resto y salir. */
+            int restante = tlen - i;
+            if (out_len + (size_t)restante > out_cap) {
+                out_cap = out_len + (size_t)restante + 16;
+                char *nuevo = (char *)realloc(out, out_cap);
+                if (!nuevo) { free(out); free(patron); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+                out = nuevo;
+            }
+            memcpy(out + out_len, texto + i, (size_t)restante);
+            out_len += (size_t)restante;
+            break;
+        }
+        int real_ini = i + ini;
+        int real_fin = i + fin;
+        int prev_len = real_ini - i;
+        /* Crecer buffer si hace falta para texto previo + reemplazo. */
+        if (out_len + (size_t)prev_len + (size_t)rlen + 1 > out_cap) {
+            while (out_len + (size_t)prev_len + (size_t)rlen + 1 > out_cap) out_cap *= 2;
+            char *nuevo = (char *)realloc(out, out_cap);
+            if (!nuevo) { free(out); free(patron); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+            out = nuevo;
+        }
+        memcpy(out + out_len, texto + i, (size_t)prev_len);
+        out_len += (size_t)prev_len;
+        memcpy(out + out_len, rep, (size_t)rlen);
+        out_len += (size_t)rlen;
+        if (real_fin == real_ini) {
+            /* Match vacío: copiar 1 byte para no perderlo, avanzar 1. */
+            if (real_ini < tlen) {
+                if (out_len + 1 > out_cap) {
+                    out_cap *= 2;
+                    char *nuevo = (char *)realloc(out, out_cap);
+                    if (!nuevo) { free(out); free(patron); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+                    out = nuevo;
+                }
+                out[out_len++] = texto[real_ini];
+            }
+            i = real_ini + 1;
+        } else {
+            i = real_fin;
+        }
+    }
+    free(patron);
+    Valor v = valor_cadena_duplicar(out, (int)out_len);
+    free(out);
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Azar (v1.26) — built-ins primitivos. El módulo `azar.cor` los envuelve.
  * ────────────────────────────────────────────────────────────────── */
 
@@ -2889,6 +3101,11 @@ static const EntradaNativa NATIVAS[] = {
     {"azar_semilla",        12, nativa_azar_semilla},
     /* Proceso (v1.27). */
     {"proceso_ejecutar",    16, nativa_proceso_ejecutar},
+    /* Regex (v1.28). */
+    {"regex_coincide",      14, nativa_regex_coincide},
+    {"regex_buscar",        12, nativa_regex_buscar},
+    {"regex_todos",         11, nativa_regex_todos},
+    {"regex_reemplazar",    16, nativa_regex_reemplazar},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

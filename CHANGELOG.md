@@ -6,6 +6,114 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.28.0] — 2026-05-13 — Stdlib `regex` + fix destructuring en función
+
+Tercer módulo de **Fase 2 — stdlib esencial**. Motor de expresiones
+regulares con backtracking propio (~500 líneas C, sin dependencias).
+Subset acotado pero suficiente para validación de formato, búsqueda y
+reemplazo.
+
+### API del módulo `regex`
+
+```cornamusa
+importar regex
+
+regex.coincide("\\d+", "123")              # fullmatch → verdadero
+regex.coincide("\\d+", "abc 123 def")      # fullmatch → falso
+
+regex.buscar("\\d+", "abc 123 def")        # primera ocurrencia → (4, 7)
+regex.contiene("\\d", "abc")               # → falso
+regex.extraer("[A-Z]\\w+", "hola Cornamusa")  # primer match → "Cornamusa"
+
+regex.todos("\\w+", "hola mundo amigo")    # → ["hola", "mundo", "amigo"]
+
+regex.reemplazar("\\d+", "ano 2026", "N")  # → "ano N"
+```
+
+### Sintaxis soportada
+
+| Construcción | Significado |
+|---|---|
+| `abc` | literales |
+| `.` | cualquier carácter (excepto `\n`) |
+| `\.`, `\\`, `\n`, `\t`, `\r` | escapes |
+| `*`, `+`, `?` | quantifiers greedy (0+, 1+, 0/1) |
+| `^`, `$` | anclas de inicio/fin |
+| `[abc]`, `[^abc]`, `[a-z]` | clases de carácter |
+| `\d \D \w \W \s \S` | clases predefinidas (ASCII) |
+| `a\|b\|c` | alternancia |
+| `(?:...)` o `(...)` | grupos no-captura (estructurales) |
+
+**NO soportado en v1.28**: backreferences `\1`, lookahead, `\b`,
+quantifiers explícitos `{n,m}`, lazy `*?`, captura de grupos.
+
+### Implementación
+
+[src/regex.c](src/regex.c) — parser-to-AST + matcher con
+*continuation-passing style*:
+
+```c
+match_nodo(nodo, resto, texto, pos)
+  → -1 si falla, o posición tras matchear nodo+resto si OK
+```
+
+El `resto` (continuation) permite que los quantifiers ambiciosos
+hagan backtracking correctamente. Las clases usan bitmasks de 256
+bits para test O(1).
+
+### Excepciones atrapables
+
+Patrón sintácticamente inválido lanza `ErrorDeValor` con la posición:
+
+```cornamusa
+intentar:
+    regex.coincide("[abc", "abc")
+atrapar ErrorDeValor como e:
+    imprimir(e)
+    # ErrorDeValor: patron regex invalido: clase '[...]' sin cerrar en pos 4
+fin intentar
+```
+
+### Bug fix incluido: destructuring dentro de función
+
+Pre-v1.28: `ini, fin = par` dentro de una función definía mal los
+locales. El slot anónimo del valor a destructurar quedaba **bajo** los
+slots de los destinos en el stack, y el `OP_DESCARTAR` final
+descartaba el último destino en vez del slot anónimo → corrupción de
+los locales (`ErrorDeNombre` al usarlos).
+
+```cornamusa
+# Pre-v1.28 (bug):
+funcion partir(par):
+    a, b = par
+    retornar a + b   # ErrorDeNombre: 'b' no esta definido
+fin funcion
+```
+
+Fix en `emitir_destructuring`: cuando estamos dentro de una función,
+**pre-reservar slots** para cada destino IDENT con `OP_NULO` ANTES de
+evaluar el RHS, y luego usar `OP_ASIGNAR_LOCAL` (pop) para rellenarlos.
+Los destinos anidados (`(a, (b, c)) = ...`) siguen el path recursivo.
+El slot anónimo del iterador queda como local "muerto" hasta el final
+del frame — coste de un slot extra, aceptable.
+
+El destructuring a top-level seguía funcionando porque
+`OP_DEFINIR_GLOBAL` ya hacía pop, por eso este bug no se detectó hasta
+que la stdlib `regex` (con destructuring en `extraer()` dentro de una
+función) lo evidenció.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_regex.c` — 21 tests cubriendo literales,
+  fullmatch, `.`, quantifiers, clases simples/negadas/rango, clases
+  predefinidas, anchors, alternancia, grupos no-captura,
+  `regex_buscar`, `regex_todos`, `regex_reemplazar`, errores de
+  sintaxis.
+- `bc_run_53_regex` — ejecuta `examples/53_regex.cor` (validación de
+  hora `HH:MM`, extracción de palabras capitalizadas, todos los
+  números en una cadena, redactar IPs con reemplazo).
+- **170/170 tests verde**.
+
 ## [1.27.0] — 2026-05-13 — Stdlib `proceso` (lanzar procesos externos)
 
 Segundo módulo de **Fase 2 — stdlib esencial**. `proceso` permite

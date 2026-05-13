@@ -1,0 +1,59 @@
+# Ejemplo 53 — Stdlib `regex` (v1.28)
+#
+# Motor backtracking propio (sin dependencias). Subset funcional:
+# literales, ., * + ?, ^ $, [], \d \w \s, alternancia |, grupos (?:).
+
+importar regex
+
+imprimir("=== stdlib regex (v1.28) ===")
+imprimir("")
+
+# ─── Caso 1: validar formato ───
+imprimir("1) validación")
+imprimir("  '12345' es solo dígitos:", regex.coincide("\\d+", "12345"))
+imprimir("  'abc' es solo dígitos:  ", regex.coincide("\\d+", "abc"))
+imprimir("  '00:42' es hora HH:MM:  ",
+    regex.coincide("[0-2]\\d:[0-5]\\d", "00:42"))
+imprimir("  '25:99' es hora HH:MM:  ",
+    regex.coincide("[0-2]\\d:[0-5]\\d", "25:99"))
+imprimir("")
+
+# ─── Caso 2: extracción ───
+imprimir("2) extraer la primera palabra capitalizada")
+texto = "hola Cornamusa programando desde 2026"
+imprimir("  texto:", texto)
+imprimir("  match:", regex.extraer("[A-Z]\\w+", texto))
+imprimir("")
+
+# ─── Caso 3: encontrar todo ───
+imprimir("3) todos los números")
+linea = "stock: 10 manzanas, 25 peras, 7 naranjas"
+nums = regex.todos("\\d+", linea)
+imprimir("  línea:  ", linea)
+imprimir("  números:", nums)
+imprimir("")
+
+# ─── Caso 4: reemplazar ───
+imprimir("4) reemplazar")
+imprimir("  censurar vocales:", regex.reemplazar("[aeiou]", "Hola Mundo", "*"))
+imprimir("  redactar IPs:    ", regex.reemplazar("\\d+\\.\\d+\\.\\d+\\.\\d+",
+    "ssh a 192.168.1.42", "[IP]"))
+imprimir("")
+
+# ─── Caso 5: contiene/buscar ───
+imprimir("5) contiene + buscar")
+imprimir("  hay dígito en 'abc123':", regex.contiene("\\d", "abc123"))
+imprimir("  hay dígito en 'abcdef':", regex.contiene("\\d", "abcdef"))
+imprimir("  posición:               ", regex.buscar("\\d+", "abc123"))
+imprimir("")
+
+# ─── Caso 6: errores atrapables ───
+imprimir("6) errores atrapables")
+intentar:
+    regex.coincide("[abc", "abc")
+atrapar ErrorDeValor como e:
+    imprimir("  patron invalido →", cadena(e))
+fin intentar
+
+imprimir("")
+imprimir("=== fin ejemplo 53 ===")

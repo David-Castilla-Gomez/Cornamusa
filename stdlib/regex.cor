@@ -1,0 +1,69 @@
+# Cornamusa stdlib: regex.cor
+#
+# Expresiones regulares con motor backtracking propio en C
+# (~500 líneas, sin dependencias externas). Subset funcional pensado
+# para validación de formato, búsqueda y reemplazo.
+#
+# Sintaxis soportada (v1.28):
+#   - Literales y escapes: \. \\ \n \t \r etc.
+#   - Cualquier carácter: .
+#   - Quantifiers (greedy): * + ?
+#   - Anchors: ^ (inicio del texto), $ (fin del texto)
+#   - Clases: [abc], [^abc], [a-z], [a-zA-Z0-9_]
+#   - Clases predefinidas: \d \D \w \W \s \S
+#   - Alternancia: a|b
+#   - Grupos no-captura: (?:...) y (...) (la API no expone captura)
+#
+# NO soportado en v1.28:
+#   - Backreferences \1, \2
+#   - Lookahead/lookbehind
+#   - Boundary \b
+#   - Quantifiers explícitos {n}, {n,m}
+#   - Lazy quantifiers *?, +?
+#   - Captura de grupos (extraer subcadenas de paréntesis)
+#
+# Patrón inválido lanza ErrorDeValor en cada llamada (no hay precompila).
+#
+# Uso:
+#   importar regex
+#
+#   regex.coincide("\\d+", "123")           # verdadero (todo numero)
+#   regex.buscar("\\d+", "abc 42 def")      # (4, 6) → indice [4, 6)
+#   regex.todos("\\w+", "hola mundo amigo")  # ["hola", "mundo", "amigo"]
+#   regex.reemplazar("\\d+", "ano 2026", "N") # "ano N"
+
+
+# ¿El patrón matchea todo el texto? (fullmatch)
+funcion coincide(patron, texto):
+    retornar regex_coincide(patron, texto)
+fin funcion
+
+# Busca la primera ocurrencia. Retorna tupla (inicio, fin) o nulo.
+funcion buscar(patron, texto):
+    retornar regex_buscar(patron, texto)
+fin funcion
+
+# Retorna lista de todas las ocurrencias no-solapantes como cadenas.
+funcion todos(patron, texto):
+    retornar regex_todos(patron, texto)
+fin funcion
+
+# Reemplaza ocurrencias con `rep` (literal, sin backreferences en v1.28).
+funcion reemplazar(patron, texto, rep):
+    retornar regex_reemplazar(patron, texto, rep)
+fin funcion
+
+# Atajo: ¿hay al menos una ocurrencia en el texto?
+funcion contiene(patron, texto):
+    retornar buscar(patron, texto) != nulo
+fin funcion
+
+# Atajo: extrae la subcadena del primer match, o nulo si no hay.
+funcion extraer(patron, texto):
+    r = buscar(patron, texto)
+    si r == nulo:
+        retornar nulo
+    fin si
+    ini, fn = r
+    retornar texto[ini:fn]
+fin funcion

@@ -1163,13 +1163,58 @@ static bool emitir_asignacion_ident(Compilador *c, const Expr *destino,
 }
 
 static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
-    /* Asume el valor a destructurar está en TOS. */
+    /* Asume el valor a destructurar está en TOS.
+       v1.28 fix: dentro de función, los destinos IDENT generan nuevos
+       locales (cada uno consume el TOS pero deja el slot ocupado).
+       Previo: el slot_iter quedaba por DEBAJO de los locales nuevos y
+       el `OP_DESCARTAR` final descartaba el último valor del último
+       destino en lugar del slot_iter, corrompiendo los locales del
+       destructuring. Fix: en función, pre-reservar slots con OP_NULO
+       para los destinos IDENT ANTES de evaluar (los destinos ya están
+       en el stack cuando llega el valor a destructurar), luego usar
+       OP_ASIGNAR_LOCAL (pop) para llenarlos. En top-level, los destinos
+       son globales y OP_DEFINIR_GLOBAL ya pop, así que sigue funcionando
+       como antes. */
     int n = patron->como.secuencia.n_elementos;
     Expr **elementos = patron->como.secuencia.elementos;
+    bool en_funcion = c->actual->es_funcion;
 
-    /* 1. Mover TOS a slot anónimo. agregar_local registra el slot tope. */
+    /* v1.28: en función, pre-reservar slots para destinos IDENT. Los
+       destinos anidados (TUPLA/LISTA) seguirán el path recursivo y
+       gestionarán sus propios slots. */
+    int *slots_destinos = NULL;
+    if (en_funcion) {
+        slots_destinos = (int *)calloc((size_t)n, sizeof(int));
+        if (!slots_destinos) {
+            error_compilacion(c, linea, 0, "memoria insuficiente");
+            return false;
+        }
+        /* TOS actualmente tiene el valor a destructurar. Necesitamos
+           empujar nulos POR DEBAJO de él. La forma más simple: agregar
+           local "_" para slot_iter, luego empujar OP_NULO por cada
+           destino IDENT. Después de extraer cada V[i], usar
+           OP_ASIGNAR_LOCAL para llenar el slot reservado. */
+    }
+
+    /* 1. Mover TOS a slot anónimo. */
     int slot_iter = agregar_local(c, "", 0, linea);
-    if (slot_iter < 0) return false;
+    if (slot_iter < 0) { free(slots_destinos); return false; }
+
+    /* v1.28: en función, ahora reservar slots para cada IDENT empujando
+       OP_NULO; anidados los gestionará la recursión. */
+    if (en_funcion) {
+        for (int i = 0; i < n; i++) {
+            if (elementos[i]->tipo == EXPR_IDENT) {
+                chunk_emitir_byte(c->actual->chunk, OP_NULO, linea);
+                int s = agregar_local(c, elementos[i]->como.ident.nombre,
+                                            elementos[i]->como.ident.longitud, linea);
+                if (s < 0) { free(slots_destinos); return false; }
+                slots_destinos[i] = s;
+            } else {
+                slots_destinos[i] = -1;  /* anidado, no reserva aquí */
+            }
+        }
+    }
 
     /* 2. Verify longitud == n. */
     chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
@@ -1184,36 +1229,68 @@ static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
     /* 3. Por cada elemento i: extraer V[i] y asignar. */
     for (int i = 0; i < n; i++) {
         const Expr *dst_i = elementos[i];
-        /* Push slot_iter[i] al TOS. */
         chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                             (uint8_t)slot_iter, linea);
         chunk_emitir_constante(c->actual->chunk,
                                  valor_entero_de_long((long)i), linea);
         chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
-        /* Asignar TOS a dst_i. */
         if (dst_i->tipo == EXPR_IDENT) {
-            if (!emitir_asignacion_ident(c, dst_i, linea)) return false;
+            if (en_funcion) {
+                /* Slot ya reservado: asignar al slot. OP_ASIGNAR_LOCAL
+                   sí hace pop (Cornamusa VM), por eso no hace falta
+                   DESCARTAR extra. */
+                chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                    (uint8_t)slots_destinos[i], linea);
+            } else {
+                /* Top-level: OP_DEFINIR_GLOBAL hace pop. */
+                if (!emitir_asignacion_ident(c, dst_i, linea)) {
+                    free(slots_destinos); return false;
+                }
+            }
         } else if (dst_i->tipo == EXPR_TUPLA || dst_i->tipo == EXPR_LISTA) {
-            if (!emitir_destructuring(c, dst_i, linea)) return false;
+            if (!emitir_destructuring(c, dst_i, linea)) {
+                free(slots_destinos); return false;
+            }
         } else {
             error_compilacion(c, linea, 0,
                 "ErrorDeSintaxis: destino de destructuring debe ser "
                 "identificador o tupla/lista anidada");
+            free(slots_destinos);
             return false;
         }
     }
 
-    /* 4. Cleanup: descartar slot_iter y rebobinar n_locales. */
-    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);
-    c->actual->n_locales--;
+    /* 4. Cleanup: descartar slot_iter. En función está por DEBAJO de los
+       destinos pre-reservados — sin OP_SWAP/ROT lo único que podemos
+       hacer es marcarlo como muerto en c->n_locales (sin emit DESCARTAR
+       que afectaría el tope). Pero entonces el stack queda con un
+       slot huérfano. Solución: emitimos OP_DESCARTAR_BAJO conceptual
+       via un truco: leer TOS → empujarlo → OP_ASIGNAR_LOCAL slot_iter
+       → OP_DESCARTAR.
+       Más simple aún: como slot_iter NO se usa más después de esto y
+       persiste en el frame durante toda la función, lo dejamos como
+       slot anónimo "muerto" que ocupa un slot. El cost es un slot
+       extra hasta el fin del frame. Aceptable.
+       Top-level: slot_iter es el TOS porque los globales hicieron pop.
+       OP_DESCARTAR lo elimina limpiamente. */
+    if (!en_funcion) {
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);
+        c->actual->n_locales--;
+    }
+    /* En función no descartamos slot_iter del stack — se queda "muerto"
+       pero los locales destinos están por encima correctamente. */
+    free(slots_destinos);
     int salto_fin = emitir_salto(c, OP_SALTAR, linea);
 
-    /* 5. Aterrizaje de aridad mala: descartar bool false, descartar
-       slot_iter (que sigue en stack), lanzar ErrorDeValor. */
+    /* 5. Aterrizaje de aridad mala. Stack en este punto:
+       - Top-level: [..., V, bool=false]. Descartar bool y V.
+       - Función: [..., V, nulo_dst0, nulo_dst1, bool=false]. Descartar
+         bool y V queda atrás. Lo mismo: el slot_iter (V) queda muerto. */
     parchear_salto(c, salto_mala_aridad, linea);
     chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);  /* bool false */
-    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);  /* slot_iter */
-    c->actual->n_locales--;  /* el slot_iter ya no existe en este path */
+    if (!en_funcion) {
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);  /* slot_iter */
+    }
     /* Emit `lanzar ErrorDeValor("aridad ...")`. */
     int idx_err = agregar_nombre_global(c, "ErrorDeValor", 12);
     if (idx_err < 0 || idx_err > 255) {
@@ -1230,12 +1307,6 @@ static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
         linea);
     chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1, linea);
     chunk_emitir_byte(c->actual->chunk, OP_LANZAR, linea);
-    /* Restaurar n_locales para que el código post-destructuring vea el
-       estado correcto (el slot_iter ya no está). */
-    c->actual->n_locales++;  /* compensar el decrement de arriba: post-
-                                aterrizaje el código fluye al fin y NO
-                                vuelve a este punto. n_locales refleja
-                                el estado de stack en el salto_fin. */
 
     parchear_salto(c, salto_fin, linea);
     return true;
