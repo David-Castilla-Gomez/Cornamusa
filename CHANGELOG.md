@@ -6,6 +6,133 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.22.0] — 2026-05-13 — `*args` (variádicos y spread)
+
+Parámetros variádicos en definiciones y *spread* de iterables en
+llamadas. Equivalente al `*args` de Python.
+
+### Definición: recoger args sobrantes
+
+```cornamusa
+funcion suma(*nums):
+    total = 0
+    para n en nums:
+        total = total + n
+    fin para
+    retornar total
+fin funcion
+
+suma()              # 0
+suma(1, 2, 3)       # 6
+```
+
+El parámetro estrellado recibe una **tupla** con los args sobrantes.
+Combinable con parámetros fijos previos:
+
+```cornamusa
+funcion saludar(nombre, *titulos):
+    pre = ""
+    para t en titulos:
+        pre = pre + t + " "
+    fin para
+    retornar pre + nombre
+fin funcion
+
+saludar("Ana")                       # "Ana"
+saludar("Castilla", "Sr.", "Prof.")  # "Sr. Prof. Castilla"
+```
+
+### Llamada: expandir iterable como args
+
+```cornamusa
+nums = [10, 20, 30]
+suma(*nums)              # 60
+suma(1, *nums)           # 61
+suma(1, *nums, 100)      # 161    # mezcla libre
+```
+
+### Forwarding genérico (decorador-like)
+
+```cornamusa
+funcion log_llamada(f, *args):
+    imprimir(f"-> llamando con {longitud(args)} arg(s)")
+    retornar f(*args)
+fin funcion
+
+funcion area(w, h):
+    retornar w * h
+fin funcion
+
+log_llamada(area, 5, 8)  # imprime trace y devuelve 40
+```
+
+### Lambdas variádicas
+
+```cornamusa
+contar = lambda *xs: longitud(xs)
+contar(1, 2, 3, 4)  # 4
+```
+
+### Errores atrapables
+
+- Aridad insuficiente → `ErrorDeTipo: f() esperaba al menos N argumentos`.
+- `*expr` sobre no-iterable → `ErrorDeTipo: 'X' no es iterable para spread (*)`.
+
+```cornamusa
+intentar:
+    f(*"abc")
+atrapar ErrorDeTipo como e:
+    imprimir(e)
+fin intentar
+```
+
+### Limitaciones (v1.22)
+
+- **`*resto` debe ser el último parámetro**. No se permite parámetros
+  fijos tras él (eso requiere kwargs — viene en v1.23).
+- **No combinable con defaults** en la misma función. La restricción
+  desaparece en v1.23 al añadir kwargs (que permitirán pasar valores
+  nombrados después del `*resto`).
+- **Spread acepta lista o tupla**, no cadenas/rangos/iteradores
+  genéricos (consistente con la semántica conservadora de v1.22).
+
+### Implementación
+
+AST extendido en [src/ast.h](src/ast.h):
+
+```c
+struct Parametro {
+    ...
+    bool es_estrella;       /* v1.22: `*resto` */
+};
+struct { ... Expr **args; int n_args;
+         bool *args_spread; /* v1.22: por-arg */
+       } llamada;
+```
+
+Nuevos opcodes en [src/chunk.h](src/chunk.h):
+
+- `OP_LISTA_AGREGAR` — TOS=valor; debajo lista. Pop, append.
+- `OP_LISTA_EXTENDER` — TOS=iterable; debajo lista. Pop, extiende.
+- `OP_LLAMAR_SPREAD` — TOS=lista args; bajo callee. Llama expandido.
+
+`FuncionBC` añade `bool tiene_estrella`. En `ejecutar_llamar_bc`, si
+está activo, los args [n_fijos..n_args-1] se recolectan en una tupla
+que ocupa el slot del param estrellado.
+
+El parser ([src/parser.c](src/parser.c)) detecta `*ident` en listas de
+parámetros (función y lambda) y `*expr` en argumentos de llamada. La
+heurística F10 de inline cache no se ve afectada — solo las llamadas
+con spread usan el path nuevo; el resto sigue por `OP_LLAMAR` y se
+promueve normalmente.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_varargs.c` — 13 tests cubriendo recoger,
+  fijos+estrella, spread, forwarding, lambda, errores atrapables.
+- `bc_run_47_varargs` — ejecuta `examples/47_varargs.cor`.
+- **152/152 tests verde**.
+
 ## [1.21.0] — 2026-05-13 — Destructuring assignment
 
 Asignación múltiple en una sola línea: `a, b = par`, `[x, y, z] = lista`,

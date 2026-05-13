@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.21.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.22.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -120,7 +120,8 @@ Hoja de ruta resumida:
 | **v1.19** | **Stdlib `fechas` (timestamps, descomponer/componer/formato, aritmética, calendario)** | ✅ |
 | **v1.20** | **Diccionarios preservan orden de inserción (Python 3.7+ semantics)** | ✅ |
 | **v1.21** | **Destructuring assignment (`a, b = par`, swap, anidación, lista LHS)** | ✅ |
-| v1.22+ | `*args`/`**kwargs`, generadores (`producir`), comprehensions, stdlib `azar`/`regex`/`proceso`/`red` | ⏳ |
+| **v1.22** | **`*args` en definiciones y llamadas (recoger + expandir iterables)** | ✅ |
+| v1.23+ | `**kwargs`, generadores (`producir`), comprehensions, stdlib `azar`/`regex`/`proceso`/`red` | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

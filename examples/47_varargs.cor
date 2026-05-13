@@ -1,0 +1,90 @@
+# Ejemplo 47 — `*args` en definiciones y llamadas (v1.22)
+#
+# `funcion f(*xs)` recoge en una tupla todos los argumentos posicionales
+# extras. `f(*lista)` expande un iterable como argumentos individuales.
+# Combinables: `f(1, *medio, 99)`.
+
+imprimir("=== *args (v1.22) ===")
+imprimir("")
+
+# ─── Caso 1: definición con *resto ───
+funcion suma(*nums):
+    total = 0
+    para n en nums:
+        total = total + n
+    fin para
+    retornar total
+fin funcion
+
+imprimir("1) recoger argumentos")
+imprimir(f"  suma()           = {suma()}")
+imprimir(f"  suma(1)          = {suma(1)}")
+imprimir(f"  suma(1, 2, 3)    = {suma(1, 2, 3)}")
+imprimir(f"  suma(10, 20, 30) = {suma(10, 20, 30)}")
+imprimir("")
+
+# ─── Caso 2: fijos + *resto ───
+funcion saludar(nombre, *titulos):
+    pre = ""
+    para t en titulos:
+        pre = pre + t + " "
+    fin para
+    retornar pre + nombre
+fin funcion
+
+imprimir("2) fijos + *resto")
+imprimir("  " + saludar("Ana"))
+imprimir("  " + saludar("Ana", "Dra."))
+imprimir("  " + saludar("Castilla", "Sr.", "Prof."))
+imprimir("")
+
+# ─── Caso 3: spread en llamadas ───
+imprimir("3) expandir iterable con `*` en la llamada")
+nums = [10, 20, 30]
+imprimir(f"  suma(*[10, 20, 30])    = {suma(*nums)}")
+imprimir(f"  suma(1, *[10, 20, 30]) = {suma(1, *nums)}")
+imprimir(f"  suma(1, *[10, 20, 30], 100) = {suma(1, *nums, 100)}")
+imprimir("")
+
+# ─── Caso 4: forwarding genérico ───
+funcion log_llamada(f, *args):
+    imprimir(f"  -> llamando con {longitud(args)} arg(s)")
+    retornar f(*args)
+fin funcion
+
+funcion area(ancho, alto):
+    retornar ancho * alto
+fin funcion
+
+imprimir("4) forwarding genérico (decorador-like)")
+r = log_llamada(area, 5, 8)
+imprimir(f"  resultado: {r}")
+imprimir("")
+
+# ─── Caso 5: lambda con *args ───
+imprimir("5) lambda variádica")
+contar = lambda *xs: longitud(xs)
+imprimir(f"  contar()           = {contar()}")
+imprimir(f"  contar(1, 2, 3, 4) = {contar(1, 2, 3, 4)}")
+imprimir("")
+
+# ─── Caso 6: errores atrapables ───
+funcion f(a, b, *resto):
+    retornar (a, b, resto)
+fin funcion
+
+imprimir("6) errores atrapables")
+intentar:
+    f(1)
+atrapar ErrorDeTipo como e:
+    imprimir(f"  faltan obligatorios → {e}")
+fin intentar
+
+intentar:
+    f(*"abc")
+atrapar ErrorDeTipo como e:
+    imprimir(f"  spread sobre no-iterable → {e}")
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 47 ===")

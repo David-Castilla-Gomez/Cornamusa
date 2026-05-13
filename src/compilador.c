@@ -628,6 +628,25 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
                 return true;
             }
+            /* v1.22: si la llamada tiene algún `*expr` (spread arg),
+               construimos una lista runtime con todos los args
+               expandidos y usamos OP_LLAMAR_SPREAD. */
+            bool tiene_spread = (e->como.llamada.args_spread != NULL);
+            if (tiene_spread) {
+                if (!compilador_compilar_expr(c, callee)) return false;
+                /* Lista vacía sobre la que iremos acumulando args. */
+                chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA, 0, e->linea);
+                for (int i = 0; i < n_args; i++) {
+                    if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                    if (e->como.llamada.args_spread[i]) {
+                        chunk_emitir_byte(c->actual->chunk, OP_LISTA_EXTENDER, e->linea);
+                    } else {
+                        chunk_emitir_byte(c->actual->chunk, OP_LISTA_AGREGAR, e->linea);
+                    }
+                }
+                chunk_emitir_byte(c->actual->chunk, OP_LLAMAR_SPREAD, e->linea);
+                return true;
+            }
             /* Caso general: empuja callee, después args, y emite
                OP_LLAMAR [n]. La VM se encarga del frame y de validar
                aridad. */
@@ -764,11 +783,20 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         case EXPR_LAMBDA: {
             int n_params = e->como.lambda.n_parametros;
             Parametro *params = e->como.lambda.parametros;
-            /* v1.17: contar defaults y validar que estén en cola. */
+            /* v1.17: contar defaults y validar que estén en cola.
+               v1.22: detectar `*resto` (último param). */
             int n_defaults_lam = 0;
             bool vio_default = false;
+            bool tiene_estrella_lam = false;
             for (int i = 0; i < n_params; i++) {
-                if (params[i].valor_defecto != NULL) {
+                if (params[i].es_estrella) {
+                    if (i != n_params - 1) {
+                        error_compilacion(c, e->linea, e->columna,
+                            "'*resto' debe ser el ultimo parametro");
+                        return false;
+                    }
+                    tiene_estrella_lam = true;
+                } else if (params[i].valor_defecto != NULL) {
                     vio_default = true;
                     n_defaults_lam++;
                 } else if (vio_default) {
@@ -776,6 +804,11 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         "parametro sin valor por defecto despues de uno con default");
                     return false;
                 }
+            }
+            if (tiene_estrella_lam && n_defaults_lam > 0) {
+                error_compilacion(c, e->linea, e->columna,
+                    "'*resto' no se combina con defaults en v1.22");
+                return false;
             }
 
             FuncionBC *fn = funcion_bc_nueva("lambda", 6, n_params);
@@ -808,6 +841,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
 
             /* v1.17: registrar n_defaults antes de promover a constante. */
             fn->n_defaults = n_defaults_lam;
+            fn->tiene_estrella = tiene_estrella_lam;
 
             Valor v_plantilla = valor_plantilla(fn);
             int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);
@@ -2624,10 +2658,21 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     Parametro *params = s->como.funcion.parametros;
 
     /* v1.17: validar defaults — solo permitidos en la cola. Contar n_defaults. */
+    /* v1.22: si hay `*resto`, debe ser el ÚLTIMO parámetro y no
+       puede combinarse con defaults (limitación de v1.22; kwargs en
+       v1.23 lo desbloqueará). */
     int n_defaults = 0;
     bool vio_default = false;
+    bool tiene_estrella = false;
     for (int i = 0; i < n_params; i++) {
-        if (params[i].valor_defecto != NULL) {
+        if (params[i].es_estrella) {
+            if (i != n_params - 1) {
+                error_compilacion(c, s->linea, s->columna,
+                    "'*resto' debe ser el ultimo parametro");
+                return false;
+            }
+            tiene_estrella = true;
+        } else if (params[i].valor_defecto != NULL) {
             vio_default = true;
             n_defaults++;
         } else if (vio_default) {
@@ -2635,6 +2680,11 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
                 "parametro sin valor por defecto despues de uno con default");
             return false;
         }
+    }
+    if (tiene_estrella && n_defaults > 0) {
+        error_compilacion(c, s->linea, s->columna,
+            "'*resto' no se combina con valores por defecto en v1.22");
+        return false;
     }
 
     FuncionBC *fn = funcion_bc_nueva(nombre, len_nombre, n_params);
@@ -2681,6 +2731,8 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     /* v1.17: registrar n_defaults en la plantilla. La VM lo lee al
        procesar OP_CLOSURE para saber cuántos valores pop del stack. */
     fn->n_defaults = n_defaults;
+    /* v1.22: registrar si tiene `*resto`. */
+    fn->tiene_estrella = tiene_estrella;
 
     Valor v_plantilla = valor_plantilla(fn);
     int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);

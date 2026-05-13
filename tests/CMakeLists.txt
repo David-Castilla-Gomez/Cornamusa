@@ -444,6 +444,18 @@ set_tests_properties(bc_run_46_destructuring PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 46"
 )
 
+# v1.22: *args en definiciones y llamadas.
+add_test(
+    NAME bc_run_47_varargs
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/47_varargs.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_47_varargs PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 47"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

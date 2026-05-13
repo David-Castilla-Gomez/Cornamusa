@@ -709,7 +709,47 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
     CallFrame *frame = *frame_inout;
     Closure *cl = base_nuevo->como.closure;
     FuncionBC *fn = cl->plantilla;
-    if (n_args != fn->aridad) {
+
+    /* v1.22: si la función tiene `*resto`, el último param recoge los
+       args sobrantes en tupla. `n_fijos = aridad - 1`. Aceptamos
+       n_args ≥ n_fijos. Los args [n_fijos .. n_args-1] van a la
+       tupla del slot estrella. Combinación con defaults: si faltan
+       args fijos pero hay defaults, los completamos primero. */
+    if (fn->tiene_estrella) {
+        int n_fijos = fn->aridad - 1;
+        if (n_args < n_fijos) {
+            int min_aridad_fija = n_fijos - fn->n_defaults;
+            if (n_args >= min_aridad_fija && cl->defaults) {
+                int n_faltantes = n_fijos - n_args;
+                for (int i = 0; i < n_faltantes; i++) {
+                    int def_idx = (n_args - min_aridad_fija) + i;
+                    empujar(vm, valor_clonar(&cl->defaults[def_idx]));
+                }
+                n_args = (uint8_t)n_fijos;
+            } else {
+                llamar_set_error(vm, frame,
+                    "ErrorDeTipo: %.*s() esperaba al menos %d argumentos, recibio %d",
+                    fn->longitud_nombre, fn->nombre, n_fijos, n_args);
+                return VM_ERROR_RUNTIME;
+            }
+        }
+        /* Construir tupla con los args sobrantes [n_fijos .. n_args-1]. */
+        int n_extra = n_args - n_fijos;
+        Tupla *t = tupla_nueva(n_extra);
+        if (!t) {
+            llamar_set_error(vm, frame,
+                "memoria insuficiente al recolectar *resto");
+            return VM_ERROR_RUNTIME;
+        }
+        /* Los args extra están en el stack: base_nuevo+1+n_fijos .. base_nuevo+n_args. */
+        Valor *base_extra = base_nuevo + 1 + n_fijos;
+        for (int i = 0; i < n_extra; i++) {
+            t->elementos[i] = base_extra[i];  /* toma posesión */
+        }
+        vm->tope = base_extra;  /* descartamos los slots ocupados por extras */
+        empujar(vm, valor_tupla(t));
+        n_args = (uint8_t)fn->aridad;
+    } else if (n_args != fn->aridad) {
         /* v1.17: si faltan args y la función tiene defaults para
            ellos, los completamos. n_args debe estar en
            [aridad - n_defaults, aridad]. */
@@ -3529,6 +3569,112 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 }
                 break;
             }
+            /* v1.22: utilidades para spread en llamadas. */
+            case OP_LISTA_AGREGAR: {
+                /* TOS = valor; debajo = lista. Pop valor, append. */
+                Valor v = *(--vm->tope);
+                Valor *l_slot = vm->tope - 1;
+                if (l_slot->tipo != VAL_LISTA) {
+                    valor_destruir(&v);
+                    VM_ERROR("ErrorInterno: OP_LISTA_AGREGAR sin lista");
+                    return VM_ERROR_RUNTIME;
+                }
+                lista_agregar(l_slot->como.lista, v);  /* toma posesión */
+                break;
+            }
+            case OP_LISTA_EXTENDER: {
+                /* TOS = iterable; debajo = lista. Pop iterable,
+                   itera elementos y los agrega a la lista. */
+                Valor it = *(--vm->tope);
+                Valor *l_slot = vm->tope - 1;
+                if (l_slot->tipo != VAL_LISTA) {
+                    valor_destruir(&it);
+                    VM_ERROR("ErrorInterno: OP_LISTA_EXTENDER sin lista");
+                    return VM_ERROR_RUNTIME;
+                }
+                Lista *l = l_slot->como.lista;
+                if (it.tipo == VAL_LISTA) {
+                    Lista *src = it.como.lista;
+                    for (int i = 0; i < src->cuenta; i++) {
+                        lista_agregar(l, valor_clonar(&src->elementos[i]));
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_TUPLA) {
+                    Tupla *src = it.como.tupla;
+                    for (int i = 0; i < src->cuenta; i++) {
+                        lista_agregar(l, valor_clonar(&src->elementos[i]));
+                    }
+                    valor_destruir(&it);
+                } else {
+                    const char *tname = valor_nombre_tipo(&it);
+                    VM_ERROR(
+                        "ErrorDeTipo: '%s' no es iterable para spread (*)",
+                        tname);
+                    valor_destruir(&it);
+                    RAISE_OR_DIE();
+                }
+                break;
+            }
+            case OP_LLAMAR_SPREAD: {
+                /* TOS = lista args; bajo = callee. Empujamos cada
+                   elemento de la lista al stack y despachamos como
+                   OP_LLAMAR con n_args = longitud(lista). */
+                Valor lista_args = *(--vm->tope);
+                if (lista_args.tipo != VAL_LISTA) {
+                    valor_destruir(&lista_args);
+                    VM_ERROR("ErrorInterno: OP_LLAMAR_SPREAD sin lista");
+                    return VM_ERROR_RUNTIME;
+                }
+                Lista *la = lista_args.como.lista;
+                if (la->cuenta > 255) {
+                    valor_destruir(&lista_args);
+                    VM_ERROR(
+                        "ErrorDeValor: spread produce >255 argumentos");
+                    return VM_ERROR_RUNTIME;
+                }
+                for (int i = 0; i < la->cuenta; i++) {
+                    empujar(vm, valor_clonar(&la->elementos[i]));
+                }
+                uint8_t n_args = (uint8_t)la->cuenta;
+                valor_destruir(&lista_args);
+                Valor *base_nuevo = vm->tope - n_args - 1;
+                Valor callee = *base_nuevo;
+                switch (callee.tipo) {
+                    case VAL_NATIVA:
+                        if (ejecutar_llamar_nativa(vm, &frame, base_nuevo,
+                                                     n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        break;
+                    case VAL_FUNCION_BC:
+                        if (ejecutar_llamar_bc(vm, &frame, base_nuevo,
+                                                 n_args) != VM_OK) {
+                            RAISE_OR_DIE();
+                            break;
+                        }
+                        break;
+                    case VAL_CLASE:
+                        if (ejecutar_llamar_clase(vm, &frame, base_nuevo,
+                                                    n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        break;
+                    case VAL_METODO_LIGADO:
+                        if (ejecutar_llamar_metodo_ligado(vm, &frame,
+                                base_nuevo, n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        break;
+                    case VAL_INSTANCIA:
+                        if (ejecutar_llamar_instancia(vm, &frame,
+                                base_nuevo, n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        break;
+                    default:
+                        VM_ERROR("ErrorDeTipo: '%s' no es invocable",
+                                 valor_nombre_tipo(&callee));
+                        return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+
             case OP_LLAMAR: {
                 /*
                  * Slow path. Despacha por tipo y, tras éxito, promueve

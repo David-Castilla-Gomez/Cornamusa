@@ -54,6 +54,9 @@ const char *opcode_nombre(OpCode op) {
         case OP_LLAMAR_BC:       return "OP_LLAMAR_BC";
         case OP_LLAMAR_CLASE:    return "OP_LLAMAR_CLASE";
         case OP_LLAMAR_METODO_LIGADO: return "OP_LLAMAR_METODO_LIGADO";
+        case OP_LISTA_AGREGAR:   return "OP_LISTA_AGREGAR";
+        case OP_LISTA_EXTENDER:  return "OP_LISTA_EXTENDER";
+        case OP_LLAMAR_SPREAD:   return "OP_LLAMAR_SPREAD";
         case OP_CLOSURE:         return "OP_CLOSURE";
         case OP_OBTENER_UPVALUE: return "OP_OBTENER_UPVALUE";
         case OP_ASIGNAR_UPVALUE: return "OP_ASIGNAR_UPVALUE";
@@ -214,6 +217,7 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->inline_desc.ctor_arg2_attr_yo = NULL;
     f->inline_desc.ctor_arg2_attr_otro = NULL;
     f->n_defaults = 0;     /* v1.17: el compilador lo setea si hay defaults */
+    f->tiene_estrella = false;  /* v1.22: lo setea el compilador si hay *resto */
     return f;
 }
 

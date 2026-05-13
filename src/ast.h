@@ -131,6 +131,7 @@ struct Expr {
             Expr *callee;       /* la expresión que produce la función */
             Expr **args;        /* array alocado en arena */
             int n_args;
+            bool *args_spread;  /* v1.22: por-arg, true si es `*expr` */
         } llamada;
 
         struct {
@@ -377,6 +378,7 @@ struct Parametro {
     int longitud_nombre;
     Expr *anotacion_tipo;       /* NULL si no hay */
     Expr *valor_defecto;        /* NULL si no hay */
+    bool es_estrella;           /* v1.22: `*resto` recoge args sobrantes */
     int linea, columna;
 };
 

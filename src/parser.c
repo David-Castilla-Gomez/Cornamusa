@@ -844,9 +844,12 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
        buffer en stack hasta 8 args; si excede, alocamos en arena con
        crecimiento. */
     Expr *buffer[8];
+    bool spread_buffer[8] = {0};
     Expr **args = buffer;
+    bool *spreads = spread_buffer;
     int n = 0;
     int capacidad = 8;
+    bool algun_spread = false;
 
     if (!check(p, TT_PARENT_DER)) {
         do {
@@ -854,13 +857,26 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
                 capacidad *= 2;
                 Expr **nuevo = (Expr **)arena_alocar(p->arena,
                     sizeof(Expr *) * (size_t)capacidad);
-                if (nuevo == NULL) return NULL;
+                bool *nuevo_sp = (bool *)arena_alocar(p->arena,
+                    sizeof(bool) * (size_t)capacidad);
+                if (nuevo == NULL || nuevo_sp == NULL) return NULL;
                 memcpy(nuevo, args, sizeof(Expr *) * (size_t)n);
+                memcpy(nuevo_sp, spreads, sizeof(bool) * (size_t)n);
                 args = nuevo;
+                spreads = nuevo_sp;
+            }
+            /* v1.22: `*expr` en argumento → spread (expande iterable). */
+            bool es_spread = false;
+            if (check(p, TT_ASTERISCO)) {
+                avanzar(p);
+                es_spread = true;
+                algun_spread = true;
             }
             Expr *arg = parsear_expresion(p);
             if (arg == NULL) return NULL;
-            args[n++] = arg;
+            args[n] = arg;
+            spreads[n] = es_spread;
+            n++;
         } while (consumir_si(p, TT_COMA));
     }
 
@@ -873,8 +889,17 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
     if (args_finales == NULL) return NULL;
     if (n > 0) memcpy(args_finales, args, sizeof(Expr *) * (size_t)n);
 
-    return expr_llamada(p->arena, callee, args_finales, n,
-                        apertura.linea, apertura.columna);
+    Expr *e = expr_llamada(p->arena, callee, args_finales, n,
+                            apertura.linea, apertura.columna);
+    if (e == NULL) return NULL;
+    if (algun_spread) {
+        bool *sp_finales = (bool *)arena_alocar(p->arena,
+            sizeof(bool) * (size_t)(n > 0 ? n : 1));
+        if (sp_finales == NULL) return NULL;
+        if (n > 0) memcpy(sp_finales, spreads, sizeof(bool) * (size_t)n);
+        e->como.llamada.args_spread = sp_finales;
+    }
+    return e;
 }
 
 static Expr *parsear_atributo(Parser *p, Expr *objeto) {
@@ -1544,8 +1569,23 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
     int n = 0;
     int capacidad = 0;
 
+    bool ya_visto_estrella = false;
     if (!check(p, TT_PARENT_DER)) {
         do {
+            /* v1.22: `*ident` → parámetro variádico que recoge args sobrantes
+               en una tupla. Solo se permite uno y debe estar tras los
+               posicionales (puede haber defaults antes pero no después). */
+            bool es_estrella = false;
+            if (check(p, TT_ASTERISCO)) {
+                avanzar(p);
+                es_estrella = true;
+                if (ya_visto_estrella) {
+                    error_en(p, &p->actual,
+                        "solo se permite un parámetro '*resto'");
+                    return false;
+                }
+                ya_visto_estrella = true;
+            }
             if (!check(p, TT_IDENT)) {
                 error_en(p, &p->actual,
                     "se esperaba un nombre de parámetro");
@@ -1563,6 +1603,11 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
                 if (anot_tipo == NULL) return false;
             }
             if (consumir_si(p, TT_ASIGNAR)) {
+                if (es_estrella) {
+                    error_en(p, &p->actual,
+                        "parámetro '*resto' no puede tener valor por defecto");
+                    return false;
+                }
                 /* Valor por defecto. */
                 valor_defecto = parser_parsear_expr(p);
                 if (valor_defecto == NULL) return false;
@@ -1580,6 +1625,7 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
             params[n].longitud_nombre = t_nombre.longitud;
             params[n].anotacion_tipo = anot_tipo;
             params[n].valor_defecto = valor_defecto;
+            params[n].es_estrella = es_estrella;
             params[n].linea = t_nombre.linea;
             params[n].columna = t_nombre.columna;
             n++;
@@ -1720,9 +1766,22 @@ static Expr *parsear_lambda(Parser *p) {
 
     /* Lista de parámetros sin paréntesis: `x, y, z` o vacía.
        En lambda NO se admiten anotaciones de tipo: el `:` siempre
-       termina la lista de parámetros. Solo `= valor_defecto` opcional. */
+       termina la lista de parámetros. Solo `= valor_defecto` opcional.
+       v1.22: `*resto` también permitido aquí. */
+    bool ya_visto_estrella = false;
     if (!check(p, TT_DOS_PUNTOS)) {
         do {
+            bool es_estrella = false;
+            if (check(p, TT_ASTERISCO)) {
+                avanzar(p);
+                es_estrella = true;
+                if (ya_visto_estrella) {
+                    error_en(p, &p->actual,
+                        "solo se permite un '*resto' en lambda");
+                    return NULL;
+                }
+                ya_visto_estrella = true;
+            }
             if (!check(p, TT_IDENT)) {
                 error_en(p, &p->actual,
                     "se esperaba un nombre de parámetro en lambda");
@@ -1734,6 +1793,11 @@ static Expr *parsear_lambda(Parser *p) {
             Expr *anot_tipo = NULL;  /* Lambda no admite anotaciones. */
             Expr *valor_defecto = NULL;
             if (consumir_si(p, TT_ASIGNAR)) {
+                if (es_estrella) {
+                    error_en(p, &p->actual,
+                        "'*resto' no puede tener defecto");
+                    return NULL;
+                }
                 valor_defecto = parser_parsear_expr(p);
                 if (valor_defecto == NULL) return NULL;
             }
@@ -1751,6 +1815,7 @@ static Expr *parsear_lambda(Parser *p) {
             params[n].longitud_nombre = t_nombre.longitud;
             params[n].anotacion_tipo = anot_tipo;
             params[n].valor_defecto = valor_defecto;
+            params[n].es_estrella = es_estrella;
             params[n].linea = t_nombre.linea;
             params[n].columna = t_nombre.columna;
             n++;

@@ -153,6 +153,15 @@ typedef enum {
     OP_LLAMAR_CLASE,
     OP_LLAMAR_METODO_LIGADO,
 
+    /* v1.22: llamadas con desempaquetado de iterables (`*lista` como arg).
+       OP_LISTA_AGREGAR  — TOS=valor; debajo lista. Pop valor, append.
+       OP_LISTA_EXTENDER — TOS=iterable; debajo lista. Pop, append cada elem.
+       OP_LLAMAR_SPREAD  — TOS=lista args; bajo callee. Llama con args
+                            expandidos como n_args = longitud(lista). */
+    OP_LISTA_AGREGAR,
+    OP_LISTA_EXTENDER,
+    OP_LLAMAR_SPREAD,
+
     /* ---- Closures (v0.6.2) ---- */
     OP_CLOSURE,                 /* [byte fn_idx] [n_upvalues * (is_local, index)] */
     OP_OBTENER_UPVALUE,         /* [byte slot] */
@@ -438,6 +447,10 @@ struct FuncionBC {
        OP_CLOSURE, la VM pop estos N valores y los guarda en
        `closure->defaults`. */
     int n_defaults;
+    /* v1.22: si tiene_estrella, el ÚLTIMO parámetro (slot `aridad-1`)
+       recoge los args sobrantes en una tupla. `aridad` cuenta los
+       fixed más el `*resto`. n_args ≥ aridad-1 es válido. */
+    bool tiene_estrella;
 };
 
 /*
