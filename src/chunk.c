@@ -57,6 +57,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_LISTA_AGREGAR:   return "OP_LISTA_AGREGAR";
         case OP_LISTA_EXTENDER:  return "OP_LISTA_EXTENDER";
         case OP_LLAMAR_SPREAD:   return "OP_LLAMAR_SPREAD";
+        case OP_LLAMAR_KW:       return "OP_LLAMAR_KW";
         case OP_CLOSURE:         return "OP_CLOSURE";
         case OP_OBTENER_UPVALUE: return "OP_OBTENER_UPVALUE";
         case OP_ASIGNAR_UPVALUE: return "OP_ASIGNAR_UPVALUE";
@@ -218,6 +219,8 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->inline_desc.ctor_arg2_attr_otro = NULL;
     f->n_defaults = 0;     /* v1.17: el compilador lo setea si hay defaults */
     f->tiene_estrella = false;  /* v1.22: lo setea el compilador si hay *resto */
+    f->nombres_params = NULL;       /* v1.23: setea el compilador */
+    f->long_nombres_params = NULL;
     return f;
 }
 
@@ -237,6 +240,14 @@ void funcion_bc_liberar(FuncionBC *f) {
     if (f->inline_desc.nombre_clase) free(f->inline_desc.nombre_clase);
     if (f->inline_desc.ctor_arg2_attr_yo) free(f->inline_desc.ctor_arg2_attr_yo);
     if (f->inline_desc.ctor_arg2_attr_otro) free(f->inline_desc.ctor_arg2_attr_otro);
+    /* v1.23: liberar nombres de params si están. */
+    if (f->nombres_params) {
+        for (int i = 0; i < f->aridad; i++) {
+            free(f->nombres_params[i]);
+        }
+        free(f->nombres_params);
+        free(f->long_nombres_params);
+    }
     gc_desenlazar(&f->obj);
     free(f);
 }

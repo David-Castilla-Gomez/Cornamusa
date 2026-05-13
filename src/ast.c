@@ -94,6 +94,8 @@ Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, i
         e->como.llamada.args = args;
         e->como.llamada.n_args = n_args;
         e->como.llamada.args_spread = NULL;  /* v1.22: NULL = sin spreads */
+        e->como.llamada.kwarg_keys = NULL;   /* v1.23: NULL = sin kwargs */
+        e->como.llamada.kwarg_lens = NULL;
     }
     return e;
 }

@@ -456,6 +456,18 @@ set_tests_properties(bc_run_47_varargs PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 47"
 )
 
+# v1.23: keyword arguments en llamadas.
+add_test(
+    NAME bc_run_48_kwargs
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/48_kwargs.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_48_kwargs PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 48"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

@@ -632,6 +632,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                construimos una lista runtime con todos los args
                expandidos y usamos OP_LLAMAR_SPREAD. */
             bool tiene_spread = (e->como.llamada.args_spread != NULL);
+            bool tiene_kwargs = (e->como.llamada.kwarg_keys != NULL);
+            if (tiene_spread && tiene_kwargs) {
+                error_compilacion(c, e->linea, e->columna,
+                    "no se puede combinar `*args` con keyword args en la misma llamada (v1.23)");
+                return false;
+            }
             if (tiene_spread) {
                 if (!compilador_compilar_expr(c, callee)) return false;
                 /* Lista vacía sobre la que iremos acumulando args. */
@@ -645,6 +651,47 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     }
                 }
                 chunk_emitir_byte(c->actual->chunk, OP_LLAMAR_SPREAD, e->linea);
+                return true;
+            }
+            /* v1.23: llamada con keyword arguments. Empuja callee,
+               posicionales en orden, luego pares (clave, valor) para
+               cada kwarg. */
+            if (tiene_kwargs) {
+                int n_pos = 0;
+                for (int i = 0; i < n_args; i++) {
+                    if (e->como.llamada.kwarg_keys[i] == NULL) n_pos++;
+                }
+                int n_kw = n_args - n_pos;
+                if (n_pos > 255 || n_kw > 255) {
+                    error_compilacion(c, e->linea, e->columna,
+                        "demasiados argumentos (max 255 posicionales o 255 keyword)");
+                    return false;
+                }
+                if (!compilador_compilar_expr(c, callee)) return false;
+                /* Posicionales primero (parser garantiza que están antes). */
+                for (int i = 0; i < n_args; i++) {
+                    if (e->como.llamada.kwarg_keys[i] != NULL) continue;
+                    if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                }
+                /* Pares (clave_cadena, valor) para cada kwarg. */
+                for (int i = 0; i < n_args; i++) {
+                    const char *k = e->como.llamada.kwarg_keys[i];
+                    if (k == NULL) continue;
+                    int klen = e->como.llamada.kwarg_lens[i];
+                    Valor v_clave = valor_cadena_duplicar(k, klen);
+                    int idx_const = chunk_agregar_constante(c->actual->chunk, v_clave);
+                    if (idx_const < 0 || idx_const > 255) {
+                        error_compilacion(c, e->linea, e->columna,
+                            "demasiadas constantes");
+                        return false;
+                    }
+                    chunk_emitir_byte2(c->actual->chunk, OP_CONST,
+                                        (uint8_t)idx_const, e->linea);
+                    if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                }
+                chunk_emitir_byte(c->actual->chunk, OP_LLAMAR_KW, e->linea);
+                chunk_emitir_byte(c->actual->chunk, (uint8_t)n_pos, e->linea);
+                chunk_emitir_byte(c->actual->chunk, (uint8_t)n_kw, e->linea);
                 return true;
             }
             /* Caso general: empuja callee, después args, y emite
@@ -842,6 +889,29 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             /* v1.17: registrar n_defaults antes de promover a constante. */
             fn->n_defaults = n_defaults_lam;
             fn->tiene_estrella = tiene_estrella_lam;
+            /* v1.23: duplicar nombres de params (lambda también soporta kwargs). */
+            if (n_params > 0) {
+                fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
+                fn->long_nombres_params = (int *)malloc(sizeof(int) * (size_t)n_params);
+                if (!fn->nombres_params || !fn->long_nombres_params) {
+                    error_compilacion(c, e->linea, e->columna, "memoria insuficiente");
+                    funcion_bc_liberar(fn);
+                    return false;
+                }
+                for (int i = 0; i < n_params; i++) {
+                    int ln = params[i].longitud_nombre;
+                    char *copia = (char *)malloc((size_t)ln + 1);
+                    if (!copia) {
+                        error_compilacion(c, e->linea, e->columna, "memoria insuficiente");
+                        funcion_bc_liberar(fn);
+                        return false;
+                    }
+                    if (ln > 0) memcpy(copia, params[i].nombre, (size_t)ln);
+                    copia[ln] = '\0';
+                    fn->nombres_params[i] = copia;
+                    fn->long_nombres_params[i] = ln;
+                }
+            }
 
             Valor v_plantilla = valor_plantilla(fn);
             int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);
@@ -2733,6 +2803,29 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     fn->n_defaults = n_defaults;
     /* v1.22: registrar si tiene `*resto`. */
     fn->tiene_estrella = tiene_estrella;
+    /* v1.23: duplicar nombres de parámetros para matching de kwargs. */
+    if (n_params > 0) {
+        fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
+        fn->long_nombres_params = (int *)malloc(sizeof(int) * (size_t)n_params);
+        if (!fn->nombres_params || !fn->long_nombres_params) {
+            error_compilacion(c, s->linea, s->columna, "memoria insuficiente");
+            funcion_bc_liberar(fn);
+            return false;
+        }
+        for (int i = 0; i < n_params; i++) {
+            int ln = params[i].longitud_nombre;
+            char *copia = (char *)malloc((size_t)ln + 1);
+            if (!copia) {
+                error_compilacion(c, s->linea, s->columna, "memoria insuficiente");
+                funcion_bc_liberar(fn);
+                return false;
+            }
+            if (ln > 0) memcpy(copia, params[i].nombre, (size_t)ln);
+            copia[ln] = '\0';
+            fn->nombres_params[i] = copia;
+            fn->long_nombres_params[i] = ln;
+        }
+    }
 
     Valor v_plantilla = valor_plantilla(fn);
     int fn_idx = chunk_agregar_constante(c->actual->chunk, v_plantilla);

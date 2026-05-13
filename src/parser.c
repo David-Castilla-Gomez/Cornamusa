@@ -845,11 +845,17 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
        crecimiento. */
     Expr *buffer[8];
     bool spread_buffer[8] = {0};
+    const char *kkey_buffer[8] = {0};
+    int klen_buffer[8] = {0};
     Expr **args = buffer;
     bool *spreads = spread_buffer;
+    const char **kkeys = kkey_buffer;
+    int *klens = klen_buffer;
     int n = 0;
     int capacidad = 8;
     bool algun_spread = false;
+    bool algun_kwarg = false;
+    bool visto_kwarg = false;  /* tras un kwarg, no más posicionales */
 
     if (!check(p, TT_PARENT_DER)) {
         do {
@@ -859,11 +865,19 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
                     sizeof(Expr *) * (size_t)capacidad);
                 bool *nuevo_sp = (bool *)arena_alocar(p->arena,
                     sizeof(bool) * (size_t)capacidad);
-                if (nuevo == NULL || nuevo_sp == NULL) return NULL;
+                const char **nuevo_kk = (const char **)arena_alocar(p->arena,
+                    sizeof(const char *) * (size_t)capacidad);
+                int *nuevo_kl = (int *)arena_alocar(p->arena,
+                    sizeof(int) * (size_t)capacidad);
+                if (!nuevo || !nuevo_sp || !nuevo_kk || !nuevo_kl) return NULL;
                 memcpy(nuevo, args, sizeof(Expr *) * (size_t)n);
                 memcpy(nuevo_sp, spreads, sizeof(bool) * (size_t)n);
+                memcpy(nuevo_kk, kkeys, sizeof(const char *) * (size_t)n);
+                memcpy(nuevo_kl, klens, sizeof(int) * (size_t)n);
                 args = nuevo;
                 spreads = nuevo_sp;
+                kkeys = nuevo_kk;
+                klens = nuevo_kl;
             }
             /* v1.22: `*expr` en argumento → spread (expande iterable). */
             bool es_spread = false;
@@ -874,8 +888,30 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
             }
             Expr *arg = parsear_expresion(p);
             if (arg == NULL) return NULL;
+            /* v1.23: si `arg` es EXPR_IDENT y el siguiente token es `=`,
+               re-interpretar como keyword argument `nombre = valor`.
+               No aplica si era spread `*x`. */
+            const char *kkey = NULL;
+            int klen = 0;
+            if (!es_spread
+                && arg->tipo == EXPR_IDENT
+                && check(p, TT_ASIGNAR)) {
+                avanzar(p);  /* consume `=` */
+                kkey = arg->como.ident.nombre;
+                klen = arg->como.ident.longitud;
+                arg = parsear_expresion(p);
+                if (arg == NULL) return NULL;
+                algun_kwarg = true;
+                visto_kwarg = true;
+            } else if (visto_kwarg && !es_spread) {
+                error_en(p, &p->actual,
+                    "argumentos posicionales no pueden ir tras keyword args");
+                return NULL;
+            }
             args[n] = arg;
             spreads[n] = es_spread;
+            kkeys[n] = kkey;
+            klens[n] = klen;
             n++;
         } while (consumir_si(p, TT_COMA));
     }
@@ -898,6 +934,19 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
         if (sp_finales == NULL) return NULL;
         if (n > 0) memcpy(sp_finales, spreads, sizeof(bool) * (size_t)n);
         e->como.llamada.args_spread = sp_finales;
+    }
+    if (algun_kwarg) {
+        const char **kk_finales = (const char **)arena_alocar(p->arena,
+            sizeof(const char *) * (size_t)(n > 0 ? n : 1));
+        int *kl_finales = (int *)arena_alocar(p->arena,
+            sizeof(int) * (size_t)(n > 0 ? n : 1));
+        if (!kk_finales || !kl_finales) return NULL;
+        if (n > 0) {
+            memcpy(kk_finales, kkeys, sizeof(const char *) * (size_t)n);
+            memcpy(kl_finales, klens, sizeof(int) * (size_t)n);
+        }
+        e->como.llamada.kwarg_keys = kk_finales;
+        e->como.llamada.kwarg_lens = kl_finales;
     }
     return e;
 }

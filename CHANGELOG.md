@@ -6,6 +6,98 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.23.0] — 2026-05-13 — Keyword arguments
+
+Pasar argumentos por **nombre** en llamadas: `f(x=1, y=2)`. Permite
+saltar defaults selectivamente, reordenar libremente y mejora la
+legibilidad de funciones con muchos parámetros opcionales.
+
+### Sintaxis
+
+```cornamusa
+funcion conectar(host, puerto=80, usar_tls=falso, reintentos=3):
+    ...
+fin funcion
+
+conectar("api.dev")
+conectar("api.dev", usar_tls=verdadero)
+conectar("api.dev", reintentos=10, usar_tls=verdadero)  # orden libre
+conectar("api.dev", 443, usar_tls=verdadero)            # mezcla
+```
+
+### Reglas
+
+- **Posicionales antes de keyword args** — `f(x=1, 2)` es error de
+  sintaxis.
+- **Orden libre entre keyword args** — `f(b=2, a=1)` y `f(a=1, b=2)`
+  son equivalentes.
+- **Cada parámetro se asigna una sola vez** — `f(1, a=99)` falla con
+  `ErrorDeTipo` si `a` ya tomó el `1` posicional.
+- **Keywords desconocidos** → `ErrorDeTipo` atrapable.
+- **Falta argumento obligatorio** → `ErrorDeTipo` con el nombre del
+  parámetro.
+
+### Combinación con `*args`
+
+Funciones `f(a, b, *resto)` aceptan kwargs para sus parámetros fijos:
+
+```cornamusa
+funcion f(a, b, *resto):
+    retornar [a, b, resto]
+fin funcion
+
+f(b=2, a=1)   # [1, 2, ()]
+```
+
+No se puede combinar `f(*lista, key=val)` en la misma llamada (la
+sintaxis se mantiene simple en v1.23; viene en v1.24 con `**kwargs`).
+
+### Implementación
+
+AST extendido en [src/ast.h](src/ast.h):
+
+```c
+struct { ...
+    const char **kwarg_keys;   /* v1.23: NULL si solo posicional */
+    int *kwarg_lens;
+} llamada;
+```
+
+Nuevo opcode en [src/chunk.h](src/chunk.h):
+
+- `OP_LLAMAR_KW [n_pos] [n_kw]` — layout en stack:
+  `[callee, pos0..posN-1, key0, val0, key1, val1, ...]`.
+
+`FuncionBC` añade `char **nombres_params` (duplicados en heap) para
+matching nombre → slot. El compilador los popula tanto para
+`funcion` como para `lambda`.
+
+La VM en `OP_LLAMAR_KW`:
+
+1. Lee `n_pos` y `n_kw` del bytecode.
+2. Inicializa array `params_finales[aridad]` y `params_asignados[aridad]`.
+3. Copia posicionales a los primeros `n_pos` slots.
+4. Para cada (key, val), busca slot por nombre — error si desconocido
+   o si ya está asignado.
+5. Rellena defaults para slots no-asignados — error si no hay default.
+6. Si `tiene_estrella`, slot final recibe tupla vacía.
+7. Empuja `params_finales` y pushea un `CallFrame` nuevo.
+
+### Limitaciones (v1.23)
+
+- **Solo funciones bytecode** soportan kwargs (no nativas como
+  `imprimir`, `longitud`). Las nativas siguen siendo posicionales.
+- **No combinable con `*lista` spread** en la misma llamada.
+- **No hay `**kwargs`** (recoger keywords sobrantes en dict) ni
+  spread `**dict`. Viene en v1.24.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_kwargs.c` — 11 tests cubriendo matching,
+  defaults, mezcla con `*args`, errores atrapables.
+- `bc_run_48_kwargs` — ejecuta `examples/48_kwargs.cor`.
+- **155/155 tests verde**.
+
 ## [1.22.0] — 2026-05-13 — `*args` (variádicos y spread)
 
 Parámetros variádicos en definiciones y *spread* de iterables en

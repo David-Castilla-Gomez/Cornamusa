@@ -162,6 +162,14 @@ typedef enum {
     OP_LISTA_EXTENDER,
     OP_LLAMAR_SPREAD,
 
+    /* v1.23: llamadas con keyword arguments `f(x=1, y=2)`.
+       Layout en stack al ejecutar:
+         [..., callee, pos0..posN-1, key0, val0, key1, val1, ...]
+       donde keyI son cadenas (VAL_CADENA) y valI son los valores.
+       Operandos: [n_pos] [n_kw]. La VM hace matching key→param y
+       rellena defaults para los no-cubiertos. */
+    OP_LLAMAR_KW,
+
     /* ---- Closures (v0.6.2) ---- */
     OP_CLOSURE,                 /* [byte fn_idx] [n_upvalues * (is_local, index)] */
     OP_OBTENER_UPVALUE,         /* [byte slot] */
@@ -451,6 +459,12 @@ struct FuncionBC {
        recoge los args sobrantes en una tupla. `aridad` cuenta los
        fixed más el `*resto`. n_args ≥ aridad-1 es válido. */
     bool tiene_estrella;
+    /* v1.23: nombres de parámetros para matching de keyword args.
+       Arrays paralelos de longitud `aridad`. Duplicados en heap;
+       freed en funcion_bc_liberar. NULL si no se setearon (función
+       compilada pre-v1.23 — no soporta kwargs). */
+    char **nombres_params;
+    int *long_nombres_params;
 };
 
 /*

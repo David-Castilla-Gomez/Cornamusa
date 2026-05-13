@@ -1,0 +1,41 @@
+release: Cornamusa v1.23.0 - keyword arguments
+
+Pasar argumentos por nombre en llamadas: f(x=1, y=2). Permite saltar
+defaults selectivamente, reordenar libremente y mejora la legibilidad
+de funciones con muchos parámetros opcionales.
+
+Ejemplo:
+  funcion conectar(host, puerto=80, usar_tls=falso, reintentos=3): ...
+  conectar("api.dev", usar_tls=verdadero)
+  conectar("api.dev", reintentos=10, usar_tls=verdadero)  # orden libre
+
+Reglas:
+  - Posicionales antes de keyword args (error de sintaxis si no).
+  - Orden libre entre keyword args.
+  - Cada parámetro se asigna una sola vez (error si duplica).
+  - Keywords desconocidos: ErrorDeTipo atrapable.
+  - Falta argumento obligatorio: ErrorDeTipo con el nombre.
+
+Combinable con *args para parámetros fijos:
+  funcion f(a, b, *resto): ...
+  f(b=2, a=1)   # [1, 2, ()]
+
+Implementación:
+  - AST: EXPR_LLAMADA.kwarg_keys/kwarg_lens (paralelo a args).
+  - Parser: detecta `ident = expr` re-interpretando expr_ident parseado.
+  - Opcode nuevo: OP_LLAMAR_KW [n_pos] [n_kw] con layout
+    [callee, pos0..n_pos-1, key0, val0, key1, val1, ...].
+  - FuncionBC.nombres_params/long_nombres_params (duplicados en heap).
+  - VM hace matching nombre→slot, rellena defaults, gestiona errores.
+
+Limitaciones v1.23:
+  - Solo funciones bytecode (no nativas como imprimir, longitud).
+  - No combinable con *lista spread en la misma llamada.
+  - No **kwargs (def ni spread) — viene en v1.24.
+
+Tests: 11 nuevos en test_bytecode_kwargs.c + ejemplo 48 +
+bc_run_48. 155/155 tests verde.
+
+Tercer release de Fase 1 del roadmap fundamentales para competir.
+
+Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>

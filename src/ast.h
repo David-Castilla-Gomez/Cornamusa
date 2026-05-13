@@ -132,6 +132,11 @@ struct Expr {
             Expr **args;        /* array alocado en arena */
             int n_args;
             bool *args_spread;  /* v1.22: por-arg, true si es `*expr` */
+            /* v1.23: arrays paralelos para keyword arguments.
+               kwarg_keys[i] != NULL ⇒ arg[i] es `nombre = expr`.
+               El nombre apunta al buffer fuente del lexer. */
+            const char **kwarg_keys;
+            int *kwarg_lens;
         } llamada;
 
         struct {

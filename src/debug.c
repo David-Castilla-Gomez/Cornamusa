@@ -166,6 +166,13 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_LISTA_AGREGAR:   return instruccion_simple("OP_LISTA_AGREGAR", offset, out);
         case OP_LISTA_EXTENDER:  return instruccion_simple("OP_LISTA_EXTENDER", offset, out);
         case OP_LLAMAR_SPREAD:   return instruccion_simple("OP_LLAMAR_SPREAD", offset, out);
+        case OP_LLAMAR_KW: {
+            /* 2 bytes: n_pos, n_kw. */
+            uint8_t np = c->codigo[offset + 1];
+            uint8_t nk = c->codigo[offset + 2];
+            fprintf(out, "%-22s n_pos=%d n_kw=%d\n", "OP_LLAMAR_KW", np, nk);
+            return offset + 3;
+        }
         case OP_CLOSURE: {
             /* Formato: [byte fn_idx] [n_upvalues * (is_local, index)].
                No sabemos n_upvalues sin leer la FuncionBC del pool, así

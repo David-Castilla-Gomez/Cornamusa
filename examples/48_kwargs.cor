@@ -1,0 +1,74 @@
+# Ejemplo 48 — Keyword arguments (v1.23)
+#
+# `f(x=1, y=2)` permite pasar argumentos por nombre. Útil para legibilidad
+# y para usar defaults selectivamente sin recordar el orden posicional.
+
+imprimir("=== keyword arguments (v1.23) ===")
+imprimir("")
+
+# ─── Caso 1: pasar por nombre ───
+funcion crear_punto(eje_x=0, eje_y=0, eje_z=0):
+    retornar {"x": eje_x, "y": eje_y, "z": eje_z}
+fin funcion
+
+imprimir("1) selectivo por nombre")
+imprimir(crear_punto())
+imprimir(crear_punto(eje_x=5))
+imprimir(crear_punto(eje_z=7))
+imprimir(crear_punto(eje_y=3, eje_x=1))
+imprimir("")
+
+# ─── Caso 2: legibilidad de booleanos ───
+funcion conectar(host, puerto=80, usar_tls=falso, reintentos=3):
+    s = "conectando a " + host + ":" + cadena(puerto)
+    si usar_tls:
+        s = s + " (TLS)"
+    fin si
+    s = s + " reintentos=" + cadena(reintentos)
+    retornar s
+fin funcion
+
+imprimir("2) sintaxis legible para opciones")
+imprimir(conectar("api.cornamusa.dev"))
+imprimir(conectar("api.cornamusa.dev", usar_tls=verdadero))
+imprimir(conectar("api.cornamusa.dev", puerto=443, usar_tls=verdadero))
+imprimir(conectar("api.cornamusa.dev", reintentos=10, usar_tls=verdadero))
+imprimir("")
+
+# ─── Caso 3: mezcla posicional + kwarg ───
+funcion area_rect(ancho, alto, etiqueta="rect"):
+    retornar etiqueta + ": " + cadena(ancho * alto)
+fin funcion
+
+imprimir("3) mezcla pos + kwarg")
+imprimir(area_rect(5, 8))
+imprimir(area_rect(5, 8, etiqueta="ventana"))
+imprimir(area_rect(5, alto=10, etiqueta="puerta"))
+imprimir("")
+
+# ─── Caso 4: errores atrapables ───
+funcion f(a, b):
+    retornar a + b
+fin funcion
+
+imprimir("4) errores atrapables")
+intentar:
+    f(1, b=2, z=5)
+atrapar ErrorDeTipo como e:
+    imprimir("  kwarg desconocido →", cadena(e))
+fin intentar
+
+intentar:
+    f(1, a=99)
+atrapar ErrorDeTipo como e:
+    imprimir("  arg duplicado →", cadena(e))
+fin intentar
+
+intentar:
+    f(a=1)
+atrapar ErrorDeTipo como e:
+    imprimir("  falta obligatorio →", cadena(e))
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 48 ===")

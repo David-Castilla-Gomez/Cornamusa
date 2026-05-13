@@ -3615,6 +3615,202 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 }
                 break;
             }
+            case OP_LLAMAR_KW: {
+                /* v1.23: llamada con keyword arguments.
+                   Stack: [..., callee, pos0..n_pos-1, key0, val0, ...]
+                   Args: [n_pos] [n_kw]. */
+                uint8_t n_pos = LEER_BYTE();
+                uint8_t n_kw  = LEER_BYTE();
+                /* Cada kw ocupa 2 slots; los pares (key,val) están al
+                   tope. El callee está debajo de todo. */
+                int total_stack = n_pos + 2 * n_kw;
+                Valor *base_nuevo = vm->tope - total_stack - 1;
+                Valor callee = *base_nuevo;
+                if (callee.tipo != VAL_FUNCION_BC) {
+                    VM_ERROR(
+                        "ErrorDeTipo: keyword args solo soportados para funciones bytecode (no '%s')",
+                        valor_nombre_tipo(&callee));
+                    RAISE_OR_DIE();
+                    break;
+                }
+                Closure *cl = callee.como.closure;
+                FuncionBC *fn = cl->plantilla;
+                if (!fn->nombres_params) {
+                    VM_ERROR(
+                        "ErrorInterno: funcion sin metadata de nombres de parametros");
+                    RAISE_OR_DIE();
+                    break;
+                }
+                /* La función debe tener al menos n_pos posicionales fijos. */
+                int aridad_fija = fn->tiene_estrella ? (fn->aridad - 1) : fn->aridad;
+                if (n_pos > aridad_fija) {
+                    VM_ERROR(
+                        "ErrorDeTipo: %.*s() recibio %d posicionales pero solo acepta %d",
+                        fn->longitud_nombre, fn->nombre, n_pos, aridad_fija);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                /* Construir array de valores de tamaño `aridad` con:
+                    - posicionales del stack en [0..n_pos)
+                    - kwargs matched en [n_pos..aridad)
+                    - defaults para huecos
+                   Reorganizamos en sitio cubrir cada slot. */
+                int aridad = fn->aridad;
+                /* Reserva temporal en stack: cada slot del param. */
+                Valor params_finales[256];
+                bool params_asignados[256] = {0};
+                for (int i = 0; i < aridad; i++) params_finales[i] = valor_nulo();
+                /* Posicionales: ocupan los primeros n_pos slots. */
+                for (int i = 0; i < n_pos; i++) {
+                    params_finales[i] = base_nuevo[1 + i];
+                    params_asignados[i] = true;
+                }
+                /* Kwargs: para cada par (key, val) en stack. */
+                bool error_match = false;
+                char err_buf[256] = {0};
+                for (int i = 0; i < n_kw; i++) {
+                    Valor *par = base_nuevo + 1 + n_pos + 2 * i;
+                    Valor key = par[0];
+                    Valor val = par[1];
+                    if (key.tipo != VAL_CADENA) {
+                        snprintf(err_buf, sizeof(err_buf),
+                            "ErrorInterno: kwarg key no es cadena");
+                        error_match = true;
+                        break;
+                    }
+                    /* Buscar slot del parámetro por nombre. */
+                    int slot = -1;
+                    for (int j = 0; j < aridad_fija; j++) {
+                        if (fn->long_nombres_params[j] == key.como.cadena.longitud
+                            && memcmp(fn->nombres_params[j],
+                                       key.como.cadena.texto,
+                                       (size_t)key.como.cadena.longitud) == 0) {
+                            slot = j;
+                            break;
+                        }
+                    }
+                    if (slot < 0) {
+                        snprintf(err_buf, sizeof(err_buf),
+                            "ErrorDeTipo: %.*s() no acepta keyword '%.*s'",
+                            fn->longitud_nombre, fn->nombre,
+                            key.como.cadena.longitud, key.como.cadena.texto);
+                        error_match = true;
+                        break;
+                    }
+                    if (params_asignados[slot]) {
+                        snprintf(err_buf, sizeof(err_buf),
+                            "ErrorDeTipo: %.*s() recibio multiple valor para '%.*s'",
+                            fn->longitud_nombre, fn->nombre,
+                            key.como.cadena.longitud, key.como.cadena.texto);
+                        error_match = true;
+                        break;
+                    }
+                    valor_destruir(&key);  /* la cadena se duplicó al compilar */
+                    params_finales[slot] = val;
+                    params_asignados[slot] = true;
+                }
+                if (error_match) {
+                    /* Liberar kwargs no consumidos: keys (cadenas) y vals. */
+                    /* Las keys + vals están en stack desde
+                       base_nuevo+1+n_pos hasta tope. Las que ya
+                       consumimos parcialmente: liberar todo desde i en
+                       adelante. Simplicidad: liberamos toda esa banda
+                       (los slots ya consumidos en params_finales se
+                       liberarán al destruir cada uno abajo). */
+                    /* Restaurar stack al callee. */
+                    for (int j = 0; j < aridad; j++) {
+                        if (params_asignados[j]) valor_destruir(&params_finales[j]);
+                    }
+                    /* Los slots no consumidos del stack: liberar. */
+                    vm->tope = base_nuevo;
+                    valor_destruir(&callee);
+                    VM_ERROR("%s", err_buf);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                /* Rellenar defaults para slots no-asignados (solo
+                   los últimos n_defaults parámetros fijos). */
+                int min_aridad_fija = aridad_fija - fn->n_defaults;
+                for (int i = 0; i < aridad_fija; i++) {
+                    if (params_asignados[i]) continue;
+                    if (i < min_aridad_fija || !cl->defaults) {
+                        snprintf(err_buf, sizeof(err_buf),
+                            "ErrorDeTipo: %.*s() falta argumento '%.*s'",
+                            fn->longitud_nombre, fn->nombre,
+                            fn->long_nombres_params[i], fn->nombres_params[i]);
+                        error_match = true;
+                        break;
+                    }
+                    int def_idx = i - min_aridad_fija;
+                    params_finales[i] = valor_clonar(&cl->defaults[def_idx]);
+                    params_asignados[i] = true;
+                }
+                if (error_match) {
+                    for (int j = 0; j < aridad; j++) {
+                        if (params_asignados[j]) valor_destruir(&params_finales[j]);
+                    }
+                    vm->tope = base_nuevo;
+                    valor_destruir(&callee);
+                    VM_ERROR("%s", err_buf);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                /* Si tiene *resto, el slot estrella va a recibir tupla vacía. */
+                if (fn->tiene_estrella) {
+                    Tupla *t = tupla_nueva(0);
+                    if (!t) {
+                        for (int j = 0; j < aridad; j++) {
+                            if (params_asignados[j]) valor_destruir(&params_finales[j]);
+                        }
+                        vm->tope = base_nuevo;
+                        valor_destruir(&callee);
+                        VM_ERROR("memoria insuficiente al crear *resto");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    params_finales[aridad - 1] = valor_tupla(t);
+                    params_asignados[aridad - 1] = true;
+                }
+                /* Stack: limpiar lo que había desde base_nuevo+1 al
+                   tope (callee se queda) y empujar params_finales. */
+                vm->tope = base_nuevo + 1;
+                for (int i = 0; i < aridad; i++) {
+                    empujar(vm, params_finales[i]);
+                }
+                /* Despachar usando ejecutar_llamar_bc con n_args = aridad
+                   (sin defaults ni estrella, ya está todo asignado). */
+                /* Necesitamos saltarse el path de defaults y estrella de
+                   ejecutar_llamar_bc — pero como n_args == aridad y
+                   tiene_estrella ya colocó tupla, ejecutar_llamar_bc
+                   detectará tiene_estrella y recolectará tupla vacía.
+                   Para evitar esa segunda pasada, temporalmente
+                   limpiamos tiene_estrella... no, mejor: hacemos el
+                   despacho manual a un frame. */
+                if (vm->n_frames >= VM_FRAMES_MAX) {
+                    VM_ERROR("desbordamiento de pila de llamadas");
+                    return VM_ERROR_RUNTIME;
+                }
+                CallFrame *nf = &vm->frames[vm->n_frames++];
+                nf->chunk = &fn->chunk;
+                nf->ip = fn->chunk.codigo;
+                nf->base_pila = base_nuevo;
+                nf->closure = cl;
+                nf->es_constructor = false;
+                nf->modulo_en_carga = NULL;
+                nf->globales_pre_modulo = NULL;
+                nf->chunk_modulo = NULL;
+                if (cl->globales_definicion != NULL
+                    && cl->globales_definicion != vm->globales) {
+                    nf->globales_pre_llamada = vm->globales;
+                    vm->globales = cl->globales_definicion;
+                } else {
+                    nf->globales_pre_llamada = NULL;
+                }
+                nf->modulo_binding_name = NULL;
+                nf->modulo_binding_len = 0;
+                nf->desde_import = false;
+                frame = nf;
+                break;
+            }
             case OP_LLAMAR_SPREAD: {
                 /* TOS = lista args; bajo = callee. Empujamos cada
                    elemento de la lista al stack y despachamos como
