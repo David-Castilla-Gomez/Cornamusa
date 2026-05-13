@@ -1,0 +1,61 @@
+# Cornamusa stdlib: proceso.cor
+#
+# Lanzar procesos externos y capturar su output. Wrap sobre el built-in
+# `proceso_ejecutar(programa, argv)`. Cross-platform: Windows
+# (CreateProcess) y POSIX (fork + execvp). Bloquea hasta que el
+# proceso termine.
+#
+# Uso:
+#   importar proceso
+#
+#   # Ejecutar comando y capturar salida
+#   r = proceso.ejecutar("git", "status", "--short")
+#   imprimir(r["stdout"])
+#   imprimir("exit code:", r["codigo"])
+#
+#   # Captura solo stdout (atajo)
+#   salida = proceso.capturar("git", "log", "-1", "--format=%s")
+#   imprimir(salida)
+#
+# Limitaciones v1.27:
+#   - Sin stdin interactivo. El proceso hereda stdin del padre.
+#   - Sin timeout: bloquea hasta que el proceso termine.
+#   - Sin env vars personalizadas. El child hereda el entorno del padre.
+#   - Sin cambio de directorio de trabajo.
+#   - Salida limitada a 10 MB por stream (stdout, stderr cada uno).
+
+
+# Ejecuta `programa` con los args extra. Retorna un diccionario:
+#   { "stdout": cadena, "stderr": cadena, "codigo": entero }
+#
+# `codigo` es el exit code del proceso. En POSIX, si el proceso
+# terminó por señal, codigo = 128 + numero_señal. En Windows es el
+# valor pasado a ExitProcess() (32 bits).
+funcion ejecutar(programa, *args):
+    # argv en convención execvp: argv[0] = nombre del programa.
+    argv = [programa]
+    para a en args:
+        agregar(argv, cadena(a))
+    fin para
+    retornar proceso_ejecutar(programa, argv)
+fin funcion
+
+
+# Atajo: solo stdout como cadena. Si el proceso falla (exit != 0)
+# lanza ErrorDeSistema con clase y stderr embedded.
+funcion capturar(programa, *args):
+    r = ejecutar(programa, *args)
+    si r["codigo"] != 0:
+        lanzar ErrorDeSistema(
+            "proceso fallo (codigo " + cadena(r["codigo"]) + "): "
+            + r["stderr"])
+    fin si
+    retornar r["stdout"]
+fin funcion
+
+
+# Atajo: solo retorna el exit code, descartando output. Útil para
+# probar si un comando funciona sin importar qué imprime.
+funcion codigo(programa, *args):
+    retornar ejecutar(programa, *args)["codigo"]
+fin funcion

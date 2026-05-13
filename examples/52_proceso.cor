@@ -1,0 +1,75 @@
+# Ejemplo 52 — Stdlib `proceso` (v1.27)
+#
+# Lanza procesos externos cross-platform: Windows (CreateProcess) y
+# POSIX (fork + execvp). Captura stdout, stderr y exit code.
+#
+# Este ejemplo es Windows-flavored (usa `cmd /c`). En POSIX habría
+# que cambiar a `sh -c`.
+
+importar proceso
+
+imprimir("=== stdlib proceso (v1.27) ===")
+imprimir("")
+
+# ─── Caso 1: ejecutar y leer el dict ───
+imprimir("1) ejecutar comando simple")
+r = proceso.ejecutar("cmd", "/c", "echo", "hola")
+imprimir("  stdout:", r["stdout"])
+imprimir("  stderr:", r["stderr"])
+imprimir("  codigo:", r["codigo"])
+imprimir("")
+
+# ─── Caso 2: capturar stdout solo ───
+imprimir("2) atajo capturar()")
+texto = proceso.capturar("cmd", "/c", "echo", "atajo")
+imprimir("  capturado:", texto)
+imprimir("")
+
+# ─── Caso 3: exit code ───
+imprimir("3) exit code")
+c0 = proceso.codigo("cmd", "/c", "exit", "0")
+c5 = proceso.codigo("cmd", "/c", "exit", "5")
+imprimir("  exit 0 →", c0)
+imprimir("  exit 5 →", c5)
+imprimir("")
+
+# ─── Caso 4: comando con multiples args ───
+imprimir("4) listar archivos (cmd dir)")
+r = proceso.ejecutar("cmd", "/c", "dir", "/B", "C:\\Windows\\System32\\drivers\\etc")
+# stdout tiene los nombres, uno por linea. Mostramos las 3 primeras.
+lineas = []
+actual = ""
+i = 0
+n = longitud(r["stdout"])
+mientras i < n:
+    c = r["stdout"][i]
+    si c == "\n":
+        agregar(lineas, actual)
+        actual = ""
+    sino:
+        actual = actual + c
+    fin si
+    i = i + 1
+fin mientras
+imprimir("  cuenta:", longitud(lineas))
+si longitud(lineas) > 0:
+    imprimir("  primer archivo:", lineas[0])
+fin si
+imprimir("")
+
+# ─── Caso 5: errores atrapables ───
+imprimir("5) errores atrapables")
+intentar:
+    proceso.capturar("cmd", "/c", "exit", "3")
+atrapar ErrorDeSistema como e:
+    imprimir("  capturar() con exit!=0 →", cadena(e))
+fin intentar
+
+intentar:
+    proceso.ejecutar("no_existe_xyz_99999")
+atrapar ErrorDeSistema como e:
+    imprimir("  programa inexistente →", cadena(e))
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 52 ===")

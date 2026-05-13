@@ -1182,6 +1182,9 @@ DEFINIR_EXC_NATIVA(ErrorDeValor)
 DEFINIR_EXC_NATIVA(ErrorDeIndice)
 DEFINIR_EXC_NATIVA(ErrorDeClave)
 DEFINIR_EXC_NATIVA(ErrorDeNombre)
+/* v1.27: para stdlib `proceso` (y futura `red`, `archivos` avanzado). */
+DEFINIR_EXC_NATIVA(ErrorDeSistema)
+DEFINIR_EXC_NATIVA(ErrorDeIO)
 
 #undef DEFINIR_EXC_NATIVA
 
@@ -2655,6 +2658,108 @@ static Valor nativa_tiempo_formato(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Proceso (v1.27) — built-in primitivo. El módulo `proceso.cor` envuelve.
+ * ────────────────────────────────────────────────────────────────── */
+
+#include "proceso.h"
+
+static Valor nativa_proceso_ejecutar(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: proceso_ejecutar(programa, argv) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: programa debe ser cadena");
+    }
+    if (args[1].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: argv debe ser lista");
+    }
+    /* Construir argv C: nombre_programa + lista cornamusa + NULL.
+       Cada elemento debe ser cadena. */
+    Lista *l = args[1].como.lista;
+    int n_extra = l->cuenta;
+    /* argv tendrá: programa, args[0..n_extra-1], NULL */
+    int argv_sz = 1 + n_extra + 1;
+    char **buf = (char **)malloc(sizeof(char *) * (size_t)argv_sz);
+    if (!buf) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    /* Duplicar cada cadena para asegurar terminación NUL. */
+    /* programa: */
+    {
+        const char *t = args[0].como.cadena.texto;
+        int len = args[0].como.cadena.longitud;
+        char *copia = (char *)malloc((size_t)len + 1);
+        if (!copia) { free(buf); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+        memcpy(copia, t, (size_t)len);
+        copia[len] = '\0';
+        buf[0] = copia;
+    }
+    int construidos = 1;
+    for (int i = 0; i < n_extra; i++) {
+        if (l->elementos[i].tipo != VAL_CADENA) {
+            for (int k = 0; k < construidos; k++) free(buf[k]);
+            free(buf);
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: argv[%d] debe ser cadena (no '%s')",
+                i, valor_nombre_tipo(&l->elementos[i]));
+        }
+        const char *t = l->elementos[i].como.cadena.texto;
+        int len = l->elementos[i].como.cadena.longitud;
+        char *copia = (char *)malloc((size_t)len + 1);
+        if (!copia) {
+            for (int k = 0; k < construidos; k++) free(buf[k]);
+            free(buf);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        memcpy(copia, t, (size_t)len);
+        copia[len] = '\0';
+        buf[1 + i] = copia;
+        construidos++;
+    }
+    buf[1 + n_extra] = NULL;
+
+    ProcesoResultado pr;
+    int rc = proceso_ejecutar_c(buf[0], (const char *const *)buf, &pr);
+
+    /* Limpiar argv. */
+    for (int i = 0; i < 1 + n_extra; i++) free(buf[i]);
+    free(buf);
+
+    if (rc != 0) {
+        Valor v_err = error_nativa(err, linea, columna,
+            "ErrorDeSistema: proceso_ejecutar fallo (%s)", pr.mensaje_error);
+        free(pr.stdout_buf); free(pr.stderr_buf);
+        return v_err;
+    }
+
+    /* Construir dict {stdout, stderr, codigo}. */
+    Diccionario *d = dicc_nuevo();
+    if (!d) {
+        free(pr.stdout_buf); free(pr.stderr_buf);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor k_out = valor_cadena_duplicar("stdout", 6);
+    Valor v_out = valor_cadena_duplicar(pr.stdout_buf ? pr.stdout_buf : "",
+                                          pr.stdout_len);
+    dicc_asignar(d, k_out, v_out);
+    Valor k_err = valor_cadena_duplicar("stderr", 6);
+    Valor v_se = valor_cadena_duplicar(pr.stderr_buf ? pr.stderr_buf : "",
+                                          pr.stderr_len);
+    dicc_asignar(d, k_err, v_se);
+    Valor k_cod = valor_cadena_duplicar("codigo", 6);
+    Valor v_cod = valor_entero_de_i64((int64_t)pr.exit_codigo);
+    dicc_asignar(d, k_cod, v_cod);
+
+    free(pr.stdout_buf);
+    free(pr.stderr_buf);
+    return valor_diccionario(d);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Azar (v1.26) — built-ins primitivos. El módulo `azar.cor` los envuelve.
  * ────────────────────────────────────────────────────────────────── */
 
@@ -2750,6 +2855,8 @@ static const EntradaNativa NATIVAS[] = {
     {"ErrorDeIndice",   13, nativa_exc_ErrorDeIndice},
     {"ErrorDeClave",    12, nativa_exc_ErrorDeClave},
     {"ErrorDeNombre",   13, nativa_exc_ErrorDeNombre},
+    {"ErrorDeSistema",  14, nativa_exc_ErrorDeSistema},
+    {"ErrorDeIO",       9,  nativa_exc_ErrorDeIO},
     /* GC manual (v0.8.1). */
     {"recolectar",      10, nativa_recolectar},
     /* Sistema (v0.9.2). */
@@ -2780,6 +2887,8 @@ static const EntradaNativa NATIVAS[] = {
     {"azar_decimal",        12, nativa_azar_decimal},
     {"azar_entero",         11, nativa_azar_entero},
     {"azar_semilla",        12, nativa_azar_semilla},
+    /* Proceso (v1.27). */
+    {"proceso_ejecutar",    16, nativa_proceso_ejecutar},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

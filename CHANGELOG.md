@@ -6,6 +6,105 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.27.0] — 2026-05-13 — Stdlib `proceso` (lanzar procesos externos)
+
+Segundo módulo de **Fase 2 — stdlib esencial**. `proceso` permite
+ejecutar comandos externos y capturar su stdout, stderr y exit code.
+Implementación cross-platform: Windows (`CreateProcess` + pipes
+anónimos) y POSIX (`fork`/`execvp` + pipes + `select` para evitar
+deadlock).
+
+### API del módulo `proceso`
+
+```cornamusa
+importar proceso
+
+# Ejecutar y leer todo el resultado
+r = proceso.ejecutar("git", "status", "--short")
+imprimir(r["stdout"])
+imprimir("código:", r["codigo"])
+
+# Atajo: solo stdout (si exit != 0 lanza ErrorDeSistema)
+texto = proceso.capturar("cmd", "/c", "echo", "hola")
+
+# Atajo: solo exit code (descarta output)
+c = proceso.codigo("git", "rev-parse", "--is-inside-work-tree")
+```
+
+Cada función acepta `programa` + args via `*args` (recordar: trilogía
+`*/**` cerrada en v1.25).
+
+### Forma del resultado
+
+```cornamusa
+{
+    "stdout": "salida estandar del proceso\n",
+    "stderr": "salida de error\n",
+    "codigo": 0     # exit code; en POSIX, 128+N para terminación por señal N
+}
+```
+
+### Built-in primitivo
+
+`nativos.c` añade:
+- `proceso_ejecutar(programa, argv_lista)` → dict con 3 claves.
+
+argv sigue convención `execvp`: `argv[0]` es el nombre del programa
+(repetido). El módulo lo construye automáticamente.
+
+### Excepciones primitivas nuevas
+
+- `ErrorDeSistema(msg)` — para errores de proceso/red/IO.
+- `ErrorDeIO(msg)` — alias compañero (ya se atrapaba por nombre via
+  `archivos`, ahora también lanzable explícitamente).
+
+Antes solo se podía atrapar `ErrorDeIO` (el mensaje del error lo
+construía la VM con el prefijo). Ahora también se puede lanzar
+directamente: `lanzar ErrorDeSistema("conexion cerrada")`.
+
+### Implementación cross-platform
+
+[src/proceso.c](src/proceso.c) — ~320 líneas C:
+
+**Windows**:
+- Pipes anónimos via `CreatePipe` + `SetHandleInformation` para
+  hacer no-heredables los extremos de lectura del padre.
+- Línea de comando construida con escapado mínimo (solo entrecomilla
+  args con espacios/comillas), porque `cmd.exe` se confunde con
+  comillas redundantes (`cmd /c "echo" "hola"` ≠ `cmd /c echo hola`).
+- `WaitForSingleObject(INFINITE)` + `GetExitCodeProcess`.
+- Lectura secuencial stdout → stderr (aceptable para tamaños < 10 MB).
+
+**POSIX**:
+- `pipe()` + `fork()` + `dup2()` en child antes de `execvp()`.
+- Lectura concurrente con `select()` para evitar deadlock cuando el
+  child satura uno de los pipes mientras el padre lee del otro.
+- `waitpid()` + `WIFEXITED`/`WIFSIGNALED` para decodificar exit
+  status (signal terminación → exit code `128 + N`).
+
+### Limitaciones (v1.27)
+
+- **Sin stdin interactivo** — el child hereda stdin del padre.
+- **Sin timeout** — bloquea hasta que el proceso termine.
+- **Sin env vars o cwd personalizados** — hereda del padre.
+- **Output máximo: 10 MB por stream** — más allá lanza
+  `ErrorDeSistema: salida excede 10485760 bytes`.
+
+Estas limitaciones se pueden levantar en v1.27.x si surge demanda.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_proceso.c` — 8 tests portables:
+  - Forma del dict (3 claves stdout/stderr/codigo).
+  - Exit code 0 y no-0.
+  - Tipo de cada campo (cadena/cadena/entero).
+  - Programa inexistente → `ErrorDeSistema` atrapable.
+  - Tipos incorrectos de argumentos → `ErrorDeTipo`.
+- `bc_run_52_proceso` — ejecuta `examples/52_proceso.cor` (solo en
+  Windows; el ejemplo usa `cmd /c` y `dir`). Lista archivos reales
+  de `C:\Windows\System32\drivers\etc`.
+- **167/167 tests verde**.
+
 ## [1.26.0] — 2026-05-13 — Stdlib `azar` + fix `OP_LANZAR` globals
 
 Arranca **Fase 2 — stdlib esencial**. Primer módulo: `azar`, PRNG de

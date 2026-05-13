@@ -504,6 +504,22 @@ set_tests_properties(bc_run_51_azar PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 51"
 )
 
+# v1.27: stdlib `proceso` (ejecutar procesos externos).
+# El ejemplo es Windows-flavored; en POSIX habría que cambiarlo a sh.
+# Solo ejecutamos el bc_run en Windows; el unit test es portable.
+if(WIN32)
+    add_test(
+        NAME bc_run_52_proceso
+        COMMAND $<TARGET_FILE:cornamusa> --bytecode
+                ${CMAKE_SOURCE_DIR}/examples/52_proceso.cor
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+    set_tests_properties(bc_run_52_proceso PROPERTIES
+        LABELS "integracion"
+        PASS_REGULAR_EXPRESSION "fin ejemplo 52"
+    )
+endif()
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable
