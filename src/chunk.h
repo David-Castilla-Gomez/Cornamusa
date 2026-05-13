@@ -459,6 +459,10 @@ struct FuncionBC {
        recoge los args sobrantes en una tupla. `aridad` cuenta los
        fixed más el `*resto`. n_args ≥ aridad-1 es válido. */
     bool tiene_estrella;
+    /* v1.24: si tiene_doble_estrella, el ÚLTIMO parámetro recoge los
+       keyword args no-matched en un diccionario. Si también tiene
+       estrella, `*resto` está en `aridad-2` y `**kw` en `aridad-1`. */
+    bool tiene_doble_estrella;
     /* v1.23: nombres de parámetros para matching de keyword args.
        Arrays paralelos de longitud `aridad`. Duplicados en heap;
        freed en funcion_bc_liberar. NULL si no se setearon (función

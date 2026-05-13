@@ -1,0 +1,77 @@
+# Ejemplo 49 — `**kwargs` en definición (v1.24)
+#
+# `**kw` recoge en un diccionario todos los keyword arguments que no
+# coinciden con un parámetro fijo. Combina con `*args` para
+# funciones totalmente flexibles, útiles para wrappers y decoradores.
+
+imprimir("=== **kwargs en definición (v1.24) ===")
+imprimir("")
+
+# ─── Caso 1: recogida de opciones ───
+funcion api(host, **opciones):
+    s = "GET " + host
+    si "puerto" en opciones:
+        s = s + ":" + cadena(opciones["puerto"])
+    fin si
+    si "tls" en opciones y opciones["tls"]:
+        s = "https " + s
+    fin si
+    retornar s
+fin funcion
+
+imprimir("1) recoger opciones por nombre")
+imprimir(api("api.dev"))
+imprimir(api("api.dev", puerto=443, tls=verdadero))
+imprimir(api("api.dev", tls=verdadero, debug=verdadero))
+imprimir("")
+
+# ─── Caso 2: combinar *args + **kw ───
+funcion debug_call(f, *args, **kw):
+    imprimir("  -> args:", args)
+    imprimir("  -> kw:", kw)
+    retornar f(*args)
+fin funcion
+
+funcion sumar(a, b):
+    retornar a + b
+fin funcion
+
+imprimir("2) decorador-like con *args + **kw")
+r = debug_call(sumar, 5, 8, etiqueta="suma de prueba", trace=verdadero)
+imprimir("  resultado:", r)
+imprimir("")
+
+# ─── Caso 3: dict vacío cuando no hay kwargs ───
+funcion config(**opciones):
+    si longitud(opciones) == 0:
+        retornar "defaults"
+    fin si
+    retornar opciones
+fin funcion
+
+imprimir("3) dict vacío si no se pasan kwargs")
+imprimir(config())
+imprimir(config(modo="agresivo"))
+imprimir("")
+
+# ─── Caso 4: lambda con **kw ───
+imprimir("4) lambda variádica con **kw")
+con_opciones = lambda **op: cadena(longitud(op)) + " opciones"
+imprimir(con_opciones())
+imprimir(con_opciones(uno=1, dos=2, tres=3))
+imprimir("")
+
+# ─── Caso 5: errores atrapables ───
+funcion f(a):
+    retornar a
+fin funcion
+
+imprimir("5) errores atrapables")
+intentar:
+    f(a=1, no_existe=99)
+atrapar ErrorDeTipo como e:
+    imprimir("  sin **kw rechaza kw desconocido →", cadena(e))
+fin intentar
+
+imprimir("")
+imprimir("=== fin ejemplo 49 ===")

@@ -384,6 +384,7 @@ struct Parametro {
     Expr *anotacion_tipo;       /* NULL si no hay */
     Expr *valor_defecto;        /* NULL si no hay */
     bool es_estrella;           /* v1.22: `*resto` recoge args sobrantes */
+    bool es_doble_estrella;     /* v1.24: `**kw` recoge kwargs sobrantes */
     int linea, columna;
 };
 

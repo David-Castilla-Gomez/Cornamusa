@@ -710,13 +710,15 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
     Closure *cl = base_nuevo->como.closure;
     FuncionBC *fn = cl->plantilla;
 
-    /* v1.22: si la función tiene `*resto`, el último param recoge los
-       args sobrantes en tupla. `n_fijos = aridad - 1`. Aceptamos
-       n_args ≥ n_fijos. Los args [n_fijos .. n_args-1] van a la
-       tupla del slot estrella. Combinación con defaults: si faltan
-       args fijos pero hay defaults, los completamos primero. */
-    if (fn->tiene_estrella) {
-        int n_fijos = fn->aridad - 1;
+    /* v1.22/v1.24: cálculo de n_fijos según presencia de *resto / **kw.
+       Si solo `**kw`: n_fijos = aridad - 1.
+       Si `*resto` + `**kw`: n_fijos = aridad - 2.
+       Si solo `*resto`: n_fijos = aridad - 1.
+       Si ninguno: n_fijos = aridad. */
+    if (fn->tiene_estrella || fn->tiene_doble_estrella) {
+        int n_fijos = fn->aridad
+                      - (fn->tiene_estrella ? 1 : 0)
+                      - (fn->tiene_doble_estrella ? 1 : 0);
         if (n_args < n_fijos) {
             int min_aridad_fija = n_fijos - fn->n_defaults;
             if (n_args >= min_aridad_fija && cl->defaults) {
@@ -733,22 +735,42 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
                 return VM_ERROR_RUNTIME;
             }
         }
-        /* Construir tupla con los args sobrantes [n_fijos .. n_args-1]. */
-        int n_extra = n_args - n_fijos;
-        Tupla *t = tupla_nueva(n_extra);
-        if (!t) {
-            llamar_set_error(vm, frame,
-                "memoria insuficiente al recolectar *resto");
-            return VM_ERROR_RUNTIME;
+        if (fn->tiene_estrella) {
+            /* Construir tupla con los args sobrantes [n_fijos .. n_args-1]. */
+            int n_extra = n_args - n_fijos;
+            Tupla *t = tupla_nueva(n_extra);
+            if (!t) {
+                llamar_set_error(vm, frame,
+                    "memoria insuficiente al recolectar *resto");
+                return VM_ERROR_RUNTIME;
+            }
+            Valor *base_extra = base_nuevo + 1 + n_fijos;
+            for (int i = 0; i < n_extra; i++) {
+                t->elementos[i] = base_extra[i];
+            }
+            vm->tope = base_extra;
+            empujar(vm, valor_tupla(t));
+            n_args = (uint8_t)(n_fijos + 1);
+        } else {
+            /* Solo `**kw`: n_args debe ser exactamente n_fijos
+               (no aceptamos extras posicionales sin *resto). */
+            if (n_args > n_fijos) {
+                llamar_set_error(vm, frame,
+                    "ErrorDeTipo: %.*s() recibio %d argumentos, acepta %d posicionales",
+                    fn->longitud_nombre, fn->nombre, n_args, n_fijos);
+                return VM_ERROR_RUNTIME;
+            }
         }
-        /* Los args extra están en el stack: base_nuevo+1+n_fijos .. base_nuevo+n_args. */
-        Valor *base_extra = base_nuevo + 1 + n_fijos;
-        for (int i = 0; i < n_extra; i++) {
-            t->elementos[i] = base_extra[i];  /* toma posesión */
+        /* Si tiene **kw, empujar dict vacío en su slot final. */
+        if (fn->tiene_doble_estrella) {
+            Diccionario *d = dicc_nuevo();
+            if (!d) {
+                llamar_set_error(vm, frame, "memoria insuficiente para **kw");
+                return VM_ERROR_RUNTIME;
+            }
+            empujar(vm, valor_diccionario(d));
+            n_args = (uint8_t)fn->aridad;
         }
-        vm->tope = base_extra;  /* descartamos los slots ocupados por extras */
-        empujar(vm, valor_tupla(t));
-        n_args = (uint8_t)fn->aridad;
     } else if (n_args != fn->aridad) {
         /* v1.17: si faltan args y la función tiene defaults para
            ellos, los completamos. n_args debe estar en
@@ -3641,9 +3663,13 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     RAISE_OR_DIE();
                     break;
                 }
-                /* La función debe tener al menos n_pos posicionales fijos. */
-                int aridad_fija = fn->tiene_estrella ? (fn->aridad - 1) : fn->aridad;
-                if (n_pos > aridad_fija) {
+                /* aridad_fija descuenta *resto y **kw si están. */
+                int aridad_fija = fn->aridad
+                                  - (fn->tiene_estrella ? 1 : 0)
+                                  - (fn->tiene_doble_estrella ? 1 : 0);
+                /* Si tiene *resto, los posicionales sobrantes van a tupla;
+                   si no, n_pos no puede exceder aridad_fija. */
+                if (n_pos > aridad_fija && !fn->tiene_estrella) {
                     VM_ERROR(
                         "ErrorDeTipo: %.*s() recibio %d posicionales pero solo acepta %d",
                         fn->longitud_nombre, fn->nombre, n_pos, aridad_fija);
@@ -3652,7 +3678,8 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 }
                 /* Construir array de valores de tamaño `aridad` con:
                     - posicionales del stack en [0..n_pos)
-                    - kwargs matched en [n_pos..aridad)
+                    - kwargs matched en [n_pos..aridad_fija)
+                    - kwargs no-matched → dict para **kw (si existe)
                     - defaults para huecos
                    Reorganizamos en sitio cubrir cada slot. */
                 int aridad = fn->aridad;
@@ -3660,10 +3687,37 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 Valor params_finales[256];
                 bool params_asignados[256] = {0};
                 for (int i = 0; i < aridad; i++) params_finales[i] = valor_nulo();
-                /* Posicionales: ocupan los primeros n_pos slots. */
-                for (int i = 0; i < n_pos; i++) {
+                /* Si hay **kw, prepararle un dict (recibirá kwargs no-matched). */
+                Diccionario *dict_kw = NULL;
+                if (fn->tiene_doble_estrella) {
+                    dict_kw = dicc_nuevo();
+                    if (!dict_kw) {
+                        VM_ERROR("memoria insuficiente para **kw");
+                        return VM_ERROR_RUNTIME;
+                    }
+                }
+                /* Posicionales: los primeros min(n_pos, aridad_fija) llenan
+                   slots fijos; el exceso (si tiene_estrella) va a la tupla. */
+                int n_pos_fijos = n_pos < aridad_fija ? n_pos : aridad_fija;
+                for (int i = 0; i < n_pos_fijos; i++) {
                     params_finales[i] = base_nuevo[1 + i];
                     params_asignados[i] = true;
+                }
+                /* Excedentes posicionales → tupla *resto. */
+                if (fn->tiene_estrella && n_pos > aridad_fija) {
+                    int n_extra = n_pos - aridad_fija;
+                    Tupla *t = tupla_nueva(n_extra);
+                    if (!t) {
+                        if (dict_kw) dicc_liberar(dict_kw);
+                        VM_ERROR("memoria insuficiente para *resto");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    for (int i = 0; i < n_extra; i++) {
+                        t->elementos[i] = base_nuevo[1 + aridad_fija + i];
+                    }
+                    int slot_estrella = fn->tiene_doble_estrella ? (aridad - 2) : (aridad - 1);
+                    params_finales[slot_estrella] = valor_tupla(t);
+                    params_asignados[slot_estrella] = true;
                 }
                 /* Kwargs: para cada par (key, val) en stack. */
                 bool error_match = false;
@@ -3690,6 +3744,17 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                         }
                     }
                     if (slot < 0) {
+                        if (fn->tiene_doble_estrella) {
+                            /* No matched a param fijo → al dict de **kw.
+                               dicc_asignar toma posesión de clave/valor. */
+                            if (!dicc_asignar(dict_kw, key, val)) {
+                                snprintf(err_buf, sizeof(err_buf),
+                                    "memoria insuficiente al rellenar **kw");
+                                error_match = true;
+                                break;
+                            }
+                            continue;
+                        }
                         snprintf(err_buf, sizeof(err_buf),
                             "ErrorDeTipo: %.*s() no acepta keyword '%.*s'",
                             fn->longitud_nombre, fn->nombre,
@@ -3721,6 +3786,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     for (int j = 0; j < aridad; j++) {
                         if (params_asignados[j]) valor_destruir(&params_finales[j]);
                     }
+                    if (dict_kw) dicc_liberar(dict_kw);
                     /* Los slots no consumidos del stack: liberar. */
                     vm->tope = base_nuevo;
                     valor_destruir(&callee);
@@ -3749,26 +3815,36 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     for (int j = 0; j < aridad; j++) {
                         if (params_asignados[j]) valor_destruir(&params_finales[j]);
                     }
+                    if (dict_kw) dicc_liberar(dict_kw);
                     vm->tope = base_nuevo;
                     valor_destruir(&callee);
                     VM_ERROR("%s", err_buf);
                     RAISE_OR_DIE();
                     break;
                 }
-                /* Si tiene *resto, el slot estrella va a recibir tupla vacía. */
+                /* Si tiene *resto y no se asignó arriba: tupla vacía. */
                 if (fn->tiene_estrella) {
-                    Tupla *t = tupla_nueva(0);
-                    if (!t) {
-                        for (int j = 0; j < aridad; j++) {
-                            if (params_asignados[j]) valor_destruir(&params_finales[j]);
+                    int slot_estrella = fn->tiene_doble_estrella ? (aridad - 2) : (aridad - 1);
+                    if (!params_asignados[slot_estrella]) {
+                        Tupla *t = tupla_nueva(0);
+                        if (!t) {
+                            for (int j = 0; j < aridad; j++) {
+                                if (params_asignados[j]) valor_destruir(&params_finales[j]);
+                            }
+                            if (dict_kw) dicc_liberar(dict_kw);
+                            vm->tope = base_nuevo;
+                            valor_destruir(&callee);
+                            VM_ERROR("memoria insuficiente al crear *resto");
+                            return VM_ERROR_RUNTIME;
                         }
-                        vm->tope = base_nuevo;
-                        valor_destruir(&callee);
-                        VM_ERROR("memoria insuficiente al crear *resto");
-                        return VM_ERROR_RUNTIME;
+                        params_finales[slot_estrella] = valor_tupla(t);
+                        params_asignados[slot_estrella] = true;
                     }
-                    params_finales[aridad - 1] = valor_tupla(t);
+                }
+                if (fn->tiene_doble_estrella) {
+                    params_finales[aridad - 1] = valor_diccionario(dict_kw);
                     params_asignados[aridad - 1] = true;
+                    dict_kw = NULL;
                 }
                 /* Stack: limpiar lo que había desde base_nuevo+1 al
                    tope (callee se queda) y empujar params_finales. */

@@ -6,6 +6,98 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.24.0] — 2026-05-13 — `**kwargs` en definición
+
+Parámetros `**kw` recogen los keyword arguments sobrantes en un
+diccionario. Combinable con `*args` para funciones totalmente
+flexibles — ideal para wrappers y decoradores.
+
+### Sintaxis
+
+```cornamusa
+funcion api(host, **opciones):
+    # `opciones` es un dict con los kwargs no-fijos
+    si "tls" en opciones y opciones["tls"]:
+        ...
+    fin si
+fin funcion
+
+api("api.dev")                                  # opciones = {}
+api("api.dev", puerto=443, tls=verdadero)       # opciones = {"puerto": 443, "tls": verdadero}
+```
+
+### Combinable con `*args`
+
+```cornamusa
+funcion debug_call(f, *args, **kw):
+    imprimir("args:", args, "  kw:", kw)
+    retornar f(*args)
+fin funcion
+
+debug_call(sumar, 5, 8, etiqueta="suma", trace=verdadero)
+# args = (5, 8)
+# kw   = {"etiqueta": "suma", "trace": verdadero}
+```
+
+### Orden de parámetros
+
+`fijos → *args → **kw`. El compilador rechaza otros órdenes:
+
+```cornamusa
+funcion mal(**kw, a):  # ErrorDeCompilacion: no puede haber parámetros tras '**kw'
+funcion mal(*args, b, **kw):  # ErrorDeCompilacion: *resto debe ir antes de **kw
+```
+
+### Errores atrapables (regresión)
+
+Una función SIN `**kw` sigue rechazando keywords desconocidos:
+
+```cornamusa
+funcion f(a):
+    retornar a
+fin funcion
+
+intentar:
+    f(a=1, zorro=5)
+atrapar ErrorDeTipo como e:
+    imprimir(e)  # ErrorDeTipo: f() no acepta keyword 'zorro'
+fin intentar
+```
+
+### Lambdas
+
+```cornamusa
+con_opciones = lambda **op: cadena(longitud(op)) + " opciones"
+con_opciones(a=1, b=2)   # "2 opciones"
+```
+
+### Implementación
+
+`FuncionBC` añade `bool tiene_doble_estrella` y `Parametro` añade
+`bool es_doble_estrella`. El parser reconoce `**ident` en defs de
+`funcion` y `lambda` (token `TT_DOBLE_ASTERISCO` ya existía para `**`).
+
+`ejecutar_llamar_bc` y `OP_LLAMAR_KW` se generalizaron:
+
+- `aridad_fija = aridad - (tiene_estrella ? 1 : 0) - (tiene_doble_estrella ? 1 : 0)`.
+- Posicionales excedentes → tupla `*args` (si existe).
+- Kwargs no-matched contra params fijos → `**kw` (si existe).
+- Si no hay kwargs explícitos pero la función tiene `**kw`, su slot
+  recibe dict vacío.
+
+### Limitaciones (v1.24)
+
+- **Spread `**dict`** en llamadas viene en v1.25.
+- **No combinable con defaults** todavía (`f(a, b=1, **kw)` rechazado
+  por compilador). Se levantará en v1.25 al añadir el spread.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_kwkw.c` — 9 tests cubriendo recogida,
+  combinación con *args, dict vacío, regresión sin **kw, lambda.
+- `bc_run_49_kwkw` — ejecuta `examples/49_kwkw.cor`.
+- **158/158 tests verde**.
+
 ## [1.23.0] — 2026-05-13 — Keyword arguments
 
 Pasar argumentos por **nombre** en llamadas: `f(x=1, y=2)`. Permite

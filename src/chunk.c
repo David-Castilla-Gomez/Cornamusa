@@ -219,6 +219,7 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->inline_desc.ctor_arg2_attr_otro = NULL;
     f->n_defaults = 0;     /* v1.17: el compilador lo setea si hay defaults */
     f->tiene_estrella = false;  /* v1.22: lo setea el compilador si hay *resto */
+    f->tiene_doble_estrella = false;  /* v1.24: setea si hay **kw */
     f->nombres_params = NULL;       /* v1.23: setea el compilador */
     f->long_nombres_params = NULL;
     return f;

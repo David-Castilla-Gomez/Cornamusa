@@ -1619,13 +1619,25 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
     int capacidad = 0;
 
     bool ya_visto_estrella = false;
+    bool ya_visto_doble_estrella = false;
     if (!check(p, TT_PARENT_DER)) {
         do {
             /* v1.22: `*ident` → parámetro variádico que recoge args sobrantes
-               en una tupla. Solo se permite uno y debe estar tras los
-               posicionales (puede haber defaults antes pero no después). */
+               en una tupla. Solo se permite uno.
+               v1.24: `**ident` → recoge keyword args sobrantes en dict.
+               Debe ser el último parámetro. */
             bool es_estrella = false;
-            if (check(p, TT_ASTERISCO)) {
+            bool es_doble_estrella = false;
+            if (ya_visto_doble_estrella) {
+                error_en(p, &p->actual,
+                    "no puede haber parámetros tras '**kw'");
+                return false;
+            }
+            if (check(p, TT_DOBLE_ASTERISCO)) {
+                avanzar(p);
+                es_doble_estrella = true;
+                ya_visto_doble_estrella = true;
+            } else if (check(p, TT_ASTERISCO)) {
                 avanzar(p);
                 es_estrella = true;
                 if (ya_visto_estrella) {
@@ -1652,9 +1664,9 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
                 if (anot_tipo == NULL) return false;
             }
             if (consumir_si(p, TT_ASIGNAR)) {
-                if (es_estrella) {
+                if (es_estrella || es_doble_estrella) {
                     error_en(p, &p->actual,
-                        "parámetro '*resto' no puede tener valor por defecto");
+                        "parámetro variádico no puede tener valor por defecto");
                     return false;
                 }
                 /* Valor por defecto. */
@@ -1675,6 +1687,7 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
             params[n].anotacion_tipo = anot_tipo;
             params[n].valor_defecto = valor_defecto;
             params[n].es_estrella = es_estrella;
+            params[n].es_doble_estrella = es_doble_estrella;
             params[n].linea = t_nombre.linea;
             params[n].columna = t_nombre.columna;
             n++;
@@ -1818,10 +1831,21 @@ static Expr *parsear_lambda(Parser *p) {
        termina la lista de parámetros. Solo `= valor_defecto` opcional.
        v1.22: `*resto` también permitido aquí. */
     bool ya_visto_estrella = false;
+    bool ya_visto_doble_estrella = false;
     if (!check(p, TT_DOS_PUNTOS)) {
         do {
             bool es_estrella = false;
-            if (check(p, TT_ASTERISCO)) {
+            bool es_doble_estrella = false;
+            if (ya_visto_doble_estrella) {
+                error_en(p, &p->actual,
+                    "no puede haber parámetros tras '**kw' en lambda");
+                return NULL;
+            }
+            if (check(p, TT_DOBLE_ASTERISCO)) {
+                avanzar(p);
+                es_doble_estrella = true;
+                ya_visto_doble_estrella = true;
+            } else if (check(p, TT_ASTERISCO)) {
                 avanzar(p);
                 es_estrella = true;
                 if (ya_visto_estrella) {
@@ -1842,9 +1866,9 @@ static Expr *parsear_lambda(Parser *p) {
             Expr *anot_tipo = NULL;  /* Lambda no admite anotaciones. */
             Expr *valor_defecto = NULL;
             if (consumir_si(p, TT_ASIGNAR)) {
-                if (es_estrella) {
+                if (es_estrella || es_doble_estrella) {
                     error_en(p, &p->actual,
-                        "'*resto' no puede tener defecto");
+                        "variádicos no admiten defecto");
                     return NULL;
                 }
                 valor_defecto = parser_parsear_expr(p);
@@ -1865,6 +1889,7 @@ static Expr *parsear_lambda(Parser *p) {
             params[n].anotacion_tipo = anot_tipo;
             params[n].valor_defecto = valor_defecto;
             params[n].es_estrella = es_estrella;
+            params[n].es_doble_estrella = es_doble_estrella;
             params[n].linea = t_nombre.linea;
             params[n].columna = t_nombre.columna;
             n++;

@@ -831,18 +831,20 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             int n_params = e->como.lambda.n_parametros;
             Parametro *params = e->como.lambda.parametros;
             /* v1.17: contar defaults y validar que estén en cola.
-               v1.22: detectar `*resto` (último param). */
+               v1.22: detectar `*resto`. v1.24: detectar `**kw`. */
             int n_defaults_lam = 0;
             bool vio_default = false;
             bool tiene_estrella_lam = false;
+            bool tiene_doble_estrella_lam = false;
+            int idx_doble_lam = -1;
+            int idx_estrella_lam = -1;
             for (int i = 0; i < n_params; i++) {
-                if (params[i].es_estrella) {
-                    if (i != n_params - 1) {
-                        error_compilacion(c, e->linea, e->columna,
-                            "'*resto' debe ser el ultimo parametro");
-                        return false;
-                    }
+                if (params[i].es_doble_estrella) {
+                    tiene_doble_estrella_lam = true;
+                    idx_doble_lam = i;
+                } else if (params[i].es_estrella) {
                     tiene_estrella_lam = true;
+                    idx_estrella_lam = i;
                 } else if (params[i].valor_defecto != NULL) {
                     vio_default = true;
                     n_defaults_lam++;
@@ -852,9 +854,22 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     return false;
                 }
             }
-            if (tiene_estrella_lam && n_defaults_lam > 0) {
+            if (tiene_doble_estrella_lam && idx_doble_lam != n_params - 1) {
                 error_compilacion(c, e->linea, e->columna,
-                    "'*resto' no se combina con defaults en v1.22");
+                    "'**kw' debe ser el ultimo parametro");
+                return false;
+            }
+            if (tiene_estrella_lam) {
+                int esperado = tiene_doble_estrella_lam ? n_params - 2 : n_params - 1;
+                if (idx_estrella_lam != esperado) {
+                    error_compilacion(c, e->linea, e->columna,
+                        "'*resto' debe ir justo antes de '**kw' o ser el ultimo");
+                    return false;
+                }
+            }
+            if ((tiene_estrella_lam || tiene_doble_estrella_lam) && n_defaults_lam > 0) {
+                error_compilacion(c, e->linea, e->columna,
+                    "variádicos no se combinan con defaults en v1.24");
                 return false;
             }
 
@@ -889,6 +904,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             /* v1.17: registrar n_defaults antes de promover a constante. */
             fn->n_defaults = n_defaults_lam;
             fn->tiene_estrella = tiene_estrella_lam;
+            fn->tiene_doble_estrella = tiene_doble_estrella_lam;
             /* v1.23: duplicar nombres de params (lambda también soporta kwargs). */
             if (n_params > 0) {
                 fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
@@ -2727,21 +2743,32 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     int n_params = s->como.funcion.n_parametros;
     Parametro *params = s->como.funcion.parametros;
 
-    /* v1.17: validar defaults — solo permitidos en la cola. Contar n_defaults. */
-    /* v1.22: si hay `*resto`, debe ser el ÚLTIMO parámetro y no
-       puede combinarse con defaults (limitación de v1.22; kwargs en
-       v1.23 lo desbloqueará). */
+    /* v1.17: validar defaults — solo permitidos en la cola. Contar n_defaults.
+       v1.22: `*resto` debe ser el último (o penúltimo si hay `**kw`).
+       v1.24: `**kw` SIEMPRE debe ser el último. */
     int n_defaults = 0;
     bool vio_default = false;
     bool tiene_estrella = false;
+    bool tiene_doble_estrella = false;
+    int idx_doble = -1;
+    int idx_estrella = -1;
     for (int i = 0; i < n_params; i++) {
-        if (params[i].es_estrella) {
-            if (i != n_params - 1) {
+        if (params[i].es_doble_estrella) {
+            if (tiene_doble_estrella) {
                 error_compilacion(c, s->linea, s->columna,
-                    "'*resto' debe ser el ultimo parametro");
+                    "solo se permite un '**kw'");
+                return false;
+            }
+            tiene_doble_estrella = true;
+            idx_doble = i;
+        } else if (params[i].es_estrella) {
+            if (tiene_estrella) {
+                error_compilacion(c, s->linea, s->columna,
+                    "solo se permite un '*resto'");
                 return false;
             }
             tiene_estrella = true;
+            idx_estrella = i;
         } else if (params[i].valor_defecto != NULL) {
             vio_default = true;
             n_defaults++;
@@ -2751,9 +2778,22 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
             return false;
         }
     }
-    if (tiene_estrella && n_defaults > 0) {
+    if (tiene_doble_estrella && idx_doble != n_params - 1) {
         error_compilacion(c, s->linea, s->columna,
-            "'*resto' no se combina con valores por defecto en v1.22");
+            "'**kw' debe ser el ultimo parametro");
+        return false;
+    }
+    if (tiene_estrella) {
+        int esperado = tiene_doble_estrella ? n_params - 2 : n_params - 1;
+        if (idx_estrella != esperado) {
+            error_compilacion(c, s->linea, s->columna,
+                "'*resto' debe ir justo antes de '**kw' o ser el ultimo");
+            return false;
+        }
+    }
+    if ((tiene_estrella || tiene_doble_estrella) && n_defaults > 0) {
+        error_compilacion(c, s->linea, s->columna,
+            "variádicos no se combinan con defaults (v1.24)");
         return false;
     }
 
@@ -2803,6 +2843,8 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     fn->n_defaults = n_defaults;
     /* v1.22: registrar si tiene `*resto`. */
     fn->tiene_estrella = tiene_estrella;
+    /* v1.24: registrar si tiene `**kw`. */
+    fn->tiene_doble_estrella = tiene_doble_estrella;
     /* v1.23: duplicar nombres de parámetros para matching de kwargs. */
     if (n_params > 0) {
         fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
