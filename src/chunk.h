@@ -170,6 +170,18 @@ typedef enum {
        rellena defaults para los no-cubiertos. */
     OP_LLAMAR_KW,
 
+    /* v1.25: llamadas con `**dict` spread o mezclas runtime.
+       OP_DICC_AGREGAR_PAR — TOS=valor, debajo=clave, debajo=dict.
+                              Asigna dict[clave]=valor (sin pop de dict).
+       OP_DICC_EXTENDER    — TOS=dict_otro, debajo=dict. Merge claves
+                              de otro en éste; pop ambos? — pop solo
+                              dict_otro, deja dict en TOS.
+       OP_LLAMAR_KW_DICT   — TOS=dict_kw, debajo n_pos posicionales,
+                              debajo callee. Operando: [n_pos]. */
+    OP_DICC_AGREGAR_PAR,
+    OP_DICC_EXTENDER,
+    OP_LLAMAR_KW_DICT,
+
     /* ---- Closures (v0.6.2) ---- */
     OP_CLOSURE,                 /* [byte fn_idx] [n_upvalues * (is_local, index)] */
     OP_OBTENER_UPVALUE,         /* [byte slot] */

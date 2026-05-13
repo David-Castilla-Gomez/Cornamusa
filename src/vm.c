@@ -822,6 +822,217 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
     return VM_OK;
 }
 
+/*
+ * v1.23: helper para llamadas con keyword arguments.
+ * Asume stack: [..., callee, pos0..n_pos-1, key0, val0, key1, val1, ..., (key,val)*n_kw-1].
+ * Hace matching kw→param, valida, rellena defaults, recolecta *resto/**kw,
+ * y crea el CallFrame nuevo (avanza *frame_inout).
+ * En error: deja vm->error.tuvo_error y retorna VM_ERROR_RUNTIME — el caller
+ * decide si RAISE_OR_DIE o terminar.
+ */
+static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
+                                       Valor *base_nuevo,
+                                       uint8_t n_pos, uint8_t n_kw) {
+    CallFrame *frame = *frame_inout;
+    Valor callee = *base_nuevo;
+    if (callee.tipo != VAL_FUNCION_BC) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: keyword args solo soportados para funciones bytecode (no '%s')",
+            valor_nombre_tipo(&callee));
+        return VM_ERROR_RUNTIME;
+    }
+    Closure *cl = callee.como.closure;
+    FuncionBC *fn = cl->plantilla;
+    if (!fn->nombres_params) {
+        llamar_set_error(vm, frame,
+            "ErrorInterno: funcion sin metadata de nombres de parametros");
+        return VM_ERROR_RUNTIME;
+    }
+    int aridad_fija = fn->aridad
+                      - (fn->tiene_estrella ? 1 : 0)
+                      - (fn->tiene_doble_estrella ? 1 : 0);
+    if (n_pos > aridad_fija && !fn->tiene_estrella) {
+        llamar_set_error(vm, frame,
+            "ErrorDeTipo: %.*s() recibio %d posicionales pero solo acepta %d",
+            fn->longitud_nombre, fn->nombre, n_pos, aridad_fija);
+        return VM_ERROR_RUNTIME;
+    }
+    int aridad = fn->aridad;
+    Valor params_finales[256];
+    bool params_asignados[256] = {0};
+    for (int i = 0; i < aridad; i++) params_finales[i] = valor_nulo();
+    Diccionario *dict_kw = NULL;
+    if (fn->tiene_doble_estrella) {
+        dict_kw = dicc_nuevo();
+        if (!dict_kw) {
+            llamar_set_error(vm, frame, "memoria insuficiente para **kw");
+            return VM_ERROR_RUNTIME;
+        }
+    }
+    int n_pos_fijos = n_pos < aridad_fija ? n_pos : aridad_fija;
+    for (int i = 0; i < n_pos_fijos; i++) {
+        params_finales[i] = base_nuevo[1 + i];
+        params_asignados[i] = true;
+    }
+    if (fn->tiene_estrella && n_pos > aridad_fija) {
+        int n_extra = n_pos - aridad_fija;
+        Tupla *t = tupla_nueva(n_extra);
+        if (!t) {
+            if (dict_kw) dicc_liberar(dict_kw);
+            llamar_set_error(vm, frame, "memoria insuficiente para *resto");
+            return VM_ERROR_RUNTIME;
+        }
+        for (int i = 0; i < n_extra; i++) {
+            t->elementos[i] = base_nuevo[1 + aridad_fija + i];
+        }
+        int slot_estrella = fn->tiene_doble_estrella ? (aridad - 2) : (aridad - 1);
+        params_finales[slot_estrella] = valor_tupla(t);
+        params_asignados[slot_estrella] = true;
+    }
+    bool error_match = false;
+    char err_buf[256] = {0};
+    for (int i = 0; i < n_kw; i++) {
+        Valor *par = base_nuevo + 1 + n_pos + 2 * i;
+        Valor key = par[0];
+        Valor val = par[1];
+        if (key.tipo != VAL_CADENA) {
+            snprintf(err_buf, sizeof(err_buf),
+                "ErrorDeTipo: clave de keyword arg debe ser cadena (no '%s')",
+                valor_nombre_tipo(&key));
+            error_match = true;
+            break;
+        }
+        int slot = -1;
+        for (int j = 0; j < aridad_fija; j++) {
+            if (fn->long_nombres_params[j] == key.como.cadena.longitud
+                && memcmp(fn->nombres_params[j],
+                           key.como.cadena.texto,
+                           (size_t)key.como.cadena.longitud) == 0) {
+                slot = j;
+                break;
+            }
+        }
+        if (slot < 0) {
+            if (fn->tiene_doble_estrella) {
+                if (!dicc_asignar(dict_kw, key, val)) {
+                    snprintf(err_buf, sizeof(err_buf),
+                        "memoria insuficiente al rellenar **kw");
+                    error_match = true;
+                    break;
+                }
+                continue;
+            }
+            snprintf(err_buf, sizeof(err_buf),
+                "ErrorDeTipo: %.*s() no acepta keyword '%.*s'",
+                fn->longitud_nombre, fn->nombre,
+                key.como.cadena.longitud, key.como.cadena.texto);
+            error_match = true;
+            break;
+        }
+        if (params_asignados[slot]) {
+            snprintf(err_buf, sizeof(err_buf),
+                "ErrorDeTipo: %.*s() recibio multiple valor para '%.*s'",
+                fn->longitud_nombre, fn->nombre,
+                key.como.cadena.longitud, key.como.cadena.texto);
+            error_match = true;
+            break;
+        }
+        valor_destruir(&key);
+        params_finales[slot] = val;
+        params_asignados[slot] = true;
+    }
+    if (error_match) {
+        for (int j = 0; j < aridad; j++) {
+            if (params_asignados[j]) valor_destruir(&params_finales[j]);
+        }
+        if (dict_kw) dicc_liberar(dict_kw);
+        vm->tope = base_nuevo;
+        valor_destruir(&callee);
+        llamar_set_error(vm, frame, "%s", err_buf);
+        return VM_ERROR_RUNTIME;
+    }
+    /* Rellenar defaults para slots fijos no-asignados. */
+    int min_aridad_fija = aridad_fija - fn->n_defaults;
+    for (int i = 0; i < aridad_fija; i++) {
+        if (params_asignados[i]) continue;
+        if (i < min_aridad_fija || !cl->defaults) {
+            snprintf(err_buf, sizeof(err_buf),
+                "ErrorDeTipo: %.*s() falta argumento '%.*s'",
+                fn->longitud_nombre, fn->nombre,
+                fn->long_nombres_params[i], fn->nombres_params[i]);
+            error_match = true;
+            break;
+        }
+        int def_idx = i - min_aridad_fija;
+        params_finales[i] = valor_clonar(&cl->defaults[def_idx]);
+        params_asignados[i] = true;
+    }
+    if (error_match) {
+        for (int j = 0; j < aridad; j++) {
+            if (params_asignados[j]) valor_destruir(&params_finales[j]);
+        }
+        if (dict_kw) dicc_liberar(dict_kw);
+        vm->tope = base_nuevo;
+        valor_destruir(&callee);
+        llamar_set_error(vm, frame, "%s", err_buf);
+        return VM_ERROR_RUNTIME;
+    }
+    /* *resto vacía si no asignada y dict **kw final. */
+    if (fn->tiene_estrella) {
+        int slot_estrella = fn->tiene_doble_estrella ? (aridad - 2) : (aridad - 1);
+        if (!params_asignados[slot_estrella]) {
+            Tupla *t = tupla_nueva(0);
+            if (!t) {
+                for (int j = 0; j < aridad; j++) {
+                    if (params_asignados[j]) valor_destruir(&params_finales[j]);
+                }
+                if (dict_kw) dicc_liberar(dict_kw);
+                vm->tope = base_nuevo;
+                valor_destruir(&callee);
+                llamar_set_error(vm, frame, "memoria insuficiente para *resto");
+                return VM_ERROR_RUNTIME;
+            }
+            params_finales[slot_estrella] = valor_tupla(t);
+            params_asignados[slot_estrella] = true;
+        }
+    }
+    if (fn->tiene_doble_estrella) {
+        params_finales[aridad - 1] = valor_diccionario(dict_kw);
+        params_asignados[aridad - 1] = true;
+        dict_kw = NULL;
+    }
+    /* Reescribir stack: callee | params_finales[]. */
+    vm->tope = base_nuevo + 1;
+    for (int i = 0; i < aridad; i++) {
+        empujar(vm, params_finales[i]);
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        llamar_set_error(vm, frame, "desbordamiento de pila de llamadas");
+        return VM_ERROR_RUNTIME;
+    }
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = cl;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (cl->globales_definicion != NULL
+        && cl->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = cl->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+    *frame_inout = nf;
+    return VM_OK;
+}
+
 static ResultadoVM ejecutar_llamar_clase(VM *vm, CallFrame **frame_inout,
                                           Valor *base_nuevo, uint8_t n_args) {
     CallFrame *frame = *frame_inout;
@@ -3640,11 +3851,126 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
             case OP_LLAMAR_KW: {
                 /* v1.23: llamada con keyword arguments.
                    Stack: [..., callee, pos0..n_pos-1, key0, val0, ...]
-                   Args: [n_pos] [n_kw]. */
+                   Args: [n_pos] [n_kw]. Delega al helper compartido. */
                 uint8_t n_pos = LEER_BYTE();
                 uint8_t n_kw  = LEER_BYTE();
-                /* Cada kw ocupa 2 slots; los pares (key,val) están al
-                   tope. El callee está debajo de todo. */
+                int total_stack = n_pos + 2 * n_kw;
+                Valor *base_nuevo = vm->tope - total_stack - 1;
+                if (ejecutar_llamar_kw(vm, &frame, base_nuevo, n_pos, n_kw) != VM_OK) {
+                    RAISE_OR_DIE();
+                    break;
+                }
+                break;
+            }
+            case OP_DICC_AGREGAR_PAR: {
+                /* TOS = valor; debajo = clave; debajo = dict. */
+                Valor val = *(--vm->tope);
+                Valor key = *(--vm->tope);
+                Valor *d_slot = vm->tope - 1;
+                if (d_slot->tipo != VAL_DICCIONARIO) {
+                    valor_destruir(&key); valor_destruir(&val);
+                    VM_ERROR("ErrorInterno: OP_DICC_AGREGAR_PAR sin dict");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (!dicc_asignar(d_slot->como.dicc, key, val)) {
+                    VM_ERROR("memoria insuficiente al agregar par a dict");
+                    return VM_ERROR_RUNTIME;
+                }
+                break;
+            }
+            case OP_DICC_EXTENDER: {
+                /* TOS = otro dict; debajo = dict acumulador. */
+                Valor otro = *(--vm->tope);
+                Valor *d_slot = vm->tope - 1;
+                if (d_slot->tipo != VAL_DICCIONARIO) {
+                    valor_destruir(&otro);
+                    VM_ERROR("ErrorInterno: OP_DICC_EXTENDER sin dict base");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (otro.tipo != VAL_DICCIONARIO) {
+                    const char *tname = valor_nombre_tipo(&otro);
+                    VM_ERROR(
+                        "ErrorDeTipo: '%s' no es diccionario para spread (**)",
+                        tname);
+                    valor_destruir(&otro);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                Diccionario *dst = d_slot->como.dicc;
+                Diccionario *src = otro.como.dicc;
+                /* Iterar src por orden de inserción. */
+                for (int oi = 0; oi < src->cuenta; oi++) {
+                    int slot_idx = src->orden_insercion[oi];
+                    EntradaDicc *e2 = &src->entradas[slot_idx];
+                    if (!e2->ocupada) continue;
+                    if (!dicc_asignar(dst, valor_clonar(&e2->clave),
+                                          valor_clonar(&e2->valor))) {
+                        valor_destruir(&otro);
+                        VM_ERROR("memoria insuficiente al extender dict");
+                        return VM_ERROR_RUNTIME;
+                    }
+                }
+                valor_destruir(&otro);
+                break;
+            }
+            case OP_LLAMAR_KW_DICT: {
+                /* v1.25: TOS = dict_kw; debajo = n_pos posicionales; debajo = callee.
+                   Operando: [n_pos]. Convertimos dict en pares (key, val) en
+                   el stack y delegamos al helper de OP_LLAMAR_KW. */
+                uint8_t n_pos = LEER_BYTE();
+                Valor dict_v = *(--vm->tope);
+                if (dict_v.tipo != VAL_DICCIONARIO) {
+                    valor_destruir(&dict_v);
+                    VM_ERROR("ErrorInterno: OP_LLAMAR_KW_DICT sin dict");
+                    return VM_ERROR_RUNTIME;
+                }
+                Diccionario *dk = dict_v.como.dicc;
+                if (dk->cuenta > 255) {
+                    valor_destruir(&dict_v);
+                    VM_ERROR("demasiados kwargs tras spread (max 255)");
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Validar claves cadena ANTES de mutar el stack. */
+                for (int oi = 0; oi < dk->cuenta; oi++) {
+                    int slot_idx = dk->orden_insercion[oi];
+                    EntradaDicc *e2 = &dk->entradas[slot_idx];
+                    if (!e2->ocupada) continue;
+                    if (e2->clave.tipo != VAL_CADENA) {
+                        const char *tname = valor_nombre_tipo(&e2->clave);
+                        VM_ERROR(
+                            "ErrorDeTipo: clave de **dict debe ser cadena (no '%s')",
+                            tname);
+                        valor_destruir(&dict_v);
+                        RAISE_OR_DIE();
+                        goto raise_atrapado;
+                    }
+                }
+                /* Push pares (clave, valor) al stack. */
+                int n_kw = 0;
+                for (int oi = 0; oi < dk->cuenta; oi++) {
+                    int slot_idx = dk->orden_insercion[oi];
+                    EntradaDicc *e2 = &dk->entradas[slot_idx];
+                    if (!e2->ocupada) continue;
+                    empujar(vm, valor_clonar(&e2->clave));
+                    empujar(vm, valor_clonar(&e2->valor));
+                    n_kw++;
+                }
+                valor_destruir(&dict_v);
+                Valor *base_nuevo = vm->tope - n_pos - 2 * n_kw - 1;
+                if (ejecutar_llamar_kw(vm, &frame, base_nuevo,
+                                         n_pos, (uint8_t)n_kw) != VM_OK) {
+                    RAISE_OR_DIE();
+                    break;
+                }
+                break;
+            }
+#if 0
+            /* legacy: bloque grande de OP_LLAMAR_KW antiguo (sustituido por
+               ejecutar_llamar_kw helper en v1.25). Conservado bajo #if 0
+               para diff legible — eliminar tras 1-2 releases. */
+            case OP_LLAMAR_KW + 0xFF00: {
+                uint8_t n_pos = LEER_BYTE();
+                uint8_t n_kw  = LEER_BYTE();
                 int total_stack = n_pos + 2 * n_kw;
                 Valor *base_nuevo = vm->tope - total_stack - 1;
                 Valor callee = *base_nuevo;
@@ -3887,6 +4213,7 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 frame = nf;
                 break;
             }
+#endif
             case OP_LLAMAR_SPREAD: {
                 /* TOS = lista args; bajo = callee. Empujamos cada
                    elemento de la lista al stack y despachamos como

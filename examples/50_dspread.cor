@@ -1,0 +1,83 @@
+# Ejemplo 50 — Spread `**dict` en llamadas (v1.25)
+#
+# `f(**dict)` expande un diccionario como keyword arguments. Cierra la
+# trilogía `*/**`: ahora Cornamusa tiene paridad con Python en
+# desempaquetado y empaquetado de argumentos.
+
+imprimir("=== **dict spread (v1.25) ===")
+imprimir("")
+
+# ─── Caso 1: spread básico ───
+funcion api(host, puerto=80, tls=falso):
+    s = host + ":" + cadena(puerto)
+    si tls:
+        s = "https " + s
+    fin si
+    retornar s
+fin funcion
+
+imprimir("1) spread de dict de configuración")
+config_prod = {"puerto": 443, "tls": verdadero}
+imprimir(api("api.dev", **config_prod))
+
+config_dev = {"puerto": 8080}
+imprimir(api("local", **config_dev))
+imprimir("")
+
+# ─── Caso 2: mezcla con kwargs explícitos ───
+imprimir("2) **spread + kwarg explícito")
+imprimir(api("api.dev", **{"puerto": 443}, tls=verdadero))
+imprimir(api("api.dev", tls=verdadero, **{"puerto": 8443}))
+imprimir("")
+
+# ─── Caso 3: forwarding genérico vía **kw ───
+funcion log_y_llamar(f, host, **kw):
+    imprimir("  host:", host, "  kw:", kw)
+    retornar f(host, **kw)
+fin funcion
+
+imprimir("3) forwarding completo (decorador-like)")
+r = log_y_llamar(api, "produccion", puerto=443, tls=verdadero)
+imprimir("  resultado:", r)
+imprimir("")
+
+# ─── Caso 4: merge de dicts vía spread ───
+funcion eco(**kw):
+    retornar kw
+fin funcion
+
+base = {"region": "eu", "version": 1}
+override = {"version": 2, "debug": verdadero}
+
+imprimir("4) merge de configuraciones via spread")
+imprimir("  base:    ", base)
+imprimir("  override:", override)
+imprimir("  merge:   ", eco(**base, **override))
+imprimir("")
+
+# ─── Caso 5: errores atrapables ───
+funcion f(a, b):
+    retornar [a, b]
+fin funcion
+
+imprimir("5) errores atrapables")
+intentar:
+    f(**{"a": 1, "zorro": 99})
+atrapar ErrorDeTipo como e:
+    imprimir("  kwarg desconocido →", cadena(e))
+fin intentar
+
+intentar:
+    f(**[1, 2])
+atrapar ErrorDeTipo como e:
+    imprimir("  spread sobre no-dict →", cadena(e))
+fin intentar
+
+intentar:
+    f(**{1: "uno", 2: "dos"})
+atrapar ErrorDeTipo como e:
+    imprimir("  clave no-cadena →", cadena(e))
+fin intentar
+
+imprimir("")
+imprimir("=== fin ejemplo 50 ===")

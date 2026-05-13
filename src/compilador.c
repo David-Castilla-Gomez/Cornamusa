@@ -633,9 +633,10 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                expandidos y usamos OP_LLAMAR_SPREAD. */
             bool tiene_spread = (e->como.llamada.args_spread != NULL);
             bool tiene_kwargs = (e->como.llamada.kwarg_keys != NULL);
-            if (tiene_spread && tiene_kwargs) {
+            bool tiene_dspread = (e->como.llamada.args_doble_spread != NULL);
+            if (tiene_spread && (tiene_kwargs || tiene_dspread)) {
                 error_compilacion(c, e->linea, e->columna,
-                    "no se puede combinar `*args` con keyword args en la misma llamada (v1.23)");
+                    "no se puede combinar `*args` con keyword args / **dict en la misma llamada (v1.25)");
                 return false;
             }
             if (tiene_spread) {
@@ -651,6 +652,62 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     }
                 }
                 chunk_emitir_byte(c->actual->chunk, OP_LLAMAR_SPREAD, e->linea);
+                return true;
+            }
+            /* v1.25: llamada con `**dict` spread (con o sin kwargs
+               explícitos). Construye un dict runtime con todos los
+               kwargs y usa OP_LLAMAR_KW_DICT. */
+            if (tiene_dspread) {
+                int n_pos = 0;
+                for (int i = 0; i < n_args; i++) {
+                    bool es_kw = (e->como.llamada.kwarg_keys
+                                  && e->como.llamada.kwarg_keys[i] != NULL);
+                    bool es_dsp = e->como.llamada.args_doble_spread[i];
+                    if (!es_kw && !es_dsp) n_pos++;
+                }
+                if (n_pos > 255) {
+                    error_compilacion(c, e->linea, e->columna,
+                        "demasiados posicionales (max 255)");
+                    return false;
+                }
+                if (!compilador_compilar_expr(c, callee)) return false;
+                /* Posicionales primero. */
+                for (int i = 0; i < n_args; i++) {
+                    bool es_kw = (e->como.llamada.kwarg_keys
+                                  && e->como.llamada.kwarg_keys[i] != NULL);
+                    bool es_dsp = e->como.llamada.args_doble_spread[i];
+                    if (es_kw || es_dsp) continue;
+                    if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                }
+                /* Dict vacío que recibirá los kwargs. */
+                chunk_emitir_byte2(c->actual->chunk, OP_BUILD_DICC, 0, e->linea);
+                /* En orden de aparición, kwargs y dspreads alimentan el dict. */
+                for (int i = 0; i < n_args; i++) {
+                    bool es_kw = (e->como.llamada.kwarg_keys
+                                  && e->como.llamada.kwarg_keys[i] != NULL);
+                    bool es_dsp = e->como.llamada.args_doble_spread[i];
+                    if (!es_kw && !es_dsp) continue;
+                    if (es_kw) {
+                        const char *k = e->como.llamada.kwarg_keys[i];
+                        int klen = e->como.llamada.kwarg_lens[i];
+                        Valor v_clave = valor_cadena_duplicar(k, klen);
+                        int idx_const = chunk_agregar_constante(c->actual->chunk, v_clave);
+                        if (idx_const < 0 || idx_const > 255) {
+                            error_compilacion(c, e->linea, e->columna,
+                                "demasiadas constantes");
+                            return false;
+                        }
+                        chunk_emitir_byte2(c->actual->chunk, OP_CONST,
+                                            (uint8_t)idx_const, e->linea);
+                        if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                        chunk_emitir_byte(c->actual->chunk, OP_DICC_AGREGAR_PAR, e->linea);
+                    } else { /* es_dsp */
+                        if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                        chunk_emitir_byte(c->actual->chunk, OP_DICC_EXTENDER, e->linea);
+                    }
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR_KW_DICT,
+                                    (uint8_t)n_pos, e->linea);
                 return true;
             }
             /* v1.23: llamada con keyword arguments. Empuja callee,

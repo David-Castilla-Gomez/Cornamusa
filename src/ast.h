@@ -137,6 +137,7 @@ struct Expr {
                El nombre apunta al buffer fuente del lexer. */
             const char **kwarg_keys;
             int *kwarg_lens;
+            bool *args_doble_spread; /* v1.25: true si es `**expr` (dict) */
         } llamada;
 
         struct {

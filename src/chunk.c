@@ -58,6 +58,9 @@ const char *opcode_nombre(OpCode op) {
         case OP_LISTA_EXTENDER:  return "OP_LISTA_EXTENDER";
         case OP_LLAMAR_SPREAD:   return "OP_LLAMAR_SPREAD";
         case OP_LLAMAR_KW:       return "OP_LLAMAR_KW";
+        case OP_DICC_AGREGAR_PAR: return "OP_DICC_AGREGAR_PAR";
+        case OP_DICC_EXTENDER:   return "OP_DICC_EXTENDER";
+        case OP_LLAMAR_KW_DICT:  return "OP_LLAMAR_KW_DICT";
         case OP_CLOSURE:         return "OP_CLOSURE";
         case OP_OBTENER_UPVALUE: return "OP_OBTENER_UPVALUE";
         case OP_ASIGNAR_UPVALUE: return "OP_ASIGNAR_UPVALUE";

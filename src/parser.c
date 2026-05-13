@@ -847,14 +847,17 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
     bool spread_buffer[8] = {0};
     const char *kkey_buffer[8] = {0};
     int klen_buffer[8] = {0};
+    bool dspread_buffer[8] = {0};
     Expr **args = buffer;
     bool *spreads = spread_buffer;
     const char **kkeys = kkey_buffer;
     int *klens = klen_buffer;
+    bool *dspreads = dspread_buffer;
     int n = 0;
     int capacidad = 8;
     bool algun_spread = false;
     bool algun_kwarg = false;
+    bool algun_dspread = false;
     bool visto_kwarg = false;  /* tras un kwarg, no más posicionales */
 
     if (!check(p, TT_PARENT_DER)) {
@@ -869,19 +872,29 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
                     sizeof(const char *) * (size_t)capacidad);
                 int *nuevo_kl = (int *)arena_alocar(p->arena,
                     sizeof(int) * (size_t)capacidad);
-                if (!nuevo || !nuevo_sp || !nuevo_kk || !nuevo_kl) return NULL;
+                bool *nuevo_dsp = (bool *)arena_alocar(p->arena,
+                    sizeof(bool) * (size_t)capacidad);
+                if (!nuevo || !nuevo_sp || !nuevo_kk || !nuevo_kl || !nuevo_dsp) return NULL;
                 memcpy(nuevo, args, sizeof(Expr *) * (size_t)n);
                 memcpy(nuevo_sp, spreads, sizeof(bool) * (size_t)n);
                 memcpy(nuevo_kk, kkeys, sizeof(const char *) * (size_t)n);
                 memcpy(nuevo_kl, klens, sizeof(int) * (size_t)n);
+                memcpy(nuevo_dsp, dspreads, sizeof(bool) * (size_t)n);
                 args = nuevo;
                 spreads = nuevo_sp;
                 kkeys = nuevo_kk;
                 klens = nuevo_kl;
+                dspreads = nuevo_dsp;
             }
-            /* v1.22: `*expr` en argumento → spread (expande iterable). */
+            /* v1.22: `*expr` → spread iterable. v1.25: `**expr` → spread dict. */
             bool es_spread = false;
-            if (check(p, TT_ASTERISCO)) {
+            bool es_dspread = false;
+            if (check(p, TT_DOBLE_ASTERISCO)) {
+                avanzar(p);
+                es_dspread = true;
+                algun_dspread = true;
+                visto_kwarg = true;  /* tras **spread, no posicionales */
+            } else if (check(p, TT_ASTERISCO)) {
                 avanzar(p);
                 es_spread = true;
                 algun_spread = true;
@@ -890,10 +903,10 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
             if (arg == NULL) return NULL;
             /* v1.23: si `arg` es EXPR_IDENT y el siguiente token es `=`,
                re-interpretar como keyword argument `nombre = valor`.
-               No aplica si era spread `*x`. */
+               No aplica si era spread `*x` o `**x`. */
             const char *kkey = NULL;
             int klen = 0;
-            if (!es_spread
+            if (!es_spread && !es_dspread
                 && arg->tipo == EXPR_IDENT
                 && check(p, TT_ASIGNAR)) {
                 avanzar(p);  /* consume `=` */
@@ -903,7 +916,7 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
                 if (arg == NULL) return NULL;
                 algun_kwarg = true;
                 visto_kwarg = true;
-            } else if (visto_kwarg && !es_spread) {
+            } else if (visto_kwarg && !es_spread && !es_dspread) {
                 error_en(p, &p->actual,
                     "argumentos posicionales no pueden ir tras keyword args");
                 return NULL;
@@ -912,6 +925,7 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
             spreads[n] = es_spread;
             kkeys[n] = kkey;
             klens[n] = klen;
+            dspreads[n] = es_dspread;
             n++;
         } while (consumir_si(p, TT_COMA));
     }
@@ -947,6 +961,13 @@ static Expr *parsear_llamada(Parser *p, Expr *callee) {
         }
         e->como.llamada.kwarg_keys = kk_finales;
         e->como.llamada.kwarg_lens = kl_finales;
+    }
+    if (algun_dspread) {
+        bool *dsp_finales = (bool *)arena_alocar(p->arena,
+            sizeof(bool) * (size_t)(n > 0 ? n : 1));
+        if (!dsp_finales) return NULL;
+        if (n > 0) memcpy(dsp_finales, dspreads, sizeof(bool) * (size_t)n);
+        e->como.llamada.args_doble_spread = dsp_finales;
     }
     return e;
 }

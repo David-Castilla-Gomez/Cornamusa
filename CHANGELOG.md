@@ -6,6 +6,121 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.25.0] — 2026-05-13 — Spread `**dict` en llamadas
+
+Cierra la trilogía `*/**`: `f(**dict)` expande un diccionario como
+keyword arguments en la llamada. Combinable libremente con kwargs
+explícitos y posicionales, en cualquier orden.
+
+### Sintaxis
+
+```cornamusa
+config = {"puerto": 443, "tls": verdadero}
+api("api.dev", **config)                      # equivale a api("api.dev", puerto=443, tls=verdadero)
+api("api.dev", **{"puerto": 8080}, tls=verdadero)   # mezcla con kw explícito
+api("api.dev", tls=verdadero, **{"puerto": 443})    # orden libre
+```
+
+### Merge de configuraciones
+
+Cuando se combinan varios `**dict`, las claves de los posteriores
+sobrescriben las anteriores (semántica como Python ≥ 3.5):
+
+```cornamusa
+base     = {"region": "eu", "version": 1}
+override = {"version": 2, "debug": verdadero}
+
+config(**base, **override)
+# {"region": "eu", "version": 2, "debug": verdadero}
+```
+
+Ideal para componer configuraciones, opciones de CLI, parámetros de
+constructor, etc.
+
+### Forwarding genérico
+
+`**dict` alimenta directamente un receptor `**kw`:
+
+```cornamusa
+funcion wrapper(host, **opciones):
+    imprimir("opciones:", opciones)
+    retornar api(host, **opciones)
+fin funcion
+
+wrapper("api.dev", puerto=443, tls=verdadero)
+# opciones: {"puerto": 443, "tls": verdadero}
+# → api("api.dev", puerto=443, tls=verdadero)
+```
+
+### Errores atrapables
+
+- **Kwarg desconocido** vía spread → `ErrorDeTipo: f() no acepta keyword 'X'`.
+- **Duplicado** (posicional ya consumido o kwarg explícito) → `ErrorDeTipo: recibio multiple valor para 'X'`.
+- **`**X` con X no-dict** → `ErrorDeTipo: 'tipo' no es diccionario para spread (**)`.
+- **Clave no-cadena** en el dict spread → `ErrorDeTipo: clave de **dict debe ser cadena`.
+
+### Implementación
+
+Nuevos opcodes en [src/chunk.h](src/chunk.h):
+
+- `OP_DICC_AGREGAR_PAR` — TOS=valor, debajo=clave, debajo=dict. Asigna.
+- `OP_DICC_EXTENDER` — TOS=otro_dict, debajo=dict. Merge claves.
+- `OP_LLAMAR_KW_DICT [n_pos]` — TOS=dict_kw, debajo n_pos, debajo callee. Despacha.
+
+El compilador detecta `**expr` en argumentos y emite la secuencia:
+
+1. Empuja callee + posicionales.
+2. `OP_BUILD_DICC 0` para arrancar dict vacío.
+3. Por cada kwarg/spread en orden:
+   - Si kwarg explícito: empuja clave (cadena) + valor + `OP_DICC_AGREGAR_PAR`.
+   - Si `**spread`: empuja la expr + `OP_DICC_EXTENDER`.
+4. `OP_LLAMAR_KW_DICT n_pos`.
+
+Refactor importante en [src/vm.c](src/vm.c): la lógica de matching de
+keyword args (~150 líneas) se extrajo a `ejecutar_llamar_kw(vm, frame,
+base, n_pos, n_kw)` y la usan **tanto** `OP_LLAMAR_KW` como
+`OP_LLAMAR_KW_DICT`. `OP_LLAMAR_KW_DICT` ilumina el dict como pares
+(key, val) sobre el stack y delega al helper.
+
+### Limitaciones (v1.25)
+
+- **No combinable con `*lista` spread** en la misma llamada. Para
+  forwardear ambos hay que separar:
+
+  ```cornamusa
+  funcion wrap(*args, **kw):
+      retornar f(*args)          # OK
+      # retornar f(*args, **kw)  # ERROR (v1.25)
+  fin funcion
+  ```
+
+  Esta restricción se levantará cuando se unifique el path de llamadas
+  con un opcode `OP_LLAMAR_GENERICO` (Fase 1 cerrada, lo dejo para
+  Fase 4 si surge demanda).
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_dspread.c` — 10 tests cubriendo spread
+  solo/mezcla, alimentación a `**kw`, merge override, errores.
+- `bc_run_50_dspread` — ejecuta `examples/50_dspread.cor`.
+- **161/161 tests verde**.
+
+### Estado de Fase 1
+
+Con v1.25 se cierra la **Fase 1 — Sintaxis idiomática moderna**:
+
+| Versión | Feature | Estado |
+|---|---|---|
+| v1.21 | Destructuring (`a, b = par`) | ✅ |
+| v1.22 | `*args` (def + spread llamada) | ✅ |
+| v1.23 | Keyword args (`f(x=1)`) | ✅ |
+| v1.24 | `**kwargs` en def | ✅ |
+| v1.25 | Spread `**dict` en llamadas | ✅ |
+
+**Paridad sintáctica con Python 3.10+** para argumentos, destructuring
+y desempaquetado. Siguiente fase: **stdlib esencial** (`azar`,
+`proceso`, `regex`, `red`).
+
 ## [1.24.0] — 2026-05-13 — `**kwargs` en definición
 
 Parámetros `**kw` recogen los keyword arguments sobrantes en un
