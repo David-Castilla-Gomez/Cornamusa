@@ -614,11 +614,12 @@ static Valor nativa_diccionario(EvalError *err, int n_args, Valor *args,
     if (n_args == 0) return valor_diccionario(d);
 
     const Valor *src = &args[0];
-    /* Caso especial: dicc → dicc (copia entrada por entrada). */
+    /* Caso especial: dicc → dicc (copia entrada por entrada). v1.20:
+       en orden de inserción para preservar el orden del original. */
     if (src->tipo == VAL_DICCIONARIO) {
         const Diccionario *origen = src->como.dicc;
-        for (int i = 0; i < origen->capacidad; i++) {
-            if (!origen->entradas[i].ocupada) continue;
+        for (int idx = 0; idx < origen->cuenta; idx++) {
+            int i = origen->orden_insercion[idx];
             const Valor *src_k = &origen->entradas[i].clave;
             const Valor *src_v = &origen->entradas[i].valor;
             Valor clave = valor_clonar(src_k);
@@ -1207,15 +1208,15 @@ static Valor nativa_claves(EvalError *err, int n_args, Valor *args,
     Diccionario *d = args[0].como.dicc;
     Lista *l = lista_nueva(d->cuenta);
     if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
-    for (int i = 0; i < d->capacidad; i++) {
-        if (d->entradas[i].ocupada) {
-            lista_agregar(l, valor_clonar(&d->entradas[i].clave));
-        }
+    /* v1.20: orden de inserción. */
+    for (int i = 0; i < d->cuenta; i++) {
+        int slot = d->orden_insercion[i];
+        lista_agregar(l, valor_clonar(&d->entradas[slot].clave));
     }
     return valor_lista(l);
 }
 
-/* valores(dicc) → lista de valores. Mismo orden indeterminado que claves(). */
+/* valores(dicc) → lista de valores en orden de inserción (v1.20). */
 static Valor nativa_valores(EvalError *err, int n_args, Valor *args,
                              int linea, int columna) {
     if (n_args != 1) {
@@ -1230,10 +1231,9 @@ static Valor nativa_valores(EvalError *err, int n_args, Valor *args,
     Diccionario *d = args[0].como.dicc;
     Lista *l = lista_nueva(d->cuenta);
     if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
-    for (int i = 0; i < d->capacidad; i++) {
-        if (d->entradas[i].ocupada) {
-            lista_agregar(l, valor_clonar(&d->entradas[i].valor));
-        }
+    for (int i = 0; i < d->cuenta; i++) {
+        int slot = d->orden_insercion[i];
+        lista_agregar(l, valor_clonar(&d->entradas[slot].valor));
     }
     return valor_lista(l);
 }
@@ -1810,26 +1810,26 @@ static bool js_serializar(JsonOut *o, const Valor *v, int indent, int nivel,
         case VAL_DICCIONARIO: {
             jo_append_char(o, '{');
             Diccionario *d = v->como.dicc;
-            int impreso = 0;
-            for (int i = 0; i < d->capacidad; i++) {
-                if (!d->entradas[i].ocupada) continue;
-                if (d->entradas[i].clave.tipo != VAL_CADENA) {
+            /* v1.20: serializar en orden de inserción. JSON output
+               estable y predecible para configs/snapshots. */
+            for (int idx = 0; idx < d->cuenta; idx++) {
+                int slot = d->orden_insercion[idx];
+                EntradaDicc *e = &d->entradas[slot];
+                if (e->clave.tipo != VAL_CADENA) {
                     snprintf(err, err_cap,
                         "ErrorDeTipo: solo claves cadena son serializables a JSON");
                     return false;
                 }
-                if (impreso > 0) jo_append_char(o, ',');
+                if (idx > 0) jo_append_char(o, ',');
                 jo_indent(o, indent, nivel + 1);
-                jo_escape_cadena(o,
-                    d->entradas[i].clave.como.cadena.texto,
-                    d->entradas[i].clave.como.cadena.longitud);
+                jo_escape_cadena(o, e->clave.como.cadena.texto,
+                                  e->clave.como.cadena.longitud);
                 jo_append_char(o, ':');
                 if (indent > 0) jo_append_char(o, ' ');
-                if (!js_serializar(o, &d->entradas[i].valor, indent, nivel + 1,
+                if (!js_serializar(o, &e->valor, indent, nivel + 1,
                                     err, err_cap)) return false;
-                impreso++;
             }
-            if (impreso > 0) jo_indent(o, indent, nivel);
+            if (d->cuenta > 0) jo_indent(o, indent, nivel);
             jo_append_char(o, '}');
             return true;
         }

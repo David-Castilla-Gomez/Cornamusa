@@ -1,0 +1,102 @@
+# 45_dict_ordenado.cor — diccionarios preservan orden de inserción (v1.20).
+#
+# Desde v1.20 los diccionarios iteran y serializan en el ORDEN EN QUE
+# SE INSERTARON las claves. Importante para:
+#   - Iteración predecible (sin sorpresas de hash).
+#   - JSON estable (mismas claves → mismo output byte-a-byte).
+#   - Tablas/reportes con orden de columnas fijo.
+
+importar json
+
+# ─── 1. Iteración respeta orden ──────────────────────────────────
+imprimir("=== Orden de inserción ===")
+config = {}
+config["nombre"] = "Cornamusa"
+config["version"] = "1.20.0"
+config["activo"] = verdadero
+config["tags"] = ["lenguaje", "castellano"]
+
+para clave en config:
+    imprimir("  " + clave + " = " + cadena(config[clave]))
+fin para
+imprimir("---")
+
+# ─── 2. Sobreescribir NO cambia posición ────────────────────────
+imprimir("=== Sobreescribir mantiene posición ===")
+d = {"a": 1, "b": 2, "c": 3}
+d["b"] = 999
+imprimir(d)  # {"a": 1, "b": 999, "c": 3}
+imprimir("---")
+
+# ─── 3. Quitar + reinsertar va al final ──────────────────────────
+imprimir("=== Quitar + reinsertar mueve al final ===")
+d2 = {"a": 1, "b": 2, "c": 3}
+quitar(d2, "a")
+d2["a"] = 100
+imprimir(d2)  # {"b": 2, "c": 3, "a": 100}
+imprimir("---")
+
+# ─── 4. JSON estable ─────────────────────────────────────────────
+imprimir("=== JSON ordenado ===")
+imprimir(json.serializar_indentado(config, 2))
+imprimir("---")
+
+# ─── 5. Conversión a lista de pares preserva orden ──────────────
+imprimir("=== Pares ordenados ===")
+ks = claves(config)
+vs = valores(config)
+para i en rango(longitud(ks)):
+    imprimir("  " + ks[i] + " → " + cadena(vs[i]))
+fin para
+imprimir("---")
+
+# ─── 6. Caso de uso: tabla con columnas en orden ─────────────────
+imprimir("=== Tabla con columnas en orden ===")
+clase Persona:
+    funcion __iniciar__(yo, nombre, edad, ciudad):
+        yo.nombre = nombre
+        yo.edad = edad
+        yo.ciudad = ciudad
+    fin funcion
+
+    funcion como_dict(yo):
+        d = {}
+        d["nombre"] = yo.nombre
+        d["edad"] = yo.edad
+        d["ciudad"] = yo.ciudad
+        retornar d
+    fin funcion
+fin clase
+
+personas = [
+    Persona("Ana", 28, "Madrid"),
+    Persona("Bruno", 42, "Bilbao"),
+    Persona("Carla", 31, "Cádiz"),
+]
+
+# Cabecera (columnas en orden de inserción del primer dict).
+primero = personas[0].como_dict()
+columnas = claves(primero)
+imprimir("  " + cadena(columnas))
+
+# Filas.
+para p en personas:
+    d = p.como_dict()
+    fila = []
+    para col en columnas:
+        agregar(fila, cadena(d[col]))
+    fin para
+    imprimir("  " + cadena(fila))
+fin para
+imprimir("---")
+
+# ─── 7. Rehash invisible ─────────────────────────────────────────
+# La capacidad interna del hash table cambia con muchas inserciones,
+# pero el orden se preserva a través de los rehashes.
+imprimir("=== Rehash preserva orden (20 inserciones) ===")
+grande = {}
+para i en rango(20):
+    grande["clave_" + cadena(i)] = i
+fin para
+imprimir("  primer claves: " + cadena(claves(grande)[:5]))
+imprimir("  últimas claves: " + cadena(claves(grande)[15:]))

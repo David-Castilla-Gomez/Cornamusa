@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.20.0] — 2026-05-13 — Diccionarios preservan orden de inserción
+
+Los diccionarios ahora iteran y serializan en el **orden en que se
+insertaron las claves**. Coincide con la semántica de Python 3.7+ y
+elimina sorpresas con hash order.
+
+### Antes (v1.19 y previos)
+
+```cornamusa
+d = {"version": 2, "nombre": "app", "activo": verdadero}
+para k en d:
+    imprimir(k)
+# Orden DEPENDÍA del hash → impredecible.
+imprimir(d)
+# {"activo": ..., "version": ..., "nombre": ...}  (orden arbitrario)
+```
+
+### Ahora (v1.20)
+
+```cornamusa
+d = {"version": 2, "nombre": "app", "activo": verdadero}
+para k en d:
+    imprimir(k)
+# version
+# nombre
+# activo
+
+imprimir(d)
+# {"version": 2, "nombre": "app", "activo": true}
+```
+
+### Reglas
+
+- **Inserción nueva** → al final del orden.
+- **Sobreescribir** una clave existente → mantiene posición.
+- **Quitar** → elimina del orden.
+- **Quitar + re-insertar** → la clave va al final.
+- **Literal** `{a: 1, b: 2, c: 3}` → en orden de aparición.
+
+### Implementación
+
+Extensión de `Diccionario` ([src/valor.h](src/valor.h)):
+
+```c
+struct Diccionario {
+    ...
+    int *orden_insercion;   /* array de slot indices en orden */
+    int orden_capacidad;
+};
+```
+
+- `dicc_asignar`: inserción nueva → append slot al array.
+- `dicc_quitar`: localiza el slot en el array, shift para cerrar el
+  hueco; re-inserciones tras borrado actualizan slot indices in-place
+  con un helper.
+- `dicc_redimensionar`: re-mapea slot indices viejos a nuevos
+  manteniendo el orden viejo.
+- `iter_siguiente` para `VAL_DICCIONARIO`: itera `orden_insercion[]`
+  en lugar de `entradas[]`.
+- `valor_a_cadena` para dict, `claves()`, `valores()`,
+  `js_serializar`, `nativa_diccionario` (constructor copia),
+  iteración `para…en` del evaluador: todos usan el orden.
+
+### Costos
+
+- **Memoria**: `+sizeof(int) * capacidad` por dict.
+- **Inserción**: O(1) amortizado (mismo que antes).
+- **Borrado**: O(N) por la búsqueda lineal en el array + shift. Para
+  dicts pequeños es despreciable; para dicts grandes con muchos
+  borrados existe margen de mejora futuro (lista doblemente enlazada
+  intrusiva).
+- **Iteración**: O(N) — ANTES era O(capacidad) que con factor de
+  carga puede ser hasta 2N. Después de v1.20 es estrictamente N.
+
+### Tests
+
+15 tests unit en
+[tests/unit/test_bytecode_dict_orden.c](tests/unit/test_bytecode_dict_orden.c)
+cubriendo inserción incremental/inversa, sobreescribir, quitar (cada
+posición), iteración `para…en`, JSON, `cadena()`, literales, rehash
+con 20 claves, copia. Total: **144 verde**.
+
+Ejemplo:
+[examples/45_dict_ordenado.cor](examples/45_dict_ordenado.cor) con
+config legible, tabla con columnas en orden, rehash invisible.
+
 ## [1.19.0] — 2026-05-13 — Stdlib `fechas`
 
 Operaciones con fechas y horas: timestamps Unix, descomposición y

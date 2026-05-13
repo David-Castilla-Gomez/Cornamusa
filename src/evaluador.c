@@ -1597,12 +1597,13 @@ static void ejec_para(Evaluador *ev, const Sent *s) {
         return;
     }
 
-    /* Rama: iteración sobre diccionario — produce las claves (Python). */
+    /* Rama: iteración sobre diccionario — produce las claves (Python).
+       v1.20: orden de inserción. */
     if (iter.tipo == VAL_DICCIONARIO) {
         Diccionario *d = iter.como.dicc;
         bool rompio_d = false;
-        for (int i = 0; i < d->capacidad; i++) {
-            if (!d->entradas[i].ocupada) continue;
+        for (int idx = 0; idx < d->cuenta; idx++) {
+            int i = d->orden_insercion[idx];
             Valor v = valor_clonar(&d->entradas[i].clave);
             if (!entorno_definir(ev->entorno_actual,
                                   objetivo->como.ident.nombre,

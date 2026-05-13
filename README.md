@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.19.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.20.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -118,7 +118,8 @@ Hoja de ruta resumida:
 | **v1.18** | **Stdlib `formato` (padding, números, hex/bin, tablas) + `cadenas` extendida (separar, reemplazar, recortar, ASCII case, indice_de, contiene)** | ✅ |
 | **v1.18.1** | **Fix bug re-import de módulos** | ✅ |
 | **v1.19** | **Stdlib `fechas` (timestamps, descomponer/componer/formato, aritmética, calendario)** | ✅ |
-| v1.20+ | generadores (`producir`), `__siguiente__` lazy, dunders `__hash__`/`__repr__`/`__booleano__`, dict orden inserción | ⏳ |
+| **v1.20** | **Diccionarios preservan orden de inserción (Python 3.7+ semantics)** | ✅ |
+| v1.21+ | generadores (`producir`), `__siguiente__` lazy, dunders `__hash__`/`__repr__`/`__booleano__` | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

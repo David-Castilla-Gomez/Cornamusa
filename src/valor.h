@@ -251,6 +251,16 @@ struct Diccionario {
      * probabilidad ≈1/2^32 — irrelevante.
      */
     uint64_t version;
+    /*
+     * v1.20: array de slot indices en orden de inserción. Longitud =
+     * `cuenta`. Permite iteración determinista para `para k en dicc`,
+     * `imprimir(dicc)`, `claves(d)`, `valores(d)`, `json.serializar(d)`.
+     * En `dicc_redimensionar` se re-mapean los slot indices viejos a
+     * los nuevos manteniendo el orden. Capacidad >= cuenta; igual a
+     * `capacidad` (hash table) por simplicidad.
+     */
+    int *orden_insercion;
+    int orden_capacidad;
 };
 
 Diccionario *dicc_nuevo(void);

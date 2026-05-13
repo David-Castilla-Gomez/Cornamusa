@@ -420,6 +420,18 @@ set_tests_properties(bc_run_44_fechas PROPERTIES
     PASS_REGULAR_EXPRESSION "2400 → bisiesto"
 )
 
+# v1.20: diccionarios preservan orden de inserción.
+add_test(
+    NAME bc_run_45_dict_ordenado
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/45_dict_ordenado.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_45_dict_ordenado PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Rehash preserva orden"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

@@ -580,15 +580,26 @@ static bool dicc_redimensionar(Diccionario *d, int nueva_cap) {
     EntradaDicc *nuevas = (EntradaDicc *)calloc((size_t)nueva_cap,
         sizeof(EntradaDicc));
     if (!nuevas) return false;
-    for (int i = 0; i < d->capacidad; i++) {
-        EntradaDicc *src = &d->entradas[i];
-        if (!src->ocupada) continue;
+    /* v1.20: nuevo array de orden con la misma capacidad. */
+    int *nuevo_orden = (int *)malloc(sizeof(int) * (size_t)nueva_cap);
+    if (!nuevo_orden) { free(nuevas); return false; }
+
+    /* Iteramos por el orden de inserción viejo para construir el
+       nuevo orden con los nuevos slot indices. Cada clave se reubica
+       a su nueva posición y registramos ese slot en `nuevo_orden`. */
+    for (int i = 0; i < d->cuenta; i++) {
+        int slot_viejo = d->orden_insercion[i];
+        EntradaDicc *src = &d->entradas[slot_viejo];
         EntradaDicc *dst = dicc_buscar_slot(nuevas, nueva_cap, &src->clave);
         *dst = *src;
+        nuevo_orden[i] = (int)(dst - nuevas);
     }
     free(d->entradas);
+    free(d->orden_insercion);
     d->entradas = nuevas;
     d->capacidad = nueva_cap;
+    d->orden_insercion = nuevo_orden;
+    d->orden_capacidad = nueva_cap;
     /* Cualquier cache de slot_idx queda invalidada — todas las
        posiciones cambiaron por el rehash. */
     d->version++;
@@ -605,6 +616,14 @@ Diccionario *dicc_nuevo(void) {
     d->capacidad = DICC_CAPACIDAD_INICIAL;
     d->refcount = 1;
     d->version = 0;
+    /* v1.20: orden de inserción con la misma capacidad que el hash. */
+    d->orden_insercion = (int *)malloc(sizeof(int) * DICC_CAPACIDAD_INICIAL);
+    if (!d->orden_insercion) {
+        free(d->entradas);
+        gc_desenlazar(&d->obj); free(d);
+        return NULL;
+    }
+    d->orden_capacidad = DICC_CAPACIDAD_INICIAL;
     return d;
 }
 
@@ -623,6 +642,7 @@ void dicc_liberar(Diccionario *d) {
         }
     }
     free(d->entradas);
+    free(d->orden_insercion);  /* v1.20 */
     gc_desenlazar(&d->obj);
     free(d);
 }
@@ -643,16 +663,32 @@ bool dicc_asignar(Diccionario *d, Valor clave, Valor valor) {
     if (slot->ocupada) {
         valor_destruir(&slot->clave);
         valor_destruir(&slot->valor);
-        /* Sobreescritura: NO se incrementa version. El slot_idx
-           cacheado sigue apuntando a la misma posición — solo cambia
-           el valor, que el fast path lee directamente. */
+        /* Sobreescritura: NO se incrementa version, NO se modifica el
+           orden de inserción. El slot_idx cacheado sigue apuntando a
+           la misma posición. */
     } else {
         slot->ocupada = true;
         d->cuenta++;
-        /* Inserción nueva: bumpear version invalida slots cacheados.
-           Una nueva clave puede obligar al probing a reubicar lookups
-           previos que colisionan en el mismo bucket. */
+        /* Inserción nueva: bumpear version y registrar en el orden. */
         d->version++;
+        /* v1.20: el orden_capacidad se mantiene == capacidad por la
+           lógica de dicc_redimensionar. Aseguramos espacio. */
+        if (d->cuenta > d->orden_capacidad) {
+            int nueva_orden_cap = d->orden_capacidad * 2;
+            if (nueva_orden_cap < d->cuenta) nueva_orden_cap = d->cuenta;
+            int *nuevo = (int *)realloc(d->orden_insercion,
+                sizeof(int) * (size_t)nueva_orden_cap);
+            if (!nuevo) {
+                /* OOM: revertir slot y propagar error. */
+                slot->ocupada = false;
+                d->cuenta--;
+                valor_destruir(&clave); valor_destruir(&valor);
+                return false;
+            }
+            d->orden_insercion = nuevo;
+            d->orden_capacidad = nueva_orden_cap;
+        }
+        d->orden_insercion[d->cuenta - 1] = (int)(slot - d->entradas);
     }
     slot->clave = clave;
     slot->valor = valor;
@@ -683,6 +719,21 @@ bool dicc_contiene(const Diccionario *d, const Valor *clave) {
     return slot->ocupada;
 }
 
+/* Helper interno v1.20: encuentra la posición de `slot_idx` en
+   `orden_insercion` y la reemplaza por `nuevo_slot_idx` (in place,
+   sin shift). Usado para actualizar el orden cuando una clave se
+   reubica durante el re-hashing tras borrado. */
+static void dicc_actualizar_slot_en_orden(Diccionario *d,
+                                            int slot_idx_viejo,
+                                            int slot_idx_nuevo) {
+    for (int i = 0; i < d->cuenta; i++) {
+        if (d->orden_insercion[i] == slot_idx_viejo) {
+            d->orden_insercion[i] = slot_idx_nuevo;
+            return;
+        }
+    }
+}
+
 bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out) {
     if (!d || !valor_es_hashable(clave)) return false;
     EntradaDicc *slot = dicc_buscar_slot(d->entradas, d->capacidad, clave);
@@ -690,10 +741,8 @@ bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out) {
     /* Borrado invalida slot cacheado de esta clave Y de otras claves
        que tras la reinserción del cluster cambian de posición. */
     d->version++;
-    /* Probing lineal: al borrar, hay que reinsertar la cadena de
-       claves siguientes para mantener la invariante. Implementación
-       sencilla: marcar tombstone con clave nulo + ocupada=false +
-       reinsertar. Hacemos directamente el rehashing del cluster. */
+    int slot_borrado = (int)(slot - d->entradas);
+
     valor_destruir(&slot->clave);
     *out = slot->valor;
     slot->ocupada = false;
@@ -701,20 +750,36 @@ bool dicc_quitar(Diccionario *d, const Valor *clave, Valor *out) {
     slot->valor = valor_nulo();
     d->cuenta--;
 
-    /* Reinsertar todos los slots hasta el siguiente vacío. */
-    int i = (int)(slot - d->entradas);
-    int j = (i + 1) & (d->capacidad - 1);
+    /* v1.20: quitar slot_borrado del orden de inserción (shift left). */
+    for (int i = 0; i < d->cuenta + 1; i++) {
+        if (d->orden_insercion[i] == slot_borrado) {
+            for (int k = i; k < d->cuenta; k++) {
+                d->orden_insercion[k] = d->orden_insercion[k + 1];
+            }
+            break;
+        }
+    }
+
+    /* Reinsertar slots subsiguientes manteniendo el orden. Cada uno
+       puede reubicarse a una posición distinta (incluso al
+       slot_borrado); actualizamos `orden_insercion` con el nuevo
+       slot_idx. */
+    int j = (slot_borrado + 1) & (d->capacidad - 1);
     while (d->entradas[j].ocupada) {
         EntradaDicc copia = d->entradas[j];
         d->entradas[j].ocupada = false;
         d->entradas[j].clave = valor_nulo();
         d->entradas[j].valor = valor_nulo();
-        d->cuenta--;
-        if (!dicc_asignar(d, copia.clave, copia.valor)) {
-            /* Fallo grave: la tabla queda en estado inconsistente.
-               En la práctica no ocurre porque el factor de carga
-               garantiza que hay slots libres. */
-            return true;
+        int slot_viejo = j;
+        /* Re-buscar slot para `copia.clave` con el hueco abierto.
+           No usamos dicc_asignar porque éste tocaría el orden. */
+        EntradaDicc *dst = dicc_buscar_slot(d->entradas, d->capacidad,
+                                              &copia.clave);
+        *dst = copia;
+        dst->ocupada = true;
+        int slot_nuevo = (int)(dst - d->entradas);
+        if (slot_nuevo != slot_viejo) {
+            dicc_actualizar_slot_en_orden(d, slot_viejo, slot_nuevo);
         }
         j = (j + 1) & (d->capacidad - 1);
     }
@@ -947,18 +1012,14 @@ bool iter_siguiente(Iterador *it, Valor *out) {
             return true;
         }
         case VAL_DICCIONARIO: {
-            /* Yields claves en orden de slot. */
+            /* v1.20: yields claves en orden de INSERCIÓN. `cursor` es
+               el índice en `orden_insercion[]`, no en `entradas[]`. */
             const Diccionario *d = iter->como.dicc;
-            while (it->cursor < d->capacidad) {
-                if (d->entradas[it->cursor].ocupada) {
-                    *out = valor_clonar(&d->entradas[it->cursor].clave);
-                    it->cursor++;
-                    return true;
-                }
-                it->cursor++;
-            }
-            *out = valor_nulo();
-            return false;
+            if (it->cursor >= d->cuenta) { *out = valor_nulo(); return false; }
+            int slot = d->orden_insercion[it->cursor];
+            *out = valor_clonar(&d->entradas[slot].clave);
+            it->cursor++;
+            return true;
         }
         case VAL_CONJUNTO: {
             const Conjunto *c = iter->como.conjunto;
@@ -1684,12 +1745,12 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             int escritos = snprintf(buffer, (size_t)capacidad, "{");
             if (escritos < 0 || escritos >= capacidad) { n = capacidad - 1; break; }
             const Diccionario *d = v->como.dicc;
-            int impreso = 0;
-            for (int i = 0; i < d->capacidad; i++) {
-                const EntradaDicc *e = &d->entradas[i];
-                if (!e->ocupada) continue;
+            /* v1.20: iterar por orden de inserción. */
+            for (int idx = 0; idx < d->cuenta; idx++) {
+                int slot = d->orden_insercion[idx];
+                const EntradaDicc *e = &d->entradas[slot];
                 if (escritos + 4 >= capacidad) break;
-                if (impreso > 0) {
+                if (idx > 0) {
                     buffer[escritos++] = ',';
                     buffer[escritos++] = ' ';
                 }
@@ -1702,7 +1763,6 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                 restante = capacidad - escritos;
                 int wv = valor_a_repr(&e->valor, buffer + escritos, restante);
                 escritos += wv;
-                impreso++;
             }
             if (escritos < capacidad - 1) buffer[escritos++] = '}';
             buffer[escritos < capacidad ? escritos : capacidad - 1] = '\0';
