@@ -1,0 +1,75 @@
+# Ejemplo 46 — Destructuring assignment (v1.21)
+#
+# `a, b = par` desempaqueta un iterable en variables de una sola línea.
+# Funciona con tuplas, listas y cadenas. Soporta anidación arbitraria
+# y permite hacer swap de variables sin variable temporal.
+
+imprimir("=== destructuring (v1.21) ===")
+imprimir("")
+
+# ─── Caso 1: tupla básica ───
+imprimir("1) tupla básica")
+par = (1, 2)
+a, b = par
+imprimir(f"  par = (1, 2) → a={a}, b={b}")
+imprimir("")
+
+# ─── Caso 2: lista al LHS ───
+imprimir("2) lista al lado izquierdo")
+trio = [10, 20, 30]
+[x, yv, z] = trio
+imprimir(f"  [10, 20, 30] → x={x}, yv={yv}, z={z}")
+imprimir("")
+
+# ─── Caso 3: swap sin variable temporal ───
+imprimir("3) swap idiomático")
+i = "izquierda"
+d = "derecha"
+imprimir(f"  antes: i={i}, d={d}")
+i, d = d, i
+imprimir(f"  i, d = d, i → i={i}, d={d}")
+imprimir("")
+
+# ─── Caso 4: anidación ───
+imprimir("4) destructuring anidado")
+(cabeza, (op, valor)) = ("set", ("+", 42))
+imprimir(f"  ('set', ('+', 42)) → cabeza={cabeza}, op={op}, valor={valor}")
+imprimir("")
+
+# ─── Caso 5: función que devuelve múltiples valores ───
+funcion dividir(num, den):
+    cociente = num // den
+    resto = num % den
+    retornar (cociente, resto)
+fin funcion
+
+imprimir("5) función → varios valores")
+q, r = dividir(17, 5)
+imprimir(f"  17 // 5 = {q} resto {r}")
+imprimir("")
+
+# ─── Caso 6: iteración con destructuring ───
+imprimir("6) iteración sobre pares")
+pares = [("ana", 30), ("luis", 25), ("marta", 28)]
+para par_dato en pares:
+    nombre, edad = par_dato
+    imprimir(f"  {nombre} tiene {edad} años")
+fin para
+imprimir("")
+
+# ─── Caso 7: errores atrapables ───
+imprimir("7) errores atrapables")
+intentar:
+    a, b, c = (1, 2)
+atrapar ErrorDeValor como e:
+    imprimir(f"  aridad mismatch → {e}")
+fin intentar
+
+intentar:
+    a, b = 42
+atrapar ErrorDeTipo como e:
+    imprimir(f"  tipo no iterable → {e}")
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 46 ===")

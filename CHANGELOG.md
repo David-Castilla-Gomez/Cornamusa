@@ -6,6 +6,96 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.21.0] — 2026-05-13 — Destructuring assignment
+
+Asignación múltiple en una sola línea: `a, b = par`, `[x, y, z] = lista`,
+swap idiomático `a, b = b, a` y anidación arbitraria
+`(a, (b, c)) = (1, (2, 3))`. Equivalente al *tuple unpacking* de Python.
+
+### Antes (v1.20 y previos)
+
+```cornamusa
+par = (1, 2)
+a = par[0]
+b = par[1]
+
+# Swap:
+tmp = a
+a = b
+b = tmp
+```
+
+### Ahora (v1.21)
+
+```cornamusa
+par = (1, 2)
+a, b = par                       # 1, 2
+
+# Swap sin variable temporal:
+a, b = b, a                      # 2, 1
+
+# Lista al lado izquierdo:
+[x, yv, z] = [10, 20, 30]
+
+# Anidado:
+(nombre, (op, valor)) = ("set", ("+", 42))
+
+# Iteración con destructuring:
+para par_dato en [("ana", 30), ("luis", 25)]:
+    nombre, edad = par_dato
+    imprimir(f"{nombre} tiene {edad} años")
+fin para
+```
+
+### Errores atrapables
+
+- **Aridad incorrecta** → `ErrorDeValor` con mensaje claro.
+- **Tipo no iterable** → `ErrorDeTipo` (consistente con `longitud()`).
+
+```cornamusa
+intentar:
+    a, b, c = (1, 2)
+atrapar ErrorDeValor como e:
+    imprimir(e)  # ErrorDeValor: aridad incorrecta en destructuring
+fin intentar
+```
+
+### Iterables soportados
+
+Tupla, lista y cadena (esta última desempaqueta por *code point*).
+Cualquier valor con longitud conocida e indexación entera.
+
+### Implementación
+
+Reusa la infraestructura de [src/chunk.h](src/chunk.h) existente:
+`OP_LONGITUD`, `OP_INDICE`, `OP_IGUAL`, `OP_SALTAR_SI_FALSO`. Sin
+opcode nuevo. El compilador detecta `EXPR_TUPLA`/`EXPR_LISTA` como
+destino en [src/compilador.c](src/compilador.c) y emite:
+
+1. Eval RHS → slot anónimo.
+2. Verifica `longitud(slot) == n_destinos`. Si no → `lanzar ErrorDeValor`.
+3. Para cada destino `i`: `slot[i]` → asignación recursiva.
+
+El parser de [src/parser.c](src/parser.c) recoge `a, b, c` como tupla
+LHS sin paréntesis en `parsear_asignar_o_expr`, y el RHS también
+permite tupla sin paréntesis (`a, b = b, a`).
+
+Heurística añadida: al final de una expresión Pratt, si el siguiente
+token (`[` o `(`) está en otra línea, no continuar como infijo. Sin
+esto, `lista = [1, 2]` seguido por `[x, y] = lista` se parsearía como
+`lista = [1, 2][x, y]`.
+
+Paridad tree-walking en [src/evaluador.c](src/evaluador.c) vía
+`asignar_destructuring` recursivo.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_destructuring.c` — 15 tests cubriendo
+  tupla, lista, swap, anidación, cadena, errores atrapables, RHS
+  computado e iteración.
+- `bc_run_46_destructuring` — ejecuta `examples/46_destructuring.cor`.
+- **149/149 tests verde**.
+
 ## [1.20.0] — 2026-05-13 — Diccionarios preservan orden de inserción
 
 Los diccionarios ahora iteran y serializan en el **orden en que se

@@ -1321,6 +1321,112 @@ static void asignar_indice(Evaluador *ev, const Sent *s, Expr *destino,
  *   - INDICE (`lista[i] = v`): asigna en la lista referenciada.
  * Tuple destructuring y atributos (`obj.x = v`) llegan después.
  */
+/*
+ * v1.21: destructuring recursivo. `valor` se consume.
+ * Soporta RHS de tipo VAL_TUPLA, VAL_LISTA o VAL_CADENA (iterables
+ * indexables con longitud conocida). Aridad mismatch → ErrorDeValor.
+ * Tipo no soportado → ErrorDeTipo.
+ */
+static void asignar_destructuring(Evaluador *ev, const Sent *s,
+                                    const Expr *patron, Valor valor) {
+    int n_destino = patron->como.secuencia.n_elementos;
+    Expr **elementos = patron->como.secuencia.elementos;
+
+    /* Determinar n_origen según tipo. */
+    int n_origen = -1;
+    if (valor.tipo == VAL_TUPLA) {
+        n_origen = valor.como.tupla->cuenta;
+    } else if (valor.tipo == VAL_LISTA) {
+        n_origen = valor.como.lista->cuenta;
+    } else if (valor.tipo == VAL_CADENA) {
+        /* Longitud en code points; iteramos por code points abajo. */
+        const char *t = valor.como.cadena.texto;
+        int len = valor.como.cadena.longitud;
+        int cp = 0;
+        for (int i = 0; i < len; ) {
+            unsigned char b = (unsigned char)t[i];
+            if      (b < 0x80) i += 1;
+            else if ((b >> 5) == 0x6) i += 2;
+            else if ((b >> 4) == 0xE) i += 3;
+            else if ((b >> 3) == 0x1E) i += 4;
+            else i += 1;
+            cp++;
+        }
+        n_origen = cp;
+    } else {
+        sent_set_error(ev, s,
+            "ErrorDeTipo: '%s' no soporta destructuring",
+            valor_nombre_tipo(&valor));
+        valor_destruir(&valor);
+        return;
+    }
+
+    if (n_origen != n_destino) {
+        sent_set_error(ev, s,
+            "ErrorDeValor: aridad incorrecta en destructuring "
+            "(esperaba %d, recibió %d)", n_destino, n_origen);
+        valor_destruir(&valor);
+        return;
+    }
+
+    for (int i = 0; i < n_destino; i++) {
+        Valor elem;
+        if (valor.tipo == VAL_TUPLA) {
+            elem = valor_clonar(&valor.como.tupla->elementos[i]);
+        } else if (valor.tipo == VAL_LISTA) {
+            elem = valor_clonar(&valor.como.lista->elementos[i]);
+        } else { /* VAL_CADENA: extraer code point i como cadena */
+            const char *t = valor.como.cadena.texto;
+            int len = valor.como.cadena.longitud;
+            int idx = 0, byte_inicio = 0;
+            int j = 0;
+            while (j < len && idx <= i) {
+                if (idx == i) { byte_inicio = j; }
+                unsigned char b = (unsigned char)t[j];
+                int adv;
+                if      (b < 0x80) adv = 1;
+                else if ((b >> 5) == 0x6) adv = 2;
+                else if ((b >> 4) == 0xE) adv = 3;
+                else if ((b >> 3) == 0x1E) adv = 4;
+                else adv = 1;
+                if (idx == i) {
+                    elem = valor_cadena_duplicar(t + byte_inicio, adv);
+                    j += adv; idx++; goto extraido;
+                }
+                j += adv; idx++;
+            }
+            elem = valor_nulo();
+        extraido: ;
+        }
+
+        const Expr *dst_i = elementos[i];
+        if (dst_i->tipo == EXPR_IDENT) {
+            if (!entorno_definir(ev->entorno_actual,
+                                  dst_i->como.ident.nombre,
+                                  dst_i->como.ident.longitud, elem)) {
+                sent_set_error(ev, s, "memoria insuficiente al asignar");
+                valor_destruir(&valor);
+                return;
+            }
+        } else if (dst_i->tipo == EXPR_TUPLA
+                   || dst_i->tipo == EXPR_LISTA) {
+            asignar_destructuring(ev, s, dst_i, elem);
+            if (ev->error.tuvo_error) {
+                valor_destruir(&valor);
+                return;
+            }
+        } else {
+            sent_set_error(ev, s,
+                "ErrorDeSintaxis: destino de destructuring debe ser "
+                "identificador o tupla/lista anidada");
+            valor_destruir(&elem);
+            valor_destruir(&valor);
+            return;
+        }
+    }
+    valor_destruir(&valor);
+}
+
 static void ejec_asignar(Evaluador *ev, const Sent *s) {
     Expr *destino = s->como.asignar.destino;
 
@@ -1339,6 +1445,14 @@ static void ejec_asignar(Evaluador *ev, const Sent *s) {
         Valor v = evaluador_evaluar_expr(ev, s->como.asignar.valor);
         if (ev->error.tuvo_error) { valor_destruir(&v); return; }
         asignar_indice(ev, s, destino, v);
+        return;
+    }
+
+    /* v1.21: destructuring `a, b = par` o `[a, b] = lista`. */
+    if (destino->tipo == EXPR_TUPLA || destino->tipo == EXPR_LISTA) {
+        Valor v = evaluador_evaluar_expr(ev, s->como.asignar.valor);
+        if (ev->error.tuvo_error) { valor_destruir(&v); return; }
+        asignar_destructuring(ev, s, destino, v);
         return;
     }
 

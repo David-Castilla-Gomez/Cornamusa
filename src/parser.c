@@ -185,6 +185,16 @@ static Expr *parsear_precedencia(Parser *p, Precedencia min_prec) {
     while (true) {
         const ReglaParseo *r = obtener_regla(p->actual.tipo);
         if (r->precedencia < min_prec || r->infijo == NULL) break;
+        /* v1.21: heurística Python-like de fin de sentencia.
+           Si el token infix está en una línea DISTINTA al token previo
+           Y el infix es `[`, `(` o `.`, no lo aplicamos — probablemente
+           inicia una nueva sentencia. Sin esto, `lista = [1, 2]` seguido
+           de `[x, y] = lista` se parsearía como `lista = [1, 2][x, y]`. */
+        if (p->actual.linea != p->previo.linea
+            && (p->actual.tipo == TT_CORCH_IZQ
+                || p->actual.tipo == TT_PARENT_IZQ)) {
+            break;
+        }
         izq = r->infijo(p, izq);
         if (izq == NULL) return NULL;
     }
@@ -1386,6 +1396,69 @@ static Sent *parsear_asignar_o_expr(Parser *p) {
 
     Expr *primero = parser_parsear_expr(p);
     if (primero == NULL) return NULL;
+
+    /* v1.21: destructuring `a, b = par` — si tras la primera expr viene
+       coma + más exprs + `=`, formar tupla LHS sin paréntesis. */
+    if (check(p, TT_COMA)) {
+        /* Recolectar resto de targets. */
+        Expr **elementos = NULL;
+        int n = 1, cap = 4;
+        elementos = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+        if (elementos == NULL) return NULL;
+        elementos[0] = primero;
+        while (consumir_si(p, TT_COMA)) {
+            /* Coma final → permitido si después viene `=`. */
+            if (check(p, TT_ASIGNAR)) break;
+            Expr *e = parser_parsear_expr(p);
+            if (e == NULL) return NULL;
+            if (n >= cap) {
+                int nuevo_cap = cap * 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)nuevo_cap);
+                if (nuevo == NULL) return NULL;
+                memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+                elementos = nuevo;
+                cap = nuevo_cap;
+            }
+            elementos[n++] = e;
+        }
+        if (!consumir(p, TT_ASIGNAR,
+            "se esperaba '=' tras lista de targets en asignacion multiple")) {
+            return NULL;
+        }
+        /* RHS: permite tupla sin paréntesis para `a, b = b, a`. */
+        Expr *valor = parser_parsear_expr(p);
+        if (valor == NULL) return NULL;
+        if (check(p, TT_COMA)) {
+            int rlinea = valor->linea;
+            int rcol = valor->columna;
+            Expr **r_elems = NULL;
+            int rn = 1, rcap = 4;
+            r_elems = (Expr **)arena_alocar(p->arena,
+                sizeof(Expr *) * (size_t)rcap);
+            if (r_elems == NULL) return NULL;
+            r_elems[0] = valor;
+            while (consumir_si(p, TT_COMA)) {
+                Expr *e = parser_parsear_expr(p);
+                if (e == NULL) return NULL;
+                if (rn >= rcap) {
+                    int nuevo_cap = rcap * 2;
+                    Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                        sizeof(Expr *) * (size_t)nuevo_cap);
+                    if (nuevo == NULL) return NULL;
+                    memcpy(nuevo, r_elems, sizeof(Expr *) * (size_t)rn);
+                    r_elems = nuevo;
+                    rcap = nuevo_cap;
+                }
+                r_elems[rn++] = e;
+            }
+            valor = expr_tupla(p->arena, r_elems, rn, rlinea, rcol);
+            if (valor == NULL) return NULL;
+        }
+        Expr *tupla_lhs = expr_tupla(p->arena, elementos, n, linea, col);
+        if (tupla_lhs == NULL) return NULL;
+        return sent_asignar(p->arena, tupla_lhs, valor, linea, col);
+    }
 
     if (consumir_si(p, TT_ASIGNAR)) {
         Expr *valor = parser_parsear_expr(p);

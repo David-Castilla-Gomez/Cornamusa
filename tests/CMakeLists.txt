@@ -432,6 +432,18 @@ set_tests_properties(bc_run_45_dict_ordenado PROPERTIES
     PASS_REGULAR_EXPRESSION "Rehash preserva orden"
 )
 
+# v1.21: destructuring assignment.
+add_test(
+    NAME bc_run_46_destructuring
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/46_destructuring.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_46_destructuring PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 46"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

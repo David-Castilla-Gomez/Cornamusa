@@ -924,8 +924,154 @@ static bool compilar_para(Compilador *c, const Sent *s);
 static bool compilar_intentar(Compilador *c, const Sent *s);
 static bool compilar_clase(Compilador *c, const Sent *s);
 
+/* v1.21: destructuring helper. Asume valor a destructurar está en TOS.
+   Emit bytecode que:
+     1. Mueve TOS a un slot anónimo local.
+     2. Verifica longitud == n elementos del patrón LHS.
+     3. Por cada elemento i, extrae V[i] y lo asigna al elemento i del LHS.
+        - Si LHS[i] es identificador: emit OP_ASIGNAR_LOCAL/UPVALUE/DEFINIR_GLOBAL.
+        - Si LHS[i] es EXPR_TUPLA/EXPR_LISTA: recursión.
+        - Otro tipo: error de compilación.
+     4. Si la longitud no coincide: lanza ErrorDeValor con mensaje.
+
+   El iterable puede ser tupla, lista, cadena, rango... cualquier cosa que
+   soporte `longitud()` y `[i]`. No requiere tipo coincidente con el LHS.
+*/
+static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea);
+
+static bool emitir_asignacion_ident(Compilador *c, const Expr *destino,
+                                      int linea) {
+    /* Asume valor está en TOS. Lo asigna a `destino` (un EXPR_IDENT).
+       Consume el TOS. */
+    if (c->actual->es_funcion) {
+        int slot = buscar_local(c->actual, destino->como.ident.nombre,
+                                   destino->como.ident.longitud);
+        if (slot >= 0) {
+            /* Local existente: OP_ASIGNAR_LOCAL pop TOS y guarda en slot. */
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)slot, linea);
+            return true;
+        }
+        int upv = resolver_upvalue(c, c->actual,
+                                      destino->como.ident.nombre,
+                                      destino->como.ident.longitud, linea);
+        if (upv >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
+                                (uint8_t)upv, linea);
+            return true;
+        }
+        /* Nuevo local. V ya está en TOS — registrar el slot allí.
+           Limitación documentada: si el destructuring está dentro de un
+           bucle, los nuevos locals creados en la primera iter no se
+           re-asignan en iters siguientes (bug v0.11.5 que requiere la
+           convención OP_NULO+agregar+ASIGNAR). Para destructuring en
+           bucles, pre-declarar las variables fuera. */
+        int nuevo = agregar_local(c, destino->como.ident.nombre,
+                                       destino->como.ident.longitud, linea);
+        if (nuevo < 0) return false;
+        /* TOS → es el contenido del slot nuevo. No emit nada. */
+        return true;
+    }
+    /* Top-level (global). */
+    int idx = agregar_nombre_global(c, destino->como.ident.nombre,
+                                      destino->como.ident.longitud);
+    if (idx < 0 || idx > 255) {
+        error_compilacion(c, linea, 0,
+            "demasiadas constantes para v0.6 (operando byte)");
+        return false;
+    }
+    chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                        (uint8_t)idx, linea);
+    return true;
+}
+
+static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
+    /* Asume el valor a destructurar está en TOS. */
+    int n = patron->como.secuencia.n_elementos;
+    Expr **elementos = patron->como.secuencia.elementos;
+
+    /* 1. Mover TOS a slot anónimo. agregar_local registra el slot tope. */
+    int slot_iter = agregar_local(c, "", 0, linea);
+    if (slot_iter < 0) return false;
+
+    /* 2. Verify longitud == n. */
+    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                        (uint8_t)slot_iter, linea);
+    chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, linea);
+    chunk_emitir_constante(c->actual->chunk,
+                             valor_entero_de_long((long)n), linea);
+    chunk_emitir_byte(c->actual->chunk, OP_IGUAL, linea);
+    int salto_mala_aridad = emitir_salto(c, OP_SALTAR_SI_FALSO, linea);
+    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);  /* bool true */
+
+    /* 3. Por cada elemento i: extraer V[i] y asignar. */
+    for (int i = 0; i < n; i++) {
+        const Expr *dst_i = elementos[i];
+        /* Push slot_iter[i] al TOS. */
+        chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                            (uint8_t)slot_iter, linea);
+        chunk_emitir_constante(c->actual->chunk,
+                                 valor_entero_de_long((long)i), linea);
+        chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
+        /* Asignar TOS a dst_i. */
+        if (dst_i->tipo == EXPR_IDENT) {
+            if (!emitir_asignacion_ident(c, dst_i, linea)) return false;
+        } else if (dst_i->tipo == EXPR_TUPLA || dst_i->tipo == EXPR_LISTA) {
+            if (!emitir_destructuring(c, dst_i, linea)) return false;
+        } else {
+            error_compilacion(c, linea, 0,
+                "ErrorDeSintaxis: destino de destructuring debe ser "
+                "identificador o tupla/lista anidada");
+            return false;
+        }
+    }
+
+    /* 4. Cleanup: descartar slot_iter y rebobinar n_locales. */
+    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);
+    c->actual->n_locales--;
+    int salto_fin = emitir_salto(c, OP_SALTAR, linea);
+
+    /* 5. Aterrizaje de aridad mala: descartar bool false, descartar
+       slot_iter (que sigue en stack), lanzar ErrorDeValor. */
+    parchear_salto(c, salto_mala_aridad, linea);
+    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);  /* bool false */
+    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);  /* slot_iter */
+    c->actual->n_locales--;  /* el slot_iter ya no existe en este path */
+    /* Emit `lanzar ErrorDeValor("aridad ...")`. */
+    int idx_err = agregar_nombre_global(c, "ErrorDeValor", 12);
+    if (idx_err < 0 || idx_err > 255) {
+        error_compilacion(c, linea, 0, "demasiadas constantes (>255)");
+        return false;
+    }
+    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
+                        (uint8_t)idx_err, linea);
+    chunk_emitir_byte2(c->actual->chunk, 0, 0, linea);
+    chunk_emitir_byte2(c->actual->chunk, 0, 0, linea);
+    chunk_emitir_constante(c->actual->chunk,
+        valor_cadena_duplicar("aridad incorrecta en destructuring",
+                                strlen("aridad incorrecta en destructuring")),
+        linea);
+    chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1, linea);
+    chunk_emitir_byte(c->actual->chunk, OP_LANZAR, linea);
+    /* Restaurar n_locales para que el código post-destructuring vea el
+       estado correcto (el slot_iter ya no está). */
+    c->actual->n_locales++;  /* compensar el decrement de arriba: post-
+                                aterrizaje el código fluye al fin y NO
+                                vuelve a este punto. n_locales refleja
+                                el estado de stack en el salto_fin. */
+
+    parchear_salto(c, salto_fin, linea);
+    return true;
+}
+
 static bool compilar_asignar(Compilador *c, const Sent *s) {
     Expr *destino = s->como.asignar.destino;
+
+    /* v1.21: destructuring `a, b = par` o `[a, b] = lista`. */
+    if (destino->tipo == EXPR_TUPLA || destino->tipo == EXPR_LISTA) {
+        if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+        return emitir_destructuring(c, destino, s->linea);
+    }
 
     /* Asignación a índice: `obj[key] = valor`. */
     if (destino->tipo == EXPR_INDICE) {
