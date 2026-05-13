@@ -1,66 +1,28 @@
 # Cornamusa stdlib: formato.cor
 #
 # Funciones de formato y presentación de valores. Pensadas para
-# reportes, logs y outputs amigables.
+# reportes, logs y outputs amigables. Se complementa con `cadenas`.
 #
 # Uso:
 #   importar formato
 #   imprimir(formato.rellenar("nombre:", 12))
 #   imprimir(formato.con_decimales(3.14159, 2))
-#
-# Nota v1.18: el módulo es self-contained (NO importa `cadenas`) para
-# evitar un bug preexistente del runtime cuando dos módulos importan
-# el mismo sub-módulo. Helpers locales prefijados `_` reproducen las
-# funciones necesarias.
 
-# Repite `s` `n` veces (igual que cadenas.repetir, inline para evitar
-# import). v1.19+: cuando el bug de re-import se arregle, deferimos
-# a cadenas.repetir.
+importar cadenas
+
+# Aliases locales para facilitar lectura. v1.18 tenía helpers `_*`
+# duplicados por un bug de re-import; v1.18.1 lo arregló y ahora
+# delegamos en cadenas.* directamente.
 funcion _repetir(s, n):
-    r = ""
-    para i en rango(n):
-        r = r + s
-    fin para
-    retornar r
+    retornar cadenas.repetir(s, n)
 fin funcion
 
-# Une elementos de una lista con un separador (igual que cadenas.unir).
 funcion _unir(partes, sep):
-    n = longitud(partes)
-    si n == 0:
-        retornar ""
-    fin si
-    resultado = partes[0]
-    para i en rango(1, n):
-        resultado = resultado + sep + partes[i]
-    fin para
-    retornar resultado
+    retornar cadenas.unir(partes, sep)
 fin funcion
 
-# Busca el primer índice de `sub` en `s`, -1 si no aparece.
 funcion _indice_de(s, sub):
-    ns = longitud(s)
-    nb = longitud(sub)
-    si nb == 0:
-        retornar 0
-    fin si
-    si nb > ns:
-        retornar -1
-    fin si
-    i = 0
-    mientras i <= ns - nb:
-        coincide = verdadero
-        para j en rango(nb):
-            si s[i + j] != sub[j]:
-                coincide = falso
-            fin si
-        fin para
-        si coincide:
-            retornar i
-        fin si
-        i = i + 1
-    fin mientras
-    retornar -1
+    retornar cadenas.indice_de(s, sub)
 fin funcion
 
 # Rellena `s` con `caracter` a la derecha hasta alcanzar `ancho`.

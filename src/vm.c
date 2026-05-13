@@ -1804,11 +1804,27 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     VM_ERROR("estado interno corrupto: operandos de OP_IMPORTAR no son cadenas");
                     return VM_ERROR_RUNTIME;
                 }
-                /* 1. Cache hit: solo asignar la global con el binding. */
+                /* 1. Cache hit: solo asignar la global con el binding.
+                   v1.18.1: dos fixes.
+                   (a) Retener el módulo antes de asignar. `dicc_obtener`
+                   retorna por value sin retain, pero `dicc_asignar`
+                   toma ownership. Sin retener, doble liberación al
+                   limpiar globales + cache.
+                   (b) Empujar `nulo` al stack: el compilador emite
+                   `OP_DESCARTAR` tras OP_IMPORTAR asumiendo que el
+                   frame del módulo (cache miss) deja un `nulo` en
+                   stack al retornar. En cache hit no hay frame nuevo,
+                   así que sin este push el OP_DESCARTAR popea basura.
+                   Bug expuesto al hacer `importar X` dentro de un
+                   módulo cuando `X` ya estaba en cache. */
                 Valor cached;
                 if (dicc_obtener(vm->cache_modulos, nombre, &cached)) {
+                    if (cached.tipo == VAL_MODULO) {
+                        modulo_retener(cached.como.modulo);
+                    }
                     Valor clave = valor_clonar(binding);
                     dicc_asignar(vm->globales, clave, cached);
+                    empujar(vm, valor_nulo());  /* (b) */
                     break;
                 }
                 /* 2. Cargar archivo y compilar. */

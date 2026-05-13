@@ -6,6 +6,50 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.18.1] — 2026-05-13 — Fix: re-import de módulos
+
+Arregla un bug preexistente del runtime descubierto durante el
+desarrollo de v1.18: si dos módulos importaban el mismo sub-módulo
+(p.ej. el programa principal Y un módulo importado ambos hacían
+`importar cadenas`), la VM fallaba con
+`Pila vacia (bug del compilador)`.
+
+### Causa
+
+El compilador emite `OP_DESCARTAR` tras `OP_IMPORTAR` asumiendo que
+el frame del módulo (cache miss) deja `nulo` en stack al retornar
+(vía `OP_RETORNAR`). En el camino de **cache hit** no hay frame
+nuevo — `OP_IMPORTAR` solo asigna la global desde el cache y termina
+— pero NO empujaba `nulo`. El `OP_DESCARTAR` siguiente popeaba el
+valor que estuviera en la cima, corrompiendo el stack.
+
+### Fix
+
+`OP_IMPORTAR` en cache hit ahora:
+1. Retiene el módulo antes de asignarlo a globales (fix secundario
+   de doble-liberación: `dicc_obtener` retorna por value sin retain,
+   pero `dicc_asignar` toma ownership; sin retain, el módulo se
+   liberaba dos veces al limpiar cache + globales).
+2. **Empuja `nulo` al stack** para que el `OP_DESCARTAR` siguiente
+   tenga algo válido que descartar — convención consistente con el
+   camino de cache miss.
+
+Un patch quirúrgico en [src/vm.c](src/vm.c) de ~5 líneas.
+
+### Refactor de stdlib
+
+Con el bug arreglado, `formato.cor` vuelve a delegar en `cadenas`
+sin duplicación. Los helpers locales `_repetir`, `_unir`,
+`_indice_de` ahora son aliases triviales.
+
+### Test diferencial
+
+Añadido `bc_run_43_formato` en
+[tests/CMakeLists.txt](tests/CMakeLists.txt). El ejemplo
+[examples/43_formato.cor](examples/43_formato.cor) ya ejercitaba el
+patrón (`main` importa `formato`+`cadenas`; `formato` importa
+`cadenas`); ahora pasa como test de regresión. Total: **140 verde**.
+
 ## [1.18.0] — 2026-05-12 — Stdlib `formato` y `cadenas` extendida
 
 Stdlib más amplia para reportes legibles y manipulación de cadenas.

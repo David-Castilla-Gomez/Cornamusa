@@ -392,6 +392,21 @@ set_tests_properties(bc_run_33_atrapar_robusto PROPERTIES
     PASS_REGULAR_EXPRESSION "sin terminar abruptamente"
 )
 
+# v1.18 + v1.18.1: stdlib formato + cadenas extendida. Este ejemplo
+# importa formato Y cadenas en el principal; formato a su vez importa
+# cadenas. Con el bug v1.18 (re-import) fallaba; el fix v1.18.1 lo
+# resuelve.
+add_test(
+    NAME bc_run_43_formato
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/43_formato.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_43_formato PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "REPORTE TRIMESTRAL"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable
