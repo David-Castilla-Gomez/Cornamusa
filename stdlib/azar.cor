@@ -1,0 +1,117 @@
+# Cornamusa stdlib: azar.cor
+#
+# Números pseudoaleatorios de calidad estadística (motor xoshiro256**
+# en C). Cubre las primitivas comunes para juegos, simulación, muestreo
+# y testing.
+#
+# Uso:
+#   importar azar
+#
+#   azar.semilla(42)             # determinismo para tests
+#   x = azar.decimal()           # uniforme en [0, 1)
+#   n = azar.entero(1, 100)      # uniforme en [1, 100]
+#   c = azar.elegir(["rojo", "verde", "azul"])
+#   azar.barajar(lista)          # in-place, Fisher-Yates
+#   m = azar.muestra([1..50], 5) # 5 sin reemplazo
+#
+# Notas:
+#   - El estado del PRNG es global del proceso. La semilla inicial usa
+#     el reloj.
+#   - `barajar` muta la lista; `muestra` devuelve una nueva.
+#   - Para distribución normal, ver TODO en `normal()` abajo.
+
+
+# Uniforme [0.0, 1.0). 53 bits de mantisa.
+funcion decimal():
+    retornar azar_decimal()
+fin funcion
+
+# Uniforme entero en [a, b], inclusive en ambos extremos.
+funcion entero(a, b):
+    retornar azar_entero(a, b)
+fin funcion
+
+# Re-siembra el PRNG (útil para reproducibilidad en tests).
+funcion semilla(n):
+    retornar azar_semilla(n)
+fin funcion
+
+# Elige un elemento al azar de una secuencia indexable (lista o tupla).
+# Lanza ErrorDeValor si la secuencia es vacía.
+funcion elegir(seq):
+    n = longitud(seq)
+    si n == 0:
+        lanzar ErrorDeValor("azar.elegir: secuencia vacia")
+    fin si
+    retornar seq[azar_entero(0, n - 1)]
+fin funcion
+
+# Baraja una lista in-place vía Fisher-Yates (Knuth). Retorna la
+# misma lista por conveniencia. La lista se modifica.
+funcion barajar(lista):
+    n = longitud(lista)
+    i = n - 1
+    mientras i > 0:
+        j = azar_entero(0, i)
+        tmp = lista[i]
+        lista[i] = lista[j]
+        lista[j] = tmp
+        i = i - 1
+    fin mientras
+    retornar lista
+fin funcion
+
+# Muestra `k` elementos de `seq` sin reemplazo. Devuelve una lista
+# nueva. Si k > longitud(seq), lanza ErrorDeValor.
+funcion muestra(seq, k):
+    n = longitud(seq)
+    si k < 0:
+        lanzar ErrorDeValor("azar.muestra: k negativo")
+    fin si
+    si k > n:
+        lanzar ErrorDeValor("azar.muestra: k mayor que la secuencia")
+    fin si
+    # Copia indices y selecciona los primeros k tras barajar parcialmente.
+    indices = []
+    i = 0
+    mientras i < n:
+        agregar(indices, i)
+        i = i + 1
+    fin mientras
+    resultado = []
+    i = 0
+    mientras i < k:
+        # Saca un indice aleatorio entre [i, n-1] y intercambia con i.
+        j = azar_entero(i, n - 1)
+        idx = indices[j]
+        indices[j] = indices[i]
+        indices[i] = idx
+        agregar(resultado, seq[idx])
+        i = i + 1
+    fin mientras
+    retornar resultado
+fin funcion
+
+# Booleano al azar con probabilidad `p` de ser verdadero.
+# Default 0.5 (moneda).
+funcion booleano(p=0.5):
+    retornar azar_decimal() < p
+fin funcion
+
+# Devuelve un decimal uniforme en [a, b).
+funcion uniforme(a, b):
+    si a >= b:
+        retornar a
+    fin si
+    retornar a + (b - a) * azar_decimal()
+fin funcion
+
+# TODO v1.27 o posterior: `normal(mu, sigma)` Box-Muller requiere
+# built-ins ln/cos/sqrt que aún no expone Cornamusa. Cuando se
+# añadan, esta función será:
+#   funcion normal(mu=0.0, sigma=1.0):
+#       u1 = azar_decimal()
+#       u2 = azar_decimal()
+#       z = raiz(-2.0 * log_natural(u1)) * coseno(2.0 * PI * u2)
+#       retornar mu + sigma * z
+#   fin funcion

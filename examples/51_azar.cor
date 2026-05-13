@@ -1,0 +1,90 @@
+# Ejemplo 51 — Stdlib `azar` (v1.26)
+#
+# PRNG xoshiro256** con calidad estadística (passes BigCrush) y muy
+# poco estado. Cubre las primitivas comunes: decimal en [0, 1),
+# entero en rango, elegir, barajar (Fisher-Yates), muestrear sin
+# reemplazo, booleano sesgado.
+
+importar azar
+
+imprimir("=== stdlib azar (v1.26) ===")
+imprimir("")
+
+# ─── Caso 1: semilla para reproducibilidad ───
+azar.semilla(42)
+imprimir("1) reproducibilidad")
+imprimir("  azar.decimal():", azar.decimal())
+imprimir("  azar.decimal():", azar.decimal())
+imprimir("  azar.entero(1, 100):", azar.entero(1, 100))
+imprimir("")
+
+# ─── Caso 2: simulación de dados ───
+imprimir("2) simulación de 5 tiradas de 2d6")
+azar.semilla(1234)
+i = 0
+mientras i < 5:
+    d1 = azar.entero(1, 6)
+    d2 = azar.entero(1, 6)
+    imprimir("  ", d1, "+", d2, "=", d1 + d2)
+    i = i + 1
+fin mientras
+imprimir("")
+
+# ─── Caso 3: elegir + barajar ───
+imprimir("3) elegir y barajar")
+azar.semilla(7)
+sabores = ["chocolate", "vainilla", "fresa", "menta", "limon"]
+imprimir("  un sabor:", azar.elegir(sabores))
+
+# barajar muta in-place
+cartas = ["A", "K", "Q", "J", "10"]
+azar.barajar(cartas)
+imprimir("  cartas barajadas:", cartas)
+imprimir("")
+
+# ─── Caso 4: muestra sin reemplazo ───
+imprimir("4) muestrear lotería")
+azar.semilla(2024)
+bolas = []
+i = 1
+mientras i <= 49:
+    agregar(bolas, i)
+    i = i + 1
+fin mientras
+ganadores = azar.muestra(bolas, 6)
+imprimir("  6 números del 1-49:", ganadores)
+imprimir("")
+
+# ─── Caso 5: simulación Monte Carlo de π ───
+imprimir("5) estimar π con Monte Carlo")
+azar.semilla(2026)
+dentro = 0
+n_total = 100000
+i = 0
+mientras i < n_total:
+    xc = azar.decimal()
+    yc = azar.decimal()
+    si xc * xc + yc * yc <= 1.0:
+        dentro = dentro + 1
+    fin si
+    i = i + 1
+fin mientras
+pi_aprox = 4.0 * dentro / n_total
+imprimir("  π ≈", pi_aprox, " (real: 3.14159265...)")
+imprimir("")
+
+# ─── Caso 6: moneda sesgada ───
+imprimir("6) booleano sesgado (p=0.7)")
+azar.semilla(5)
+verdaderos = 0
+i = 0
+mientras i < 1000:
+    si azar.booleano(0.7):
+        verdaderos = verdaderos + 1
+    fin si
+    i = i + 1
+fin mientras
+imprimir("  cara en 1000 tiradas:", verdaderos, "(esperado ~700)")
+imprimir("")
+
+imprimir("=== fin ejemplo 51 ===")

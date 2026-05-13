@@ -6,6 +6,114 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.26.0] — 2026-05-13 — Stdlib `azar` + fix `OP_LANZAR` globals
+
+Arranca **Fase 2 — stdlib esencial**. Primer módulo: `azar`, PRNG de
+calidad estadística (xoshiro256**, passes BigCrush) con las
+primitivas comunes para juegos, simulación, muestreo y testing.
+
+### API del módulo `azar`
+
+```cornamusa
+importar azar
+
+azar.semilla(42)                  # reproducibilidad para tests
+azar.decimal()                    # uniforme en [0, 1) — 53 bits mantisa
+azar.entero(1, 100)               # uniforme en [1, 100] inclusive
+azar.uniforme(0.0, 10.0)          # uniforme [a, b) decimal
+azar.booleano()                   # moneda 50/50
+azar.booleano(p=0.7)              # sesgado: 70% de verdaderos
+azar.elegir(["pan", "vino"])      # un elemento al azar
+azar.barajar(lista)               # Fisher-Yates in-place, retorna lista
+azar.muestra(seq, k)              # k sin reemplazo, nueva lista
+```
+
+### Motor xoshiro256**
+
+Implementación en [src/azar.c](src/azar.c) — ~80 líneas C:
+
+- **256 bits de estado**, período `2^256 - 1`.
+- Sembrado por `SplitMix64` desde una semilla `uint64`.
+- Semilla inicial automática del reloj (`time(NULL) ^ tv_nsec`)
+  si no se llama `azar.semilla()` explícitamente.
+- `azar_entero_en(a, b)` usa **rechazo** para eliminar el bias del
+  módulo: `lim = (UINT64_MAX / rango) * rango`.
+
+### Built-ins primitivos
+
+`nativos.c` registra:
+- `azar_decimal()` → VAL_DECIMAL en [0, 1).
+- `azar_entero(a, b)` → VAL_ENTERO en [a, b].
+- `azar_semilla(n)` → re-siembra; retorna `nulo`.
+
+El módulo `stdlib/azar.cor` envuelve estos primitivos con
+`elegir`/`barajar`/`muestra`/`booleano`/`uniforme` escritos en
+Cornamusa puro.
+
+### Ejemplo de uso: Monte Carlo de π
+
+```cornamusa
+importar azar
+azar.semilla(2026)
+
+dentro = 0
+n = 100000
+i = 0
+mientras i < n:
+    xc = azar.decimal()
+    yc = azar.decimal()
+    si xc * xc + yc * yc <= 1.0:
+        dentro = dentro + 1
+    fin si
+    i = i + 1
+fin mientras
+
+imprimir("π ≈", 4.0 * dentro / n)
+# π ≈ 3.13984 (real: 3.14159265...)
+```
+
+### Bug fix incluido: `OP_LANZAR` restauraba mal `vm->globales`
+
+Pre-v1.26: si una función en un módulo importado hacía `lanzar` y la
+excepción se atrapaba en el caller, `vm->globales` quedaba apuntando
+al diccionario del módulo. Los siguientes accesos a globales del
+caller fallaban con `ErrorDeNombre: nombre 'X' no esta definido`.
+
+```cornamusa
+# Pre-v1.26 (bug):
+importar azar
+intentar:
+    azar.muestra([1, 2], 5)   # lanza ErrorDeValor adentro
+atrapar ErrorDeValor como e:
+    imprimir("ok")
+fin intentar
+azar.decimal()   # ❌ ErrorDeNombre: 'azar' no esta definido
+```
+
+Causa: el bucle de unwind en `OP_LANZAR` no restauraba
+`globales_pre_llamada` (a diferencia de `vm_lanzar_excepcion` de
+nativas que sí lo hacía). Fix: aplicar la misma lógica en ambos paths.
+
+### Limitaciones documentadas
+
+- **`azar.normal(mu, sigma)` no incluida** — Box-Muller requiere
+  `log_natural`, `coseno` y `raiz` que Cornamusa aún no expone como
+  built-ins. Comentado con TODO en el módulo; se completará cuando
+  se añada un mini-pack matemático (probablemente v1.27 o v1.28).
+- **Estado global del proceso, no por-VM**. Adecuado para single-
+  threaded; cuando llegue concurrencia habrá que migrar a estado
+  thread-local o por-VM.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_azar.c` — 8 tests: reproducibilidad con
+  semilla, rango de decimal sobre 1000 muestras, rango de entero,
+  distribución uniforme de d6 sobre 6000 tiradas (chi-square ligero),
+  errores atrapables.
+- `bc_run_51_azar` — ejecuta `examples/51_azar.cor` (Monte Carlo de π
+  con 100k muestras, simulación de dados, lotería, moneda sesgada).
+- **164/164 tests verde**.
+
 ## [1.25.0] — 2026-05-13 — Spread `**dict` en llamadas
 
 Cierra la trilogía `*/**`: `f(**dict)` expande un diccionario como

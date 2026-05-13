@@ -2655,6 +2655,56 @@ static Valor nativa_tiempo_formato(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Azar (v1.26) — built-ins primitivos. El módulo `azar.cor` los envuelve.
+ * ────────────────────────────────────────────────────────────────── */
+
+#include "azar.h"
+
+static Valor nativa_azar_decimal(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: azar_decimal() no acepta argumentos");
+    }
+    return valor_decimal(azar_decimal());
+}
+
+static Valor nativa_azar_entero(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: azar_entero(a, b) requiere 2 argumentos");
+    }
+    int64_t a, b;
+    if (!valor_entero_a_i64(&args[0], &a) || !valor_entero_a_i64(&args[1], &b)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: azar_entero() requiere enteros");
+    }
+    if (a > b) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: azar_entero() requiere a <= b (recibio a=%lld, b=%lld)",
+            (long long)a, (long long)b);
+    }
+    return valor_entero_de_i64(azar_entero_en(a, b));
+}
+
+static Valor nativa_azar_semilla(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: azar_semilla(n) requiere 1 argumento");
+    }
+    int64_t n;
+    if (!valor_entero_a_i64(&args[0], &n)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: azar_semilla() requiere un entero");
+    }
+    azar_sembrar((uint64_t)n);
+    return valor_nulo();
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
@@ -2726,6 +2776,10 @@ static const EntradaNativa NATIVAS[] = {
     {"tiempo_descomponer",  18, nativa_tiempo_descomponer},
     {"tiempo_componer",     15, nativa_tiempo_componer},
     {"tiempo_formato",      14, nativa_tiempo_formato},
+    /* Azar (v1.26). */
+    {"azar_decimal",        12, nativa_azar_decimal},
+    {"azar_entero",         11, nativa_azar_entero},
+    {"azar_semilla",        12, nativa_azar_semilla},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

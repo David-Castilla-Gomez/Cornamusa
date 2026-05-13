@@ -492,6 +492,18 @@ set_tests_properties(bc_run_50_dspread PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 50"
 )
 
+# v1.26: stdlib `azar` (PRNG xoshiro256**).
+add_test(
+    NAME bc_run_51_azar
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/51_azar.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_51_azar PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 51"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

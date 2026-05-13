@@ -3232,9 +3232,18 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     Valor v = *(--vm->tope);
                     valor_destruir(&v);
                 }
-                /* Pop frames hasta el del handler. */
+                /* Pop frames hasta el del handler. v1.26: restaurar
+                   `vm->globales` para frames que swapearon (funciones
+                   de módulo importado). Sin esto, atrapar una excepción
+                   de una función de módulo dejaba vm->globales apuntando
+                   al diccionario del módulo, rompiendo el siguiente
+                   acceso a globales del caller. */
                 while (vm->n_frames > h.frame_idx) {
                     vm->n_frames--;
+                    CallFrame *fr_descartado = &vm->frames[vm->n_frames];
+                    if (fr_descartado->globales_pre_llamada != NULL) {
+                        vm->globales = fr_descartado->globales_pre_llamada;
+                    }
                 }
                 /* Empujar la excepción para que el handler la consuma. */
                 empujar(vm, exc_v);
