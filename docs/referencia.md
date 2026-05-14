@@ -1,8 +1,8 @@
 # Referencia rápida de Cornamusa
 
-> Cheatsheet de sintaxis + tablas de built-ins, stdlib y errores. Para una explicación pedagógica usa el [tutorial](tutorial.md). Para la especificación formal del lenguaje, [ESPEC.md](../ESPEC.md).
+> Cheatsheet de sintaxis + tablas de built-ins, stdlib y errores. Para una explicación pedagógica usa el [tutorial](tutorial.md). Para la especificación formal del lenguaje, [ESPEC.md](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md).
 
-**Versión:** 0.11.5
+**Versión:** 1.40.0
 
 ---
 
@@ -50,12 +50,24 @@ intentar:
 atrapar Tipo como e:
     ...
 fin intentar
+
+con recurso como r:
+    ...
+fin con
+
+coincidir valor:
+    cuando patron:
+        ...
+fin coincidir
 ```
+
+> La indentación es **estilística**, no semántica: lo que delimita los bloques es `:` al abrir y `fin <etiqueta>` al cerrar. La convención es 4 espacios.
 
 One-liner: si tras `:` viene una sola sentencia en la misma línea, no requiere `fin`:
 
 ```cornamusa
 si x > 0: imprimir(x)
+para i en rango(3): imprimir(i)
 ```
 
 ---
@@ -88,6 +100,8 @@ en  no en            (pertenencia)
 | `+=` `-=` `*=` `/=` `//=` `%=` `**=` | aritméticos compuestos |
 | `&=` `\|=` `^=` `<<=` `>>=` | bitwise compuestos |
 
+El lado izquierdo de `=` puede ser un nombre, un índice (`xs[0] = ...`), un atributo (`obj.campo = ...`) o un patrón de **destructuring** (§5).
+
 ### Aritmética
 
 ```cornamusa
@@ -99,18 +113,15 @@ en  no en            (pertenencia)
 7 % 3       # 1            ← módulo
 2 ** 10     # 1024         ← potencia
 -7          # negación
-+7          # identidad
+~7          # NOT bit a bit
 ```
 
-### Comparación
+### Comparación e identidad
 
 ```cornamusa
 a == b      # igualdad estructural
 a != b      # desigualdad
-a < b       # menor
-a <= b      # menor o igual
-a > b       # mayor
-a >= b      # mayor o igual
+a < b       # menor      (también <=, >, >=)
 a es b      # identidad (mismo objeto)
 a es no b   # identidad negada
 a en lista  # pertenencia
@@ -120,9 +131,9 @@ a no en l   # pertenencia negada
 ### Lógicos (palabras, no símbolos)
 
 ```cornamusa
-verdadero y falso     # falso
-verdadero o falso     # verdadero
-no verdadero          # falso
+imprimir(verdadero y falso)     # falso
+imprimir(verdadero o falso)     # verdadero
+imprimir(no verdadero)          # falso
 ```
 
 Cortocircuito como Python: `a y b` no evalúa `b` si `a` es falso.
@@ -140,15 +151,18 @@ Cortocircuito como Python: `a y b` no evalúa `b` si `a` es falso.
 | `cadena` | `"hola"`, `'mundo'`, `"""multilínea"""` | no |
 | `lista` | `[1, 2, 3]` | sí |
 | `tupla` | `(1, 2, 3)` | no |
-| `diccionario` | `{"clave": "valor"}` | sí |
+| `diccionario` | `{"clave": "valor"}` — **preserva orden de inserción** (v1.20) | sí |
 | `conjunto` | `{1, 2, 3}` (no vacío) o `conjunto()` (vacío) | sí |
+| `funcion` | `funcion`, `lambda`, nativas, métodos ligados | no |
+| `clase` / instancia | ver §11 | instancia: sí |
+| `generador` | producto de llamar a una función con `producir` (§9) | — |
 
 > Los **enteros son de precisión arbitraria**: `2 ** 1000` es válido. Internamente se distingue SMALL (≤ 63 bits, inline) y BIG (mp_int), invisible al programa.
 
 ### Verdadez (truthy/falsy)
 
 **Falsos**: `falso`, `nulo`, `0`, `0.0`, `""`, `[]`, `()`, `{}` (dicc vacío), `conjunto()`.
-**Verdaderos**: todo lo demás.
+**Verdaderos**: todo lo demás. Las instancias pueden redefinirlo con `__booleano__` *(reservado)*; hoy una instancia es siempre verdadera.
 
 ---
 
@@ -182,7 +196,16 @@ para x en iterable:
 fin para
 ```
 
-`iterable` puede ser: lista, tupla, conjunto, diccionario (itera claves), cadena (itera caracteres), rango.
+`iterable` puede ser: lista, tupla, conjunto, diccionario (itera claves), cadena (itera caracteres), rango, **generador** y cualquier instancia con `__iterar__`.
+
+La variable del `para` es un único nombre. Para desempaquetar pares, destructura dentro del cuerpo:
+
+```cornamusa
+para par en pares:
+    clave, valor = par
+    imprimir(clave, "->", valor)
+fin para
+```
 
 ### `romper` y `continuar`
 
@@ -196,7 +219,7 @@ fin para
 
 ### `pasar`
 
-Sentencia vacía:
+Sentencia vacía (placeholder):
 
 ```cornamusa
 funcion no_implementado():
@@ -206,7 +229,27 @@ fin funcion
 
 ---
 
-## 5. Funciones
+## 5. Destructuring (desempaquetado)
+
+`a, b = iterable` desempaqueta en una sola línea. Funciona con tuplas, listas y cadenas; admite anidación.
+
+```cornamusa
+a, b = (1, 2)             # a=1, b=2
+[x, b, z] = [10, 20, 30]  # listas también
+i, d = d, i               # swap sin variable temporal
+(cab, (op, val)) = ("set", ("+", 42))   # anidado
+
+funcion divmod(n, d):
+    retornar (n // d, n % d)
+fin funcion
+coc, resto = divmod(17, 5)   # coc=3, resto=2
+```
+
+Errores atrapables: aridad incorrecta → `ErrorDeValor`; valor no iterable → `ErrorDeTipo`.
+
+---
+
+## 6. Funciones
 
 ### Sintaxis
 
@@ -217,31 +260,94 @@ funcion nombre(p1, p2, p3=valor_por_defecto):
 fin funcion
 ```
 
+Sin `retornar`, la función devuelve `nulo`.
+
+### Argumentos por defecto
+
+```cornamusa
+funcion saludar(nombre, idioma="es"):
+    ...
+fin funcion
+saludar("Ana")            # idioma toma "es"
+saludar("Bob", "en")
+```
+
+### `*args` — variádicos
+
+`*resto` recoge en una **tupla** todos los posicionales extra:
+
+```cornamusa
+funcion suma(*nums):
+    total = 0
+    para n en nums: total = total + n
+    retornar total
+fin funcion
+suma(1, 2, 3)             # 6
+```
+
+### `**kwargs`
+
+`**kw` recoge en un **diccionario** los keyword args que no coinciden con un parámetro fijo:
+
+```cornamusa
+funcion api(host, **opciones):
+    si "puerto" en opciones: ...
+fin funcion
+api("api.dev", puerto=443, tls=verdadero)
+```
+
+`*args` y `**kwargs` se combinan: `funcion f(a, *args, **kw):`.
+
+### Keyword arguments en la llamada
+
+```cornamusa
+crear_punto(eje_y=3, eje_x=1)     # por nombre, cualquier orden
+area_rect(5, alto=10)             # mezcla posicional + kwarg
+```
+
+### Spread en la llamada
+
+`*` expande un iterable como posicionales; `**` expande un dict como kwargs:
+
+```cornamusa
+suma(*[10, 20, 30])               # ≡ suma(10, 20, 30)
+suma(1, *[10, 20], 99)            # mezcla posicionales y *spread
+api("h", **{"puerto": 443})       # ≡ api("h", puerto=443)
+api("h", **{"puerto": 443}, tls=verdadero)   # **spread + kwarg explícito
+```
+
+> No se puede combinar `*args` con `**dict`/kwargs en la **misma** llamada.
+
 ### Lambda
+
+Función anónima de una sola expresión. Admite defaults, `*args` y `**kwargs`:
 
 ```cornamusa
 cuadrado = lambda x: x * x
-suma = lambda a, b: a + b
+contar   = lambda *xs: longitud(xs)
 ```
 
-### Closures
+### Closures y `nolocal`
 
-Lectura de variables del scope enclosing:
+Una función anidada captura variables del scope enclosing como **upvalues**. Por defecto son de solo lectura; `nolocal` permite **escribirlas**:
 
 ```cornamusa
-funcion crear_saludador(saludo):
-    funcion saludar(nombre):
-        retornar saludo + ", " + nombre
+funcion contador():
+    n = 0
+    funcion inc():
+        nolocal n
+        n = n + 1
+        retornar n
     fin funcion
-    retornar saludar
+    retornar inc
 fin funcion
+c = contador()
+imprimir(c(), c(), c())   # 1 2 3
 ```
-
-> Escritura a upvalues (`nolocal`) reservada para v1.x.
 
 ---
 
-## 6. Estructuras de datos
+## 7. Estructuras de datos
 
 ### Listas
 
@@ -253,8 +359,8 @@ xs[1:3]            # [2, 3] (slice)
 xs[::-1]           # [3, 2, 1] (invertida)
 longitud(xs)       # 3
 xs[0] = 10         # mutación
-agregar(xs, 99)    # añadir
-quitar(xs, 0)      # quitar por índice
+agregar(xs, 99)    # añadir al final
+quitar(xs, 0)      # quitar por índice (devuelve el valor)
 insertar(xs, 0, 7) # insertar en posición
 ordenar(xs)        # in-place
 invertir(xs)       # in-place
@@ -262,32 +368,33 @@ invertir(xs)       # in-place
 
 ### Diccionarios
 
+Mapa hash que **preserva el orden de inserción** (v1.20):
+
 ```cornamusa
 d = {"a": 1, "b": 2}
 d["a"]             # 1
 d["c"] = 3         # añadir
 "a" en d           # verdadero/falso
-claves(d)          # ["a", "b", "c"]
-valores(d)         # [1, 2, 3]
+quitar(d, "a")     # quitar por clave (devuelve el valor)
+claves(d)          # ["b", "c"]
+valores(d)         # [2, 3]
 longitud(d)        # cantidad de pares
 para clave en claves(d):
     imprimir(clave, "->", d[clave])
 fin para
 ```
 
-> En v0.11.5 no hay built-in para borrar una clave del dict. Reservado para v1.x (probablemente vía `borrar d[clave]`).
-
 ### Conjuntos
 
 ```cornamusa
 s = {1, 2, 3}
 agregar(s, 4)
+quitar(s, 4)
 "x" en s
 longitud(s)
 conjunto()         # vacío (no {} que es dict vacío)
+conjunto([1,1,2])  # desde iterable → {1, 2}
 ```
-
-> `quitar` solo opera sobre listas en v0.11.5. Quitar de conjuntos también queda para v1.x.
 
 ### Tuplas
 
@@ -309,9 +416,21 @@ rango(0, 10, 2)     # 0, 2, 4, 6, 8
 rango(10, 0, -1)    # 10, 9, 8, ..., 1
 ```
 
+### Comprehensions
+
+Construyen listas, dicts y conjuntos en una expresión. Un `para ... en ...` y una guarda `si` opcional:
+
+```cornamusa
+[n * 2 para n en rango(10)]                   # list
+[n para n en rango(20) si n % 2 == 0]         # con filtro
+{n: n * n para n en rango(1, 6)}              # dict
+{w[0] para w en palabras}                     # set (deduplica)
+(n * n para n en rango(1, 7))                 # generator expression (lazy)
+```
+
 ---
 
-## 7. Cadenas
+## 8. Cadenas
 
 ### Operaciones básicas
 
@@ -322,37 +441,101 @@ rango(10, 0, -1)    # 10, 9, 8, ..., 1
 longitud("Cornamusa")      # 9
 "Cornamusa"[0]             # "C"
 "Cornamusa"[-1]            # "a"
+"Cornamusa"[0:4]           # "Corn" (slicing)
 ```
 
 ### Escape
 
 ```
-\n   nueva línea
-\t   tabulador
-\r   retorno de carro
-\\   barra invertida
-\'   comilla simple
-\"   comilla doble
+\n   nueva línea          \t   tabulador
+\r   retorno de carro     \\   barra invertida
+\'   comilla simple       \"   comilla doble
 \0   null
 \xHH       byte hex (00-FF)
 \uHHHH     codepoint Unicode (4 dígitos)
 \u{HHHHHH} codepoint Unicode (cualquier ancho)
 ```
 
-### Prefijos
+### F-cadenas
+
+Interpolación completa: cada `{expr}` se evalúa y se convierte a cadena.
 
 ```cornamusa
-f"hola {nombre}"     # interpolación (v1.1: completo, evalúa cada {expr})
-f"{1+2*3}"           # expresiones complejas
-f"{{literal}}"       # → "{literal}", llaves dobles preservan literal
-f"capas: {f'in-{x}'}" # anidación
-r"C:\ruta\a"         # raw, sin escapes (reservado v1.x)
-b"\x00\xff"          # bytes (reservado v1.x)
+f"hola {nombre}"          # interpolación de variable
+f"{1 + 2 * 3}"            # expresión arbitraria
+f"{{literal}}"            # → "{literal}", llaves dobles escapan
+f"capas: {f'in-{x}'}"     # anidación
 ```
 
 ---
 
-## 8. Clases
+## 9. Generadores
+
+Una función que contiene `producir` es un **generador**: llamarla no ejecuta el cuerpo, devuelve un objeto generador. Iterarlo con `para` lo reanuda hasta el siguiente `producir`; el estado (locales + posición) se preserva.
+
+```cornamusa
+funcion contar(ini, tope):
+    i = ini
+    mientras i <= tope:
+        producir i
+        i = i + 1
+    fin mientras
+fin funcion
+
+para v en contar(1, 5):
+    imprimir(v)            # 1 2 3 4 5
+fin para
+```
+
+`producir desde` delega en un sub-generador o iterable:
+
+```cornamusa
+funcion arbol():
+    producir 0
+    producir desde [1, 2, 3]   # iterables
+    producir desde hojas()     # otros generadores
+fin funcion
+```
+
+Generator expressions inline: `(expr para v en it si guarda)` — lazy, no materializa.
+
+---
+
+## 10. Pattern matching (`coincidir` / `cuando`)
+
+```cornamusa
+coincidir valor:
+    cuando 0:
+        imprimir("cero")
+    cuando 1 | 2 | 3:
+        imprimir("pequeño")           # OR-pattern (separador `|`)
+    cuando [a, b]:
+        imprimir("par", a, b)
+    cuando [cabeza, *resto]:
+        imprimir("lista no vacía", cabeza)
+    cuando (a, b) si a == b:
+        imprimir("diagonal")          # guarda con `si`
+    cuando Perro() como p:
+        imprimir("un perro:", p)      # type-match + binding
+    cuando _:
+        imprimir("cualquier otra cosa")
+fin coincidir
+```
+
+Patrones disponibles:
+
+- **Literales**: `cuando 0`, `cuando "hola"`.
+- **Nombre** (bind): `cuando n` enlaza el valor a `n`. **Comodín**: `cuando _`.
+- **Tupla / lista**: `cuando (a, b)`, `cuando [a, b]`, con `*resto` en cualquier posición. Anidables.
+- **OR**: `cuando p1 | p2 | p3` (separador `|`).
+- **Type-match**: `cuando Clase() como nombre` — encaja con instancias de `Clase` (de usuario) y las enlaza.
+- **Guarda**: `cuando patron si condicion`.
+
+> No hay patrones de diccionario.
+
+---
+
+## 11. Clases y objetos
 
 ```cornamusa
 clase Persona:
@@ -386,21 +569,53 @@ clase Empleado extiende Persona:
 fin clase
 ```
 
-> En v0.11.5 solo `__iniciar__` se invoca automáticamente. Los demás dunders (`__sumar__`, `__cadena__`, etc.) son métodos ordinarios, no se ejecutan al usar operadores. Ver §13.
+### Dunders (métodos mágicos)
+
+Se invocan automáticamente al usar el operador correspondiente:
+
+| Dunder | Disparador |
+|---|---|
+| `__iniciar__(yo, ...)` | construcción `Clase(...)` |
+| `__cadena__(yo)` | `cadena(obj)`, `imprimir(obj)`, f-strings |
+| `__longitud__(yo)` | `longitud(obj)` |
+| `__iterar__(yo)` | `para x en obj` |
+| `__llamar__(yo, ...)` | `obj(...)` |
+| `__indice__(yo, i)` | `obj[i]` |
+| `__asignar_indice__(yo, i, v)` | `obj[i] = v` |
+| `__entrar__(yo)` / `__salir__(yo)` | bloque `con` |
+| `__igual__` `__distinto__` | `==` `!=` |
+| `__menor__` `__menor_igual__` `__mayor__` `__mayor_igual__` | `<` `<=` `>` `>=` |
+| `__sumar__` `__restar__` `__multiplicar__` `__dividir__` | `+` `-` `*` `/` |
+| `__dividir_entero__` `__modulo__` `__potencia__` | `//` `%` `**` |
+| `__sumar_derecho__`, etc. | operador con la instancia a la derecha (`5 + obj`) |
+
+> `__hash__`, `__repr__` y `__booleano__` están reservados pero aún no se invocan.
 
 ---
 
-## 9. Excepciones
+## 12. Context managers (`con`)
 
-### Lanzar
+`con` ejecuta `__entrar__` antes del cuerpo y `__salir__` después, **incluso si el cuerpo lanza una excepción**.
+
+```cornamusa
+con mutex como m:
+    imprimir("trabajando bajo", m.nombre)
+fin con
+```
+
+Equivale a `_ctx = expr; nombre = _ctx.__entrar__(); intentar: cuerpo finalmente: _ctx.__salir__()`.
+
+> Limitación: `__salir__` se invoca sin argumentos (no recibe la excepción).
+
+---
+
+## 13. Excepciones
+
+### Lanzar y atrapar
 
 ```cornamusa
 lanzar ErrorDeValor("mensaje")
-```
 
-### Atrapar
-
-```cornamusa
 intentar:
     ...
 atrapar ErrorDeTipo como e:
@@ -416,17 +631,22 @@ fin intentar
 
 | Excepción | Cuándo |
 |---|---|
-| `Excepcion` | Base de jerarquía |
+| `Excepcion` | Base de la jerarquía |
 | `ErrorAritmetico` | División por cero, overflow lógico |
 | `ErrorDeTipo` | Operación sobre tipo incorrecto |
 | `ErrorDeValor` | Valor del tipo correcto pero inválido |
 | `ErrorDeIndice` | Índice fuera de rango |
 | `ErrorDeClave` | Clave no presente en dict |
 | `ErrorDeNombre` | Identificador no definido |
+| `ErrorDeAtributo` | Atributo/método inexistente en instancia o módulo |
+| `ErrorDeSistema` | Fallo del sistema operativo |
+| `ErrorDeIO` | Fallo de entrada/salida |
+
+Cuando un error no se atrapa, Cornamusa imprime un **traceback** multi-frame con la cadena de llamadas y la línea de fuente.
 
 ---
 
-## 10. Módulos
+## 14. Módulos
 
 ```cornamusa
 importar matematicas                       # global `matematicas`
@@ -436,211 +656,210 @@ desde matematicas importar factorial como fact
 importar paquete.submodulo                 # subsegmentos
 ```
 
-> `desde X importar *` no soportado.
+> `desde X importar *` no está soportado.
 
 ---
 
-## 11. Built-ins (v1.1.0)
+## 15. Built-ins
 
-30 funciones y constructores registrados como globales.
+Funciones y constructores registrados como globales (no requieren `importar`).
 
 ### E/S y conversión
 
 | Firma | Descripción |
 |---|---|
 | `imprimir(*args)` | Imprime args separados por espacio + `\n` |
-| `leer([prompt])` | Lee una línea de stdin. Sin args silencioso, con cadena la imprime como prompt. EOF inmediato y línea vacía son INDISTINGUIBLES (`""` en ambos). **(v1.1)** |
+| `leer([prompt])` | Lee una línea de stdin. Sin args, silencioso; con cadena, la imprime como prompt |
 | `tipo(x)` | Cadena con el nombre del tipo |
-| `cadena(x)` | Coerción a cadena (representación de `imprimir`). **(v1.1)** |
-| `entero(x)` | Coerción a entero (entero/decimal/booleano/cadena). **(v1.1)** |
-| `decimal(x)` | Coerción a decimal. **(v1.1)** |
-| `booleano(x)` | Coerción a booleano según truthiness. **(v1.1)** |
-| `lista(iter)` | Materializa iterable como lista. **(v1.1)** |
-| `tupla(iter)` | Materializa iterable como tupla inmutable. **(v1.1)** |
-| `diccionario(pares)` | Construye dicc desde iterable de pares o de otro dicc. **(v1.1)** |
+| `cadena(x)` | Coerción a cadena (usa `__cadena__` si existe) |
+| `entero(x)` | Coerción a entero (entero/decimal/booleano/cadena) |
+| `decimal(x)` | Coerción a decimal |
+| `booleano(x)` | Coerción a booleano según truthiness |
+| `lista(iter)` | Materializa un iterable como lista |
+| `tupla(iter)` | Materializa un iterable como tupla |
+| `diccionario(pares)` | Construye dict desde iterable de pares o de otro dict |
+| `repr(x)` | Representación inspeccionable (cadenas entre comillas, etc.) |
 
 ### Tamaño e iteración
 
 | Firma | Descripción |
 |---|---|
-| `longitud(x)` | Tamaño de cadena/lista/dicc/conjunto/tupla/rango |
-| `rango(fin)` / `rango(inicio, fin)` / `rango(inicio, fin, paso)` | Iterador entero perezoso |
+| `longitud(x)` | Tamaño de cadena/lista/dict/conjunto/tupla/rango (usa `__longitud__`) |
+| `rango(fin)` / `rango(ini, fin)` / `rango(ini, fin, paso)` | Iterador entero perezoso |
 
 ### Mutación de colecciones
 
 | Firma | Descripción |
 |---|---|
-| `agregar(coleccion, x)` | Añade `x` al final (lista) o al conjunto |
-| `quitar(lista, indice?)` | Quita por índice (lista). Sin índice: quita el último. Devuelve el valor quitado. **Solo listas en v0.11.5**. |
-| `insertar(lista, i, x)` | Inserta `x` en posición `i`, desplaza |
+| `agregar(coleccion, x)` | Añade al final (lista) o al conjunto |
+| `quitar(coleccion, clave?)` | Quita por índice (lista), clave (dict) o valor (conjunto); devuelve lo quitado. Sin arg en lista: quita el último |
+| `insertar(lista, i, x)` | Inserta `x` en la posición `i` |
 | `invertir(lista)` | In-place |
-| `ordenar(lista, invertido=falso)` | In-place; `invertido=verdadero` para descendente |
-| `claves(dicc)` | Lista de claves |
-| `valores(dicc)` | Lista de valores |
-| `conjunto(iter?)` | `conjunto()` vacío, o desde iterable |
+| `ordenar(lista, invertido=falso)` | In-place |
+| `claves(dict)` / `valores(dict)` | Listas con las claves / los valores |
+| `conjunto(iter?)` | `conjunto()` vacío, o desde un iterable |
+
+### Numéricos y reflexión
+
+| Firma | Descripción |
+|---|---|
+| `absoluto(n)` | Valor absoluto |
+| `redondear(n, decimales=0)` | Redondeo a `decimales` posiciones |
+| `instancia_de(obj, Clase)` | ¿`obj` es instancia de `Clase` (o subclase)? Solo clases de usuario |
+| `subclase_de(A, B)` | ¿`A` es subclase de `B`? |
+| `id(x)` | Identificador entero del objeto |
 
 ### Excepciones (constructores)
 
-| Constructor | Argumento |
-|---|---|
-| `Excepcion(msg)` | Excepción base |
-| `ErrorAritmetico(msg)` | |
-| `ErrorDeTipo(msg)` | |
-| `ErrorDeValor(msg)` | |
-| `ErrorDeIndice(msg)` | |
-| `ErrorDeClave(msg)` | |
-| `ErrorDeNombre(msg)` | |
+`Excepcion`, `ErrorAritmetico`, `ErrorDeTipo`, `ErrorDeValor`, `ErrorDeIndice`, `ErrorDeClave`, `ErrorDeNombre`, `ErrorDeSistema`, `ErrorDeIO` — todos `(msg)`. `ErrorDeAtributo` lo lanza la VM.
 
 ### Sistema y memoria
 
 | Firma | Descripción |
 |---|---|
-| `recolectar()` | Fuerza pasada de GC |
-| `obtener_argv()` | Lista de cadenas con args del programa (también `sistema.argv`) |
-| `salir(codigo=0)` | Termina el proceso. No retorna |
+| `recolectar()` | Fuerza una pasada del GC |
+| `obtener_argv()` | Lista de cadenas con los args del programa (también `sistema.argv`) |
+| `salir(codigo=0)` | Termina el proceso |
 
-### No registrados todavía (v1.2+)
+### Built-ins de bajo nivel (envueltos por la stdlib)
 
-`enumerar`, `mapear`, `filtrar`, `reducir`, `suma`, `mínimo`/`minimo`, `máximo`/`maximo`, `absoluto`, `redondear`, `abrir`, `iterar`, `siguiente`, `instancia_de`, `subclase_de`, `id`, `resumen`, `repr`.
+`archivo_leer`, `archivo_escribir`, `archivo_existe`, `archivo_lineas`, `archivo_agregar`, `json_parsear`, `json_serializar`, `tiempo_actual`, `tiempo_descomponer`, `tiempo_componer`, `tiempo_formato`, `azar_decimal`, `azar_entero`, `azar_semilla`, `proceso_ejecutar`, `regex_coincide`, `regex_buscar`, `regex_todos`, `regex_reemplazar`, `red_http_obtener`.
+
+Se pueden usar directamente, pero la práctica recomendada es importar el módulo de stdlib correspondiente (§16), que ofrece nombres legibles y funciones de conveniencia.
 
 ---
 
-## 12. Biblioteca estándar (`stdlib/`)
+## 16. Biblioteca estándar (`stdlib/`)
+
+Doce módulos. Se importan con `importar <nombre>`.
 
 ### `matematicas`
 
-Constantes y funciones puras escritas en Cornamusa.
-
-| Símbolo | Descripción |
-|---|---|
-| `matematicas.PI` | 3.141592653589793 |
-| `matematicas.E` | 2.718281828459045 |
-| `matematicas.cuadrado(n)` | `n * n` |
-| `matematicas.cubo(n)` | `n * n * n` |
-| `matematicas.absoluto(n)` | `\|n\|` |
-| `matematicas.maximo(a, b)` | el mayor |
-| `matematicas.minimo(a, b)` | el menor |
-| `matematicas.signo(n)` | `-1`, `0` o `1` |
-| `matematicas.factorial(n)` | recursivo, soporta bignum (`factorial(100)` OK) |
-| `matematicas.suma_rango(a, b)` | suma de los enteros en `[a, b)` |
-| `matematicas.es_par(n)` | booleano |
-| `matematicas.es_impar(n)` | booleano |
-| `matematicas.mcd(a, b)` | máximo común divisor (Euclides) |
+`PI`, `E`, `cuadrado(n)`, `cubo(n)`, `absoluto(n)`, `maximo(a,b)`, `minimo(a,b)`, `signo(n)`, `factorial(n)`, `suma_rango(a,b)`, `es_par(n)`, `es_impar(n)`, `mcd(a,b)`.
 
 ### `cadenas`
 
-Operaciones sobre texto que requieren indexación UTF-8.
+`repetir(s,n)`, `es_vacia(s)`, `unir(partes,sep)`, `caracter(s,i)`, `empieza_con(s,pre)`, `termina_con(s,suf)`, `indice_de(s,sub)`, `contiene(s,sub)`, `separar(s,sep)`, `reemplazar(s,viejo,nuevo)`, `minusculas_ascii(s)`, `mayusculas_ascii(s)`, `recortar(s)`, `recortar_izquierda(s)`, `recortar_derecha(s)`, `contar(s,sub)`.
 
-| Función | Descripción |
-|---|---|
-| `cadenas.repetir(s, n)` | `s` repetido `n` veces |
-| `cadenas.empieza_con(s, prefijo)` | Booleano |
-| `cadenas.termina_con(s, sufijo)` | Booleano |
-| `cadenas.contar(s, sub)` | Ocurrencias no-solapadas |
-| `cadenas.caracter(s, i)` | Equivalente a `s[i]` (un carácter) |
+### `funcionales`
+
+`mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `enumerar_desde(xs,inicio)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `suma_desde(xs,inicial)`, `minimo(xs)`, `maximo(xs)`.
+
+### `formato`
+
+`rellenar(s,ancho,car=" ")`, `alinear_derecha(...)`, `centrar(...)`, `con_decimales(n,decimales=2)`, `numero_con_separador(n,sep="_")`, `porcentaje(d,decimales=2)`, `como_hex(n,prefijo="0x")`, `como_binario(n,prefijo="0b")`, `linea(car="-",ancho=60)`, `fila(valores,anchos,sep=" | ")`.
+
+### `archivos`
+
+`leer(ruta)`, `escribir(ruta,contenido)`, `lineas(ruta)`, `existe(ruta)`, `agregar(ruta,contenido)`.
+
+### `json`
+
+`parsear(texto)`, `serializar(valor)`, `serializar_indentado(valor,indent)`.
+
+### `fechas`
+
+`ahora()`, `componentes(ts)`, `construir(año,mes,dia,hora=0,minuto=0,segundo=0)`, `formato(ts,spec)`, `iso8601(ts)`, `legible(ts)`, `solo_fecha(ts)`, `solo_hora(ts)`, `sumar_dias(ts,n)`, `sumar_horas(ts,n)`, `diferencia_seg(a,b)`, `diferencia_dias(a,b)`, `es_bisiesto(año)`, `dias_en_mes(año,mes)`, `nombre_dia(d)`, `nombre_mes(m)`. Constantes: `SEGUNDO`, `MINUTO`, `HORA`, `DIA`, `SEMANA`.
+
+### `azar`
+
+`decimal()` → [0,1), `entero(a,b)` → [a,b], `semilla(n)`, `elegir(seq)`, `barajar(lista)`, `muestra(seq,k)`, `booleano(p=0.5)`, `uniforme(a,b)`.
+
+### `proceso`
+
+`ejecutar(programa, *args)` → dict `{salida, error, codigo}`, `capturar(programa, *args)` → solo stdout, `codigo(programa, *args)` → solo exit code.
+
+### `regex`
+
+`coincide(patron,texto)`, `buscar(patron,texto)`, `todos(patron,texto)`, `reemplazar(patron,texto,rep)`, `contiene(patron,texto)`, `extraer(patron,texto)`. Subset soportado: literales y escapes, `* + ? {n,m}`, clases `. [abc] [^abc] [a-z] \d \w \s` y negadas, anclas `^ $ \b`, grupos `() (?:)`, alternancia `|`.
+
+### `red`
+
+`obtener(url,cabeceras_extra=nulo,timeout=10)` → dict `{codigo, cabeceras, cuerpo}`, `descargar_cuerpo(url)`, `parsear_cabeceras(cab_raw)`. Solo HTTP/1.1 plano (sin TLS).
 
 ### `sistema`
 
-| Símbolo | Descripción |
-|---|---|
-| `sistema.argv` | Lista de cadenas con argumentos del programa |
-
-`salir(codigo)` también disponible globalmente, sin importar.
+`sistema.argv` — lista de cadenas con los argumentos del programa.
 
 ---
 
-## 13. Reservas para v1.x
-
-Sintaxis aceptada por el parser pero no implementada (forward-compatibility):
-
-| Característica | Estado |
-|---|---|
-| F-strings con expresiones (`f"hola {x+1}"`) | parser OK; runtime: ignora interpolación |
-| `con` (context managers) | reservada como keyword |
-| `coincidir` (pattern matching) | reservada como keyword |
-| `borrar` (`del` de Python) | reservada |
-| `producir` (generadores) | reservada |
-| `asincrono` / `esperar` (async/await) | reservadas; v2.0+ |
-| `nolocal` (escritura a upvalue) | reservada |
-| Anotaciones de tipo (`p: tipo`) | parser OK; runtime ignora |
-| Decoradores (`@deco`) | parser OK; runtime parcial |
-| Dunders (`__sumar__`, `__cadena__`, ...) | parser OK; en v0.11.5 solo `__iniciar__` se invoca automáticamente |
-
----
-
-## 14. CLI
+## 17. CLI
 
 ```bash
 cornamusa programa.cor                # ejecuta con tree-walking (compatibilidad histórica)
-cornamusa --bytecode programa.cor     # ejecuta con VM bytecode (recomendado, 3x más rápido)
+cornamusa --bytecode programa.cor     # ejecuta con la VM bytecode (recomendado)
+cornamusa --check programa.cor        # valida (lex+parse+compila) sin ejecutar; alias --validar
 cornamusa --tokens programa.cor       # vuelca tokens del lexer (debug)
-cornamusa --ast programa.cor          # vuelca AST en S-expression (debug)
+cornamusa --ast programa.cor          # vuelca el AST en S-expression (debug)
 cornamusa -v / --version              # versión
 cornamusa -h / --ayuda                # ayuda
 cornamusa                             # REPL interactivo
-cornamusa --bytecode prog.cor a b c   # pasa "a", "b", "c" a sistema.argv del programa
+cornamusa --bytecode prog.cor a b c   # pasa "a", "b", "c" a sistema.argv
 ```
 
 ---
 
-## 15. Errores comunes
+## 18. Errores comunes
 
 ### `ErrorDeNombre: nombre 'x' no esta definido`
 
-Variable usada sin asignar. Verifica typos. Nota: `if`, `def`, `class` etc. son palabras inglesas — Cornamusa usa `si`, `funcion`, `clase`.
+Variable usada sin asignar. Cornamusa sugiere el nombre más parecido si lo hay (`¿quisiste decir 'longitud'?`). Recuerda: las keywords son castellanas (`si`, `funcion`, `clase`), no inglesas.
 
 ### `ErrorDeTipo: '<tipo>' no soporta el operador '+'`
 
-Operación entre tipos incompatibles. Cornamusa **no** auto-convierte cadenas a número:
+Operación entre tipos incompatibles. Cornamusa **no** auto-convierte:
 
 ```cornamusa
 "5" + 3       # ✗ ErrorDeTipo
 "5" + "3"     # ✓ "53"
-5 + 3         # ✓ 8
+"5" + cadena(3)   # ✓ "53"
 ```
 
 ### `ErrorDeIndice: indice X fuera de rango`
 
-Lista/tupla accedida con índice inválido:
-
 ```cornamusa
 xs = [1, 2, 3]
 xs[5]         # ✗ ErrorDeIndice
-xs[-4]        # ✗ ErrorDeIndice
 ```
 
 ### `ErrorDeClave: 'X'`
 
-Diccionario sin esa clave:
-
 ```cornamusa
 d = {"a": 1}
-d["b"]        # ✗ ErrorDeClave: "b"
+d["b"]        # ✗ ErrorDeClave
 "b" en d      # forma idiomática para chequear primero
 ```
 
-### `ErrorDeSintaxis: se esperaba ':' tras la cabecera de la clase`
+### `ErrorDeAtributo: instancia de 'C' no tiene atributo 'x'`
 
-Olvidaste el `:` que abre el bloque o pusiste otra cosa donde Cornamusa esperaba `:`.
+Atributo o método mal escrito. Cornamusa sugiere el más parecido.
 
-### `ErrorDeSintaxis: se esperaba un nombre tras 'funcion'`
+### `desbordamiento de pila de llamadas`
 
-Pasos comunes:
-- Olvidaste el nombre de la función.
-- Usaste un nombre con caracteres reservados (`y`, `o`, `no`, `si`, `en`, `es`).
-
-> ¡Cuidado con `y`! Es la conjunción lógica AND, **no** un identificador válido. Causa errores confusos en parámetros como `def f(x, y):` (en castellano `funcion f(x, y)` no compila — usa `funcion f(x, b)` o similar).
-
-### `desbordamiento de pila de llamadas (>VM_FRAMES_MAX frames)`
-
-Recursión infinita. Por defecto VM_FRAMES_MAX ≈ 1024.
+Recursión infinita. El límite de frames es ≈ 1024.
 
 ---
 
-## 16. Recursos
+## 19. Reservas para el futuro
+
+Sintaxis aceptada (parcialmente) por el parser pero **no implementada** en el runtime:
+
+| Característica | Estado |
+|---|---|
+| `borrar` (`del` de Python) | keyword reservada; usar `quitar(...)` mientras tanto |
+| `global` (escritura a global desde función) | keyword reservada; sin implementar en la VM |
+| `asincrono` / `esperar` (async/await) | keywords reservadas; v2.x |
+| Anotaciones de tipo (`p: tipo`) | el parser las acepta; el runtime las ignora |
+| Decoradores (`@deco`) | soporte parcial en el parser |
+| Dunders `__hash__`, `__repr__`, `__booleano__` | reservados; aún no se invocan |
+| Prefijos de cadena `r"..."` (raw), `b"..."` (bytes) | reservados |
+
+---
+
+## 20. Recursos
 
 - **[Tutorial paso a paso](tutorial.md)** — para aprender desde cero.
-- **[Especificación formal](../ESPEC.md)** — sintaxis EBNF y semántica completa.
-- **[Decisiones arquitectónicas](../decisiones/)** — `B1` a `B10`, razonamiento detrás de las elecciones.
-- **[Ejemplos](../examples/)** — 23+ programas demostrando features.
+- **[Especificación formal](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md)** — sintaxis EBNF y semántica.
+- **[Decisiones arquitectónicas](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/decisiones)** — el razonamiento detrás de las elecciones de diseño.
+- **[Ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)** — 57 programas, uno por feature.
 - **[Issues y discusión](https://github.com/David-Castilla-Gomez/Cornamusa/issues)** — bugs, ideas, preguntas.

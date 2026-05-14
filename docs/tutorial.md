@@ -60,8 +60,6 @@ altura = 1.65
 mayor_de_edad = verdadero
 
 imprimir(nombre, "tiene", edad, "años")
-imprimir("Mide", altura, "metros")
-imprimir("¿Es mayor?", mayor_de_edad)
 ```
 
 Cornamusa es de **tipado dinámico**: las variables no tienen tipo, los valores sí. Puedes reasignar a un tipo distinto:
@@ -158,6 +156,12 @@ fin si
 
 > **Importante**: la indentación es **estilística**, no semántica. Lo que delimita los bloques es `:` al abrir y `fin <etiqueta>` al cerrar. Recomendamos 4 espacios de indentación por convención.
 
+Si tras `:` viene una sola sentencia en la misma línea, no hace falta `fin`:
+
+```cornamusa
+si x > 0: imprimir("positivo")
+```
+
 ### `mientras`
 
 ```cornamusa
@@ -171,7 +175,7 @@ imprimir("¡Despegue!")
 
 ### `para`
 
-Itera sobre cualquier valor iterable (rango, lista, cadena, diccionario, conjunto, tupla):
+Itera sobre cualquier valor iterable (rango, lista, cadena, diccionario, conjunto, tupla, generador):
 
 ```cornamusa
 para i en rango(5):
@@ -181,10 +185,6 @@ fin para
 frutas = ["manzana", "pera", "uva"]
 para fruta en frutas:
     imprimir("Me gusta la", fruta)
-fin para
-
-para letra en "Hola":
-    imprimir(letra)    # H, o, l, a
 fin para
 ```
 
@@ -214,7 +214,60 @@ fin para
 
 ---
 
-## 5. Funciones
+## 5. Destructuring (desempaquetado)
+
+Cuando un valor es una colección, puedes desempaquetarlo en varias variables de una sola vez:
+
+```cornamusa
+a, b = (1, 2)
+imprimir(a, b)        # 1 2
+
+[a, b, c] = [10, 20, 30]
+imprimir(a, b, c)     # 10 20 30
+```
+
+> Ojo: `y`, `o`, `no`, `es`, `en`, `si` son palabras reservadas — no pueden ser nombres de variable. Usa `b`, `cy`, `eje_y`... en su lugar.
+
+El idiom más útil: **intercambiar variables sin variable temporal**:
+
+```cornamusa
+i = "izquierda"
+d = "derecha"
+i, d = d, i
+imprimir(i, d)        # derecha izquierda
+```
+
+Funciona con anidación arbitraria:
+
+```cornamusa
+(cabeza, (op, valor)) = ("set", ("+", 42))
+imprimir(cabeza, op, valor)   # set + 42
+```
+
+Es ideal para funciones que devuelven varios valores:
+
+```cornamusa
+funcion dividir(num, den):
+    retornar (num // den, num % den)
+fin funcion
+
+cociente, resto = dividir(17, 5)
+imprimir(cociente, "resto", resto)   # 3 resto 2
+```
+
+Y para iterar sobre pares — la variable del `para` es un solo nombre, así que destructuras dentro del cuerpo:
+
+```cornamusa
+gente = [("Ana", 30), ("Luis", 25)]
+para persona en gente:
+    nombre, edad = persona
+    imprimir(nombre, "tiene", edad)
+fin para
+```
+
+---
+
+## 6. Funciones
 
 ```cornamusa
 funcion saludar(nombre):
@@ -224,6 +277,8 @@ fin funcion
 mensaje = saludar("Mundo")
 imprimir(mensaje)        # ¡Hola, Mundo!
 ```
+
+Si no hay `retornar`, la función devuelve `nulo`.
 
 ### Argumentos por defecto
 
@@ -236,26 +291,99 @@ funcion saludar(nombre, idioma="es"):
     fin si
 fin funcion
 
-imprimir(saludar("Ana"))               # ¡Hola, Ana!
-imprimir(saludar("Bob", "en"))         # Hello, Bob!
+imprimir(saludar("Ana"))            # ¡Hola, Ana!
+imprimir(saludar("Bob", "en"))      # Hello, Bob!
 ```
 
-### Funciones que no devuelven valor
+### Argumentos por nombre (keyword)
 
-Si no hay `retornar`, la función devuelve `nulo`:
+Puedes pasar argumentos por su nombre, en cualquier orden. Útil para legibilidad:
 
 ```cornamusa
-funcion saludar(nombre):
-    imprimir("Hola,", nombre)
+funcion conectar(host, puerto=80, usar_tls=falso):
+    esquema = "http"
+    si usar_tls:
+        esquema = "https"
+    fin si
+    retornar esquema + "://" + host + ":" + cadena(puerto)
 fin funcion
 
-resultado = saludar("Ana")
-imprimir(resultado)     # nulo
+imprimir(conectar("api.dev", usar_tls=verdadero))         # sin recordar el orden
+imprimir(conectar("api.dev", puerto=443, usar_tls=verdadero))
 ```
 
-### Closures (funciones dentro de funciones)
+### `*args` — número variable de argumentos
 
-Una función definida dentro de otra captura variables del scope enclosing como **upvalues** (lectura):
+`*resto` recoge en una **tupla** todos los argumentos posicionales que sobren:
+
+```cornamusa
+funcion suma(*nums):
+    total = 0
+    para n en nums:
+        total = total + n
+    fin para
+    retornar total
+fin funcion
+
+imprimir(suma())            # 0
+imprimir(suma(1, 2, 3))     # 6
+imprimir(suma(10, 20))      # 30
+```
+
+Se combina con parámetros fijos: `funcion saludar(nombre, *titulos):`.
+
+### `**kwargs` — argumentos por nombre variables
+
+`**kw` recoge en un **diccionario** los argumentos por nombre que no coincidan con un parámetro fijo:
+
+```cornamusa
+funcion api(host, **opciones):
+    s = "GET " + host
+    si "puerto" en opciones:
+        s = s + ":" + cadena(opciones["puerto"])
+    fin si
+    retornar s
+fin funcion
+
+imprimir(api("api.dev"))                    # GET api.dev
+imprimir(api("api.dev", puerto=443))        # GET api.dev:443
+```
+
+### Spread: expandir colecciones en la llamada
+
+El reverso de `*args`/`**kwargs`: `*` expande un iterable como argumentos posicionales, `**` expande un dict como argumentos por nombre.
+
+```cornamusa
+nums = [10, 20, 30]
+imprimir(suma(*nums))               # ≡ suma(10, 20, 30)
+
+config = {"puerto": 443}
+imprimir(api("api.dev", **config))  # ≡ api("api.dev", puerto=443)
+```
+
+Esto hace trivial escribir *wrappers* genéricos (funciones que envuelven a otras):
+
+```cornamusa
+funcion con_log(f, *args):
+    imprimir("-> llamando con", longitud(args), "argumentos")
+    retornar f(*args)
+fin funcion
+```
+
+> Limitación actual: no se puede combinar `*args` y `**kwargs` en la **misma** llamada (`f(*args, **kw)`). Reenvía uno u otro, o pasa los kwargs explícitos.
+
+### Lambda
+
+Función anónima de una sola expresión:
+
+```cornamusa
+cuadrado = lambda x: x * x
+imprimir(cuadrado(7))    # 49
+```
+
+### Closures y `nolocal`
+
+Una función definida dentro de otra captura las variables del scope que la envuelve. Por defecto puede **leerlas**:
 
 ```cornamusa
 funcion crear_saludador(saludo):
@@ -267,23 +395,28 @@ fin funcion
 
 hola = crear_saludador("Hola")
 imprimir(hola("Ana"))      # Hola, Ana
-imprimir(hola("Bob"))      # Hola, Bob
 ```
 
-> **Nota v0.11.4**: la **escritura** a upvalues (con `nolocal` o equivalente) está reservada para v1.x. En v0.11.4 los upvalues son de solo lectura — útiles para closures sobre constantes y configuraciones, pero no para "contadores mutables tipo Python".
-
-### Lambda
-
-Función anónima de una sola expresión:
+Para **escribir** en una variable del scope enclosing, decláralа con `nolocal`. Así se construyen contadores y acumuladores con estado:
 
 ```cornamusa
-cuadrado = lambda x: x * x
-imprimir(cuadrado(7))    # 49
+funcion crear_contador():
+    n = 0
+    funcion siguiente():
+        nolocal n
+        n = n + 1
+        retornar n
+    fin funcion
+    retornar siguiente
+fin funcion
+
+contar = crear_contador()
+imprimir(contar(), contar(), contar())   # 1 2 3
 ```
 
 ---
 
-## 6. Estructuras de datos
+## 7. Estructuras de datos
 
 ### Listas
 
@@ -295,25 +428,12 @@ imprimir(xs[0])      # 10 (primer elemento)
 imprimir(xs[-1])     # 50 (último, índice negativo)
 imprimir(longitud(xs))  # 5
 
-# Modificación
-xs[0] = 99
-imprimir(xs)         # [99, 20, 30, 40, 50]
-
-# Built-ins de mutación
+xs[0] = 99           # modificación por índice
 agregar(xs, 60)      # añade al final
-imprimir(xs)         # [99, 20, 30, 40, 50, 60]
-
-quitar(xs, 0)        # quita por índice
-imprimir(xs)         # [20, 30, 40, 50, 60]
-
+quitar(xs, 0)        # quita por índice, devuelve el valor
 insertar(xs, 0, 10)  # inserta en posición 0
-imprimir(xs)         # [10, 20, 30, 40, 50, 60]
-
-invertir(xs)
-imprimir(xs)         # [60, 50, 40, 30, 20, 10]
-
-ordenar(xs)
-imprimir(xs)         # [10, 20, 30, 40, 50, 60]
+invertir(xs)         # invierte in-place
+ordenar(xs)          # ordena in-place
 ```
 
 ### Slicing (rebanadas)
@@ -329,7 +449,7 @@ imprimir(xs[2:])       # [30, 40, 50]
 
 ### Diccionarios
 
-Mapa hash mutable:
+Mapa clave→valor mutable. **Preserva el orden de inserción**:
 
 ```cornamusa
 persona = {"nombre": "Ana", "edad": 30, "ciudad": "Madrid"}
@@ -337,133 +457,146 @@ persona = {"nombre": "Ana", "edad": 30, "ciudad": "Madrid"}
 imprimir(persona["nombre"])   # Ana
 persona["edad"] = 31          # modificación
 persona["email"] = "ana@..."  # añadir clave nueva
+quitar(persona, "ciudad")     # borrar una clave
 
-# Iteración
 para clave en claves(persona):
     imprimir(clave, "->", persona[clave])
 fin para
 ```
 
-> En v0.11.5 no hay built-in para borrar una clave del dict (planeado v1.x). Mientras tanto puedes reescribir el dict completo con las claves que quieres conservar.
-
 ### Conjuntos
 
-Sin claves repetidas, sin orden:
+Sin elementos repetidos, sin orden:
 
 ```cornamusa
 s = {1, 2, 3, 2, 1}
-imprimir(s)          # {1, 2, 3} — sin duplicados
+imprimir(s)             # {1, 2, 3} — sin duplicados
 imprimir(longitud(s))   # 3
 
-vacio = conjunto()   # {} es un diccionario, no conjunto vacío
+vacio = conjunto()      # {} es un diccionario, no conjunto vacío
 agregar(vacio, "a")
-imprimir(vacio)      # {a}
+quitar(vacio, "a")
 ```
 
 ### Tuplas
 
-Como listas pero **inmutables**:
+Como listas pero **inmutables** — útiles para datos que no deben cambiar:
 
 ```cornamusa
 punto = (3, 4)
 imprimir(punto[0])   # 3
-
-# punto[0] = 10  → error: las tuplas no se pueden modificar
+# punto[0] = 10  → ✗ ErrorDeTipo: las tuplas no se modifican
 ```
 
 ---
 
-## 7. Cadenas
+## 8. Comprehensions
+
+Una **comprehension** construye una colección en una sola expresión, en lugar de un bucle con `agregar`. Compáralo:
+
+```cornamusa
+# La forma larga:
+dobles = []
+para n en rango(10):
+    agregar(dobles, n * 2)
+fin para
+
+# La comprehension equivalente:
+dobles = [n * 2 para n en rango(10)]
+```
+
+Puedes añadir un filtro con `si`:
+
+```cornamusa
+pares = [n para n en rango(20) si n % 2 == 0]
+largas = [w para w en palabras si longitud(w) > 4]
+```
+
+Y construir diccionarios o conjuntos con la misma sintaxis:
+
+```cornamusa
+cuadrados = {n: n * n para n en rango(1, 6)}      # dict
+iniciales = {w[0] para w en ["alfa", "beta"]}     # set (deduplica)
+```
+
+Entre **paréntesis** la comprehension es una *generator expression*: perezosa, no calcula nada hasta que la recorres (ver §11):
+
+```cornamusa
+perezosa = (n * n para n en rango(1, 1000000))    # instantáneo, nada se calcula aún
+```
+
+---
+
+## 9. Cadenas
 
 ```cornamusa
 s = "Cornamusa"
 imprimir(longitud(s))    # 9
 imprimir(s[0])           # C
 imprimir(s[-1])          # a (último)
+imprimir(s[0:4])         # Corn (slicing)
 
-# Concatenación
-saludo = "Hola, " + "mundo"
-
-# Repetición
-linea = "=" * 30
-imprimir(linea)
-
-# Pertenencia
-imprimir("orna" en s)    # verdadero
+saludo = "Hola, " + "mundo"   # concatenación
+linea = "=" * 30              # repetición
+imprimir("orna" en s)         # verdadero (pertenencia)
 ```
 
-### Módulo `cadenas`
-
-Para operaciones más avanzadas (introducidas en v0.9.1):
-
-```cornamusa
-importar cadenas
-
-imprimir(cadenas.repetir("-", 20))           # --------------------
-imprimir(cadenas.empieza_con("hola.cor", "hola"))   # verdadero
-imprimir(cadenas.termina_con("foo.txt", ".txt"))    # verdadero
-imprimir(cadenas.contar("aaabaa", "aa"))     # 2
-imprimir(cadenas.caracter("Cornamusa", 4))   # a
-```
-
-### F-cadenas con interpolación (v1.1)
+### F-cadenas con interpolación
 
 Para construir cadenas con valores embebidos sin concatenar manualmente, usa el prefijo `f`:
 
 ```cornamusa
 nombre = "Ana"
 edad = 30
-imprimir(f"Hola {nombre}, tienes {edad} anos")
-# → Hola Ana, tienes 30 anos
+imprimir(f"Hola {nombre}, tienes {edad} años")
+# → Hola Ana, tienes 30 años
 
 # Cualquier expresión vale dentro de las llaves
 imprimir(f"el doble de {edad} es {edad * 2}")
-# → el doble de 30 es 60
-
-# Anidación
-imprimir(f"capas: {f'inner-{edad}'}")
-# → capas: inner-30
 
 # Llaves literales con `{{` y `}}`
 imprimir(f"{{literal}}")           # → {literal}
 ```
 
-Cualquier tipo se convierte a cadena automáticamente: enteros bignum, decimales, booleanos, listas, etc.
-
-### Conversores explícitos (v1.1)
-
-Cuando necesitas convertir entre tipos:
+### Conversores de tipo
 
 ```cornamusa
 imprimir(cadena(42))            # "42"
-imprimir(cadena(2 ** 100))      # bignum completo, sin pérdida
-imprimir(entero("42"))          # 42 (parse base 10)
-imprimir(entero("-7"))          # -7
-imprimir(entero(3.9))           # 3 (truncar hacia cero)
-imprimir(decimal("3,14"))       # ErrorDeValor (Cornamusa usa "."), prueba decimal("3.14")
+imprimir(entero("42"))          # 42
+imprimir(entero(3.9))           # 3 (trunca hacia cero)
 imprimir(decimal("3.14"))       # 3.14
-imprimir(booleano([]))          # falso  (lista vacía)
-imprimir(booleano("hola"))      # verdadero
+imprimir(booleano([]))          # falso (lista vacía es falsy)
 imprimir(lista("abc"))          # ["a", "b", "c"]
 imprimir(tupla(rango(3)))       # (0, 1, 2)
-imprimir(diccionario([("a", 1), ("b", 2)]))   # {"a": 1, "b": 2}
 ```
 
-### Entrada interactiva con `leer()` (v1.1)
-
-Para leer del teclado (stdin):
+### Entrada interactiva con `leer()`
 
 ```cornamusa
 nombre = leer("Tu nombre: ")
 edad = entero(leer("Edad: "))
-imprimir(f"Hola {nombre}, en 10 anos tendras {edad + 10}")
+imprimir(f"Hola {nombre}, en 10 años tendrás {edad + 10}")
 ```
 
 `leer()` sin argumentos lee una línea silenciosa; con un prompt cadena lo imprime sin newline antes de leer.
 
+### El módulo `cadenas`
+
+Para operaciones más avanzadas, importa el módulo `cadenas`:
+
+```cornamusa
+importar cadenas
+
+imprimir(cadenas.mayusculas_ascii("hola"))      # HOLA
+imprimir(cadenas.separar("a,b,c", ","))         # ["a", "b", "c"]
+imprimir(cadenas.unir(["a", "b", "c"], "-"))    # a-b-c
+imprimir(cadenas.recortar("  hola  "))          # "hola"
+imprimir(cadenas.reemplazar("foo bar", "o", "0"))  # f00 bar
+```
+
 ---
 
-## 8. Clases y objetos
+## 10. Clases y objetos
 
 ```cornamusa
 clase Persona:
@@ -487,7 +620,7 @@ ana.cumplir_anos()
 imprimir(ana.edad)          # 31
 ```
 
-`__iniciar__` es el constructor (equivalente a `__init__` de Python). El primer parámetro de cada método se llama `yo` por convención (puedes usar otro nombre, pero `yo` es estándar).
+`__iniciar__` es el constructor. El primer parámetro de cada método se llama `yo` por convención (equivale a `self`).
 
 ### Herencia
 
@@ -508,13 +641,7 @@ clase Perro extiende Animal:
     fin funcion
 fin clase
 
-clase Gato extiende Animal:
-    funcion hablar(yo):
-        retornar yo.nombre + " maúlla: ¡miau!"
-    fin funcion
-fin clase
-
-mascotas = [Perro("Rex"), Gato("Misi"), Animal("???")]
+mascotas = [Perro("Rex"), Animal("???")]
 para m en mascotas:
     imprimir(m.hablar())
 fin para
@@ -525,91 +652,188 @@ fin para
 Llama al método de la superclase:
 
 ```cornamusa
-clase Persona:
-    funcion __iniciar__(yo, nombre, edad):
-        yo.nombre = nombre
-        yo.edad = edad
-    fin funcion
-
-    funcion saludar(yo):
-        retornar "Soy " + yo.nombre
-    fin funcion
-fin clase
-
 clase Empleado extiende Persona:
     funcion __iniciar__(yo, nombre, edad, salario):
-        super.__iniciar__(nombre, edad)    # llama al __iniciar__ de Persona
+        super.__iniciar__(nombre, edad)    # constructor de Persona
         yo.salario = salario
     fin funcion
 
     funcion saludar(yo):
-        base = super.saludar()              # método saludar de Persona
-        retornar base + ", empleado"
+        retornar super.saludar() + ", empleado"
+    fin funcion
+fin clase
+```
+
+### Métodos mágicos (dunders)
+
+Los métodos con nombre `__...__` se invocan **automáticamente** al usar el operador correspondiente. Esto deja que tus objetos se comporten como tipos nativos:
+
+```cornamusa
+clase Vector:
+    funcion __iniciar__(yo, px, py):
+        yo.px = px
+        yo.py = py
+    fin funcion
+
+    funcion __sumar__(yo, otro):
+        retornar Vector(yo.px + otro.px, yo.py + otro.py)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"({yo.px}, {yo.py})"
+    fin funcion
+
+    funcion __igual__(yo, otro):
+        retornar yo.px == otro.px y yo.py == otro.py
     fin funcion
 fin clase
 
-ana = Empleado("Ana", 30, 50000)
-imprimir(ana.saludar())   # Soy Ana, empleado
-imprimir(ana.salario)     # 50000
+a = Vector(1, 2)
+b = Vector(3, 4)
+imprimir(a + b)              # (4, 6)  ← usa __sumar__ y __cadena__
+imprimir(a == Vector(1, 2)) # verdadero
 ```
 
-> Nota: en v0.11.4 los dunders aritméticos (`__sumar__`, etc.) son métodos ordinarios — no se invocan automáticamente al hacer `a + b`. Solo `__iniciar__` es especial. Esto cambia en v1.x.
+Los principales: `__cadena__` (`cadena`/`imprimir`/f-strings), `__longitud__` (`longitud`), `__iterar__` (`para`), `__indice__` / `__asignar_indice__` (`obj[i]`), `__llamar__` (`obj(...)`), `__entrar__` / `__salir__` (bloque `con`), los aritméticos (`__sumar__`, `__restar__`, ...) y los de comparación (`__igual__`, `__menor__`, ...). La lista completa está en la [referencia](referencia.md#11-clases-y-objetos).
 
 ---
 
-## 9. Módulos
+## 11. Generadores
 
-Un **módulo** es un archivo `.cor` cuyas variables y funciones se pueden importar desde otro:
+Una función que contiene `producir` es un **generador**. Llamarla no ejecuta el cuerpo: devuelve un objeto generador. Cada vez que lo iteras, la función se reanuda donde quedó hasta el siguiente `producir`, conservando todo su estado.
 
 ```cornamusa
-# matematicas.cor
-PI = 3.14159
+funcion contar(ini, tope):
+    i = ini
+    mientras i <= tope:
+        producir i
+        i = i + 1
+    fin mientras
+fin funcion
 
-funcion cuadrado(x):
-    retornar x * x
+para v en contar(1, 5):
+    imprimir(v)        # 1 2 3 4 5
+fin para
+```
+
+Lo potente: un generador puede ser **infinito**, porque solo calcula valores a medida que se piden:
+
+```cornamusa
+funcion fibonacci():
+    a = 0
+    b = 1
+    mientras verdadero:
+        producir a
+        a, b = b, a + b
+    fin mientras
+fin funcion
+
+i = 0
+para n en fibonacci():
+    si i >= 10: romper
+    imprimir(n)
+    i = i + 1
+fin para
+```
+
+`producir desde` delega en otro generador o iterable, encadenándolos:
+
+```cornamusa
+funcion arbol():
+    producir 0
+    producir desde [1, 2, 3]
+    producir desde otra_secuencia()
 fin funcion
 ```
 
-```cornamusa
-# uso.cor
-importar matematicas
-
-imprimir(matematicas.PI)
-imprimir(matematicas.cuadrado(5))   # 25
-```
-
-### `desde X importar Y`
-
-Trae nombres específicos al scope local:
+Y entre paréntesis tienes *generator expressions*, generadores en una línea:
 
 ```cornamusa
-desde matematicas importar PI, cuadrado
-
-imprimir(PI)
-imprimir(cuadrado(7))
+cuadrados = (n * n para n en rango(1, 1000000))
+# nada se calcula hasta que recorres `cuadrados`
 ```
-
-### Alias
-
-```cornamusa
-importar matematicas como mat
-imprimir(mat.PI)
-
-desde matematicas importar cuadrado como cuad
-imprimir(cuad(8))
-```
-
-### Stdlib disponible (v0.11.4)
-
-- **`matematicas`**: `PI`, `E`, `cuadrado`, `cubo`, `absoluto`, `maximo`, `minimo`, `signo`, `factorial`, `suma_rango`, `es_par`, `es_impar`, `mcd`.
-- **`cadenas`**: `repetir`, `empieza_con`, `termina_con`, `contar`, `caracter`.
-- **`sistema`**: `argv` (lista de argumentos del programa).
 
 ---
 
-## 10. Manejo de errores
+## 12. Pattern matching
 
-Cornamusa lanza **excepciones** cuando algo va mal: división por cero, acceso a clave inexistente, tipo incorrecto, etc.
+`coincidir` compara un valor contra una serie de **patrones** y ejecuta la rama del primero que encaje. Es más expresivo que una cadena de `si`/`sino si`:
+
+```cornamusa
+funcion describir(valor):
+    coincidir valor:
+        cuando 0:
+            retornar "cero"
+        cuando 1 | 2 | 3:
+            retornar "pequeño"
+        cuando [a]:
+            retornar f"lista de un elemento: {a}"
+        cuando [primero, *resto]:
+            retornar f"lista que empieza por {primero}"
+        cuando (a, b) si a == b:
+            retornar "par diagonal"
+        cuando n si n > 100:
+            retornar f"un número grande: {n}"
+        cuando _:
+            retornar "ni idea"
+    fin coincidir
+fin funcion
+
+imprimir(describir(0))            # cero
+imprimir(describir(2))            # pequeño
+imprimir(describir([1, 2, 3]))    # lista que empieza por 1
+imprimir(describir((5, 5)))       # par diagonal
+imprimir(describir(500))          # un número grande: 500
+```
+
+Los patrones disponibles:
+
+- **Literales**: `cuando 0`, `cuando "hola"`.
+- **Nombre**: `cuando n` enlaza el valor a `n`.
+- **Comodín**: `cuando _` encaja con todo.
+- **Listas y tuplas**: `cuando [a, b]`, `cuando (a, b)`, con `*resto` en cualquier posición (`[primero, *medio, ultimo]`). Anidables.
+- **OR**: `cuando 1 | 2 | 3` (separador `|`).
+- **Type-match con binding**: `cuando Perro() como p` encaja con cualquier instancia de la clase `Perro` y la enlaza a `p`.
+- **Guarda**: `cuando patron si condicion` añade una condición booleana.
+
+---
+
+## 13. Context managers (`con`)
+
+El bloque `con` garantiza que un recurso se **libere siempre**, haya o no una excepción. La clase del recurso define `__entrar__` (se ejecuta al entrar) y `__salir__` (se ejecuta al salir, pase lo que pase):
+
+```cornamusa
+clase Conexion:
+    funcion __iniciar__(yo, host):
+        yo.host = host
+    fin funcion
+
+    funcion __entrar__(yo):
+        imprimir("abriendo conexión a", yo.host)
+        retornar yo
+    fin funcion
+
+    funcion __salir__(yo):
+        imprimir("cerrando conexión")
+    fin funcion
+fin clase
+
+con Conexion("api.dev") como c:
+    imprimir("trabajando con", c.host)
+fin con
+# Salida:
+#   abriendo conexión a api.dev
+#   trabajando con api.dev
+#   cerrando conexión
+```
+
+Aunque el cuerpo lance una excepción, `__salir__` se ejecuta igualmente.
+
+---
+
+## 14. Manejo de errores
+
+Cornamusa lanza **excepciones** cuando algo va mal: división por cero, clave inexistente, tipo incorrecto, etc.
 
 ### `intentar` / `atrapar`
 
@@ -621,7 +845,9 @@ atrapar ErrorAritmetico como e:
 fin intentar
 ```
 
-### Múltiples tipos
+### Múltiples tipos y `finalmente`
+
+`finalmente` se ejecuta **siempre**, haya o no excepción — ideal para limpieza:
 
 ```cornamusa
 intentar:
@@ -630,18 +856,6 @@ atrapar ErrorDeTipo como e:
     imprimir("Tipo incorrecto:", e)
 atrapar ErrorDeValor como e:
     imprimir("Valor inválido:", e)
-fin intentar
-```
-
-### `finalmente`
-
-Bloque que **siempre** se ejecuta (haya o no excepción):
-
-```cornamusa
-intentar:
-    arriesgado()
-atrapar Excepcion como e:
-    imprimir("Falló:", e)
 finalmente:
     imprimir("Limpieza")
 fin intentar
@@ -650,84 +864,175 @@ fin intentar
 ### Lanzar excepciones
 
 ```cornamusa
-funcion dividir(a, b):
-    si b == 0:
-        lanzar ErrorAritmetico("división por cero")
+funcion raiz_cuadrada(n):
+    si n < 0:
+        lanzar ErrorDeValor("no hay raíz real de un negativo")
     fin si
-    retornar a / b
+    retornar n ** 0.5
 fin funcion
-
-intentar:
-    dividir(10, 0)
-atrapar ErrorAritmetico como e:
-    imprimir("Capturado:", e)
-fin intentar
 ```
 
-### Tipos de excepción built-in
+### Tipos de excepción
 
-- `Excepcion` — base.
-- `ErrorAritmetico` — división por cero, etc.
-- `ErrorDeTipo` — operación con tipo incorrecto.
-- `ErrorDeValor` — valor del tipo correcto pero inválido.
-- `ErrorDeIndice` — índice fuera de rango.
-- `ErrorDeClave` — clave no presente en diccionario.
-- `ErrorDeNombre` — identificador no definido.
+`Excepcion` (base), `ErrorAritmetico`, `ErrorDeTipo`, `ErrorDeValor`, `ErrorDeIndice`, `ErrorDeClave`, `ErrorDeNombre`, `ErrorDeAtributo`, `ErrorDeSistema`, `ErrorDeIO`.
+
+### Tracebacks y sugerencias
+
+Cuando un error **no se atrapa**, Cornamusa imprime un *traceback* con la cadena de llamadas que llevó al fallo y la línea de fuente exacta. Además, si escribes mal un nombre o un atributo, te sugiere el más parecido:
+
+```
+ErrorDeNombre: nombre 'longutud' no esta definido
+    ¿quisiste decir 'longitud'?
+```
 
 ---
 
-## 11. Programa completo
+## 15. Módulos y la biblioteca estándar
 
-Pongamos todo junto en un programa real. **Conversor de temperatura interactivo**:
+Un **módulo** es un archivo `.cor` cuyas variables y funciones se pueden importar desde otro:
 
 ```cornamusa
-# conversor.cor
+# matematicas_propias.cor
+PI = 3.14159
+funcion cuadrado(x):
+    retornar x * x
+fin funcion
+```
 
-clase Conversor:
-    funcion __iniciar__(yo, escala):
-        yo.escala = escala
+```cornamusa
+# uso.cor
+importar matematicas_propias
+imprimir(matematicas_propias.cuadrado(5))   # 25
+
+# Traer nombres específicos:
+desde matematicas_propias importar PI, cuadrado
+imprimir(cuadrado(7))
+
+# Con alias:
+importar matematicas_propias como mat
+imprimir(mat.PI)
+```
+
+### La biblioteca estándar
+
+Cornamusa trae **doce módulos** listos para usar. Un vistazo rápido:
+
+```cornamusa
+importar matematicas
+imprimir(matematicas.factorial(20))         # bignum, sin overflow
+
+importar funcionales
+imprimir(funcionales.mapear(lambda x: x*x, [1, 2, 3]))   # [1, 4, 9]
+imprimir(funcionales.filtrar(lambda x: x > 2, [1, 2, 3, 4]))  # [3, 4]
+
+importar cadenas
+imprimir(cadenas.separar("uno,dos,tres", ","))
+
+importar archivos
+archivos.escribir("salida.txt", "hola")
+imprimir(archivos.leer("salida.txt"))
+
+importar json
+texto = json.serializar({"nombre": "Ana", "edad": 30})
+imprimir(json.parsear(texto))
+
+importar fechas
+imprimir(fechas.legible(fechas.ahora()))
+
+importar azar
+imprimir(azar.entero(1, 6))                 # tirada de dado
+imprimir(azar.elegir(["cara", "cruz"]))
+
+importar regex
+imprimir(regex.todos("\\d+", "tengo 3 gatos y 2 perros"))   # ["3", "2"]
+
+importar formato
+imprimir(formato.con_decimales(3.14159, 2)) # 3.14
+
+importar proceso
+imprimir(proceso.capturar("echo", "hola"))
+
+importar red
+respuesta = red.obtener("http://example.com")
+imprimir(respuesta["codigo"])
+```
+
+La lista completa de funciones de cada módulo está en la [referencia](referencia.md#16-biblioteca-estándar-stdlib).
+
+---
+
+## 16. Un programa completo
+
+Pongámoslo todo junto. **Análisis de un registro de ventas**:
+
+```cornamusa
+# ventas.cor — usa destructuring, comprehensions, clases y stdlib.
+
+importar funcionales
+
+clase Venta:
+    funcion __iniciar__(yo, producto, unidades, precio):
+        yo.producto = producto
+        yo.unidades = unidades
+        yo.precio = precio
     fin funcion
 
-    funcion a_celsius(yo, valor):
-        si yo.escala == "F":
-            retornar (valor - 32) * 5 / 9
-        sino si yo.escala == "K":
-            retornar valor - 273.15
-        sino:
-            retornar valor   # ya está en Celsius
-        fin si
+    funcion total(yo):
+        retornar yo.unidades * yo.precio
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"{yo.producto}: {yo.unidades} x {yo.precio} = {yo.total()}"
     fin funcion
 fin clase
 
-importar matematicas
-
 funcion main():
-    valores_f = [32, 68, 98.6, 212]
-    c = Conversor("F")
-    para v en valores_f:
-        celsius = c.a_celsius(v)
-        imprimir(v, "°F =", matematicas.absoluto(celsius), "°C")
+    datos = [
+        ("gaita", 3, 200),
+        ("tambor", 5, 80),
+        ("flauta", 12, 25),
+    ]
+
+    # La variable de una comprehension es un solo nombre; accedemos a
+    # los campos de cada tupla por índice.
+    ventas = [Venta(f[0], f[1], f[2]) para f en datos]
+
+    para v en ventas:
+        imprimir(" -", v)
     fin para
+
+    totales = funcionales.mapear(lambda v: v.total(), ventas)
+    imprimir("Ingreso total:", funcionales.suma(totales))
+
+    # La venta más grande, con pattern matching sobre el resultado.
+    mayor = ventas[0]
+    para v en ventas:
+        si v.total() > mayor.total():
+            mayor = v
+        fin si
+    fin para
+    imprimir("Mayor venta:", mayor.producto)
 fin funcion
 
 main()
 ```
 
 ```
-$ ./build/cornamusa --bytecode conversor.cor
-32 °F = 0 °C
-68 °F = 20 °C
-98.6 °F = 37 °C
-212 °F = 100 °C
+$ ./build/cornamusa --bytecode ventas.cor
+ - gaita: 3 x 200 = 600
+ - tambor: 5 x 80 = 400
+ - flauta: 12 x 25 = 300
+Ingreso total: 1300
+Mayor venta: gaita
 ```
 
 ---
 
-## Próximos pasos
+## 17. Próximos pasos
 
-- Lee la **[referencia rápida](referencia.md)** para tener todo a mano.
-- Mira los **[ejemplos](../examples/)** del repositorio: 23+ programas demostrando cada feature.
-- Si encuentras un bug o una característica confusa, [abre un issue en GitHub](https://github.com/David-Castilla-Gomez/Cornamusa/issues).
-- Cornamusa está en evolución activa. La hoja de ruta vive en [README.md](../README.md) y en `decisiones/`.
+- Consulta la **[referencia rápida](referencia.md)** para tener toda la sintaxis y la stdlib a mano.
+- Explora los **[57 ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)** del repositorio: hay uno por cada característica del lenguaje.
+- Lee la **[especificación formal](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md)** si quieres el detalle preciso de la gramática y la semántica.
+- Si encuentras un bug o algo confuso, [abre un issue en GitHub](https://github.com/David-Castilla-Gomez/Cornamusa/issues).
 
 ¡Buen camino!

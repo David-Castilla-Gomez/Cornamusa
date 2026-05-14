@@ -46,19 +46,20 @@ ESPEC.md tiene la gramática EBNF, semántica formal y tipos. Las ADRs (`B1` a `
 
 ## Estado del proyecto
 
-Cornamusa es **estable** y funcional. Lenguaje completo: OOP con herencia, GC mark-sweep, excepciones, módulos, stdlib mínima. Rendimiento ~3x sobre v0.10 tras small-int tagging (B9). Documentación validada contra el intérprete real.
+Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cercana a Python 3.10+: OOP con herencia y dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers. GC mark-sweep, excepciones con traceback multi-frame, doce módulos de stdlib. Toda la documentación está validada contra el intérprete real.
 
 | Hito | Versión | Estado |
 |---|---|---|
-| Sintaxis básica | v0.4 | ✅ |
-| Estructuras de datos | v0.5 | ✅ |
 | VM bytecode + closures + excepciones | v0.6 | ✅ |
-| Clases y herencia | v0.7 | ✅ |
-| GC mark-sweep | v0.8 | ✅ |
-| Módulos + stdlib | v0.9 | ✅ |
-| Inline caching tipo PEP 659 | v0.10 | ✅ |
-| Small-int tagging | v0.11 | ✅ |
-| Documentación + sitio web + ejemplos avanzados | v1.0 | en curso |
+| Clases, herencia, GC, módulos | v0.7–v0.9 | ✅ |
+| Inline caching + small-int tagging | v0.10–v0.11 | ✅ |
+| Dunders, `nolocal`, context managers | v1.2–v1.13 | ✅ |
+| Pattern matching (`coincidir`) | v1.15–v1.16 | ✅ |
+| Stdlib amplia (12 módulos) | v1.8–v1.29 | ✅ |
+| Destructuring, `*args`/`**kwargs`, spread | v1.21–v1.25 | ✅ |
+| Comprehensions y generadores | v1.30–v1.34 | ✅ |
+| Errores con sugerencias + traceback | v1.35–v1.38 | ✅ |
+| Performance: `-O3` + LTO | v1.40 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 
