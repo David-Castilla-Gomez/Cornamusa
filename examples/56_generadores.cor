@@ -124,4 +124,32 @@ fin para
 imprimir("  ", linea_vals)
 imprimir("")
 
+# ─── Caso 7: generator expressions inline (v1.34) ───
+imprimir("7) generator expressions `(expr para v en it)`")
+
+# genex directa: lazy, no materializa
+cuadrados = (n * n para n en rango(1, 7))
+imprimir("  tipo:", tipo(cuadrados))
+vals = []
+para v en cuadrados:
+    agregar(vals, v)
+fin para
+imprimir("  cuadrados 1..6:", vals)
+
+# genex con guarda, pasada directo a un para
+imprimir("  pares de 0..19:")
+suma_pares = 0
+para v en (n para n en rango(20) si n % 2 == 0):
+    suma_pares = suma_pares + v
+fin para
+imprimir("    suma =", suma_pares)
+
+# genex captura variable externa como upvalue
+funcion escalador(factor):
+    # la genex captura `factor` del scope de escalador
+    retornar (x * factor para x en [1, 2, 3, 4])
+fin funcion
+imprimir("  escalador(10):", tomar(escalador(10), 4))
+imprimir("")
+
 imprimir("=== fin ejemplo 56 ===")

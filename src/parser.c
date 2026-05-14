@@ -64,6 +64,11 @@ static Expr *parsear_nulo(Parser *p);
 static Expr *parsear_ident(Parser *p);
 static Expr *parsear_super(Parser *p);
 static Expr *parsear_grupo(Parser *p);
+static bool parsear_comprehension_cola(Parser *p,
+                                          const char **nombre_var_out,
+                                          int *longitud_var_out,
+                                          Expr **iterable_out,
+                                          Expr **guarda_out);
 static Expr *parsear_unario(Parser *p);
 static Expr *parsear_no(Parser *p);
 static Expr *parsear_lambda(Parser *p);
@@ -509,6 +514,18 @@ static Expr *parsear_grupo(Parser *p) {
 
     Expr *primero = parsear_expresion(p);
     if (primero == NULL) return NULL;
+
+    /* v1.34: generator expression `(expr para v en iter [si guarda])`.
+       Produce un generador lazy en lugar de una lista materializada. */
+    if (check(p, TT_PARA)) {
+        const char *vn; int vl; Expr *iter; Expr *guarda;
+        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+        if (!consumir(p, TT_PARENT_DER,
+            "se esperaba ')' al final de la generator expression")) return NULL;
+        return expr_comprehension(p->arena, /*tipo=genex*/3,
+                                    primero, NULL, vn, vl, iter, guarda,
+                                    apertura.linea, apertura.columna);
+    }
 
     /* Sin coma: es grupo. */
     if (!check(p, TT_COMA)) {

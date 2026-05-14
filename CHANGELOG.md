@@ -6,6 +6,83 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.34.0] — 2026-05-14 — Generator expressions inline
+
+`(expr para v en iter [si guarda])` — el equivalente lazy de una
+list comprehension. En lugar de materializar una lista, produce un
+**generador** que se evalúa elemento a elemento.
+
+### Sintaxis
+
+```cornamusa
+cuadrados = (n * n para n en rango(1, 7))
+imprimir(tipo(cuadrados))   # generador
+
+# Pasada directamente a un `para` — sin lista intermedia
+para v en (n para n en rango(20) si n % 2 == 0):
+    imprimir(v)
+fin para
+
+# Como argumento a otra función
+tomar((x * 3 para x en rango(100)), 5)   # [0, 3, 6, 9, 12]
+```
+
+### Captura de variables externas
+
+La genex captura las variables del scope que la rodea como
+**upvalues** — igual que un closure:
+
+```cornamusa
+funcion escalador(factor):
+    retornar (x * factor para x en [1, 2, 3, 4])
+fin funcion
+
+g = escalador(10)
+# g produce: 10, 20, 30, 40 — `factor` capturado del scope de escalador
+```
+
+### Implementación
+
+`EXPR_COMPREHENSION` gana un `tipo_destino = 3` (genex). El parser lo
+construye cuando ve `para` tras la primera expresión dentro de `(...)`.
+
+El compilador desugar la genex a una **FuncionBC sintética
+generadora** de un parámetro:
+
+```
+funcion $genex($gx_param):
+    para v en $gx_param:
+        si guarda:
+            producir expr
+        fin si
+    fin para
+fin funcion
+```
+
+- Se compila en un scope hijo → `expr`/`guarda` resuelven variables
+  externas como upvalues automáticamente.
+- `fn->es_generador = true` → llamarla devuelve un `VAL_GENERADOR`.
+- En el scope padre: `OP_CLOSURE` + upvalues, luego se compila el
+  iterable real y `OP_LLAMAR 1`.
+
+Reusa toda la maquinaria de generadores de v1.31 — cada
+`iter_siguiente` reanuda el frame suspendido. **Lazy de verdad**:
+`(x para x en rango(1000000))` no aloca un millón de elementos.
+
+### Tests añadidos
+
+- `test_bytecode_generadores.c`: 6 tests — genex básica, es
+  generador, con guarda, captura upvalue, top-level, inline en `para`.
+- `examples/56_generadores.cor`: caso 7 con genex lazy, guarda y
+  captura de upvalue vía función `escalador`.
+- **178/178 tests verde**.
+
+### Cierre de la familia de iteración perezosa
+
+Con v1.34, Cornamusa tiene el conjunto completo Python-paritario:
+comprehensions (v1.30/v1.32), generadores con `producir` (v1.31),
+`producir desde` (v1.33) y generator expressions (v1.34).
+
 ## [1.33.0] — 2026-05-14 — `producir desde` (delegación de generadores)
 
 `producir desde EXPR` delega a un sub-generador (o cualquier iterable):

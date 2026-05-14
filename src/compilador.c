@@ -867,6 +867,124 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                slots temporales (n_locales -= 3). */
             int tipo_destino = e->como.comprehension.tipo_destino;
 
+            /* v1.34: generator expression `(expr para v en iter si g)`.
+               Se compila como una FuncionBC sintética generadora con un
+               parámetro (el iterable), y se invoca inmediatamente con
+               el iterable real. El cuerpo:
+                   funcion $genex($it):
+                       para v en $it:
+                           si guarda: producir expr fin si
+                       fin para
+                   fin funcion
+               `expr`/`guarda` resuelven variables externas como
+               upvalues — gracias al scope hijo. Lazy de verdad: cada
+               `iter_siguiente` reanuda el frame del generador. */
+            if (tipo_destino == 3) {
+                FuncionBC *fn = funcion_bc_nueva("$genex", 6, 1);
+                if (!fn) {
+                    return error_compilacion(c, e->linea, e->columna,
+                        "memoria insuficiente"), false;
+                }
+                ScopeCompilador scope_gx;
+                scope_iniciar(&scope_gx, &fn->chunk, true, c->actual);
+                scope_gx.funcion = fn;
+                scope_gx.locales[0].nombre = "$genex";
+                scope_gx.locales[0].longitud_nombre = 6;
+                /* Param 0 (slot 1): el iterable. */
+                scope_gx.locales[1].nombre = "$gx_param";
+                scope_gx.locales[1].longitud_nombre = 9;
+                scope_gx.locales[1].capturado = false;
+                scope_gx.n_locales = 2;
+
+                ScopeCompilador *prev = c->actual;
+                c->actual = &scope_gx;
+
+                /* Cuerpo: emitir el bucle `para v en $gx_param`. */
+                bool gx_ok = true;
+                /* OP_OBTENER_LOCAL 1 ($gx_param) + OP_ITER_INICIAR. */
+                chunk_emitir_byte2(&fn->chunk, OP_OBTENER_LOCAL, 1, e->linea);
+                chunk_emitir_byte(&fn->chunk, OP_ITER_INICIAR, e->linea);
+                int gx_slot_iter = agregar_local(c, "$gx_iter", 8, e->linea);
+                if (gx_slot_iter < 0) { gx_ok = false; }
+                /* OP_NULO + reservar slot para la variable de iteración. */
+                if (gx_ok) {
+                    chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
+                }
+                int gx_slot_var = gx_ok
+                    ? agregar_local(c, e->como.comprehension.nombre_var,
+                                       e->como.comprehension.longitud_var, e->linea)
+                    : -1;
+                if (gx_slot_var < 0) { gx_ok = false; }
+                int gx_inicio = fn->chunk.cuenta;
+                if (gx_ok) {
+                    chunk_emitir_byte2(&fn->chunk, OP_ITER_SIGUIENTE,
+                                        (uint8_t)gx_slot_iter, e->linea);
+                    chunk_emitir_byte(&fn->chunk, 0xff, e->linea);
+                    chunk_emitir_byte(&fn->chunk, 0xff, e->linea);
+                }
+                int gx_off_ph = fn->chunk.cuenta - 2;
+                int gx_salto_cont = -1;
+                if (gx_ok) {
+                    chunk_emitir_byte2(&fn->chunk, OP_ASIGNAR_LOCAL,
+                                        (uint8_t)gx_slot_var, e->linea);
+                    if (e->como.comprehension.guarda) {
+                        if (!compilador_compilar_expr(c, e->como.comprehension.guarda)) {
+                            gx_ok = false;
+                        } else {
+                            gx_salto_cont = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
+                            chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
+                        }
+                    }
+                }
+                if (gx_ok) {
+                    if (!compilador_compilar_expr(c, e->como.comprehension.expr_elem)) {
+                        gx_ok = false;
+                    }
+                }
+                if (gx_ok) {
+                    chunk_emitir_byte(&fn->chunk, OP_PRODUCIR, e->linea);
+                    emitir_bucle(c, gx_inicio, e->linea);
+                    if (gx_salto_cont >= 0) {
+                        parchear_salto(c, gx_salto_cont, e->linea);
+                        chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
+                        emitir_bucle(c, gx_inicio, e->linea);
+                    }
+                    /* Patchear offset_fin del OP_ITER_SIGUIENTE. */
+                    int gx_off = fn->chunk.cuenta - gx_off_ph - 2;
+                    fn->chunk.codigo[gx_off_ph] = (uint8_t)((gx_off >> 8) & 0xff);
+                    fn->chunk.codigo[gx_off_ph + 1] = (uint8_t)(gx_off & 0xff);
+                    /* Fin del cuerpo: OP_NULO + OP_RETORNAR. */
+                    chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
+                    chunk_emitir_byte(&fn->chunk, OP_RETORNAR, e->linea);
+                }
+                c->actual = prev;
+                if (!gx_ok) {
+                    funcion_bc_liberar(fn);
+                    return false;
+                }
+                fn->es_generador = true;
+                /* Promover a constante + OP_CLOSURE + upvalues. */
+                Valor v_pl = valor_plantilla(fn);
+                int fn_idx = chunk_agregar_constante(c->actual->chunk, v_pl);
+                if (fn_idx < 0 || fn_idx > 255) {
+                    error_compilacion(c, e->linea, e->columna,
+                        "demasiadas constantes");
+                    return false;
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
+                                    (uint8_t)fn_idx, e->linea);
+                for (int i = 0; i < scope_gx.n_upvalues; i++) {
+                    chunk_emitir_byte(c->actual->chunk,
+                        scope_gx.upvalues[i].es_local ? 1 : 0, e->linea);
+                    chunk_emitir_byte(c->actual->chunk,
+                        scope_gx.upvalues[i].indice, e->linea);
+                }
+                /* Compilar el iterable en el scope padre y llamar con 1 arg. */
+                if (!compilador_compilar_expr(c, e->como.comprehension.iterable)) return false;
+                chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1, e->linea);
+                return true;
+            }
+
             /* 1. Crear acumulador, dejarlo en TOS, reservar su slot. */
             switch (tipo_destino) {
                 case 0:

@@ -275,6 +275,84 @@ static void test_producir_desde_anidado(void) {
         "x", "10");
 }
 
+/* ───── v1.34: generator expressions inline ───── */
+
+static void test_genex_basica(void) {
+    verificar_var("genex basica iterada",
+        "funcion f():\n"
+        "  g = (x * 2 para x en [1, 2, 3, 4])\n"
+        "  total = 0\n"
+        "  para v en g:\n"
+        "    total = total + v\n"
+        "  fin para\n"
+        "  retornar total\n"
+        "fin funcion\n"
+        "x = f()",
+        "x", "20");
+}
+
+static void test_genex_es_generador(void) {
+    verificar_var("genex produce VAL_GENERADOR",
+        "funcion f():\n"
+        "  retornar tipo((x para x en [1]))\n"
+        "fin funcion\n"
+        "x = f()",
+        "x", "generador");
+}
+
+static void test_genex_con_guarda(void) {
+    verificar_var("genex con guarda",
+        "funcion f():\n"
+        "  g = (n para n en rango(10) si n % 2 == 0)\n"
+        "  ls = []\n"
+        "  para v en g:\n"
+        "    agregar(ls, v)\n"
+        "  fin para\n"
+        "  retornar ls\n"
+        "fin funcion\n"
+        "x = f()",
+        "x", "[0, 2, 4, 6, 8]");
+}
+
+static void test_genex_captura_upvalue(void) {
+    verificar_var("genex captura variable externa",
+        "funcion f():\n"
+        "  factor = 100\n"
+        "  g = (x * factor para x en [1, 2, 3])\n"
+        "  ls = []\n"
+        "  para v en g:\n"
+        "    agregar(ls, v)\n"
+        "  fin para\n"
+        "  retornar ls\n"
+        "fin funcion\n"
+        "x = f()",
+        "x", "[100, 200, 300]");
+}
+
+static void test_genex_top_level(void) {
+    verificar_var("genex a top-level",
+        "g = (x + 1 para x en [10, 20, 30])\n"
+        "total = 0\n"
+        "para v en g:\n"
+        "  total = total + v\n"
+        "fin para\n"
+        "x = total",
+        "x", "63");
+}
+
+static void test_genex_directa_en_para(void) {
+    verificar_var("genex inline en para",
+        "funcion f():\n"
+        "  total = 0\n"
+        "  para v en (n * n para n en rango(1, 5)):\n"
+        "    total = total + v\n"
+        "  fin para\n"
+        "  retornar total\n"
+        "fin funcion\n"
+        "x = f()",
+        "x", "30");
+}
+
 int main(void) {
     test_llamar_devuelve_generador();
     test_iterar_simple();
@@ -287,6 +365,12 @@ int main(void) {
     test_producir_desde_subgenerador();
     test_producir_desde_lista();
     test_producir_desde_anidado();
+    test_genex_basica();
+    test_genex_es_generador();
+    test_genex_con_guarda();
+    test_genex_captura_upvalue();
+    test_genex_top_level();
+    test_genex_directa_en_para();
 
     if (fallos == 0) {
         printf("generadores: todos los tests pasan\n");
