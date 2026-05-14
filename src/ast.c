@@ -161,6 +161,25 @@ Expr *expr_diccionario(Arena *a, Expr **claves, Expr **valores, int n,
     return e;
 }
 
+/* v1.30: comprehension. tipo_destino: 0=lista, 1=dict, 2=conjunto. */
+Expr *expr_comprehension(Arena *a, int tipo_destino,
+                          Expr *expr_elem, Expr *expr_valor,
+                          const char *nombre_var, int longitud_var,
+                          Expr *iterable, Expr *guarda,
+                          int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_COMPREHENSION, linea, col);
+    if (e) {
+        e->como.comprehension.tipo_destino = tipo_destino;
+        e->como.comprehension.expr_elem = expr_elem;
+        e->como.comprehension.expr_valor = expr_valor;
+        e->como.comprehension.nombre_var = nombre_var;
+        e->como.comprehension.longitud_var = longitud_var;
+        e->como.comprehension.iterable = iterable;
+        e->como.comprehension.guarda = guarda;
+    }
+    return e;
+}
+
 Expr *expr_indice(Arena *a, Expr *objeto, Expr *indice, int linea, int col) {
     Expr *e = nuevo_expr(a, EXPR_INDICE, linea, col);
     if (e) {

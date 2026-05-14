@@ -161,6 +161,9 @@ typedef enum {
     OP_LISTA_AGREGAR,
     OP_LISTA_EXTENDER,
     OP_LLAMAR_SPREAD,
+    /* v1.30: para set comprehension. TOS=valor; debajo=conjunto. Pop valor,
+       agregar al conjunto. Valor debe ser hashable. */
+    OP_CONJUNTO_AGREGAR,
 
     /* v1.23: llamadas con keyword arguments `f(x=1, y=2)`.
        Layout en stack al ejecutar:

@@ -6,6 +6,103 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.30.0] — 2026-05-14 — Comprehensions (list, dict, set)
+
+Arranca **Fase 3 — generadores y comprehensions**. Sintaxis
+Python-paritaria para construir colecciones idiomáticamente:
+
+```cornamusa
+funcion ejemplos():
+    # List comprehension
+    dobles = [n * 2 para n en rango(10)]
+    pares = [n para n en rango(20) si n % 2 == 0]
+
+    # Dict comprehension
+    cuadrados = {n: n * n para n en rango(1, 6)}
+    iniciales = {w: w[0] para w en ["alfa", "beta", "gamma"]}
+
+    # Set comprehension (deduplica)
+    primeras = {w[0] para w en ["alfa", "abeja", "barba", "casa"]}
+
+    # Con expresiones complejas
+    digitos = [regex.extraer("\\d+", l) para l en lineas]
+fin funcion
+```
+
+### Sintaxis
+
+```
+[ EXPR para VAR en ITERABLE [si GUARDA] ]      # lista
+{ EXPR para VAR en ITERABLE [si GUARDA] }      # conjunto (deduplica)
+{ CLAVE: VAL para VAR en ITERABLE [si GUARDA] } # diccionario
+```
+
+- `VAR` es un identificador simple (sin destructuring en v1.30).
+- `GUARDA` es opcional; si está, solo se incluye el elemento cuando es
+  verdadera.
+- Solo **un `para...en...`** (sin nested loops en v1.30.x).
+
+### Implementación
+
+AST extendido en [src/ast.h](src/ast.h):
+
+```c
+EXPR_COMPREHENSION { tipo_destino, expr_elem, expr_valor,
+                      nombre_var, longitud_var, iterable, guarda }
+```
+
+`tipo_destino`: 0=lista, 1=dict, 2=conjunto.
+
+El parser detecta `para` tras la primera expresión (o par `k: v` en
+dict) dentro de `[` o `{` y construye un `EXPR_COMPREHENSION` en lugar
+del literal correspondiente.
+
+El compilador desugar a bytecode equivalente a un bucle `para`:
+
+1. `OP_BUILD_LISTA/DICC/CONJUNTO 0` — acumulador vacío.
+2. Eval iterable + `OP_ITER_INICIAR`.
+3. Loop: `OP_ITER_SIGUIENTE` → asignar a var.
+4. Si guarda: eval + `OP_SALTAR_SI_FALSO`.
+5. Eval expr_elem (+ expr_valor para dict) → `OP_LISTA_AGREGAR` /
+   `OP_CONJUNTO_AGREGAR` / `OP_DICC_AGREGAR_PAR`.
+6. Salta al inicio.
+7. **Limpieza crítica** (clave para evitar slots muertos en bucles):
+   `OP_OBTENER_LOCAL slot_acc` + `OP_ASIGNAR_LOCAL slot_acc` +
+   2× `OP_DESCARTAR` para dejar el acumulador como TOS y descartar
+   slot_iter / slot_var. `n_locales -= 3`.
+
+### Opcode nuevo
+
+- `OP_CONJUNTO_AGREGAR` — TOS=valor, debajo=conjunto. Pop valor,
+  agregar. Verifica hashable; `RAISE_OR_DIE` si no.
+
+### Limitaciones (v1.30)
+
+- **Solo dentro de funciones**. En top-level se rechaza con
+  `ErrorDeCompilacion: comprehensions solo soportadas dentro de
+  funciones en v1.30` (problema de slots: top-level no tiene scope
+  formal para reservar el acumulador). Workaround: envolver en
+  función.
+- **Comprehensions dentro de bucles**: las pasada multipasada
+  comparte slots de iteración pero la lógica de "agotar iterador"
+  puede confundirse si la comprehension está dentro de un bucle
+  externo en la misma función. Workaround: extraer a función
+  auxiliar.
+- **Sin nested loops**: `[x para x en xs para y en ys]` no soportado.
+- **Sin destructuring**: `para k, v en pares.items()` no soportado.
+- **Sin generator expressions** `(...)`: requiere generadores
+  (v1.31).
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_comprehensions.c` — 13 tests cubriendo
+  list/dict/set con y sin guarda, iterar cadenas, dedup en sets,
+  rechazo top-level.
+- `bc_run_55_comprehensions` — ejecuta `examples/55_comprehensions.cor`
+  (cuadrados, filtros, iniciales por palabra, extracción regex,
+  cálculo de primos vía función auxiliar).
+- **175/175 tests verde**.
+
 ## [1.29.0] — 2026-05-14 — Stdlib `red` (cliente HTTP/1.1)
 
 Cierra **Fase 2 — stdlib esencial**. Cliente HTTP/1.1 plano (sin TLS)

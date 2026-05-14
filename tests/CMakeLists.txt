@@ -552,6 +552,18 @@ if(CORNAMUSA_TEST_RED)
     )
 endif()
 
+# v1.30: comprehensions.
+add_test(
+    NAME bc_run_55_comprehensions
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/55_comprehensions.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_55_comprehensions PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 55"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

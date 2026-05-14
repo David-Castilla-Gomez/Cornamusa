@@ -76,6 +76,7 @@ typedef enum {
     EXPR_DICCIONARIO,           /* {k: v, ...} */
     EXPR_CONJUNTO,              /* {a, b, c} */
     EXPR_TUPLA,                 /* (a, b) — distinto de grupo (a) */
+    EXPR_COMPREHENSION,         /* v1.30: [expr para v en it si g], {...}, {k:v ...} */
 
     /* Indexación / slicing */
     EXPR_INDICE,                /* obj[k] */
@@ -169,6 +170,20 @@ struct Expr {
             int n_pares;
         } diccionario;
 
+        /* v1.30: comprehension. tipo_destino determina si list/dict/set.
+           Para list/set: solo `expr_elem`. Para dict: ambos `expr_elem`
+           (clave) y `expr_valor`. `nombre_var` es el ident del bucle,
+           `iterable` la expresión a iterar, `guarda` opcional. */
+        struct {
+            int tipo_destino;    /* 0=lista, 1=dict, 2=conjunto */
+            Expr *expr_elem;     /* expr/clave generado por iteración */
+            Expr *expr_valor;    /* solo dict: valor */
+            const char *nombre_var;
+            int longitud_var;
+            Expr *iterable;
+            Expr *guarda;        /* NULL si no hay `si ...` */
+        } comprehension;
+
         /* Indexación obj[k]. */
         struct {
             Expr *objeto;
@@ -257,6 +272,11 @@ Expr *expr_diccionario(Arena *a, Expr **claves, Expr **valores, int n,
                        int linea, int col);
 Expr *expr_conjunto(Arena *a, Expr **elementos, int n, int linea, int col);
 Expr *expr_tupla(Arena *a, Expr **elementos, int n, int linea, int col);
+Expr *expr_comprehension(Arena *a, int tipo_destino,
+                          Expr *expr_elem, Expr *expr_valor,
+                          const char *nombre_var, int longitud_var,
+                          Expr *iterable, Expr *guarda,
+                          int linea, int col);
 Expr *expr_indice(Arena *a, Expr *objeto, Expr *indice, int linea, int col);
 Expr *expr_rebanada(Arena *a, Expr *objeto, Expr *inicio, Expr *fin, Expr *paso,
                     int linea, int col);

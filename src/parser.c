@@ -554,34 +554,93 @@ static Expr *parsear_grupo(Parser *p) {
 }
 
 /*
- * Parsea una lista literal `[a, b, c]`, `[]` o `[1]`.
- * Las comprensiones de lista (`[x para x en y si cond]`) se aplazan
- * a v0.3.1 / Fase 3 sesión polish.
+ * Helper: parsea el sufijo de comprehension `para VAR en ITER [si GUARDA]`
+ * asumiendo que el `para` ya está en el token actual (sin consumir).
+ * Avanza hasta el token de cierre (`]`, `}` o `)`). Retorna los
+ * componentes en los out-params.
+ *
+ * Sintaxis soportada (v1.30): un solo `para...en...` con un `si` opcional.
+ * No soporta nested `para...para...` (v1.30.1).
+ */
+static bool parsear_comprehension_cola(Parser *p,
+                                          const char **nombre_var_out,
+                                          int *longitud_var_out,
+                                          Expr **iterable_out,
+                                          Expr **guarda_out) {
+    if (!consumir(p, TT_PARA, "se esperaba 'para' en comprehension")) return false;
+    if (!check(p, TT_IDENT)) {
+        error_en(p, &p->actual,
+            "se esperaba un nombre de variable tras 'para'");
+        return false;
+    }
+    Token t = p->actual;
+    avanzar(p);
+    *nombre_var_out = t.inicio;
+    *longitud_var_out = t.longitud;
+    if (!consumir(p, TT_EN, "se esperaba 'en' tras la variable")) return false;
+    Expr *it = parsear_expresion(p);
+    if (it == NULL) return false;
+    *iterable_out = it;
+    *guarda_out = NULL;
+    if (consumir_si(p, TT_SI)) {
+        Expr *g = parsear_expresion(p);
+        if (g == NULL) return false;
+        *guarda_out = g;
+    }
+    return true;
+}
+
+/*
+ * Parsea una lista literal `[a, b, c]`, `[]`, `[1]`, o una comprehension
+ * `[expr para v en iter [si guarda]]`.
  */
 static Expr *parsear_lista_literal(Parser *p) {
     Token apertura = p->actual;
     avanzar(p); /* consume '[' */
 
-    Expr **elementos = NULL;
-    int n = 0;
-    int cap = 0;
+    /* Lista vacía. */
+    if (check(p, TT_CORCH_DER)) {
+        avanzar(p);
+        return expr_lista(p->arena, NULL, 0,
+                            apertura.linea, apertura.columna);
+    }
 
-    if (!check(p, TT_CORCH_DER)) {
-        do {
-            if (check(p, TT_CORCH_DER)) break; /* trailing comma */
-            Expr *e = parsear_expresion(p);
-            if (e == NULL) return NULL;
-            if (n >= cap) {
-                cap = cap == 0 ? 8 : cap * 2;
-                Expr **nuevo = (Expr **)arena_alocar(p->arena,
-                    sizeof(Expr *) * (size_t)cap);
-                if (nuevo == NULL) return NULL;
-                if (n > 0) memcpy(nuevo, elementos,
-                                  sizeof(Expr *) * (size_t)n);
-                elementos = nuevo;
-            }
-            elementos[n++] = e;
-        } while (consumir_si(p, TT_COMA));
+    /* Parsear primer elemento. */
+    Expr *primero = parsear_expresion(p);
+    if (primero == NULL) return NULL;
+
+    /* v1.30: comprehension `[expr para ...]`. */
+    if (check(p, TT_PARA)) {
+        const char *vn; int vl; Expr *iter; Expr *guarda;
+        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+        if (!consumir(p, TT_CORCH_DER,
+            "se esperaba ']' al final de la comprehension")) return NULL;
+        return expr_comprehension(p->arena, /*tipo=lista*/0,
+                                    primero, NULL, vn, vl, iter, guarda,
+                                    apertura.linea, apertura.columna);
+    }
+
+    /* Lista literal con más elementos. */
+    Expr **elementos = NULL;
+    int n = 1;
+    int cap = 8;
+    elementos = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+    if (elementos == NULL) return NULL;
+    elementos[0] = primero;
+
+    while (consumir_si(p, TT_COMA)) {
+        if (check(p, TT_CORCH_DER)) break; /* trailing comma */
+        Expr *e = parsear_expresion(p);
+        if (e == NULL) return NULL;
+        if (n >= cap) {
+            cap *= 2;
+            Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                sizeof(Expr *) * (size_t)cap);
+            if (nuevo == NULL) return NULL;
+            memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+            elementos = nuevo;
+        }
+        elementos[n++] = e;
     }
 
     if (!consumir(p, TT_CORCH_DER,
@@ -613,10 +672,21 @@ static Expr *parsear_llaves(Parser *p) {
     Expr *primero = parsear_expresion(p);
     if (primero == NULL) return NULL;
 
-    /* `{ k : v }` → diccionario. */
+    /* `{ k : v }` → diccionario o dict comprehension. */
     if (consumir_si(p, TT_DOS_PUNTOS)) {
         Expr *valor = parsear_expresion(p);
         if (valor == NULL) return NULL;
+
+        /* v1.30: `{k: v para ...}` → dict comprehension. */
+        if (check(p, TT_PARA)) {
+            const char *vn; int vl; Expr *iter; Expr *guarda;
+            if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+            if (!consumir(p, TT_LLAVE_DER,
+                "se esperaba '}' al final de la comprehension dict")) return NULL;
+            return expr_comprehension(p->arena, /*tipo=dict*/1,
+                                        primero, valor, vn, vl, iter, guarda,
+                                        apertura.linea, apertura.columna);
+        }
 
         Expr **claves = NULL;
         Expr **valores = NULL;
@@ -659,7 +729,18 @@ static Expr *parsear_llaves(Parser *p) {
                                 apertura.linea, apertura.columna);
     }
 
-    /* Sino, es conjunto. */
+    /* v1.30: `{expr para ...}` → set comprehension. */
+    if (check(p, TT_PARA)) {
+        const char *vn; int vl; Expr *iter; Expr *guarda;
+        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+        if (!consumir(p, TT_LLAVE_DER,
+            "se esperaba '}' al final de la comprehension conjunto")) return NULL;
+        return expr_comprehension(p->arena, /*tipo=conjunto*/2,
+                                    primero, NULL, vn, vl, iter, guarda,
+                                    apertura.linea, apertura.columna);
+    }
+
+    /* Sino, es conjunto literal. */
     Expr **elementos = NULL;
     int n = 0;
     int cap = 8;

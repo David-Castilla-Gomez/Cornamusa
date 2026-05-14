@@ -3824,6 +3824,27 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 lista_agregar(l_slot->como.lista, v);  /* toma posesión */
                 break;
             }
+            case OP_CONJUNTO_AGREGAR: {
+                /* TOS = valor; debajo = conjunto. Pop valor, agregar. */
+                Valor v = *(--vm->tope);
+                Valor *s_slot = vm->tope - 1;
+                if (s_slot->tipo != VAL_CONJUNTO) {
+                    valor_destruir(&v);
+                    VM_ERROR("ErrorInterno: OP_CONJUNTO_AGREGAR sin conjunto");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (!valor_es_hashable(&v)) {
+                    const char *tname = valor_nombre_tipo(&v);
+                    VM_ERROR(
+                        "ErrorDeTipo: '%s' no es hashable para conjunto",
+                        tname);
+                    valor_destruir(&v);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                conj_agregar(s_slot->como.conjunto, v);
+                break;
+            }
             case OP_LISTA_EXTENDER: {
                 /* TOS = iterable; debajo = lista. Pop iterable,
                    itera elementos y los agrega a la lista. */

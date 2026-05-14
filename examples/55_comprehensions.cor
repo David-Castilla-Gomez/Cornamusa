@@ -1,0 +1,78 @@
+# Ejemplo 55 — Comprehensions (v1.30)
+#
+# Sintaxis Python-paritaria para construir colecciones:
+#   - List: [expr para v en iter [si guarda]]
+#   - Dict: {k: v para v en iter [si guarda]}
+#   - Set:  {expr para v en iter [si guarda]}
+#
+# v1.30 acotada: solo dentro de funciones, un solo `para...en...`, una
+# guarda. Sin generators inline (`(...)`) — eso requiere v1.31.
+
+funcion ejemplos():
+    imprimir("=== comprehensions (v1.30) ===")
+    imprimir("")
+
+    # ─── Caso 1: list comprehension ───
+    imprimir("1) list comprehension")
+    dobles = [n * 2 para n en rango(10)]
+    imprimir("  dobles 0..9:", dobles)
+
+    cuadrados = [n * n para n en rango(8)]
+    imprimir("  cuadrados:", cuadrados)
+    imprimir("")
+
+    # ─── Caso 2: list con guarda ───
+    imprimir("2) list con filtro")
+    pares = [n para n en rango(20) si n % 2 == 0]
+    imprimir("  pares 0..19:", pares)
+
+    palabras = ["sol", "luna", "estrella", "mar", "rio", "galaxia"]
+    largas = [w para w en palabras si longitud(w) > 4]
+    imprimir("  palabras > 4 chars:", largas)
+    imprimir("")
+
+    # ─── Caso 3: dict comprehension ───
+    imprimir("3) dict comprehension")
+    cuad_dict = {n: n * n para n en rango(1, 6)}
+    imprimir("  n → n²:", cuad_dict)
+
+    iniciales = {w: w[0] para w en ["alfa", "beta", "gamma", "delta"]}
+    imprimir("  iniciales:", iniciales)
+    imprimir("")
+
+    # ─── Caso 4: set comprehension ───
+    imprimir("4) set comprehension (deduplica)")
+    primeras_letras = {w[0] para w en ["alfa", "abeja", "barba", "borde", "casa"]}
+    imprimir("  primeras letras únicas:", primeras_letras)
+
+    longitudes = {longitud(w) para w en palabras}
+    imprimir("  longitudes únicas:", longitudes)
+    imprimir("")
+
+    # ─── Caso 5: transformación con regex ───
+    importar regex
+    imprimir("5) extraer dígitos de cada línea")
+    lineas = ["stock: 10", "precio: 25.50", "envio: 5", "total: 30"]
+    digitos = [regex.extraer("\\d+", l) para l en lineas]
+    imprimir("  digitos:", digitos)
+    imprimir("")
+
+    # ─── Caso 6: comprehension dentro de bucle (limitación v1.30) ───
+    # NOTA: las comprehensions dentro de bucles tienen un bug conocido
+    # con slots compartidos. Workaround: extraer a una función auxiliar.
+    funcion es_primo(n):
+        si n < 2:
+            retornar falso
+        fin si
+        divisores = [d para d en rango(2, n) si n % d == 0]
+        retornar longitud(divisores) == 0
+    fin funcion
+    imprimir("6) comprehensions desde funcion (workaround para v1.30)")
+    primos = [n para n en rango(20) si es_primo(n)]
+    imprimir("  primos < 20:", primos)
+    imprimir("")
+
+    imprimir("=== fin ejemplo 55 ===")
+fin funcion
+
+ejemplos()
