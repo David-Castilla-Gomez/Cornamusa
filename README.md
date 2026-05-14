@@ -32,28 +32,34 @@ imprimir("PI =", mat.PI)
 imprimir("100! =", mat.factorial(100))
 ```
 
-## Características (en v1.0.0)
+## Características
+
+**Lenguaje:**
 
 - ✅ **Sintaxis castellana natural**: `si`/`sino`, `mientras`, `para X en Y`, `funcion`, `clase`, `intentar`/`atrapar`/`finalmente`, `verdadero`/`falso`/`nulo`.
-- ✅ **Tipado dinámico** con tipos completos: enteros bignum, decimales f64, cadenas UTF-8, listas, diccionarios, conjuntos, tuplas.
+- ✅ **Tipado dinámico** con tipos completos: enteros bignum, decimales f64, cadenas UTF-8, listas, tuplas, diccionarios (con orden de inserción), conjuntos.
 - ✅ **Bloques explícitos** con `:` al abrir y `fin <etiqueta>` al cerrar. Indentación recomendada pero no obligatoria.
 - ✅ **UTF-8 completo** en código e identificadores con normalización NFC obligatoria.
-- ✅ **Clases con herencia** y `super` multinivel; `yo` como referencia a la instancia.
-- ✅ **Excepciones** completas: `atrapar Tipo como e`, `sino`, `finalmente`, `lanzar` con re-raise.
-- ✅ **Closures con upvalues**, lambdas, slicing de listas.
-- ✅ **GC mark-sweep** automático con `recolectar()` para forzarlo manualmente.
+- ✅ **Clases con herencia** y `super` multinivel, y **dunders** que se invocan automáticamente: `__sumar__`, `__cadena__`, `__indice__`, `__iterar__`, `__llamar__`, `__entrar__`/`__salir__`, comparación, operadores reflejados...
+- ✅ **Funciones flexibles**: argumentos por defecto, `*args`, `**kwargs`, keyword arguments, spread `*`/`**` en llamadas, lambdas.
+- ✅ **Closures con `nolocal`** para escribir en el scope envolvente.
+- ✅ **Destructuring**: `a, b = par`, swap sin temporal, anidación.
+- ✅ **Pattern matching**: `coincidir`/`cuando` con literales, estructuras, OR-patterns, star-patterns, type-match y guardas.
+- ✅ **Generadores** con `producir`, `producir desde` y generator expressions; **comprehensions** de lista, dict y conjunto.
+- ✅ **Context managers**: `con expr como x:` con `__entrar__`/`__salir__`.
+- ✅ **Excepciones** con `atrapar Tipo como e`, `finalmente`, `lanzar`, **traceback multi-frame** y **mensajes con sugerencias** ("¿quisiste decir...?").
+- ✅ **F-cadenas con interpolación real**: `f"hola {nombre}, {edad + 10}"` evalúa cada `{expr}`.
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
-- ✅ **Stdlib mínima**: `matematicas` (PI, E, factorial, mcd, ...), `cadenas` (repetir, contar, empieza_con, ...), `sistema` (`argv`, `salir`), `archivos` (`leer`, `escribir`, `lineas`, `existe`, `agregar`) desde v1.8 y `json` (`parsear`, `serializar`) desde v1.9.
-- ✅ **Conversores explícitos** (v1.1): `cadena()`, `entero()`, `decimal()`, `booleano()`, `lista()`, `tupla()`, `diccionario()`.
-- ✅ **F-cadenas con interpolación real** (v1.1): `f"hola {nombre}, tienes {edad+10} en 10 anos"` evalúa cada `{expr}`. Soporta llaves dobles `{{` `}}`, expresiones complejas, anidación.
-- ✅ **Entrada interactiva** (v1.1): `leer([prompt])` lee de stdin para programas interactivos.
-- ✅ **Dunders aritméticos y de coerción** (v1.2): `Vector + Vector` invoca `__sumar__`, `imprimir(obj)` usa `__cadena__`, `obj[k]` usa `__indice__`. 14 dunders soportados (aritméticos, comparación, indexación, representación).
-- ✅ **Dunders avanzados** (v1.3): operadores reflejados (`5 + V(...)` invoca `__sumar_derecho__`), `__llamar__` (instancias callable), `__longitud__` (`longitud(obj)` invoca el dunder), `cadena(obj)` también invoca `__cadena__`.
-- ✅ **Closures completas con `nolocal`** (v1.4): declaración explícita de variables de scope envolvente con validación temprana.
+
+**Biblioteca estándar** — doce módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `fechas`, `azar`, `proceso`, `regex`, `red`, `sistema`.
+
+**Implementación:**
+
+- ✅ **VM bytecode** con **inline caching** estilo PEP 659 (quickening por reescritura de opcode) y **small-int tagging** (enteros i63 inline en `Valor`, bignum transparente vía libtommath).
+- ✅ **GC mark-sweep** automático con `recolectar()` para forzarlo manualmente.
+- ✅ Build **`-O3` + LTO**; intérprete de referencia tree-walking congelado como oráculo de regresión.
 - ✅ **Tests diferenciales** tree-walking vs bytecode + **benchmarks** en [`benchmarks/`](benchmarks/).
-- ✅ **Inline caching** estilo PEP 659 con quickening por reescritura de opcode (decisión [B8](decisiones/B8-inline-caching.md)). Especializaciones: `OP_OBTENER_GLOBAL_CACHE`, `OP_LLAMAR_{NATIVA,BC,CLASE,METODO_LIGADO}`, `OP_*_INT_INT` (suma/resta/mult + comparaciones), `OP_OBTENER_ATRIBUTO_INSTANCIA` (shape cache).
-- ✅ **Small-int tagging** (decisión [B9](decisiones/B9-small-int-tagging.md)): enteros que caben en 63 bits viven inline en `Valor` sin alocar `mp_int`. Operaciones SMALL+SMALL inline con detección de overflow vía `__builtin_*_overflow`. Aritmética bignum (libtommath) sigue disponible transparentemente para enteros grandes. ~2.7x geomedia sobre v0.10 (6x en `fibonacci_recursivo`).
-- ⏳ **GC generacional + sitio web + docs completos**: planeados para v1.0.
+- ✅ Flag **`--check`** para validar sintaxis y compilación sin ejecutar (CI/editores).
 
 ## Cómo probar (5 minutos)
 
@@ -77,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.0.0 publicada.** Cornamusa es estable, documentado y usable. Lenguaje funcional para programas reales con rendimiento ~3x sobre v0.10 (5.8x en `fibonacci_recursivo`, 4.8x en `globales_lookup`, 3x en `dicc_intensivo`). [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.40.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ (pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers) y una stdlib de doce módulos útil para scripting real. 185 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -165,42 +171,21 @@ cmake --build build -j
 
 ## Ejemplos
 
-23 programas en [`examples/`](examples/), agrupados por feature:
+**57 programas** en [`examples/`](examples/), uno por feature y numerados por orden de aparición. Una selección:
 
-**Básicos** (todos corren en tree-walking y bytecode):
-- [`01_hola_mundo.cor`](examples/01_hola_mundo.cor) · [`02_fizzbuzz.cor`](examples/02_fizzbuzz.cor) · [`13_factorial_jugable.cor`](examples/13_factorial_jugable.cor) · [`15_fizzbuzz_jugable.cor`](examples/15_fizzbuzz_jugable.cor)
+**Fundamentos** — [`01_hola_mundo`](examples/01_hola_mundo.cor) · [`02_fizzbuzz`](examples/02_fizzbuzz.cor) · [`05_listas`](examples/05_listas.cor) · [`06_diccionarios`](examples/06_diccionarios.cor) · [`07_clases_herencia`](examples/07_clases_herencia.cor) · [`08_excepciones`](examples/08_excepciones.cor) · [`10_quicksort`](examples/10_quicksort.cor)
 
-**Estructuras de datos**:
-- [`05_listas.cor`](examples/05_listas.cor) · [`06_diccionarios.cor`](examples/06_diccionarios.cor) · [`16_lista_busqueda.cor`](examples/16_lista_busqueda.cor) · [`17_dicc_frecuencia.cor`](examples/17_dicc_frecuencia.cor) · [`18_conj_y_tupla.cor`](examples/18_conj_y_tupla.cor)
+**OOP y closures** — [`28_dunders_jugable`](examples/28_dunders_jugable.cor) · [`29_oop_avanzado`](examples/29_oop_avanzado.cor) · [`30_closures_nolocal`](examples/30_closures_nolocal.cor) · [`36_con_recursos`](examples/36_con_recursos.cor) (context managers)
 
-**Bytecode-only** (closures, OOP, módulos, sistema):
-- [`19_closures_jugable.cor`](examples/19_closures_jugable.cor) · [`20_clases_jugable.cor`](examples/20_clases_jugable.cor) · [`21_modulos_jugable.cor`](examples/21_modulos_jugable.cor) · [`22_modulos_avanzado.cor`](examples/22_modulos_avanzado.cor) · [`23_sistema_jugable.cor`](examples/23_sistema_jugable.cor)
+**Pattern matching** — [`38_coincidir`](examples/38_coincidir.cor) · [`39_coincidir_estructural`](examples/39_coincidir_estructural.cor) · [`40_or_y_star`](examples/40_or_y_star.cor) · [`41_type_match`](examples/41_type_match.cor)
 
-**Avanzados** (programas no triviales):
-- [`24_notas_clase.cor`](examples/24_notas_clase.cor) — análisis de notas con dicc, listas, ordenamiento, mediana
-- [`25_biblioteca_oop.cor`](examples/25_biblioteca_oop.cor) — simulación de biblioteca con OOP, herencia, polimorfismo
+**Funciones modernas** — [`46_destructuring`](examples/46_destructuring.cor) · [`47_varargs`](examples/47_varargs.cor) · [`48_kwargs`](examples/48_kwargs.cor) · [`50_dspread`](examples/50_dspread.cor)
 
-**v1.1**:
-- [`26_leer_jugable.cor`](examples/26_leer_jugable.cor) — calculadora de IMC con `leer()` interactivo y conversores
-- [`27_fstrings_jugable.cor`](examples/27_fstrings_jugable.cor) — interpolación real con f-cadenas (anidación, bignum, lista)
+**Generadores y comprehensions** — [`55_comprehensions`](examples/55_comprehensions.cor) · [`56_generadores`](examples/56_generadores.cor)
 
-**v1.2**:
-- [`28_dunders_jugable.cor`](examples/28_dunders_jugable.cor) — Vector2D, TablaInversa y Persona usando `__sumar__`, `__cadena__`, `__indice__`, `__menor__`
+**Stdlib** — [`31_archivos`](examples/31_archivos.cor) · [`32_json_archivos`](examples/32_json_archivos.cor) · [`44_fechas`](examples/44_fechas.cor) · [`51_azar`](examples/51_azar.cor) · [`52_proceso`](examples/52_proceso.cor) · [`53_regex`](examples/53_regex.cor) · [`54_red`](examples/54_red.cor)
 
-**v1.3**:
-- [`29_oop_avanzado.cor`](examples/29_oop_avanzado.cor) — operadores reflejados, instancias callable (`Multiplicador`), `__longitud__` (`Pila`), `Contador` con estado interno
-
-**v1.4**:
-- [`30_closures_nolocal.cor`](examples/30_closures_nolocal.cor) — contador, sumador, memoización con cache, toggle compartido entre dos closures
-
-**v1.8**:
-- [`31_archivos.cor`](examples/31_archivos.cor) — I/O persistente con `archivos.escribir`/`leer`/`lineas`/`agregar`/`existe`
-
-**v1.9**:
-- [`32_json_archivos.cor`](examples/32_json_archivos.cor) — `json.parsear`/`serializar` combinado con `archivos`, mostrando auto-traducción `verdadero/falso/nulo ↔ true/false/null`
-
-**v1.10**:
-- [`33_atrapar_robusto.cor`](examples/33_atrapar_robusto.cor) — programas robustos con errores atrapables: cargar config con fallback ante archivo inexistente o JSON corrupto
+**Robustez** — [`33_atrapar_robusto`](examples/33_atrapar_robusto.cor) · [`57_sugerencias`](examples/57_sugerencias.cor) (errores con sugerencias)
 
 ## Documentación
 

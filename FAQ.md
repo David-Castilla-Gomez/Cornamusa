@@ -14,14 +14,14 @@ No es una traducción literal de Python: las palabras clave se eligieron para qu
 
 ### ¿Es un toy language o se puede usar en serio?
 
-Es funcional para programas reales (OOP completo, GC, excepciones, módulos, stdlib mínima, ~3x más rápido que CPython equivalente en algunos benchmarks tras small-int tagging). Pero todavía le faltan cosas para producción seria:
+Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de doce módulos (`archivos`, `json`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
 
-- Built-ins de I/O (`abrir`, `leer`).
-- Stdlib amplia (regex, json, fechas, red, ...).
-- Threads / async.
-- Ecosistema de bibliotecas de terceros.
+Lo que todavía le falta para producción seria:
 
-Ahora mismo sirve bien para **enseñar a programar en castellano** y para programas pequeños/medianos donde la stdlib mínima es suficiente.
+- Threads / async (planeado para v2.x).
+- HTTPS/TLS en el cliente de red (solo HTTP/1.1 plano por ahora).
+- Ecosistema de bibliotecas de terceros y gestor de paquetes.
+- Tooling: depurador, formateador, language server.
 
 ### ¿Por qué se llama Cornamusa?
 
@@ -34,8 +34,7 @@ Comparte modelo dinámico, objetos, listas/dicc, indentación irrelevante (no co
 - Bloques con `:` y `fin <etiqueta>`, indentación estilística no semántica.
 - Enteros bignum desde día uno (sin `int` 32-bit ni `long` separado).
 - Tipos numéricos: solo `entero` (precisión arbitraria) y `decimal` (IEEE 754 64-bit). No hay `Fraccion` ni `Decimal` exacto en core.
-- Solo `__iniciar__` se invoca automáticamente en v0.11.x; los demás dunders aritméticos quedan para v1.x.
-- No hay GIL ni hilos en v1.0.
+- No hay GIL ni hilos: Cornamusa es single-threaded por diseño.
 
 Más detalles en §8 de [ESPEC.md](ESPEC.md).
 
@@ -100,33 +99,40 @@ Decisión [B4](decisiones/B4-tildes-y-unicode.md): **keywords ASCII castellanas,
 
 Decisión [B5+B6](decisiones/B5-B6-yo-y-dunders.md). Por consistencia: si las keywords están en castellano, los dunders también. `__iniciar__` (constructor), `__cadena__` (str), `__longitud__` (len), etc.
 
-### ¿Cómo declaro una variable global desde dentro de una función?
-
-```cornamusa
-contador = 0
-
-funcion incrementar():
-    global contador
-    contador = contador + 1
-fin funcion
-```
-
-Sin `global`, `contador = ...` dentro de la función crea un local nuevo.
-
 ### ¿Funcionan los closures con escritura?
 
-En v0.11.x sí para **lectura**, no para escritura. La keyword `nolocal` está reservada pero no implementada — viene en v1.x. Workaround: usar una lista o dicc como contenedor mutable:
+Sí. Una función anidada puede **leer** las variables del scope que la envuelve directamente, y para **escribirlas** las declara con `nolocal`:
 
 ```cornamusa
 funcion crear_contador():
-    estado = [0]                  # lista de un elemento, mutable
+    n = 0
     funcion siguiente():
-        estado[0] = estado[0] + 1
-        retornar estado[0]
+        nolocal n
+        n = n + 1
+        retornar n
     fin funcion
     retornar siguiente
 fin funcion
+
+contar = crear_contador()
+imprimir(contar(), contar(), contar())   # 1 2 3
 ```
+
+Sin `nolocal`, una asignación dentro de la función anidada crea un local nuevo en lugar de modificar la variable capturada.
+
+### ¿Cómo modifico una variable global desde dentro de una función?
+
+La keyword `global` está reservada pero **aún no está implementada** en la VM bytecode. Mientras tanto, si necesitas estado mutable compartido, usa un contenedor mutable (lista o diccionario) a nivel de módulo:
+
+```cornamusa
+estado = {"contador": 0}
+
+funcion incrementar():
+    estado["contador"] = estado["contador"] + 1   # muta el dict, no reasigna
+fin funcion
+```
+
+O reestructura para que la función **devuelva** el nuevo valor y el llamador lo reasigne.
 
 ---
 
@@ -164,7 +170,7 @@ No. Cornamusa es single-threaded por diseño en v1.0. Concurrencia es trabajo de
 
 ### ¿Quién mantiene Cornamusa?
 
-David Castilla Gómez como autor único hasta v1.0. A partir de v1.0, contribuciones externas bienvenidas siguiendo [CONTRIBUTING.md](CONTRIBUTING.md).
+David Castilla Gómez como autor único. Contribuciones externas bienvenidas siguiendo [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ### ¿Es estable la API?
 
@@ -195,15 +201,14 @@ Sí, en hitos:
 
 | Hito | Estado |
 |---|---|
-| v0.4-v0.5 — Sintaxis + estructuras | ✅ |
-| v0.6 — VM bytecode | ✅ |
-| v0.7 — Clases | ✅ |
-| v0.8 — GC | ✅ |
-| v0.9 — Módulos | ✅ |
-| v0.10 — Inline caching | ✅ |
-| v0.11 — Small-int tagging | ✅ |
-| v1.0 — Documentación + sitio web | en curso |
-| v1.1+ | f-strings reales, dunders aritméticos, `nolocal`, más stdlib |
+| v0.4-v0.5 — Sintaxis + estructuras de datos | ✅ |
+| v0.6-v0.9 — VM bytecode, clases, GC, módulos | ✅ |
+| v0.10-v0.11 — Inline caching + small-int tagging | ✅ |
+| v1.0 — Documentación + sitio web + estabilidad | ✅ |
+| v1.2-v1.16 — Dunders, `nolocal`, context managers, pattern matching | ✅ |
+| v1.21-v1.34 — Destructuring, `*args`/`**kwargs`, comprehensions, generadores | ✅ |
+| v1.35-v1.40 — Sugerencias de error, traceback, `--check`, `-O3`+LTO | ✅ |
+| Próximo | Tooling (formateador, depurador, LSP) |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing |
 
 Detalle de qué entra en cada release en [CHANGELOG.md](CHANGELOG.md).
