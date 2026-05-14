@@ -1,0 +1,81 @@
+# Ejemplo 57 — Mensajes de error con sugerencias (v1.35 + v1.36)
+#
+# Cuando un nombre o atributo no existe, Cornamusa busca el más
+# parecido (distancia de Levenshtein) y lo sugiere. Funciona para:
+#   - Built-ins y variables/funciones globales (v1.35).
+#   - Atributos de instancia, métodos y símbolos de módulo (v1.36).
+#
+# Este ejemplo provoca los errores a propósito y los atrapa para
+# mostrar el mensaje completo con la sugerencia.
+
+imprimir("=== sugerencias de error (v1.35 + v1.36) ===")
+imprimir("")
+
+# ─── Caso 1: typo en built-in ───
+imprimir("1) typo en built-in")
+intentar:
+    longutud([1, 2, 3])
+atrapar ErrorDeNombre como e:
+    imprimir("  ", cadena(e))
+fin intentar
+imprimir("")
+
+# ─── Caso 2: typo en variable de usuario ───
+imprimir("2) typo en variable de usuario")
+contador_global = 100
+intentar:
+    imprimir(contador_globl)
+atrapar ErrorDeNombre como e:
+    imprimir("  ", cadena(e))
+fin intentar
+imprimir("")
+
+# ─── Caso 3: typo en atributo de instancia ───
+clase Vector:
+    funcion __iniciar__(yo, a, b):
+        yo.componente_x = a
+        yo.componente_y = b
+    fin funcion
+    funcion magnitud(yo):
+        retornar yo.componente_x + yo.componente_y
+    fin funcion
+fin clase
+
+imprimir("3) typo en atributo de instancia")
+v = Vector(3, 4)
+intentar:
+    imprimir(v.componente_z)
+atrapar ErrorDeAtributo como e:
+    imprimir("  ", cadena(e))
+fin intentar
+imprimir("")
+
+# ─── Caso 4: typo en nombre de método ───
+imprimir("4) typo en nombre de método")
+intentar:
+    v.magnitd()
+atrapar ErrorDeAtributo como e:
+    imprimir("  ", cadena(e))
+fin intentar
+imprimir("")
+
+# ─── Caso 5: typo en símbolo de módulo ───
+importar azar
+imprimir("5) typo en símbolo de módulo")
+intentar:
+    azar.decimial()
+atrapar ErrorDeAtributo como e:
+    imprimir("  ", cadena(e))
+fin intentar
+imprimir("")
+
+# ─── Caso 6: nombre sin candidato cercano (sin sugerencia espuria) ───
+imprimir("6) nombre sin candidato → sin sugerencia falsa")
+intentar:
+    imprimir(qqqzzzxyz)
+atrapar ErrorDeNombre como e:
+    imprimir("  ", cadena(e))
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 57 ===")

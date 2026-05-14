@@ -148,6 +148,52 @@ static void test_no_sugiere_internos(void) {
         "$");
 }
 
+/* ───── v1.36: sugerencias en atributos ───── */
+
+static void test_sugiere_atributo_instancia(void) {
+    verificar_error_contiene("typo en atributo de instancia",
+        "clase Punto:\n"
+        "  funcion __iniciar__(yo):\n"
+        "    yo.coord_x = 1\n"
+        "    yo.coord_y = 2\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "p = Punto()\n"
+        "imprimir(p.coord_z)",
+        "quisiste decir 'coord_");
+}
+
+static void test_sugiere_metodo(void) {
+    verificar_error_contiene("typo en nombre de método",
+        "clase Caja:\n"
+        "  funcion __iniciar__(yo):\n"
+        "    yo.x = 1\n"
+        "  fin funcion\n"
+        "  funcion abrir(yo):\n"
+        "    retornar yo.x\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "c = Caja()\n"
+        "imprimir(c.abrr())",
+        "quisiste decir 'abrir'");
+}
+
+/* NOTA: la sugerencia sobre símbolos de módulo (`mod.simbol`) se
+   verifica vía el ejemplo `examples/`, no aquí — los unit tests no
+   tienen `stdlib/` en su working directory. */
+
+static void test_atributo_sin_sugerencia(void) {
+    verificar_error_no_contiene("atributo sin candidato cercano",
+        "clase X:\n"
+        "  funcion __iniciar__(yo):\n"
+        "    yo.algo = 1\n"
+        "  fin funcion\n"
+        "fin clase\n"
+        "x = X()\n"
+        "imprimir(x.zzzzzzz)",
+        "quisiste decir");
+}
+
 int main(void) {
     test_sugiere_builtin();
     test_sugiere_builtin_imprimir();
@@ -156,6 +202,9 @@ int main(void) {
     test_sin_sugerencia_lejano();
     test_error_sigue_presente();
     test_no_sugiere_internos();
+    test_sugiere_atributo_instancia();
+    test_sugiere_metodo();
+    test_atributo_sin_sugerencia();
 
     if (fallos == 0) {
         printf("sugerencias: todos los tests pasan\n");

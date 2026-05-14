@@ -727,20 +727,15 @@ static int distancia_levenshtein(const char *a, int alen,
 }
 
 /*
- * v1.35: busca en un diccionario de nombres (globales) el más cercano
- * a `objetivo` por distancia de Levenshtein. Si encuentra uno con
- * distancia ≤ umbral, lo copia a `out` y retorna true. Umbral: 2 para
- * nombres ≥ 4 chars, 1 para nombres más cortos (evita sugerencias
- * absurdas con nombres de 1-2 letras).
+ * v1.35: escanea un diccionario buscando la clave-cadena más cercana
+ * a `objetivo`. Actualiza `*mejor_dist`/`*mejor`/`*mejor_len` in-place
+ * si encuentra algo mejor. Helper interno de `sugerir_*`.
  */
-static bool sugerir_nombre_cercano(const Diccionario *d,
-                                     const char *objetivo, int obj_len,
-                                     char *out, size_t out_cap) {
-    if (!d || obj_len <= 0 || obj_len > 64) return false;
-    int umbral = obj_len >= 4 ? 2 : 1;
-    int mejor_dist = umbral + 1;
-    const char *mejor = NULL;
-    int mejor_len = 0;
+static void escanear_dicc_cercano(const Diccionario *d,
+                                    const char *objetivo, int obj_len,
+                                    int *mejor_dist,
+                                    const char **mejor, int *mejor_len) {
+    if (!d) return;
     for (int i = 0; i < d->capacidad; i++) {
         const EntradaDicc *e = &d->entradas[i];
         if (!e->ocupada || e->clave.tipo != VAL_CADENA) continue;
@@ -750,12 +745,58 @@ static bool sugerir_nombre_cercano(const Diccionario *d,
         /* Saltar nombres internos ($iter, $comp_acc, etc.). */
         if (cand[0] == '$') continue;
         int dist = distancia_levenshtein(objetivo, obj_len, cand, cand_len);
-        if (dist < mejor_dist) {
-            mejor_dist = dist;
-            mejor = cand;
-            mejor_len = cand_len;
+        if (dist < *mejor_dist) {
+            *mejor_dist = dist;
+            *mejor = cand;
+            *mejor_len = cand_len;
         }
     }
+}
+
+/* Umbral adaptativo: 2 para nombres ≥ 4 chars, 1 para más cortos. */
+static int umbral_sugerencia(int obj_len) {
+    return obj_len >= 4 ? 2 : 1;
+}
+
+/*
+ * v1.35: busca en un diccionario de nombres (globales) el más cercano
+ * a `objetivo`. Si lo halla dentro del umbral, lo copia a `out` y
+ * retorna true.
+ */
+static bool sugerir_nombre_cercano(const Diccionario *d,
+                                     const char *objetivo, int obj_len,
+                                     char *out, size_t out_cap) {
+    if (!d || obj_len <= 0 || obj_len > 64) return false;
+    int umbral = umbral_sugerencia(obj_len);
+    int mejor_dist = umbral + 1;
+    const char *mejor = NULL;
+    int mejor_len = 0;
+    escanear_dicc_cercano(d, objetivo, obj_len, &mejor_dist, &mejor, &mejor_len);
+    if (mejor && mejor_dist <= umbral) {
+        int n = mejor_len < (int)out_cap - 1 ? mejor_len : (int)out_cap - 1;
+        memcpy(out, mejor, (size_t)n);
+        out[n] = '\0';
+        return true;
+    }
+    return false;
+}
+
+/*
+ * v1.36: busca el atributo más cercano combinando hasta dos
+ * diccionarios (típicamente `instancia->atributos` + `clase->metodos`,
+ * o `modulo->atributos` solo con `d2 = NULL`).
+ */
+static bool sugerir_atributo_cercano(const Diccionario *d1,
+                                       const Diccionario *d2,
+                                       const char *objetivo, int obj_len,
+                                       char *out, size_t out_cap) {
+    if (obj_len <= 0 || obj_len > 64) return false;
+    int umbral = umbral_sugerencia(obj_len);
+    int mejor_dist = umbral + 1;
+    const char *mejor = NULL;
+    int mejor_len = 0;
+    escanear_dicc_cercano(d1, objetivo, obj_len, &mejor_dist, &mejor, &mejor_len);
+    escanear_dicc_cercano(d2, objetivo, obj_len, &mejor_dist, &mejor, &mejor_len);
     if (mejor && mejor_dist <= umbral) {
         int n = mejor_len < (int)out_cap - 1 ? mejor_len : (int)out_cap - 1;
         memcpy(out, mejor, (size_t)n);
@@ -2452,25 +2493,22 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 Valor v;
                 int slot_idx;
                 if (!dicc_obtener_y_slot(vm->globales, nombre, &v, &slot_idx)) {
-                    vm->error.tuvo_error = true;
-                    vm->error.linea = linea_actual_frame(frame);
                     char sug[80];
                     if (sugerir_nombre_cercano(vm->globales,
                             nombre->como.cadena.texto,
                             nombre->como.cadena.longitud,
                             sug, sizeof(sug))) {
-                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                            "ErrorDeNombre: nombre '%.*s' no esta definido "
+                        VM_ERROR("ErrorDeNombre: nombre '%.*s' no esta definido "
                             "(¿quisiste decir '%s'?)",
                             nombre->como.cadena.longitud,
                             nombre->como.cadena.texto, sug);
                     } else {
-                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                            "ErrorDeNombre: nombre '%.*s' no esta definido",
+                        VM_ERROR("ErrorDeNombre: nombre '%.*s' no esta definido",
                             nombre->como.cadena.longitud,
                             nombre->como.cadena.texto);
                     }
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
                 /*
                  * Rellenar cache y promover a OP_OBTENER_GLOBAL_CACHE si
@@ -2501,25 +2539,22 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 uint8_t idx = LEER_BYTE();
                 const Valor *nombre = &frame->chunk->constantes[idx];
                 if (!dicc_contiene(vm->globales, nombre)) {
-                    vm->error.tuvo_error = true;
-                    vm->error.linea = linea_actual_frame(frame);
                     char sug[80];
                     if (sugerir_nombre_cercano(vm->globales,
                             nombre->como.cadena.texto,
                             nombre->como.cadena.longitud,
                             sug, sizeof(sug))) {
-                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                            "ErrorDeNombre: nombre '%.*s' no esta definido "
+                        VM_ERROR("ErrorDeNombre: nombre '%.*s' no esta definido "
                             "(¿quisiste decir '%s'?)",
                             nombre->como.cadena.longitud,
                             nombre->como.cadena.texto, sug);
                     } else {
-                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                            "ErrorDeNombre: nombre '%.*s' no esta definido",
+                        VM_ERROR("ErrorDeNombre: nombre '%.*s' no esta definido",
                             nombre->como.cadena.longitud,
                             nombre->como.cadena.texto);
                     }
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
                 Valor clave_clon = valor_clonar(nombre);
                 Valor valor = sacar(vm);
@@ -3564,11 +3599,25 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 if (obj.tipo == VAL_MODULO) {
                     Valor v;
                     if (!dicc_obtener(obj.como.modulo->atributos, nombre, &v)) {
-                        VM_ERROR("ErrorDeAtributo: el modulo '%.*s' no tiene atributo '%.*s'",
-                                 obj.como.modulo->longitud_nombre,
-                                 obj.como.modulo->nombre,
-                                 nombre->como.cadena.longitud,
-                                 nombre->como.cadena.texto);
+                        char sug[80];
+                        if (sugerir_atributo_cercano(
+                                obj.como.modulo->atributos, NULL,
+                                nombre->como.cadena.texto,
+                                nombre->como.cadena.longitud,
+                                sug, sizeof(sug))) {
+                            VM_ERROR("ErrorDeAtributo: el modulo '%.*s' no tiene "
+                                     "atributo '%.*s' (¿quisiste decir '%s'?)",
+                                     obj.como.modulo->longitud_nombre,
+                                     obj.como.modulo->nombre,
+                                     nombre->como.cadena.longitud,
+                                     nombre->como.cadena.texto, sug);
+                        } else {
+                            VM_ERROR("ErrorDeAtributo: el modulo '%.*s' no tiene atributo '%.*s'",
+                                     obj.como.modulo->longitud_nombre,
+                                     obj.como.modulo->nombre,
+                                     nombre->como.cadena.longitud,
+                                     nombre->como.cadena.texto);
+                        }
                         valor_destruir(&obj);
                         RAISE_OR_DIE();
                         break;
@@ -3625,11 +3674,28 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     empujar(vm, valor_metodo_ligado(bm));
                     break;
                 }
-                VM_ERROR("ErrorDeAtributo: instancia de '%.*s' no tiene atributo '%.*s'",
-                         obj.como.instancia->clase->longitud_nombre,
-                         obj.como.instancia->clase->nombre,
-                         nombre->como.cadena.longitud,
-                         nombre->como.cadena.texto);
+                {
+                    char sug[80];
+                    if (sugerir_atributo_cercano(
+                            obj.como.instancia->atributos,
+                            obj.como.instancia->clase->metodos,
+                            nombre->como.cadena.texto,
+                            nombre->como.cadena.longitud,
+                            sug, sizeof(sug))) {
+                        VM_ERROR("ErrorDeAtributo: instancia de '%.*s' no tiene "
+                                 "atributo '%.*s' (¿quisiste decir '%s'?)",
+                                 obj.como.instancia->clase->longitud_nombre,
+                                 obj.como.instancia->clase->nombre,
+                                 nombre->como.cadena.longitud,
+                                 nombre->como.cadena.texto, sug);
+                    } else {
+                        VM_ERROR("ErrorDeAtributo: instancia de '%.*s' no tiene atributo '%.*s'",
+                                 obj.como.instancia->clase->longitud_nombre,
+                                 obj.como.instancia->clase->nombre,
+                                 nombre->como.cadena.longitud,
+                                 nombre->como.cadena.texto);
+                    }
+                }
                 valor_destruir(&obj);
                 RAISE_OR_DIE();
                 break;

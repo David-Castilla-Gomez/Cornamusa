@@ -6,6 +6,83 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.36.0] — 2026-05-14 — Sugerencias en atributos
+
+Extiende las sugerencias "¿quisiste decir...?" de v1.35 a los
+`ErrorDeAtributo`: acceso a atributo de instancia, método de clase, o
+símbolo de módulo inexistente.
+
+### Ejemplos
+
+```cornamusa
+clase Punto:
+    funcion __iniciar__(yo):
+        yo.coord_x = 1
+        yo.coord_y = 2
+    fin funcion
+fin clase
+p = Punto()
+imprimir(p.coord_z)
+# ErrorDeAtributo: instancia de 'Punto' no tiene atributo 'coord_z'
+#   (¿quisiste decir 'coord_x'?)
+
+# Métodos también:
+c.abrr()
+# ErrorDeAtributo: instancia de 'Caja' no tiene atributo 'abrr'
+#   (¿quisiste decir 'abrir'?)
+
+# Símbolos de módulo:
+importar azar
+azar.decimial()
+# ErrorDeAtributo: el modulo 'azar' no tiene atributo 'decimial'
+#   (¿quisiste decir 'decimal'?)
+```
+
+### Implementación
+
+El helper de v1.35 se refactorizó:
+
+- `escanear_dicc_cercano(d, ...)` — escanea un diccionario
+  actualizando el mejor candidato in-place. Compartido por todas las
+  variantes de sugerencia.
+- `sugerir_atributo_cercano(d1, d2, ...)` — busca en **hasta dos**
+  diccionarios. Para instancias usa `instancia->atributos` +
+  `clase->metodos` (un typo puede acercarse a un atributo o a un
+  método). Para módulos usa `modulo->atributos` con `d2 = NULL`.
+
+Mismo umbral adaptativo (2 para nombres ≥ 4 chars, 1 para más
+cortos) y mismo filtro de nombres internos (`$...`).
+
+Aplicado en los dos sitios de `ErrorDeAtributo` en
+[src/vm.c](src/vm.c): `OP_OBTENER_ATRIBUTO` para módulo e instancia.
+
+### `ErrorDeNombre` ahora atrapable
+
+Como parte de este release, `ErrorDeNombre` (nombre global
+inexistente) pasó de `return VM_ERROR_RUNTIME` directo a
+`RAISE_OR_DIE()` — ahora es **atrapable con `intentar/atrapar`**
+como cualquier otro error, coherente con la política de v1.10.
+
+```cornamusa
+intentar:
+    longutud([1, 2, 3])
+atrapar ErrorDeNombre como e:
+    imprimir(cadena(e))
+    # ErrorDeNombre: nombre 'longutud' no esta definido
+    #   (¿quisiste decir 'longitud'?)
+fin intentar
+```
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_sugerencias.c` — 3 tests nuevos: typo en
+  atributo de instancia, typo en método, atributo sin candidato
+  cercano. (El caso de símbolo de módulo se cubre en el ejemplo —
+  los unit tests no tienen `stdlib/` en su working directory.)
+- `examples/57_sugerencias.cor` + `bc_run_57_sugerencias` — demuestra
+  los 6 escenarios atrapando los errores.
+- **181/181 tests verde**.
+
 ## [1.35.0] — 2026-05-14 — Mensajes de error con sugerencias
 
 Cuando un nombre global no existe, la VM busca el más parecido entre

@@ -576,6 +576,18 @@ set_tests_properties(bc_run_56_generadores PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 56"
 )
 
+# v1.35/v1.36: mensajes de error con sugerencias.
+add_test(
+    NAME bc_run_57_sugerencias
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/57_sugerencias.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_57_sugerencias PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 57"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable
