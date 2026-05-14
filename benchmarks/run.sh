@@ -15,7 +15,7 @@ set -e
 
 cd "$(dirname "$0")/.."
 
-BIN=${CORNAMUSA:-./build_v2/cornamusa.exe}
+BIN=${CORNAMUSA:-./build/cornamusa.exe}
 if [ ! -x "$BIN" ] && [ ! -f "$BIN" ]; then
     echo "No encuentro el binario en $BIN — compila con 'make build' o pasa CORNAMUSA=..."
     exit 1

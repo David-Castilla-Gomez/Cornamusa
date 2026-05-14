@@ -6,6 +6,72 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.40.0] — 2026-05-14 — Performance: `-O3` + LTO
+
+Primer release de la línea de **performance**. Sube la build Release
+a `-O3` y activa **LTO** (Link-Time Optimization). Al hacerlo se
+destapó —y se arregló— un bug de UB latente desde v1.4.
+
+### Cambios de build
+
+- `-O2` → **`-O3`** explícito para builds no-Debug (GCC/Clang) y
+  `/O2` para MSVC.
+- **LTO** vía `CMAKE_INTERPROCEDURAL_OPTIMIZATION` — la API oficial
+  de CMake, que propaga correctamente a las librerías estáticas
+  vendoradas (`tommath`, `utf8proc`) y selecciona los `gcc-ar`/
+  `gcc-ranlib` adecuados. Activable/desactivable con
+  `-DCORNAMUSA_LTO=ON|OFF` (ON por defecto).
+
+LTO inlinea los helpers hot del intérprete —`empujar`, `sacar`,
+`valor_clonar`, `dicc_obtener`, todos en `valor.c`— dentro del
+dispatch loop de `vm.c`. Sin LTO quedaban como llamadas a través de
+unidades de traducción.
+
+### Resultados (mejor de 3 corridas, GCC 13.2, Windows)
+
+| Benchmark              | v1.39 | v1.40 | Δ      |
+|------------------------|-------|-------|--------|
+| `dicc_intensivo`       | 0.069 | 0.053 | −23%   |
+| `fibonacci_recursivo`  | 0.263 | 0.222 | −16%   |
+| `oo_dunder_aritmetico` | 0.112 | 0.091 | −19%   |
+| `oo_dunder_indice`     | 0.084 | 0.054 | −36%   |
+| `oo_intensivo`         | 0.038 | 0.032 | −16%   |
+| `globales_lookup`      | 0.221 | 0.212 | −4%    |
+| `bignum_factorial`     | 0.027 | 0.028 | ~0%    |
+
+`bignum_factorial` no mejora — está dominado por libtommath, no por
+el dispatch. Los benchmarks OO/dicc, que hacen muchas llamadas a
+helpers pequeños cross-file, son los que más se benefician.
+
+Detalle en [benchmarks/RESULTS.md](benchmarks/RESULTS.md). Los
+runners `benchmarks/run.sh` y `run.ps1` se actualizaron para apuntar
+a `./build/` (antes `./build_v2/`).
+
+### Bug fix: UB latente en `nolocal` (desde v1.4)
+
+Activar LTO+O3 destapó un **segfault en closures con `nolocal`**
+(`bc_run_30_closures_nolocal`). UBSan lo identificó: el campo
+`n_nolocales` de `ScopeCompilador` **nunca se inicializaba** en
+`scope_iniciar` ([src/compilador.c](src/compilador.c)).
+
+Con `-O0`/`-O2` el campo solía caer en 0 por suerte del layout de
+stack. Con `-O3`+LTO arrancaba en basura: el contador disparaba un
+falso "demasiadas declaraciones nolocal", o corrompía el índice del
+array `nolocales[]` → segfault.
+
+El bug llevaba latente desde que se añadió `nolocal` en v1.4 — solo
+no se manifestaba porque ningún build era lo bastante agresivo. Fix:
+`s->n_nolocales = 0;` en `scope_iniciar`. Cubierto por
+`bc_run_30_closures_nolocal` con LTO activo.
+
+### Tests
+
+- **185/185 tests verde** con `-O3`+LTO.
+- Sin tests nuevos: el bug del `nolocal` ya estaba cubierto por el
+  ejemplo `30_closures_nolocal.cor` / `bc_run_30_closures_nolocal` —
+  solo que pasaba "por suerte" hasta que LTO lo destapó. Ahora pasa
+  de verdad.
+
 ## [1.39.0] — 2026-05-14 — Flag `--check` (validar sin ejecutar)
 
 `cornamusa --check archivo.cor` valida **sintaxis y compilación** sin

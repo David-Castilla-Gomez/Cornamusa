@@ -13,7 +13,7 @@ param(
 )
 
 if (-not $CornamusaBin) {
-    $CornamusaBin = './build_v2/cornamusa.exe'
+    $CornamusaBin = './build/cornamusa.exe'
 }
 
 if (-not (Test-Path $CornamusaBin)) {

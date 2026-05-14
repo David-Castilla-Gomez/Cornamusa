@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(cornamusa
-    VERSION 1.39.0
+    VERSION 1.40.0
     DESCRIPTION "Lenguaje de programación dinámico en castellano"
     LANGUAGES C
 )
@@ -24,10 +24,43 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
     if(CMAKE_BUILD_TYPE STREQUAL "Debug")
         add_compile_options(-O0 -g3)
     else()
-        add_compile_options(-O2)
+        # v1.40: -O3 explícito (antes -O2). El intérprete está
+        # repartido en archivos pequeños — más optimización agresiva
+        # ayuda al inlining intra-unidad.
+        add_compile_options(-O3)
     endif()
 elseif(MSVC)
     add_compile_options(/W4 /utf-8)
+    if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+        add_compile_options(/O2)
+    endif()
+endif()
+
+# ───── v1.40: LTO (Link-Time Optimization) ─────
+# Inlinea los helpers hot del intérprete (empujar/sacar/valor_clonar/
+# dicc_obtener, en valor.c) dentro del dispatch loop de vm.c —
+# funciones en unidades de traducción distintas que sin LTO quedan
+# como llamadas. Se usa la API oficial de CMake
+# (CMAKE_INTERPROCEDURAL_OPTIMIZATION) porque propaga correctamente a
+# las librerías estáticas vendoradas (tommath, utf8proc).
+#
+# Nota histórica: activar LTO destapó un UB latente — `n_nolocales`
+# sin inicializar en `scope_iniciar` (compilador.c). Arreglado en
+# v1.40. Sin ese fix, LTO+O3 segfaultaba en closures con `nolocal`.
+# Activable como ON por defecto en builds no-Debug; desactivable con
+# -DCORNAMUSA_LTO=OFF si algún toolchain da problemas de linking.
+option(CORNAMUSA_LTO "Activar LTO en builds Release" ON)
+if(CORNAMUSA_LTO AND NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_ok OUTPUT ipo_err)
+    if(ipo_ok)
+        set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+        message(STATUS "  LTO:          ON")
+    else()
+        message(STATUS "  LTO:          OFF (${ipo_err})")
+    endif()
+else()
+    message(STATUS "  LTO:          OFF")
 endif()
 
 # ───── Opciones del proyecto ─────

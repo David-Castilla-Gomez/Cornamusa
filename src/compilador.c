@@ -31,6 +31,12 @@ static void scope_iniciar(ScopeCompilador *s, Chunk *chunk, bool es_funcion,
     s->n_locales = 0;
     s->n_upvalues = 0;
     s->n_bucles = 0;
+    /* v1.40 fix: `n_nolocales` quedaba SIN inicializar — basura de
+       stack. Con -O0/-O2 solía caer en 0 por suerte, pero -O3+LTO lo
+       destapó: el contador arrancaba en un valor alto y disparaba
+       "demasiadas declaraciones nolocal" (o corrompía el array index
+       → segfault). UB latente desde que se añadió `nolocal` (v1.4). */
+    s->n_nolocales = 0;
     s->funcion = NULL;
     s->padre = padre;
     if (es_funcion) {
