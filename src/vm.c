@@ -261,6 +261,10 @@ void vm_iniciar(VM *vm) {
     vm->error.mensaje[0] = '\0';
     vm->error.linea = 0;
     vm->error.columna = 0;
+    /* v1.31: generador cooperation. */
+    vm->frame_techo = 0;
+    vm->modo_yield = false;
+    vm->valor_yield_pendiente = valor_nulo();
     /*
      * Fase 7: inicializar el GC e instalarlo como memoria global
      * antes de crear el diccionario de globales (que ya pasa por
@@ -794,6 +798,39 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
             return VM_ERROR_RUNTIME;
         }
     }
+    /* v1.31: si la función es generadora, NO ejecutamos el cuerpo.
+       Capturamos el frame inicial en un Generador y empujamos
+       VAL_GENERADOR en lugar de pushear un frame. */
+    if (fn->es_generador) {
+        Generador *g = generador_nuevo(cl);
+        if (!g) {
+            llamar_set_error(vm, frame, "memoria insuficiente para generador");
+            return VM_ERROR_RUNTIME;
+        }
+        /* Capturar args + callee como stack inicial del frame del gen.
+           Layout: [callee, arg0, arg1, ..., argN-1] copiados desde
+           base_nuevo. */
+        int n_inicial = (int)(vm->tope - base_nuevo);  /* incluye callee */
+        g->stack_buf = (Valor *)malloc(sizeof(Valor) * (size_t)n_inicial);
+        if (!g->stack_buf) {
+            generador_liberar(g);
+            llamar_set_error(vm, frame, "memoria insuficiente");
+            return VM_ERROR_RUNTIME;
+        }
+        g->stack_cap = n_inicial;
+        g->stack_n = n_inicial;
+        for (int i = 0; i < n_inicial; i++) {
+            /* Tomar posesión de los valores del stack. */
+            g->stack_buf[i] = base_nuevo[i];
+        }
+        g->ip_offset = 0;  /* empezar al principio del chunk */
+        /* Limpiar stack desde base_nuevo (los valores ya están en g). */
+        vm->tope = base_nuevo;
+        /* Empujar el VAL_GENERADOR como resultado de la llamada. */
+        empujar(vm, valor_generador(g));
+        return VM_OK;
+    }
+
     if (vm->n_frames >= VM_FRAMES_MAX) {
         llamar_set_error(vm, frame,
             "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
@@ -1607,28 +1644,46 @@ static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout
 
 /* Dispatch interno; la wrapper pública vm_ejecutar gestiona el flag
    gc_habilitado en cualquier path de salida. */
+static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
+                                                Valor *resultado_out,
+                                                bool inicial);
+
 static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                                           Valor *resultado_out) {
-    vm->tope = vm->pila;
-    vm->n_frames = 0;
-    vm->error.tuvo_error = false;
+    return vm_ejecutar_dispatch_impl(vm, chunk, resultado_out, true);
+}
 
-    /* Crear el frame top-level. base_pila apunta al inicio de la pila;
-       slot 0 lo reservamos como "callee virtual" para mantener la
-       convención (incluso aunque no haya función llamada). */
-    CallFrame *frame = &vm->frames[vm->n_frames++];
-    frame->chunk = chunk;
-    frame->ip = chunk->codigo;
-    frame->base_pila = vm->pila;
-    frame->closure = NULL;
-    frame->es_constructor = false;
-    frame->modulo_en_carga = NULL;
-    frame->globales_pre_modulo = NULL;
-    frame->chunk_modulo = NULL;
-    frame->globales_pre_llamada = NULL;
-                    frame->modulo_binding_name = NULL;
-                    frame->modulo_binding_len = 0;
-                frame->desde_import = false;
+static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
+                                                Valor *resultado_out,
+                                                bool inicial) {
+    if (inicial) {
+        vm->tope = vm->pila;
+        vm->n_frames = 0;
+        vm->error.tuvo_error = false;
+
+        /* Crear el frame top-level. base_pila apunta al inicio de la pila;
+           slot 0 lo reservamos como "callee virtual" para mantener la
+           convención (incluso aunque no haya función llamada). */
+        CallFrame *fr = &vm->frames[vm->n_frames++];
+        fr->chunk = chunk;
+        fr->ip = chunk->codigo;
+        fr->base_pila = vm->pila;
+        fr->closure = NULL;
+        fr->es_constructor = false;
+        fr->modulo_en_carga = NULL;
+        fr->globales_pre_modulo = NULL;
+        fr->chunk_modulo = NULL;
+        fr->globales_pre_llamada = NULL;
+        fr->modulo_binding_name = NULL;
+        fr->modulo_binding_len = 0;
+        fr->desde_import = false;
+    } else {
+        /* Caller ya configuró frame y stack (modo generador). chunk
+           es ignorado. */
+        (void)chunk;
+    }
+    /* `frame` apunta al tope de frames; útil tener un local rápido. */
+    CallFrame *frame = &vm->frames[vm->n_frames - 1];
 
     /* `gc_habilitado` lo gestiona el wrapper público vm_ejecutar. */
 
@@ -2049,6 +2104,17 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     }
                     return VM_OK;
                 }
+                /* v1.31: si estamos en modo generador y el frame del
+                   generador acaba de retornar, salir del dispatch. */
+                if (vm->modo_yield && vm->n_frames < vm->frame_techo) {
+                    /* Liberar todos los slots del frame que termina. */
+                    while (vm->tope > frame->base_pila) {
+                        Valor v = *(--vm->tope);
+                        valor_destruir(&v);
+                    }
+                    valor_destruir(&r);
+                    return VM_OK_GEN_AGOTADO;
+                }
                 /* Liberar todos los slots del frame que termina. */
                 while (vm->tope > frame->base_pila) {
                     Valor v = *(--vm->tope);
@@ -2057,6 +2123,20 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                 empujar(vm, r);
                 frame = &vm->frames[vm->n_frames - 1];
                 break;
+            }
+            case OP_PRODUCIR: {
+                /* v1.31: `producir EXPR`. TOS = valor producido.
+                   Si modo_yield está activo, suspendemos el dispatch
+                   guardando el valor en vm->valor_yield_pendiente. */
+                if (!vm->modo_yield) {
+                    VM_ERROR(
+                        "ErrorInterno: 'producir' fuera de generador");
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor v = sacar(vm);
+                valor_destruir(&vm->valor_yield_pendiente);
+                vm->valor_yield_pendiente = v;
+                return VM_OK_YIELD;
             }
 
             /* ─── Módulos (Fase 9) ─── */
@@ -2913,6 +2993,13 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                     RAISE_OR_DIE();
                     break;
                 }
+                /* v1.31: VAL_GENERADOR se itera directamente (sin envoltura
+                   en Iterador). El slot del bucle queda como VAL_GENERADOR
+                   y OP_ITER_SIGUIENTE despacha por tipo. */
+                if (it_v.tipo == VAL_GENERADOR) {
+                    empujar(vm, it_v);  /* mover ownership al slot */
+                    break;
+                }
                 Iterador *iter = iter_nuevo(&it_v);
                 valor_destruir(&it_v);
                 if (!iter) {
@@ -2927,12 +3014,27 @@ static ResultadoVM vm_ejecutar_dispatch(VM *vm, const Chunk *chunk,
                    El iterador vive en `frame->base_pila[slot]` (un local
                    oculto reservado por el compilador). Si tiene siguiente,
                    push valor. Si no, deja el slot intacto (se libera con
-                   el frame al final) y salta `offset_fin` bytes adelante. */
+                   el frame al final) y salta `offset_fin` bytes adelante.
+
+                   v1.31: el slot también puede ser VAL_GENERADOR. */
                 uint8_t slot = LEER_BYTE();
                 uint8_t hi = LEER_BYTE();
                 uint8_t lo = LEER_BYTE();
                 uint16_t offset = ((uint16_t)hi << 8) | lo;
                 Valor *iter_v = &frame->base_pila[slot];
+                if (iter_v->tipo == VAL_GENERADOR) {
+                    Valor v;
+                    if (vm_generador_paso(vm, iter_v->como.generador, &v)) {
+                        empujar(vm, v);
+                    } else {
+                        if (vm->error.tuvo_error) {
+                            RAISE_OR_DIE();
+                            break;
+                        }
+                        frame->ip += offset;
+                    }
+                    break;
+                }
                 if (iter_v->tipo != VAL_ITERADOR) {
                     VM_ERROR("estado interno corrupto: OP_ITER_SIGUIENTE sin iterador en slot %u",
                              slot);
@@ -4384,4 +4486,138 @@ ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
     ResultadoVM r = vm_ejecutar_dispatch(vm, chunk, resultado_out);
     vm->memoria.gc_habilitado = false;
     return r;
+}
+
+/*
+ * v1.31: reanuda un generador hasta el próximo OP_PRODUCIR o
+ * OP_RETORNAR. Retorna true si produjo un valor (en *out_valor), false
+ * si el generador terminó (agotado).
+ *
+ * Estrategia:
+ *   1. Restaurar el stack del gen al stack de la VM (tope actual).
+ *   2. Push CallFrame nuevo apuntando al chunk del closure del gen,
+ *      con ip = chunk + gen->ip_offset.
+ *   3. Set frame_techo = vm->n_frames (queremos volver cuando este
+ *      frame haga RETORNAR) y modo_yield = true.
+ *   4. Llamar al dispatch en modo no-inicial (sub-loop).
+ *   5. Si VM_OK_YIELD: snapshot stack al gen, save ip, pop frame,
+ *      retornar el valor producido.
+ *   6. Si VM_OK_GEN_AGOTADO: marcar gen->agotado, no hay valor.
+ *   7. Cleanup: restaurar frame_techo, modo_yield previos.
+ */
+bool vm_generador_paso(VM *vm, Generador *gen, Valor *out_valor) {
+    if (!gen || gen->agotado) {
+        *out_valor = valor_nulo();
+        return false;
+    }
+    if (gen->ejecutando) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "ErrorDeValor: generador ya en ejecucion (re-entrancia no permitida)");
+        return false;
+    }
+    gen->ejecutando = true;
+
+    /* Save VM state. */
+    int prev_frame_techo = vm->frame_techo;
+    bool prev_modo_yield = vm->modo_yield;
+
+    /* Restaurar stack del gen al vm->tope. */
+    Valor *base_nuevo = vm->tope;
+    for (int i = 0; i < gen->stack_n; i++) {
+        empujar(vm, gen->stack_buf[i]);  /* mueve ownership */
+    }
+    /* El buffer queda lógicamente vacío pero conservamos la
+       capacidad. Marcar como 0 para evitar doble-libre. */
+    gen->stack_n = 0;
+
+    /* Push frame del generador. */
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        gen->ejecutando = false;
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "desbordamiento de pila de llamadas");
+        return false;
+    }
+    Closure *cl = gen->closure;
+    FuncionBC *fn = cl->plantilla;
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo + gen->ip_offset;
+    nf->base_pila = base_nuevo;
+    nf->closure = cl;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (cl->globales_definicion != NULL
+        && cl->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = cl->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+
+    /* Activar modo generador y techo. */
+    vm->frame_techo = vm->n_frames;  /* cuando frame desaparezca → sal. */
+    vm->modo_yield = true;
+
+    /* Sub-dispatch. */
+    ResultadoVM r = vm_ejecutar_dispatch_impl(vm, NULL, NULL, false);
+
+    /* Restaurar VM state. */
+    vm->frame_techo = prev_frame_techo;
+    vm->modo_yield = prev_modo_yield;
+    gen->ejecutando = false;
+
+    if (r == VM_OK_YIELD) {
+        /* Snapshot stack al gen, save ip, pop frame. */
+        CallFrame *fr_gen = &vm->frames[vm->n_frames - 1];
+        gen->ip_offset = (int)(fr_gen->ip - fr_gen->chunk->codigo);
+        int n_slots = (int)(vm->tope - fr_gen->base_pila);
+        /* Asegurar capacidad del buffer. */
+        if (n_slots > gen->stack_cap) {
+            int nueva_cap = gen->stack_cap < 16 ? 16 : gen->stack_cap;
+            while (nueva_cap < n_slots) nueva_cap *= 2;
+            Valor *nuevo = (Valor *)realloc(gen->stack_buf,
+                sizeof(Valor) * (size_t)nueva_cap);
+            if (!nuevo) {
+                vm->error.tuvo_error = true;
+                snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                    "memoria insuficiente al suspender generador");
+                return false;
+            }
+            gen->stack_buf = nuevo;
+            gen->stack_cap = nueva_cap;
+        }
+        for (int i = 0; i < n_slots; i++) {
+            gen->stack_buf[i] = fr_gen->base_pila[i];
+        }
+        gen->stack_n = n_slots;
+        /* Pop el frame y el stack del frame. */
+        vm->n_frames--;
+        vm->tope = fr_gen->base_pila;
+        /* Restaurar globales si la función swapeó. */
+        if (fr_gen->globales_pre_llamada != NULL) {
+            vm->globales = fr_gen->globales_pre_llamada;
+        }
+        /* El valor producido está en vm->valor_yield_pendiente. */
+        *out_valor = vm->valor_yield_pendiente;
+        vm->valor_yield_pendiente = valor_nulo();
+        return true;
+    }
+    if (r == VM_OK_GEN_AGOTADO) {
+        gen->agotado = true;
+        /* El dispatch ya limpió el frame y los slots. */
+        *out_valor = valor_nulo();
+        return false;
+    }
+    /* VM_ERROR_RUNTIME u otro fallo. Marcar gen como agotado para
+       evitar reentrar a un estado roto. */
+    gen->agotado = true;
+    *out_valor = valor_nulo();
+    return false;
 }

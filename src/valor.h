@@ -76,6 +76,7 @@ typedef enum {
     VAL_INSTANCIA,     /* instancia de una clase (Fase 8) */
     VAL_METODO_LIGADO, /* método con receptor ligado (Fase 8 S2) */
     VAL_MODULO,        /* módulo cargado via `importar` (Fase 9) */
+    VAL_GENERADOR,     /* v1.31: generador suspendible con frame congelado */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -93,6 +94,7 @@ typedef struct Clase Clase;
 typedef struct Instancia Instancia;
 typedef struct MetodoLigado MetodoLigado;
 typedef struct Modulo Modulo;
+typedef struct Generador Generador;
 
 /*
  * Firma de una función nativa (puntero a función C). Recibe un
@@ -174,6 +176,7 @@ typedef struct Valor {
         Instancia *instancia; /* refcount; instancia de una clase */
         MetodoLigado *metodo_ligado; /* refcount; método con receptor */
         Modulo *modulo;     /* refcount; módulo cargado */
+        Generador *generador; /* v1.31; refcount; generador suspendible */
     } como;
 } Valor;
 
@@ -366,6 +369,29 @@ struct Iterador {
     Valor iterable;
     int cursor;
 };
+
+/*
+ * v1.31 — Generador. Función que contiene `producir`. Al llamar a la
+ * función NO se ejecuta el cuerpo: se crea un Generador con frame
+ * congelado en estado inicial. `iter_siguiente` sobre VAL_GENERADOR
+ * resume hasta el próximo OP_PRODUCIR o OP_RETORNAR.
+ */
+struct Generador {
+    GCObject obj;
+    Closure *closure;        /* refcount, mantiene plantilla viva */
+    Valor *stack_buf;        /* snapshot del frame stack (heap) */
+    int stack_n;             /* valores activos en buffer */
+    int stack_cap;
+    int ip_offset;           /* offset desde inicio del chunk del frame */
+    bool agotado;            /* ya retornó (no más producciones) */
+    bool ejecutando;         /* guarda re-entrancia */
+    int refcount;
+};
+
+Generador *generador_nuevo(Closure *cl);
+void generador_retener(Generador *g);
+void generador_liberar(Generador *g);
+Valor valor_generador(Generador *g);
 
 bool valor_es_iterable(const Valor *v);
 

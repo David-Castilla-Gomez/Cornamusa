@@ -545,6 +545,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_INSTANCIA:
         case VAL_METODO_LIGADO:
         case VAL_MODULO:
+        case VAL_GENERADOR:
             return false;
         case VAL_TUPLA:
             /* Tupla es hashable solo si todos sus elementos lo son. */
@@ -958,6 +959,7 @@ bool valor_es_iterable(const Valor *v) {
         case VAL_DICCIONARIO:
         case VAL_CONJUNTO:
         case VAL_RANGO:
+        case VAL_GENERADOR:  /* v1.31 */
             return true;
         default:
             return false;
@@ -977,6 +979,52 @@ void iter_destruir(Iterador *it) {
     valor_destruir(&it->iterable);
     gc_desenlazar(&it->obj);
     free(it);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Generador (v1.31)
+ * ────────────────────────────────────────────────────────────────── */
+
+Generador *generador_nuevo(Closure *cl) {
+    Generador *g = (Generador *)gc_alocar(sizeof(Generador), GC_TIPO_GENERADOR);
+    if (!g) return NULL;
+    closure_retener(cl);
+    g->closure = cl;
+    g->stack_buf = NULL;
+    g->stack_n = 0;
+    g->stack_cap = 0;
+    g->ip_offset = 0;
+    g->agotado = false;
+    g->ejecutando = false;
+    g->refcount = 1;
+    return g;
+}
+
+void generador_retener(Generador *g) {
+    if (g) g->refcount++;
+}
+
+void generador_liberar(Generador *g) {
+    if (!g) return;
+    g->refcount--;
+    if (g->refcount > 0) return;
+    closure_liberar(g->closure);
+    if (g->stack_buf) {
+        for (int i = 0; i < g->stack_n; i++) {
+            valor_destruir(&g->stack_buf[i]);
+        }
+        free(g->stack_buf);
+    }
+    gc_desenlazar(&g->obj);
+    free(g);
+}
+
+Valor valor_generador(Generador *g) {
+    Valor v;
+    v.tipo = VAL_GENERADOR;
+    v.dueno_cadena = false;
+    v.como.generador = g;
+    return v;
 }
 
 bool iter_siguiente(Iterador *it, Valor *out) {
@@ -1444,6 +1492,10 @@ void valor_destruir(Valor *v) {
             modulo_liberar(v->como.modulo);
             v->como.modulo = NULL;
             break;
+        case VAL_GENERADOR:
+            generador_liberar(v->como.generador);
+            v->como.generador = NULL;
+            break;
         default:
             break;
     }
@@ -1557,6 +1609,9 @@ Valor valor_clonar(const Valor *v) {
         case VAL_MODULO:
             modulo_retener(v->como.modulo);
             return valor_modulo(v->como.modulo);
+        case VAL_GENERADOR:
+            generador_retener(v->como.generador);
+            return valor_generador(v->como.generador);
     }
     return valor_nulo();
 }
@@ -1847,6 +1902,18 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                 m->longitud_nombre, m->nombre);
             break;
         }
+        case VAL_GENERADOR: {
+            const Generador *g = v->como.generador;
+            const FuncionBC *fn = g->closure ? g->closure->plantilla : NULL;
+            if (fn) {
+                n = snprintf(buffer, (size_t)capacidad, "<generador %.*s%s>",
+                    fn->longitud_nombre, fn->nombre,
+                    g->agotado ? " agotado" : "");
+            } else {
+                n = snprintf(buffer, (size_t)capacidad, "<generador>");
+            }
+            break;
+        }
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -1903,6 +1970,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_INSTANCIA:   return "instancia";
         case VAL_METODO_LIGADO: return "funcion";  /* visible como funcion */
         case VAL_MODULO:        return "modulo";
+        case VAL_GENERADOR:     return "generador";
     }
     return "desconocido";
 }
@@ -1968,6 +2036,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.metodo_ligado != NULL;
         case VAL_MODULO:
             return v->como.modulo != NULL;
+        case VAL_GENERADOR:
+            return v->como.generador != NULL && !v->como.generador->agotado;
     }
     return false;
 }
@@ -2101,6 +2171,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return a->como.metodo_ligado == b->como.metodo_ligado;
         case VAL_MODULO:
             return a->como.modulo == b->como.modulo;
+        case VAL_GENERADOR:
+            return a->como.generador == b->como.generador;
     }
     return false;
 }

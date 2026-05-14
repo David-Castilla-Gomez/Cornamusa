@@ -29,6 +29,9 @@
 typedef enum {
     VM_OK,
     VM_ERROR_RUNTIME,
+    /* v1.31: solo retornados desde dispatch en modo generador. */
+    VM_OK_YIELD,         /* OP_PRODUCIR; valor en vm->valor_yield_pendiente */
+    VM_OK_GEN_AGOTADO,   /* OP_RETORNAR del frame del generador */
 } ResultadoVM;
 
 #define VM_PILA_MAX 8192
@@ -178,6 +181,14 @@ typedef struct {
     Memoria memoria;
 
     EvalError error;
+
+    /* v1.31: cooperación con generadores. Cuando `modo_yield` es true,
+       OP_PRODUCIR pop su valor a `valor_yield_pendiente` y retorna
+       VM_OK_YIELD. OP_RETORNAR retorna VM_OK_GEN_AGOTADO si tras pop
+       el n_frames cae por debajo de `frame_techo`. */
+    int frame_techo;
+    bool modo_yield;
+    Valor valor_yield_pendiente;
 } VM;
 
 /* Inicializa la VM. La pila empieza vacía, sin error. */
@@ -200,6 +211,10 @@ void vm_destruir(VM *vm);
  * extraídos del chunk y devuelve VM_ERROR_RUNTIME.
  */
 ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out);
+
+/* v1.31: reanuda un generador hasta el próximo OP_PRODUCIR/OP_RETORNAR.
+   Retorna true si produjo (en *out_valor); false si terminó. */
+bool vm_generador_paso(VM *vm, Generador *gen, Valor *out_valor);
 
 /*
  * GC mark phase (Fase 7 sesión 3): marca todas las raíces de la VM

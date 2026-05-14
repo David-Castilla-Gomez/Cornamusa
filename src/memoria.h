@@ -53,6 +53,7 @@ typedef enum {
     GC_TIPO_INSTANCIA,
     GC_TIPO_METODO_LIGADO,
     GC_TIPO_MODULO,
+    GC_TIPO_GENERADOR,  /* v1.31 */
 } TipoGC;
 
 /*

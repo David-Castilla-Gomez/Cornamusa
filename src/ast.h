@@ -324,6 +324,7 @@ typedef enum {
     SENT_ROMPER,         /* `romper` */
     SENT_CONTINUAR,      /* `continuar` */
     SENT_RETORNAR,       /* `retornar [expr]` */
+    SENT_PRODUCIR,       /* v1.31: `producir [expr]` en generador */
     SENT_SI,             /* `si ... sino si ... sino ... fin si` */
     SENT_MIENTRAS,       /* `mientras ... [sino ...] fin mientras` */
     SENT_PARA,           /* `para X en Y: ... [sino ...] fin para` */
@@ -475,6 +476,10 @@ struct Sent {
         } retornar;
 
         struct {
+            Expr *valor;        /* v1.31: `producir expr`. Nunca NULL en práctica. */
+        } producir;
+
+        struct {
             RamaSi *ramas;
             int n_ramas;
         } si;
@@ -562,6 +567,7 @@ Sent *sent_pasar(Arena *a, int linea, int col);
 Sent *sent_romper(Arena *a, int linea, int col);
 Sent *sent_continuar(Arena *a, int linea, int col);
 Sent *sent_retornar(Arena *a, Expr *valor, int linea, int col);
+Sent *sent_producir(Arena *a, Expr *valor, int linea, int col);
 Sent *sent_si(Arena *a, RamaSi *ramas, int n_ramas, int linea, int col);
 Sent *sent_mientras(Arena *a, Expr *cond, Sent *cuerpo, Sent *sino,
                     int linea, int col);

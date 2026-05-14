@@ -564,6 +564,18 @@ set_tests_properties(bc_run_55_comprehensions PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 55"
 )
 
+# v1.31: generadores con `producir`.
+add_test(
+    NAME bc_run_56_generadores
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/56_generadores.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_56_generadores PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 56"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

@@ -273,6 +273,18 @@ void gc_marcar_objeto(GCObject *obj) {
             if (m->atributos) gc_marcar_objeto(&m->atributos->obj);
             break;
         }
+        case GC_TIPO_GENERADOR: {
+            const Generador *g = (const Generador *)obj;
+            if (g->closure) gc_marcar_objeto(&g->closure->obj);
+            /* Stack snapshot: marcar cada valor para que su heap no sea
+               recolectado mientras el generador está suspendido. */
+            if (g->stack_buf) {
+                for (int i = 0; i < g->stack_n; i++) {
+                    gc_marcar_valor(&g->stack_buf[i]);
+                }
+            }
+            break;
+        }
     }
 }
 
@@ -475,6 +487,22 @@ static void gc_liberar_objeto(GCObject *o) {
             Modulo *m = (Modulo *)o;
             free(m->nombre);
             free(m);
+            break;
+        }
+        case GC_TIPO_GENERADOR: {
+            Generador *g = (Generador *)o;
+            /* No tocamos closure ni stack_buf aquí — los maneja
+               generador_liberar via refcount cuando llega a 0. Pero
+               este es el path "GC fuerza liberación" tras barrido —
+               liberar todo lo no-GC. */
+            if (g->stack_buf) {
+                for (int i = 0; i < g->stack_n; i++) {
+                    liberar_partes_no_gc_valor(&g->stack_buf[i]);
+                }
+                free(g->stack_buf);
+                g->stack_buf = NULL;
+            }
+            free(g);
             break;
         }
     }

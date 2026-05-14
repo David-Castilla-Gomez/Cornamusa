@@ -58,6 +58,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_LISTA_EXTENDER:  return "OP_LISTA_EXTENDER";
         case OP_LLAMAR_SPREAD:   return "OP_LLAMAR_SPREAD";
         case OP_CONJUNTO_AGREGAR: return "OP_CONJUNTO_AGREGAR";
+        case OP_PRODUCIR:        return "OP_PRODUCIR";
         case OP_LLAMAR_KW:       return "OP_LLAMAR_KW";
         case OP_DICC_AGREGAR_PAR: return "OP_DICC_AGREGAR_PAR";
         case OP_DICC_EXTENDER:   return "OP_DICC_EXTENDER";
@@ -224,6 +225,7 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->n_defaults = 0;     /* v1.17: el compilador lo setea si hay defaults */
     f->tiene_estrella = false;  /* v1.22: lo setea el compilador si hay *resto */
     f->tiene_doble_estrella = false;  /* v1.24: setea si hay **kw */
+    f->es_generador = false;  /* v1.31: setea si contiene `producir` */
     f->nombres_params = NULL;       /* v1.23: setea el compilador */
     f->long_nombres_params = NULL;
     return f;

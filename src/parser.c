@@ -1679,6 +1679,12 @@ Sent *parser_parsear_sentencia(Parser *p) {
             if (e == NULL) return NULL;
             return sent_retornar(p->arena, e, linea, col);
         }
+        case TT_PRODUCIR: {
+            avanzar(p); /* consume 'producir' */
+            Expr *e = parser_parsear_expr(p);
+            if (e == NULL) return NULL;
+            return sent_producir(p->arena, e, linea, col);
+        }
         case TT_SI:        return parsear_si(p);
         case TT_MIENTRAS:  return parsear_mientras(p);
         case TT_PARA:      return parsear_para(p);

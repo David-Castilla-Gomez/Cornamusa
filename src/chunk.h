@@ -165,6 +165,11 @@ typedef enum {
        agregar al conjunto. Valor debe ser hashable. */
     OP_CONJUNTO_AGREGAR,
 
+    /* v1.31: `producir EXPR` en generador. TOS=valor producido. La VM
+       suspende el frame del generador (guarda IP y stack) y retorna al
+       caller con el valor producido. Próximo `iter_siguiente` resume. */
+    OP_PRODUCIR,
+
     /* v1.23: llamadas con keyword arguments `f(x=1, y=2)`.
        Layout en stack al ejecutar:
          [..., callee, pos0..posN-1, key0, val0, key1, val1, ...]
@@ -478,6 +483,9 @@ struct FuncionBC {
        keyword args no-matched en un diccionario. Si también tiene
        estrella, `*resto` está en `aridad-2` y `**kw` en `aridad-1`. */
     bool tiene_doble_estrella;
+    /* v1.31: si el cuerpo contiene `producir`, la función NO ejecuta
+       al llamarse — crea un VAL_GENERADOR con frame congelado. */
+    bool es_generador;
     /* v1.23: nombres de parámetros para matching de keyword args.
        Arrays paralelos de longitud `aridad`. Duplicados en heap;
        freed en funcion_bc_liberar. NULL si no se setearon (función

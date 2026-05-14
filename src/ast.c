@@ -543,6 +543,12 @@ Sent *sent_retornar(Arena *a, Expr *valor, int linea, int col) {
     return s;
 }
 
+Sent *sent_producir(Arena *a, Expr *valor, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_PRODUCIR, linea, col);
+    if (s) s->como.producir.valor = valor;
+    return s;
+}
+
 Sent *sent_si(Arena *a, RamaSi *ramas, int n_ramas, int linea, int col) {
     Sent *s = nuevo_sent(a, SENT_SI, linea, col);
     if (s) { s->como.si.ramas = ramas; s->como.si.n_ramas = n_ramas; }

@@ -2459,6 +2459,21 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             return true;
         }
 
+        case SENT_PRODUCIR: {
+            if (!c->actual->es_funcion) {
+                error_compilacion(c, s->linea, s->columna,
+                    "'producir' fuera de una funcion");
+                return false;
+            }
+            if (!compilador_compilar_expr(c, s->como.producir.valor)) return false;
+            chunk_emitir_byte(c->actual->chunk, OP_PRODUCIR, s->linea);
+            /* Marca el scope actual como generador. */
+            if (c->actual->funcion) {
+                c->actual->funcion->es_generador = true;
+            }
+            return true;
+        }
+
         case SENT_PARA:
             return compilar_para(c, s);
 

@@ -6,6 +6,184 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.31.0] — 2026-05-14 — Generadores con `producir`
+
+Cierra **Fase 3 — generadores y comprehensions**. Una función que
+contiene `producir` se convierte en **generador**: llamarla NO ejecuta
+el cuerpo, sino que devuelve un objeto suspendible. Iterar con
+`para...en...` reanuda hasta el próximo `producir` o `retornar`. El
+estado (locales, IP, expresiones a medias) se preserva entre yields.
+
+El reto técnico mayor del roadmap completado en una sola release.
+
+### Sintaxis
+
+```cornamusa
+funcion contar(ini, tope):
+    i = ini
+    mientras i <= tope:
+        producir i           # suspende, retorna i, IP guardado
+        i = i + 1
+    fin mientras
+fin funcion
+
+para v en contar(1, 5):
+    imprimir(v)   # 1, 2, 3, 4, 5
+fin para
+```
+
+### Generador infinito
+
+Sin problema — `romper` desde el `para` lo agota correctamente:
+
+```cornamusa
+funcion fib():
+    a = 0
+    b = 1
+    mientras verdadero:
+        producir a
+        c = a + b
+        a = b
+        b = c
+    fin mientras
+fin funcion
+
+i = 0
+para n en fib():
+    si i >= 10: romper fin si
+    imprimir("fib", i, "=", n)
+    i = i + 1
+fin para
+```
+
+### Pipelines lazy
+
+Los generadores **se componen**: pasar el resultado de uno a otro
+construye un pipeline lazy completo. El valor producido en cada paso
+fluye uno a uno sin materializar listas intermedias:
+
+```cornamusa
+funcion pares_naturales():
+    n = 0
+    mientras verdadero:
+        producir n * 2
+        n = n + 1
+    fin mientras
+fin funcion
+
+funcion filtrar(gen, pred):
+    para v en gen:
+        si pred(v):
+            producir v
+        fin si
+    fin para
+fin funcion
+
+funcion tomar(gen, n):
+    r = []
+    i = 0
+    para v en gen:
+        si i >= n: romper fin si
+        agregar(r, v)
+        i = i + 1
+    fin para
+    retornar r
+fin funcion
+
+es_par = lambda x: x % 2 == 0
+imprimir(tomar(filtrar(fib(), es_par), 5))
+# [0, 2, 8, 34, 144]  — tres generadores encadenados
+```
+
+### Implementación técnica
+
+**AST**: `SENT_PRODUCIR { Expr *valor }` parseado por el parser.
+`FuncionBC.es_generador` se marca al ver `OP_PRODUCIR` en el cuerpo.
+
+**Opcode nuevo**: `OP_PRODUCIR` pop el valor del TOS y, si la VM está
+en `modo_yield`, suspende el dispatch retornando `VM_OK_YIELD`.
+
+**Tipo nuevo**: `VAL_GENERADOR` con `struct Generador`:
+
+```c
+struct Generador {
+    GCObject obj;
+    Closure *closure;
+    Valor *stack_buf;       /* heap snapshot del frame stack */
+    int stack_n, stack_cap;
+    int ip_offset;          /* offset desde inicio del chunk */
+    bool agotado, ejecutando;
+    int refcount;
+};
+```
+
+**Sub-VM** ([src/vm.c](src/vm.c)):
+
+1. `vm_ejecutar_dispatch_impl(vm, chunk, out, inicial)` — el loop
+   refactorizado para aceptar entrada `inicial=false` (sub-dispatch
+   que no resetea estado VM).
+2. `vm_generador_paso(vm, gen, out)`:
+   - Restaura `gen->stack_buf` al stack VM en el tope.
+   - Push CallFrame con `ip = gen->ip_offset`.
+   - Set `frame_techo = n_frames`, `modo_yield = true`.
+   - Llama al sub-dispatch.
+   - `VM_OK_YIELD`: snapshot stack al gen, save ip, pop frame, retorna
+     valor producido.
+   - `VM_OK_GEN_AGOTADO`: marca agotado, retorna EOF.
+3. `OP_RETORNAR` chequea `n_frames < frame_techo` y retorna
+   `VM_OK_GEN_AGOTADO` si aplica.
+4. `OP_ITER_INICIAR` detecta `VAL_GENERADOR` y lo deja en slot directo
+   (no construye `Iterador` envoltorio).
+5. `OP_ITER_SIGUIENTE` despacha por tipo del slot: si es generador,
+   llama `vm_generador_paso`; sino, `iter_siguiente` clásico.
+
+**GC**: `GC_TIPO_GENERADOR` con marcado que recurre sobre
+`gen->closure` y cada valor en `gen->stack_buf`. Garantiza que el GC no
+recolecta objetos referenciados por un generador suspendido.
+
+### Estado preservado
+
+El frame stack se SERIALIZA en `gen->stack_buf` al producir, y se
+RESTAURA al reanudar. Esto incluye:
+- Args de la llamada original (en slots fijos).
+- Locales (variables del cuerpo).
+- Expresiones a medias (si el yield ocurre durante una expresión
+  compuesta — el compilador garantiza que `producir EXPR` solo
+  cambia tope en +0 al final).
+
+### Limitaciones (v1.31)
+
+- **Solo generadores planos**. Sin `producir desde` para
+  sub-generadores (v1.31.x si surge demanda).
+- **Sin `enviar()`** — generadores bidireccionales con `gen.enviar(x)`
+  vendrán solo si los pide alguien.
+- **Sin generator expressions** `(x * 2 para x en xs)` inline — el
+  parser solo reconoce `(...)` como tupla/grupo. Workaround: definir
+  la función explícitamente. Sintaxis inline → v1.32.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_generadores.c` — 8 tests cubriendo
+  llamada devuelve VAL_GENERADOR, iteración simple, generador con
+  estado, generador con args, fib infinito con `romper`, agotado,
+  vacío, `producir` top-level rechazado.
+- `bc_run_56_generadores` — ejecuta `examples/56_generadores.cor`
+  (contar perezoso, Fibonacci, pipeline tomar/filtrar, agotado).
+- **178/178 tests verde**.
+
+### Estado final del roadmap v1.21 → v1.31
+
+11 releases consecutivas. **Cornamusa ahora tiene**:
+- **Fase 1** (sintaxis idiomática moderna): destructuring, `*args`,
+  keyword arguments, `**kwargs`, spread `**dict`.
+- **Fase 2** (stdlib esencial): azar (PRNG), proceso (procesos
+  externos), regex (motor propio), red (HTTP/1.1).
+- **Fase 3** (comprehensions + generadores): list/dict/set
+  comprehensions, generadores con `producir` y pipelines lazy.
+
+**Paridad sintáctica y semántica con Python 3.10+** para la mayoría
+de scripts de propósito general.
+
 ## [1.30.0] — 2026-05-14 — Comprehensions (list, dict, set)
 
 Arranca **Fase 3 — generadores y comprehensions**. Sintaxis

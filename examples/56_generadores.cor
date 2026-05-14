@@ -1,0 +1,106 @@
+# Ejemplo 56 — Generadores con `producir` (v1.31)
+#
+# Una función que contiene `producir` se convierte en generador:
+# llamarla NO ejecuta el cuerpo, sino que devuelve un objeto
+# generador. Iterar con `para...en...` lo reanuda hasta el próximo
+# `producir`. El estado (locales + IP) se preserva entre yields.
+
+imprimir("=== generadores (v1.31) ===")
+imprimir("")
+
+# ─── Caso 1: contar perezoso ───
+funcion contar(ini, tope):
+    i = ini
+    mientras i <= tope:
+        producir i
+        i = i + 1
+    fin mientras
+fin funcion
+
+imprimir("1) contar perezoso")
+imprimir("  tipo:", tipo(contar(1, 5)))
+para v en contar(1, 5):
+    imprimir("  ", v)
+fin para
+imprimir("")
+
+# ─── Caso 2: Fibonacci infinito ───
+funcion fib():
+    a = 0
+    b = 1
+    mientras verdadero:
+        producir a
+        c = a + b
+        a = b
+        b = c
+    fin mientras
+fin funcion
+
+imprimir("2) Fibonacci infinito (rompemos con `romper`)")
+i = 0
+para n en fib():
+    si i >= 10:
+        romper
+    fin si
+    imprimir("  fib", i, "=", n)
+    i = i + 1
+fin para
+imprimir("")
+
+# ─── Caso 3: pipeline lazy ───
+funcion pares_naturales():
+    n = 0
+    mientras verdadero:
+        producir n * 2
+        n = n + 1
+    fin mientras
+fin funcion
+
+funcion tomar(gen, n):
+    resultado = []
+    i = 0
+    para v en gen:
+        si i >= n:
+            romper
+        fin si
+        agregar(resultado, v)
+        i = i + 1
+    fin para
+    retornar resultado
+fin funcion
+
+imprimir("3) tomar(pares_naturales(), 6)")
+imprimir("  ", tomar(pares_naturales(), 6))
+imprimir("")
+
+# ─── Caso 4: filtrar perezoso ───
+funcion filtrar(gen, pred):
+    para v en gen:
+        si pred(v):
+            producir v
+        fin si
+    fin para
+fin funcion
+
+es_par = lambda x: x % 2 == 0
+imprimir("4) filtrar primeros pares de fib")
+imprimir("  ", tomar(filtrar(fib(), es_par), 5))
+imprimir("")
+
+# ─── Caso 5: generador agotado ───
+funcion una_vez():
+    producir "primera y unica"
+fin funcion
+
+imprimir("5) generador agotado tras consumirlo")
+g = una_vez()
+para v en g:
+    imprimir("  iter 1:", v)
+fin para
+para v en g:
+    imprimir("  iter 2:", v, "(no debe imprimir)")
+fin para
+imprimir("  fin")
+imprimir("")
+
+imprimir("=== fin ejemplo 56 ===")
