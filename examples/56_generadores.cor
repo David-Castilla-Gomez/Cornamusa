@@ -103,4 +103,25 @@ fin para
 imprimir("  fin")
 imprimir("")
 
+# ─── Caso 6: producir desde (delegación, v1.33) ───
+funcion hojas():
+    producir 1
+    producir 2
+fin funcion
+
+funcion arbol():
+    producir 0
+    producir desde hojas()      # delega al sub-generador
+    producir desde [3, 4, 5]    # también funciona con iterables
+    producir 6
+fin funcion
+
+imprimir("6) producir desde (delegacion de generadores)")
+linea_vals = []
+para v en arbol():
+    agregar(linea_vals, v)
+fin para
+imprimir("  ", linea_vals)
+imprimir("")
+
 imprimir("=== fin ejemplo 56 ===")

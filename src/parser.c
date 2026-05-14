@@ -1681,6 +1681,40 @@ Sent *parser_parsear_sentencia(Parser *p) {
         }
         case TT_PRODUCIR: {
             avanzar(p); /* consume 'producir' */
+            /* v1.33: `producir desde EXPR` — delega a un sub-generador
+               (o cualquier iterable). Se desugar a:
+                   para $yf_N en EXPR:
+                       producir $yf_N
+                   fin para
+               El contador `$yf_N` da un nombre único para evitar
+               colisión con variables del usuario. */
+            if (consumir_si(p, TT_DESDE)) {
+                static int yf_counter = 0;
+                Expr *iterable = parser_parsear_expr(p);
+                if (iterable == NULL) return NULL;
+                /* Generar nombre único `$yf_N` en el arena. */
+                char *nombre = (char *)arena_alocar(p->arena, 24);
+                if (nombre == NULL) return NULL;
+                int nlen = snprintf(nombre, 24, "$yf_%d", yf_counter++);
+                /* Dos idents al mismo buffer: objetivo del `para` y
+                   operando de `producir`. */
+                Expr *var_obj = expr_ident(p->arena, nombre, nlen, linea, col);
+                Expr *var_prod = expr_ident(p->arena, nombre, nlen, linea, col);
+                if (var_obj == NULL || var_prod == NULL) return NULL;
+                Sent *prod = sent_producir(p->arena, var_prod, linea, col);
+                if (prod == NULL) return NULL;
+                Sent *cuerpo = sent_bloque(p->arena, &prod, 1, linea, col);
+                if (cuerpo == NULL) return NULL;
+                /* Necesitamos que el array de 1 sentencia sobreviva:
+                   sent_bloque guarda el puntero. Copiarlo al arena. */
+                Sent **sents = (Sent **)arena_alocar(p->arena, sizeof(Sent *));
+                if (sents == NULL) return NULL;
+                sents[0] = prod;
+                cuerpo = sent_bloque(p->arena, sents, 1, linea, col);
+                if (cuerpo == NULL) return NULL;
+                return sent_para(p->arena, var_obj, iterable, cuerpo,
+                                 NULL, linea, col);
+            }
             Expr *e = parser_parsear_expr(p);
             if (e == NULL) return NULL;
             return sent_producir(p->arena, e, linea, col);

@@ -6,6 +6,67 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.33.0] — 2026-05-14 — `producir desde` (delegación de generadores)
+
+`producir desde EXPR` delega a un sub-generador (o cualquier iterable):
+todos sus valores se reproducen uno a uno como si fueran del generador
+externo. Equivalente al `yield from` de Python.
+
+### Sintaxis
+
+```cornamusa
+funcion hojas():
+    producir 1
+    producir 2
+fin funcion
+
+funcion arbol():
+    producir 0
+    producir desde hojas()      # delega al sub-generador
+    producir desde [3, 4, 5]    # también funciona con iterables
+    producir 6
+fin funcion
+
+para v en arbol():
+    imprimir(v)   # 0, 1, 2, 3, 4, 5, 6
+fin para
+```
+
+Se compone recursivamente — `producir desde` de un generador que a su
+vez tiene `producir desde` funciona a cualquier profundidad.
+
+### Implementación
+
+Desugar puro en el parser, cero cambios en VM/compilador:
+
+```
+producir desde EXPR
+```
+
+se reescribe como
+
+```
+para $yf_N en EXPR:
+    producir $yf_N
+fin para
+```
+
+El parser construye el AST del bucle directamente: un `SENT_PARA` con
+objetivo `$yf_N` (nombre único por contador para evitar colisión con
+variables del usuario), iterable `EXPR`, y cuerpo `producir $yf_N`.
+Reusa toda la maquinaria de iteración y generadores ya existente
+(`OP_ITER_INICIAR`/`OP_ITER_SIGUIENTE` ya despachan sobre
+`VAL_GENERADOR` desde v1.31).
+
+### Tests añadidos
+
+- `test_bytecode_generadores.c`: `test_producir_desde_subgenerador`,
+  `test_producir_desde_lista`, `test_producir_desde_anidado` (dos
+  niveles de delegación).
+- `examples/56_generadores.cor`: caso 6 nuevo demostrando delegación
+  combinando sub-generadores e iterables literales.
+- **178/178 tests verde**.
+
 ## [1.32.0] — 2026-05-14 — Fix: comprehensions en bucles y top-level
 
 Release de pulido. Levanta las dos limitaciones documentadas de v1.30:

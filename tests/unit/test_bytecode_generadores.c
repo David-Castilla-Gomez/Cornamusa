@@ -219,6 +219,62 @@ static void test_producir_top_level(void) {
     }
 }
 
+/* ───── v1.33: producir desde (yield from) ───── */
+
+static void test_producir_desde_subgenerador(void) {
+    verificar_var("producir desde otro generador",
+        "funcion sub():\n"
+        "  producir 1\n"
+        "  producir 2\n"
+        "fin funcion\n"
+        "funcion principal():\n"
+        "  producir 0\n"
+        "  producir desde sub()\n"
+        "  producir 3\n"
+        "fin funcion\n"
+        "ls = []\n"
+        "para v en principal():\n"
+        "  agregar(ls, v)\n"
+        "fin para\n"
+        "x = ls",
+        "x", "[0, 1, 2, 3]");
+}
+
+static void test_producir_desde_lista(void) {
+    verificar_var("producir desde lista directa",
+        "funcion g():\n"
+        "  producir desde [10, 20, 30]\n"
+        "fin funcion\n"
+        "ls = []\n"
+        "para v en g():\n"
+        "  agregar(ls, v)\n"
+        "fin para\n"
+        "x = ls",
+        "x", "[10, 20, 30]");
+}
+
+static void test_producir_desde_anidado(void) {
+    verificar_var("producir desde anidado dos niveles",
+        "funcion hojas():\n"
+        "  producir 1\n"
+        "  producir 2\n"
+        "fin funcion\n"
+        "funcion rama():\n"
+        "  producir desde hojas()\n"
+        "  producir 3\n"
+        "fin funcion\n"
+        "funcion raiz():\n"
+        "  producir desde rama()\n"
+        "  producir 4\n"
+        "fin funcion\n"
+        "total = 0\n"
+        "para v en raiz():\n"
+        "  total = total + v\n"
+        "fin para\n"
+        "x = total",
+        "x", "10");
+}
+
 int main(void) {
     test_llamar_devuelve_generador();
     test_iterar_simple();
@@ -228,6 +284,9 @@ int main(void) {
     test_agotado();
     test_vacio();
     test_producir_top_level();
+    test_producir_desde_subgenerador();
+    test_producir_desde_lista();
+    test_producir_desde_anidado();
 
     if (fallos == 0) {
         printf("generadores: todos los tests pasan\n");
