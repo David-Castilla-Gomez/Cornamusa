@@ -6,6 +6,71 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.38.0] — 2026-05-14 — Traceback multi-frame
+
+Cuando un error de runtime fatal ocurre dentro de funciones
+anidadas, Cornamusa ahora imprime la **cadena de llamadas** completa
+— igual que el "Traceback" de Python.
+
+### Ejemplo
+
+```cornamusa
+funcion nivel_c(x):
+    retornar x + indefinido    # ← error aquí
+fin funcion
+funcion nivel_b(x):
+    retornar nivel_c(x * 2)
+fin funcion
+funcion nivel_a():
+    retornar nivel_b(10)
+fin funcion
+nivel_a()
+```
+
+Salida:
+
+```
+ErrorDeNombre en script.cor:2:0
+    retornar x + indefinido
+    ^
+nombre 'indefinido' no esta definido
+traza (mas reciente al final):
+  linea 13, en <programa>
+  linea 10, en nivel_a
+  linea 6, en nivel_b
+  linea 2, en nivel_c
+```
+
+Cada línea de la traza muestra **dónde estaba la ejecución** en ese
+frame: en el frame que falló, la línea del error; en los padres, la
+línea de la llamada que descendió.
+
+### Implementación
+
+`VM` gana un buffer `char traceback[1024]`. Cuando `vm_ejecutar`
+recibe `VM_ERROR_RUNTIME` del dispatch, llama `vm_capturar_traceback`
+— los `CallFrame` siguen en pila (un `return VM_ERROR_RUNTIME` no los
+desenrolla), así que itera `vm->frames[0..n_frames-1]` y formatea
+una línea por frame con `linea_actual_frame` + el nombre del closure.
+
+`main.c` imprime el traceback tras el mensaje de error si no está
+vacío.
+
+### Cuándo NO hay traceback
+
+- **Error en top-level** (un solo frame): la línea del mensaje basta,
+  el traceback sería redundante.
+- **Error atrapado** con `intentar/atrapar`: no es fatal, nunca llega
+  a `vm_ejecutar` como `VM_ERROR_RUNTIME`.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_traceback.c` — 4 tests: traza de tres
+  niveles (verifica cada frame presente), traza de un nivel
+  (encabezado + función + `<programa>`), error de top-level sin
+  traceback, error atrapado sin traceback.
+- **183/183 tests verde**.
+
 ## [1.37.0] — 2026-05-14 — Errores de runtime con contexto de fuente
 
 Los errores en tiempo de ejecución ahora muestran la **línea de

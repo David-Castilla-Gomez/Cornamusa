@@ -256,6 +256,11 @@ static int ejecutar_archivo_bytecode(const char *ruta) {
     int rc = 0;
     if (rc_vm != VM_OK) {
         imprimir_error_runtime(&vm.error, fc.fuente, ruta);
+        /* v1.38: traza de la cadena de llamadas, si el error ocurrió
+           dentro de una función anidada. */
+        if (vm.traceback[0] != '\0') {
+            fputs(vm.traceback, stderr);
+        }
         rc = 70;
     }
     valor_destruir(&resultado);

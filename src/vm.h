@@ -189,6 +189,11 @@ typedef struct {
     int frame_techo;
     bool modo_yield;
     Valor valor_yield_pendiente;
+
+    /* v1.38: traceback de la cadena de llamadas, capturado cuando un
+       error de runtime fatal sale del dispatch. Vacío ("") si no hay
+       error o el error es solo de top-level. */
+    char traceback[1024];
 } VM;
 
 /* Inicializa la VM. La pila empieza vacía, sin error. */

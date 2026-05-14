@@ -265,6 +265,8 @@ void vm_iniciar(VM *vm) {
     vm->frame_techo = 0;
     vm->modo_yield = false;
     vm->valor_yield_pendiente = valor_nulo();
+    /* v1.38: traceback. */
+    vm->traceback[0] = '\0';
     /*
      * Fase 7: inicializar el GC e instalarlo como memoria global
      * antes de crear el diccionario de globales (que ya pasa por
@@ -4638,9 +4640,54 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
 #undef VM_ERROR
 #undef RAISE_OR_DIE
 
+/*
+ * v1.38: captura la cadena de llamadas en `vm->traceback` cuando un
+ * error fatal sale del dispatch. Los frames aún están en pila (un
+ * `return VM_ERROR_RUNTIME` no los desenrolla), así que iteramos
+ * `vm->frames` del más reciente al más antiguo. Para cada frame:
+ *   - frame 0: "<programa>" (top-level).
+ *   - frame N: nombre de la función del closure.
+ * La línea es `linea_actual_frame`: en el frame que falló es la línea
+ * del error; en los padres, la línea del OP_LLAMAR que descendió.
+ *
+ * Solo escribe traceback si hay ≥ 2 frames (error dentro de una
+ * función) — para errores de top-level la línea del mensaje basta.
+ */
+static void vm_capturar_traceback(VM *vm) {
+    vm->traceback[0] = '\0';
+    if (vm->n_frames < 2) return;
+    size_t pos = 0;
+    int escrito = snprintf(vm->traceback + pos,
+        sizeof(vm->traceback) - pos, "traza (mas reciente al final):\n");
+    if (escrito > 0) pos += (size_t)escrito;
+    /* Recorremos del más antiguo (frame 0) al más reciente para que
+       el orden de lectura sea "como llegó aquí". */
+    for (int i = 0; i < vm->n_frames; i++) {
+        if (pos >= sizeof(vm->traceback) - 1) break;
+        const CallFrame *fr = &vm->frames[i];
+        int linea = linea_actual_frame(fr);
+        const char *nombre;
+        int nombre_len;
+        if (fr->closure && fr->closure->plantilla) {
+            nombre = fr->closure->plantilla->nombre;
+            nombre_len = fr->closure->plantilla->longitud_nombre;
+        } else {
+            nombre = "<programa>";
+            nombre_len = 10;
+        }
+        escrito = snprintf(vm->traceback + pos, sizeof(vm->traceback) - pos,
+            "  linea %d, en %.*s\n", linea, nombre_len, nombre);
+        if (escrito > 0) pos += (size_t)escrito;
+    }
+}
+
 ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
     vm->memoria.gc_habilitado = true;
+    vm->traceback[0] = '\0';
     ResultadoVM r = vm_ejecutar_dispatch(vm, chunk, resultado_out);
+    if (r == VM_ERROR_RUNTIME) {
+        vm_capturar_traceback(vm);
+    }
     vm->memoria.gc_habilitado = false;
     return r;
 }
