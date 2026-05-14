@@ -6,6 +6,57 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.37.0] — 2026-05-14 — Errores de runtime con contexto de fuente
+
+Los errores en tiempo de ejecución ahora muestran la **línea de
+código fuente** con un caret `^`, igual que los errores de sintaxis
+del parser. Antes solo se imprimía la cabecera y el mensaje.
+
+### Antes
+
+```
+ErrorDeNombre en script.cor:3:0
+nombre 'c' no esta definido
+```
+
+### Ahora
+
+```
+ErrorDeNombre en script.cor:3:0
+    b = c + a
+    ^
+nombre 'c' no esta definido
+```
+
+Funciona para todos los errores de runtime: `ErrorDeNombre`,
+`ErrorDeIndice`, `ErrorAritmetico`, `ErrorDeTipo`, `ErrorDeAtributo`...
+
+### Causa
+
+`error_imprimir` solo dibujaba el contexto cuando
+`columna_inicio > 0`. Los errores de runtime de la VM rastrean la
+**línea** pero no la columna exacta (`columna_inicio == 0`), así que
+el snippet nunca aparecía para ellos.
+
+### Fix
+
+[src/errores.c](src/errores.c): la condición pasa de
+`linea > 0 && columna_inicio > 0` a solo `linea > 0`. Cuando
+`columna_inicio == 0`, el caret apunta al **primer carácter
+no-blanco** de la línea — una aproximación visual razonable que da
+contexto sin pretender una precisión que la VM no tiene.
+
+Los errores de parser (que sí tienen columna precisa) no cambian:
+siguen mostrando el caret en la columna exacta con el span completo.
+
+### Tests añadidos
+
+- `tests/unit/test_errores_contexto.c` — 4 tests que capturan la
+  salida de `error_imprimir` vía `tmpfile`: caret con columna
+  precisa, caret sin columna (col 0 → primer no-blanco), caret tras
+  indentación, sin fuente (solo cabecera + mensaje, sin caret).
+- **182/182 tests verde**.
+
 ## [1.36.0] — 2026-05-14 — Sugerencias en atributos
 
 Extiende las sugerencias "¿quisiste decir...?" de v1.35 a los

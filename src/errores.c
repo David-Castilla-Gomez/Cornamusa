@@ -80,17 +80,34 @@ void error_imprimir(const Error *e, const char *fuente,
         fprintf(salida, "%s en %s\n", e->categoria, archivo);
     }
 
-    /* Contexto de la línea con caret, si tenemos fuente y posición. */
-    if (fuente != NULL && e->linea > 0 && e->columna_inicio > 0) {
+    /* Contexto de la línea con caret, si tenemos fuente y línea.
+       v1.37: se muestra aunque `columna_inicio` sea 0 — los errores
+       de runtime de la VM no rastrean columnas precisas, solo líneas.
+       En ese caso el caret apunta al primer carácter no-blanco de la
+       línea como aproximación visual razonable. */
+    if (fuente != NULL && e->linea > 0) {
         int len_linea = 0;
         const char *linea = encontrar_linea(fuente, e->linea, &len_linea);
         if (linea != NULL) {
             fprintf(salida, "    %.*s\n", len_linea, linea);
 
-            /* Caret indicators: 4 espacios de margen + (columna-1) espacios + carets. */
+            /* Caret: 4 espacios de margen + offset + carets. */
             fputs("    ", salida);
-            for (int i = 0; i < e->columna_inicio - 1; i++) fputc(' ', salida);
-            int n_carets = longitud_span > 0 ? longitud_span : 1;
+            int offset;
+            int n_carets;
+            if (e->columna_inicio > 0) {
+                offset = e->columna_inicio - 1;
+                n_carets = longitud_span > 0 ? longitud_span : 1;
+            } else {
+                /* Sin columna precisa: apuntar al inicio del contenido. */
+                offset = 0;
+                while (offset < len_linea
+                       && (linea[offset] == ' ' || linea[offset] == '\t')) {
+                    offset++;
+                }
+                n_carets = 1;
+            }
+            for (int i = 0; i < offset; i++) fputc(' ', salida);
             for (int i = 0; i < n_carets; i++) fputc('^', salida);
             fputc('\n', salida);
         }
