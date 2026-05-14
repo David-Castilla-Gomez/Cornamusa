@@ -1,0 +1,94 @@
+# Ejemplo 54 — Stdlib `red` (v1.29)
+#
+# Cliente HTTP/1.1 plano. Sin TLS (HTTPS aplazado), sin redirecciones
+# automáticas, sin keep-alive. Cubre el caso del 80%: APIs internas,
+# health-checks, scraping simple en LAN.
+#
+# Este ejemplo hace requests reales a httpbin.org. Requiere conexión
+# saliente a puerto 80.
+
+importar red
+
+# Helper local porque regex.contiene cargaría otro módulo
+funcion regex_contiene_simple(texto, subcad):
+    n = longitud(texto)
+    m = longitud(subcad)
+    si m == 0:
+        retornar verdadero
+    fin si
+    si m > n:
+        retornar falso
+    fin si
+    i = 0
+    mientras i <= n - m:
+        si texto[i:i + m] == subcad:
+            retornar verdadero
+        fin si
+        i = i + 1
+    fin mientras
+    retornar falso
+fin funcion
+
+imprimir("=== stdlib red (v1.29) ===")
+imprimir("")
+
+# ─── Caso 1: GET simple ───
+imprimir("1) GET http://httpbin.org/get")
+r = red.obtener("http://httpbin.org/get")
+imprimir("  codigo:", r["codigo"])
+imprimir("  longitud cuerpo:", longitud(r["cuerpo"]))
+imprimir("")
+
+# ─── Caso 2: parsear cabeceras ───
+imprimir("2) parsear cabeceras")
+cabs = red.parsear_cabeceras(r["cabeceras"])
+imprimir("  Content-Type:", cabs["Content-Type"])
+imprimir("  Server:      ", cabs["Server"])
+imprimir("")
+
+# ─── Caso 3: status 404 ───
+imprimir("3) status 404 (no lanza error)")
+r404 = red.obtener("http://httpbin.org/status/404")
+imprimir("  codigo:", r404["codigo"])
+imprimir("")
+
+# ─── Caso 4: timeout config ───
+imprimir("4) timeout configurable")
+r = red.obtener("http://httpbin.org/get", nulo, 5)
+imprimir("  codigo con timeout 5s:", r["codigo"])
+imprimir("")
+
+# ─── Caso 5: cabeceras extra ───
+imprimir("5) cabeceras extra")
+r = red.obtener(
+    "http://httpbin.org/headers",
+    "X-Cornamusa-Version: 1.29\r\nAccept-Language: es\r\n")
+imprimir("  codigo:", r["codigo"])
+# El cuerpo debe contener las cabeceras que enviamos (httpbin las devuelve)
+si regex_contiene_simple(r["cuerpo"], "X-Cornamusa-Version"):
+    imprimir("  → httpbin recibió X-Cornamusa-Version")
+fin si
+imprimir("")
+
+# ─── Caso 6: descargar_cuerpo (atajo) ───
+imprimir("6) descargar_cuerpo() atajo")
+texto = red.descargar_cuerpo("http://httpbin.org/uuid")
+imprimir("  cuerpo:", texto)
+imprimir("")
+
+# ─── Caso 7: errores ───
+imprimir("7) errores atrapables")
+intentar:
+    red.obtener("https://example.com/")
+atrapar ErrorDeSistema como e:
+    imprimir("  https no soportado →", cadena(e))
+fin intentar
+
+intentar:
+    red.descargar_cuerpo("http://httpbin.org/status/500")
+atrapar ErrorDeSistema como e:
+    imprimir("  HTTP 500 →", cadena(e))
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 54 ===")

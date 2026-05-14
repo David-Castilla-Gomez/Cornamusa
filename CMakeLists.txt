@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(cornamusa
-    VERSION 1.28.0
+    VERSION 1.29.0
     DESCRIPTION "Lenguaje de programación dinámico en castellano"
     LANGUAGES C
 )
@@ -79,6 +79,11 @@ add_executable(cornamusa ${CORNAMUSA_SOURCES})
 target_include_directories(cornamusa PRIVATE src)
 target_compile_definitions(cornamusa PRIVATE UTF8PROC_STATIC)
 target_link_libraries(cornamusa PRIVATE utf8proc tommath)
+
+# v1.29: stdlib `red` requiere WinSock2 en Windows.
+if(WIN32)
+    target_link_libraries(cornamusa PRIVATE ws2_32)
+endif()
 
 # ───── Tests ─────
 if(CORNAMUSA_BUILD_TESTS)

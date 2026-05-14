@@ -1,0 +1,99 @@
+# Cornamusa stdlib: red.cor
+#
+# Cliente HTTP/1.1 plano (sin TLS). Cubre HTTP GET sobre URLs
+# `http://host[:puerto]/path`. Cross-platform: WinSock2 + BSD sockets.
+#
+# Uso:
+#   importar red
+#
+#   r = red.obtener("http://httpbin.org/get")
+#   imprimir("código:", r["codigo"])
+#   imprimir("cuerpo:", r["cuerpo"])
+#
+# Limitaciones v1.29:
+#   - Solo HTTP plano (sin TLS / HTTPS).
+#   - Solo GET (POST/PUT/DELETE en v1.29.x).
+#   - Sin keep-alive (cada request abre conexión).
+#   - Sin redirecciones automáticas (3xx llega al caller).
+#   - Sin Transfer-Encoding chunked (asume Content-Length o EOF).
+#   - Tamaño máximo de respuesta: 16 MB.
+#   - Timeout default 10s, configurable.
+#
+# Para HTTPS, scraping moderno, sesiones autenticadas o anti-bots,
+# usa el fetch-toolkit externo (separate dependency).
+
+
+# GET sobre `url`. Retorna dict {codigo, cabeceras, cuerpo}.
+# `cabeceras_extra` es cadena con CRLFs ("Header: valor\r\n...") o nulo.
+# `timeout` en segundos (default 10).
+funcion obtener(url, cabeceras_extra=nulo, timeout=10):
+    retornar red_http_obtener(url, cabeceras_extra, timeout)
+fin funcion
+
+
+# Atajo: solo el cuerpo como cadena. Si codigo != 2xx, lanza
+# ErrorDeSistema.
+funcion descargar_cuerpo(url):
+    r = obtener(url)
+    cod = r["codigo"]
+    si cod < 200 o cod >= 300:
+        lanzar ErrorDeSistema(
+            "HTTP " + cadena(cod) + " al GET " + url)
+    fin si
+    retornar r["cuerpo"]
+fin funcion
+
+
+# Parsea las cabeceras de una respuesta en un diccionario
+# {nombre_lowercase: valor}. Es útil cuando vienen como cadena cruda.
+funcion parsear_cabeceras(cab_raw):
+    resultado = {}
+    actual = ""
+    i = 0
+    n = longitud(cab_raw)
+    lineas = []
+    mientras i < n:
+        c = cab_raw[i]
+        si c == "\n":
+            # eliminar \r final si existe
+            si longitud(actual) > 0 y actual[longitud(actual) - 1] == "\r":
+                actual = actual[0:longitud(actual) - 1]
+            fin si
+            si longitud(actual) > 0:
+                agregar(lineas, actual)
+            fin si
+            actual = ""
+        sino:
+            actual = actual + c
+        fin si
+        i = i + 1
+    fin mientras
+    si longitud(actual) > 0:
+        agregar(lineas, actual)
+    fin si
+    # Parsear cada linea "Nombre: valor"
+    para linea en lineas:
+        idx_dp = -1
+        j = 0
+        nl = longitud(linea)
+        mientras j < nl:
+            si linea[j] == ":":
+                idx_dp = j
+                j = nl  # break
+            fin si
+            j = j + 1
+        fin mientras
+        si idx_dp > 0:
+            nombre = linea[0:idx_dp]
+            valor = linea[idx_dp + 1:nl]
+            # trim espacios del valor
+            inicio_v = 0
+            mientras inicio_v < longitud(valor) y valor[inicio_v] == " ":
+                inicio_v = inicio_v + 1
+            fin mientras
+            valor = valor[inicio_v:longitud(valor)]
+            resultado[nombre] = valor
+        fin si
+    fin para
+    retornar resultado
+fin funcion

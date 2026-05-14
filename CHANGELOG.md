@@ -6,6 +6,134 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.29.0] — 2026-05-14 — Stdlib `red` (cliente HTTP/1.1)
+
+Cierra **Fase 2 — stdlib esencial**. Cliente HTTP/1.1 plano (sin TLS)
+cross-platform: WinSock2 en Windows, BSD sockets en POSIX. Cubre
+GET sobre URLs `http://host[:puerto]/path`. Cubre el 80% de casos:
+APIs internas, health-checks, scraping simple en LAN.
+
+### API del módulo `red`
+
+```cornamusa
+importar red
+
+# GET básico
+r = red.obtener("http://httpbin.org/get")
+imprimir(r["codigo"])      # 200
+imprimir(r["cabeceras"])   # "Content-Type: application/json\r\n..."
+imprimir(r["cuerpo"])      # cuerpo de la respuesta
+
+# Con cabeceras extra y timeout
+r = red.obtener("http://api.local/datos",
+                "X-Token: secreto\r\nAccept: text/csv\r\n",
+                timeout=5)
+
+# Atajo: solo cuerpo, lanza ErrorDeSistema si codigo != 2xx
+texto = red.descargar_cuerpo("http://httpbin.org/uuid")
+
+# Parsear cabeceras a dict
+cabs = red.parsear_cabeceras(r["cabeceras"])
+imprimir(cabs["Content-Type"])
+```
+
+### Sintaxis de URL
+
+```
+http://host[:puerto][/path]
+```
+
+- **Scheme**: solo `http://`. `https://` rechazado con
+  `ErrorDeSistema: URL debe empezar con 'http://'`.
+- **Host**: nombre o IPv4 literal. Resolución DNS via `getaddrinfo`.
+- **Puerto**: opcional, default 80.
+- **Path**: opcional, default `/`.
+
+### Built-in primitivo
+
+`nativos.c` añade:
+
+```c
+red_http_obtener(url, cabeceras_extra=nulo, timeout=10) →
+    {"codigo": int, "cabeceras": str, "cuerpo": str}
+```
+
+- `cabeceras_extra`: cadena con CRLFs (`"Nombre: valor\r\n..."`),
+  añadidas al request además de las obligatorias.
+- `timeout` en segundos, default 10.
+
+### Implementación cross-platform
+
+[src/red.c](src/red.c) — ~320 líneas C:
+
+**Windows (WinSock2)**:
+- `WSAStartup` lazy.
+- `socket` + `connect` + `setsockopt(SO_RCVTIMEO/SO_SNDTIMEO)`.
+- `send`/`recv` en bucle.
+- Linker: `target_link_libraries(cornamusa PRIVATE ws2_32)`.
+
+**POSIX (BSD sockets)**:
+- `socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)`.
+- `getaddrinfo` para DNS.
+- `setsockopt(SO_RCVTIMEO/SO_SNDTIMEO)` con `struct timeval`.
+
+### Parseo de respuesta
+
+- Status line: `HTTP/1.x <CODE> <reason>\r\n` → extrae codigo.
+- Cabeceras: hasta `\r\n\r\n` (o `\n\n` LF only) → cadena cruda.
+- Body: lo restante. Tope 16 MB.
+
+`parsear_cabeceras(raw)` en `stdlib/red.cor` convierte la cadena
+cruda en dict `{nombre: valor}` con trim de espacios.
+
+### Errores atrapables
+
+- `ErrorDeSistema: URL debe empezar con 'http://'` — scheme no soportado.
+- `ErrorDeSistema: getaddrinfo('host') fallo` — DNS o host inexistente.
+- `ErrorDeSistema: connect(...) fallo` — conexión rechazada/timeout.
+- `ErrorDeSistema: respuesta no es HTTP` — servidor habla HTTP/0.9 u
+  otro protocolo.
+- `ErrorDeSistema: HTTP 500 al GET <url>` — `descargar_cuerpo()` con
+  status != 2xx.
+
+### Limitaciones (v1.29)
+
+- **Solo GET** — POST/PUT/DELETE en v1.29.x.
+- **Solo HTTP plano** — HTTPS aplazado (requiere libtls/OpenSSL).
+- **Sin redirecciones** automáticas — 3xx llega al caller.
+- **Sin keep-alive** — cada request nueva conexión + DNS.
+- **Sin Transfer-Encoding: chunked** — asume Content-Length o EOF.
+- **Sin compresión** (gzip).
+- **Respuesta máxima 16 MB**.
+
+Para HTTPS, scraping moderno, sesiones autenticadas o anti-bots,
+usar fetch-toolkit externo (separate dependency).
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_red.c` — 6 tests de validación de
+  argumentos y manejo de errores **sin red** (URLs malformadas,
+  HTTPS rechazado, DNS fallo, timeout inválido).
+- `bc_run_54_red` — ejemplo `examples/54_red.cor` haciendo requests
+  reales a `httpbin.org`. **NO se ejecuta por defecto** (requiere
+  internet); activar con `cmake -DCORNAMUSA_TEST_RED=ON ..`.
+- **172/172 tests verde** (los 6 unitarios cuentan; el bc_run_54 es
+  opt-in).
+
+### Estado de Fase 2
+
+Con v1.29 se cierra la **Fase 2 — stdlib esencial**:
+
+| Versión | Módulo | Estado |
+|---|---|---|
+| v1.26 | `azar` (PRNG xoshiro256\*\*) | ✅ |
+| v1.27 | `proceso` (procesos externos cross-platform) | ✅ |
+| v1.28 | `regex` (motor backtracking propio) | ✅ |
+| v1.29 | `red` (HTTP/1.1 plano cross-platform) | ✅ |
+
+**Cornamusa tiene una stdlib útil para scripting real**. Siguiente:
+**Fase 3 — generadores y comprehensions** (v1.30+).
+
 ## [1.28.0] — 2026-05-13 — Stdlib `regex` + fix destructuring en función
 
 Tercer módulo de **Fase 2 — stdlib esencial**. Motor de expresiones

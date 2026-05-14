@@ -2760,6 +2760,80 @@ static Valor nativa_proceso_ejecutar(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Red (v1.29) — HTTP cliente plano. El módulo `red.cor` envuelve.
+ * ────────────────────────────────────────────────────────────────── */
+
+#include "red.h"
+
+static Valor nativa_red_http_obtener(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args < 1 || n_args > 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: red_http_obtener(url, [cabeceras_extra], [timeout]) requiere 1-3 args");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: url debe ser cadena");
+    }
+    /* Duplicar URL para NUL-terminate. */
+    int ulen = args[0].como.cadena.longitud;
+    char *url = (char *)malloc((size_t)ulen + 1);
+    if (!url) return error_nativa(err, linea, columna, "memoria insuficiente");
+    memcpy(url, args[0].como.cadena.texto, (size_t)ulen);
+    url[ulen] = '\0';
+
+    /* Cabeceras extra opcional (cadena con CRLFs). */
+    char *cabeceras = NULL;
+    if (n_args >= 2 && args[1].tipo == VAL_CADENA) {
+        int clen = args[1].como.cadena.longitud;
+        cabeceras = (char *)malloc((size_t)clen + 1);
+        if (!cabeceras) { free(url); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+        memcpy(cabeceras, args[1].como.cadena.texto, (size_t)clen);
+        cabeceras[clen] = '\0';
+    } else if (n_args >= 2 && args[1].tipo != VAL_NULO) {
+        free(url);
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cabeceras_extra debe ser cadena o nulo");
+    }
+    int timeout_seg = 10;
+    if (n_args >= 3) {
+        int64_t t;
+        if (!valor_entero_a_i64(&args[2], &t) || t <= 0 || t > 3600) {
+            free(url); free(cabeceras);
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: timeout debe ser entero positivo (segundos)");
+        }
+        timeout_seg = (int)t;
+    }
+
+    RedHttpResultado r;
+    int rc = red_http_obtener_c(url, cabeceras, timeout_seg, &r);
+    free(url); free(cabeceras);
+    if (rc != 0) {
+        Valor v_err = error_nativa(err, linea, columna,
+            "ErrorDeSistema: %s", r.mensaje_error);
+        free(r.cuerpo); free(r.cabeceras_raw);
+        return v_err;
+    }
+
+    /* Dict {codigo, cabeceras, cuerpo}. */
+    Diccionario *d = dicc_nuevo();
+    if (!d) {
+        free(r.cuerpo); free(r.cabeceras_raw);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    dicc_asignar(d, valor_cadena_duplicar("codigo", 6),
+                    valor_entero_de_i64((int64_t)r.codigo));
+    dicc_asignar(d, valor_cadena_duplicar("cabeceras", 9),
+                    valor_cadena_duplicar(r.cabeceras_raw ? r.cabeceras_raw : "",
+                                            r.cabeceras_len));
+    dicc_asignar(d, valor_cadena_duplicar("cuerpo", 6),
+                    valor_cadena_duplicar(r.cuerpo ? r.cuerpo : "", r.cuerpo_len));
+    free(r.cuerpo); free(r.cabeceras_raw);
+    return valor_diccionario(d);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Regex (v1.28) — motor en src/regex.c. El módulo `regex.cor` envuelve.
  * ────────────────────────────────────────────────────────────────── */
 
@@ -3106,6 +3180,8 @@ static const EntradaNativa NATIVAS[] = {
     {"regex_buscar",        12, nativa_regex_buscar},
     {"regex_todos",         11, nativa_regex_todos},
     {"regex_reemplazar",    16, nativa_regex_reemplazar},
+    /* Red (v1.29). */
+    {"red_http_obtener",    16, nativa_red_http_obtener},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

@@ -17,6 +17,9 @@ foreach(test_src ${TEST_SOURCES})
     )
     target_compile_definitions(${test_name} PRIVATE UTF8PROC_STATIC)
     target_link_libraries(${test_name} PRIVATE utf8proc tommath)
+    if(WIN32)
+        target_link_libraries(${test_name} PRIVATE ws2_32)
+    endif()
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
@@ -531,6 +534,23 @@ set_tests_properties(bc_run_53_regex PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "fin ejemplo 53"
 )
+
+# v1.29: stdlib `red`. NO se ejecuta por defecto porque requiere
+# conexión a internet (puerto 80 saliente a httpbin.org). Activar con
+# `cmake -DCORNAMUSA_TEST_RED=ON ..` o pasando -L con la etiqueta.
+option(CORNAMUSA_TEST_RED "Ejecutar tests de red que requieren internet" OFF)
+if(CORNAMUSA_TEST_RED)
+    add_test(
+        NAME bc_run_54_red
+        COMMAND $<TARGET_FILE:cornamusa> --bytecode
+                ${CMAKE_SOURCE_DIR}/examples/54_red.cor
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+    )
+    set_tests_properties(bc_run_54_red PROPERTIES
+        LABELS "integracion;red"
+        PASS_REGULAR_EXPRESSION "fin ejemplo 54"
+    )
+endif()
 
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(

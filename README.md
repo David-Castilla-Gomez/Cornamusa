@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.28.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.29.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -127,7 +127,8 @@ Hoja de ruta resumida:
 | **v1.26** | **Stdlib `azar` (PRNG xoshiro256**, elegir/barajar/muestra) + fix OP_LANZAR globals** | ✅ |
 | **v1.27** | **Stdlib `proceso` (lanzar procesos externos, capturar stdout/stderr/exit, cross-platform)** | ✅ |
 | **v1.28** | **Stdlib `regex` (motor backtracking propio, validación/búsqueda/reemplazo) + fix destructuring en función** | ✅ |
-| v1.29+ | stdlib `red`, generadores (`producir`), comprehensions | ⏳ |
+| **v1.29** | **Stdlib `red` (cliente HTTP/1.1 plano, cross-platform WinSock2/POSIX)** | ✅ |
+| v1.30+ | generadores (`producir`), comprehensions | ⏳ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
