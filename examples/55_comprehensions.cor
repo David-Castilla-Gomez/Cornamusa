@@ -5,8 +5,8 @@
 #   - Dict: {k: v para v en iter [si guarda]}
 #   - Set:  {expr para v en iter [si guarda]}
 #
-# v1.30 acotada: solo dentro de funciones, un solo `para...en...`, una
-# guarda. Sin generators inline (`(...)`) — eso requiere v1.31.
+# Desde v1.32: funcionan a top-level y dentro de bucles. Un solo
+# `para...en...` y una guarda. Sin generators inline `(...)` — v1.33+.
 
 funcion ejemplos():
     imprimir("=== comprehensions (v1.30) ===")
@@ -57,19 +57,16 @@ funcion ejemplos():
     imprimir("  digitos:", digitos)
     imprimir("")
 
-    # ─── Caso 6: comprehension dentro de bucle (limitación v1.30) ───
-    # NOTA: las comprehensions dentro de bucles tienen un bug conocido
-    # con slots compartidos. Workaround: extraer a una función auxiliar.
-    funcion es_primo(n):
-        si n < 2:
-            retornar falso
-        fin si
+    # ─── Caso 6: comprehension dentro de bucle (v1.32: ya funciona) ───
+    imprimir("6) comprehension dentro de un bucle")
+    primos = []
+    para n en rango(2, 30):
         divisores = [d para d en rango(2, n) si n % d == 0]
-        retornar longitud(divisores) == 0
-    fin funcion
-    imprimir("6) comprehensions desde funcion (workaround para v1.30)")
-    primos = [n para n en rango(20) si es_primo(n)]
-    imprimir("  primos < 20:", primos)
+        si longitud(divisores) == 0:
+            agregar(primos, n)
+        fin si
+    fin para
+    imprimir("  primos < 30:", primos)
     imprimir("")
 
     imprimir("=== fin ejemplo 55 ===")

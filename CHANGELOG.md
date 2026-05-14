@@ -6,6 +6,82 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.32.0] — 2026-05-14 — Fix: comprehensions en bucles y top-level
+
+Release de pulido. Levanta las dos limitaciones documentadas de v1.30:
+las comprehensions ahora funcionan **dentro de bucles** y **a
+top-level**, sin workarounds.
+
+### Antes (v1.30/v1.31)
+
+```cornamusa
+# ❌ Fallaba: "OP_ITER_SIGUIENTE sin iterador en slot N"
+funcion f():
+    para n en [1, 2, 3]:
+        sub = [x + n para x en [10, 20]]   # comprehension en bucle
+    fin para
+fin funcion
+
+# ❌ Rechazado en compilación
+x = [n * 2 para n en [1, 2, 3]]            # comprehension top-level
+```
+
+### Ahora (v1.32)
+
+```cornamusa
+# ✅ Funciona
+funcion primos(lim):
+    ps = []
+    para n en rango(2, lim):
+        divs = [d para d en rango(2, n) si n % d == 0]
+        si longitud(divs) == 0:
+            agregar(ps, n)
+        fin si
+    fin para
+    retornar ps
+fin funcion
+primos(30)  # [2, 3, 5, 7, 11, 13, 17, 19, 23, 29]
+
+# ✅ Funciona
+x = [n * 2 para n en [1, 2, 3]]   # [2, 4, 6]
+```
+
+### Causa raíz
+
+El bug v0.11.5b "pre-reservar locales del cuerpo del `para`" colocaba
+los `OP_NULO` de pre-reserva **dentro** del cuerpo del loop (entre
+`inicio_loop` y `emitir_bucle`). Cada iteración los re-ejecutaba,
+empujando un valor que nunca se compensaba → **el stack crecía +1 por
+vuelta**.
+
+Para variables simples era inocuo (el slot fijo se sigue leyendo bien
+aunque haya basura encima). Pero rompía cualquier cosa que dependa de
+`tope == n_locales`: una comprehension anidada hacía `OP_ITER_INICIAR`
+sobre un stack desplazado, y su `$comp_iter` quedaba en un slot
+distinto del que `OP_ITER_SIGUIENTE` leía → `"OP_ITER_SIGUIENTE sin
+iterador en slot N"`.
+
+### Fix
+
+1. **`compilar_para`**: mover `pre_reservar_locales` ANTES de capturar
+   `inicio_loop`. Los `OP_NULO` se ejecutan una sola vez, fuera del
+   loop. (`compilar_mientras` ya lo hacía bien — solo `compilar_para`
+   tenía el orden invertido.)
+2. **`EXPR_COMPREHENSION`**: unificar el path de compilación para usar
+   `agregar_local` SIEMPRE (función y top-level), igual que
+   `compilar_para` hace con `$iter`. Esto elimina la rama especial de
+   top-level que rechazaba la comprehension.
+
+### Tests añadidos
+
+- `test_bytecode_comprehensions.c`: `test_toplevel_funciona` (antes
+  `test_toplevel_rechazado`, invertido), `test_comprehension_en_bucle`,
+  `test_comprehension_en_bucle_con_guarda` (primos).
+- `examples/55_comprehensions.cor`: el caso 6 ahora demuestra
+  comprehension dentro de un bucle directamente (antes usaba el
+  workaround de función auxiliar).
+- **178/178 tests verde**.
+
 ## [1.31.0] — 2026-05-14 — Generadores con `producir`
 
 Cierra **Fase 3 — generadores y comprehensions**. Una función que

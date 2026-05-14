@@ -208,19 +208,45 @@ static void test_set_con_guarda(void) {
         "x", "4");
 }
 
-/* ───── Tope-level rechazado ───── */
+/* ───── Tope-level: soportado desde v1.32 ───── */
 
-static void test_toplevel_rechazado(void) {
-    /* En tope-level debe dar error de compilación. */
-    const char *err = NULL;
-    const char *res = ejecutar(
+static void test_toplevel_funciona(void) {
+    /* v1.32: las comprehensions ya funcionan en top-level. */
+    verificar_var("comprehension top-level",
         "x = [n * 2 para n en [1, 2, 3]]",
-        "x", &err);
-    if (res != NULL) {
-        fprintf(stderr, "FALLO [tope-level]: esperaba error, obtuvo %s\n", res);
-        fallos++;
-    }
-    /* err contiene mensaje del compilador, no lo validamos exactamente. */
+        "x", "[2, 4, 6]");
+}
+
+/* ───── v1.32: comprehension dentro de bucle ───── */
+
+static void test_comprehension_en_bucle(void) {
+    verificar_var("comprehension dentro de para",
+        "funcion f():\n"
+        "  resultado = []\n"
+        "  para n en [1, 2, 3]:\n"
+        "    sub = [x + n para x en [10, 20]]\n"
+        "    agregar(resultado, sub)\n"
+        "  fin para\n"
+        "  retornar resultado\n"
+        "fin funcion\n"
+        "x = f()",
+        "x", "[[11, 21], [12, 22], [13, 23]]");
+}
+
+static void test_comprehension_en_bucle_con_guarda(void) {
+    verificar_var("primos via comprehension en bucle",
+        "funcion primos(lim):\n"
+        "  ps = []\n"
+        "  para n en rango(2, lim):\n"
+        "    divs = [d para d en rango(2, n) si n % d == 0]\n"
+        "    si longitud(divs) == 0:\n"
+        "      agregar(ps, n)\n"
+        "    fin si\n"
+        "  fin para\n"
+        "  retornar ps\n"
+        "fin funcion\n"
+        "x = primos(20)",
+        "x", "[2, 3, 5, 7, 11, 13, 17, 19]");
 }
 
 int main(void) {
@@ -236,7 +262,9 @@ int main(void) {
     test_set_basico();
     test_set_dedup();
     test_set_con_guarda();
-    test_toplevel_rechazado();
+    test_toplevel_funciona();
+    test_comprehension_en_bucle();
+    test_comprehension_en_bucle_con_guarda();
 
     if (fallos == 0) {
         printf("comprehensions: todos los tests pasan\n");

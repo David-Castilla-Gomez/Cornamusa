@@ -850,31 +850,32 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return true;
         }
         case EXPR_COMPREHENSION: {
-            /* v1.30: desugar a:
-                acumulador = []  (o {} para dict/set)
-                $iter = iter(iterable); OP_ITER_INICIAR
+            /* v1.30/v1.32: desugar a un bucle con acumulador. Usa
+               `agregar_local` SIEMPRE — funciona tanto en función como
+               en top-level (igual que `compilar_para` con `$iter`).
+                acumulador = []  (o {} / set)
+                $comp_iter = iter(iterable)
+                $comp_var = nulo
                 bucle:
                     OP_ITER_SIGUIENTE → si fin, salir
-                    var = valor del iter
-                    si guarda:
-                        eval guarda; OP_SALTAR_SI_FALSO continuar
-                    eval expr_elem (y expr_valor para dict)
-                    OP_LISTA_AGREGAR (o CONJUNTO_AGREGAR / DICC_AGREGAR_PAR)
-                fin bucle.
-               El acumulador queda en TOS al salir. Las variables `var`
-               y `$iter` se quedan como locales "muertos" después de la
-               comprehension (igual que en destructuring). */
+                    $comp_var = valor del iter
+                    si guarda: eval; OP_SALTAR_SI_FALSO continuar
+                    eval expr_elem (+ expr_valor para dict)
+                    OP_{LISTA,CONJUNTO}_AGREGAR / OP_DICC_AGREGAR_PAR
+                fin bucle
+               Al salir, deja el acumulador como TOS y libera los 3
+               slots temporales (n_locales -= 3). */
             int tipo_destino = e->como.comprehension.tipo_destino;
 
-            /* 1. Crear el acumulador y dejarlo en TOS. */
+            /* 1. Crear acumulador, dejarlo en TOS, reservar su slot. */
             switch (tipo_destino) {
-                case 0: /* lista */
+                case 0:
                     chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA, 0, e->linea);
                     break;
-                case 1: /* dict */
+                case 1:
                     chunk_emitir_byte2(c->actual->chunk, OP_BUILD_DICC, 0, e->linea);
                     break;
-                case 2: /* conjunto */
+                case 2:
                     chunk_emitir_byte2(c->actual->chunk, OP_BUILD_CONJUNTO, 0, e->linea);
                     break;
                 default:
@@ -882,75 +883,33 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         "tipo de comprehension desconocido");
                     return false;
             }
-            int slot_acc = -1;
-            if (c->actual->es_funcion) {
-                slot_acc = agregar_local(c, "$comp_acc", 9, e->linea);
-                if (slot_acc < 0) return false;
-            }
+            int slot_acc = agregar_local(c, "$comp_acc", 9, e->linea);
+            if (slot_acc < 0) return false;
 
-            /* 2. Eval iterable y OP_ITER_INICIAR. */
+            /* 2. Eval iterable + OP_ITER_INICIAR, reservar su slot. */
             if (!compilador_compilar_expr(c, e->como.comprehension.iterable)) return false;
             chunk_emitir_byte(c->actual->chunk, OP_ITER_INICIAR, e->linea);
-            int slot_iter = -1;
-            if (c->actual->es_funcion) {
-                slot_iter = agregar_local(c, "$comp_iter", 10, e->linea);
-                if (slot_iter < 0) return false;
-            }
+            int slot_iter = agregar_local(c, "$comp_iter", 10, e->linea);
+            if (slot_iter < 0) return false;
 
-            /* 3. Pre-reservar slot para `var` si estamos en función. */
-            int slot_var = -1;
-            if (c->actual->es_funcion) {
-                chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
-                slot_var = agregar_local(c, e->como.comprehension.nombre_var,
-                                              e->como.comprehension.longitud_var,
-                                              e->linea);
-                if (slot_var < 0) return false;
-            }
+            /* 3. Reservar slot para la variable de iteración con OP_NULO. */
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
+            int slot_var = agregar_local(c, e->como.comprehension.nombre_var,
+                                            e->como.comprehension.longitud_var,
+                                            e->linea);
+            if (slot_var < 0) return false;
 
             /* 4. Loop. */
             int inicio_loop = c->actual->chunk->cuenta;
-
-            /* En top-level, no tenemos slot_iter — usaríamos un global,
-               pero no hay manera limpia. Limitación: comprehensions
-               solo dentro de funciones (o pre-declarar como tope). Para
-               simplificar v1.30, las permito tope-level también pero
-               sin slot_iter (usar un nuevo opcode no es necesario:
-               cuando es_funcion=false, slot_iter aún apunta al primer
-               local del top-level). */
-            int iter_slot_uint;
-            if (c->actual->es_funcion) {
-                iter_slot_uint = slot_iter;
-            } else {
-                /* En top-level, agregar_local sigue funcionando como
-                   slot lógico aunque no haya scope formal. El tope del
-                   stack tras OP_ITER_INICIAR es nuestro iterador. */
-                slot_iter = agregar_local(c, "$comp_iter", 10, e->linea);
-                if (slot_iter < 0) return false;
-                iter_slot_uint = slot_iter;
-            }
-
             chunk_emitir_byte2(c->actual->chunk, OP_ITER_SIGUIENTE,
-                                (uint8_t)iter_slot_uint, e->linea);
+                                (uint8_t)slot_iter, e->linea);
             chunk_emitir_byte(c->actual->chunk, 0xff, e->linea);
             chunk_emitir_byte(c->actual->chunk, 0xff, e->linea);
             int offset_fin_placeholder = c->actual->chunk->cuenta - 2;
 
-            /* Asignar el valor producido a `var`. */
-            if (slot_var >= 0) {
-                chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
-                                    (uint8_t)slot_var, e->linea);
-            } else {
-                /* Top-level: definir global. */
-                int idx = agregar_nombre_global(c, e->como.comprehension.nombre_var,
-                                                   e->como.comprehension.longitud_var);
-                if (idx < 0 || idx > 255) {
-                    error_compilacion(c, e->linea, e->columna,
-                        "demasiados nombres globales");
-                    return false;
-                }
-                chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
-                                    (uint8_t)idx, e->linea);
-            }
+            /* Asignar el valor producido a la variable de iteración. */
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)slot_var, e->linea);
 
             /* Eval guarda si existe. */
             int salto_continuar = -1;
@@ -960,38 +919,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* bool true */
             }
 
-            /* Empujar acumulador para agregar al él. */
-            if (slot_acc >= 0) {
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                                    (uint8_t)slot_acc, e->linea);
-            } else {
-                /* Top-level: acumulador está en el stack desde el inicio
-                   (no se le asignó global). Necesitamos accederlo. La
-                   forma más simple: el acumulador está en una posición
-                   fija del stack porque cada iteración lo deja igual.
-                   Pero como OP_OBTENER_LOCAL solo va con slot, y a
-                   tope-level no hay slots formales, usamos OP_DUP del
-                   slot adecuado: el acumulador está en slot 0 (después
-                   de los demás transitorios). Mejor: trato igual en
-                   tope-level dándole un slot. */
-                /* En realidad ya hemos hecho agregar_local("$comp_acc",..)
-                   solo si es_funcion. En tope-level no, así que necesito
-                   simularlo. Para simplificar: cuando es tope-level,
-                   forzamos slot_acc=0 si nada lo tomó. Esto requeriría
-                   reordenar.
+            /* Empujar el acumulador para agregar al él. */
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_acc, e->linea);
 
-                   Para v1.30 voy con la solución más simple: rechazar
-                   comprehensions a tope-level. El usuario las puede
-                   poner dentro de una función o usar una asignación. */
-                error_compilacion(c, e->linea, e->columna,
-                    "comprehensions solo soportadas dentro de funciones en v1.30");
-                return false;
-            }
-
-            /* Eval expr_elem (y expr_valor para dict). */
+            /* Eval expr_elem (+ expr_valor para dict) y agregar. */
             if (tipo_destino == 1) {
-                /* dict: clave + valor. Stack: [..., acc, clave]. Necesitamos
-                   [..., acc, clave, valor] para OP_DICC_AGREGAR_PAR. */
                 if (!compilador_compilar_expr(c, e->como.comprehension.expr_elem)) return false;
                 if (!compilador_compilar_expr(c, e->como.comprehension.expr_valor)) return false;
                 chunk_emitir_byte(c->actual->chunk, OP_DICC_AGREGAR_PAR, e->linea);
@@ -1003,8 +936,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     chunk_emitir_byte(c->actual->chunk, OP_CONJUNTO_AGREGAR, e->linea);
                 }
             }
-            /* OP_LISTA_AGREGAR / CONJUNTO / DICC dejan el acumulador en TOS.
-               Como ya tenemos otra copia en slot_acc, lo descartamos. */
+            /* Los opcodes AGREGAR dejan el acumulador en TOS — descartar
+               esa copia (el original sigue en slot_acc). */
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
 
             /* Salta de vuelta al inicio. */
@@ -1022,37 +955,20 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             c->actual->chunk->codigo[offset_fin_placeholder] = (uint8_t)((offset_fin >> 8) & 0xff);
             c->actual->chunk->codigo[offset_fin_placeholder + 1] = (uint8_t)(offset_fin & 0xff);
 
-            /* Limpieza crítica: los slots $comp_acc / $comp_iter / var
-               son temporales — si la comprehension está dentro de un
-               bucle, deben liberarse o cada iteración acumula slots
-               muertos y el siguiente iter encuentra el slot del
-               iterador agotado de la pasada previa.
-
-               Estrategia:
+            /* Limpieza: dejar el acumulador como TOS y liberar los 3
+               slots temporales ($comp_acc, $comp_iter, $comp_var).
                  1. OP_OBTENER_LOCAL slot_acc — push acc al TOS.
-                 2. OP_ASIGNAR_LOCAL slot_acc — pop, sobrescribe slot_acc
-                    con sí mismo (sin cambio de valor). Tope -1.
-                 3. OP_DESCARTAR — pop var. Tope -1.
-                 4. OP_DESCARTAR — pop iter. Tope -1.
-                 5. Ahora el TOS es slot_acc (la lista), que el consumidor
-                    de la expresión pop normalmente.
-                 6. Decrementar n_locales en 3 para que el compilador
-                    sepa que estos slots están libres. */
-            if (c->actual->es_funcion) {
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                                    (uint8_t)slot_acc, e->linea);
-                chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
-                                    (uint8_t)slot_acc, e->linea);
-                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* var */
-                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* iter */
-                /* El TOS ahora es slot_acc (la lista). Decrementar para
-                   que el compilador trate estos slots como libres. */
-                c->actual->n_locales -= 3;
-            } else {
-                /* Top-level: rechazado más arriba; nunca llegamos aquí. */
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                                    (uint8_t)slot_acc, e->linea);
-            }
+                 2. OP_ASIGNAR_LOCAL slot_acc — pop, escribe slot_acc
+                    con sí mismo. Tope -1.
+                 3. OP_DESCARTAR x2 — descartar var, iter.
+                 4. El TOS queda en slot_acc (el acumulador). */
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_acc, e->linea);
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)slot_acc, e->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* var */
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* iter */
+            c->actual->n_locales -= 3;
             return true;
         }
         case EXPR_INDICE: {
@@ -3352,6 +3268,20 @@ static bool compilar_para(Compilador *c, const Sent *s) {
         }
     }
 
+    /* v1.32 fix: pre-reservar slots para nuevos locales del cuerpo del
+       `para` ANTES de capturar inicio_loop. El bug previo (v0.11.5b
+       puso pre_reservar DENTRO del loop): el OP_NULO de cada slot se
+       re-ejecutaba en cada iteración, creciendo el stack +1 por vuelta.
+       Tolerable para variables simples (slot fijo se sigue leyendo
+       bien aunque haya basura encima), pero ROMPÍA comprehensions o
+       bucles anidados que dependen de `tope == n_locales` (su
+       `$comp_iter` quedaba en slot equivocado → "OP_ITER_SIGUIENTE
+       sin iterador"). Emitirlos UNA vez antes del loop arregla ambos. */
+    if (c->actual->es_funcion) {
+        if (!pre_reservar_locales(c, s->como.para.cuerpo, s->linea))
+            return false;
+    }
+
     /* inicio_loop: aquí saltan `continuar` y el OP_BUCLE final. */
     int inicio_loop = c->actual->chunk->cuenta;
 
@@ -3380,14 +3310,7 @@ static bool compilar_para(Compilador *c, const Sent *s) {
 
     if (!empujar_bucle(c, inicio_loop, s->linea)) return false;
 
-    /* v0.11.5b fix: pre-reservar slots para nuevos locales del cuerpo
-       del `para`. Sin esto, asignar a un nuevo local en el cuerpo del
-       `para` haría crecer el stack en cada iteración (mismo bug que en
-       `mientras`). */
-    if (c->actual->es_funcion) {
-        if (!pre_reservar_locales(c, s->como.para.cuerpo, s->linea))
-            return false;
-    }
+    /* pre_reservar ya se hizo antes de inicio_loop (v1.32 fix). */
 
     if (!compilador_compilar_sent(c, s->como.para.cuerpo)) return false;
 
