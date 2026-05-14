@@ -6,6 +6,66 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.35.0] — 2026-05-14 — Mensajes de error con sugerencias
+
+Cuando un nombre global no existe, la VM busca el más parecido entre
+los globales definidos y lo sugiere — el clásico "¿quisiste decir...?".
+Primer paso de la línea de **tooling/usabilidad**.
+
+### Antes
+
+```
+ErrorDeNombre: nombre 'longutud' no esta definido
+```
+
+### Ahora
+
+```
+ErrorDeNombre: nombre 'longutud' no esta definido (¿quisiste decir 'longitud'?)
+```
+
+Funciona tanto para built-ins (`longitud`, `imprimir`, `rango`...)
+como para variables y funciones del usuario:
+
+```cornamusa
+mi_contador = 10
+imprimir(mi_contadr)
+# ErrorDeNombre: nombre 'mi_contadr' no esta definido
+#   (¿quisiste decir 'mi_contador'?)
+```
+
+### Implementación
+
+[src/vm.c](src/vm.c) añade dos helpers:
+
+- `distancia_levenshtein(a, b)` — distancia de edición clásica con
+  DP de dos filas. Tope de longitud 64 (nombres más largos no se
+  sugieren).
+- `sugerir_nombre_cercano(dicc, objetivo, ...)` — itera el diccionario
+  de globales buscando la clave con menor distancia. **Umbral
+  adaptativo**: 2 para nombres ≥ 4 caracteres, 1 para más cortos
+  (evita sugerencias absurdas con nombres de 1-2 letras). Salta
+  nombres internos (`$iter`, `$comp_acc`, ...).
+
+Se invoca en los dos sitios donde se produce `ErrorDeNombre`:
+`OP_OBTENER_GLOBAL` y `OP_ASIGNAR_GLOBAL`. Si no hay candidato dentro
+del umbral, el mensaje queda como antes (sin sugerencia espuria).
+
+### Limitaciones
+
+- Solo para **globales** (built-ins, funciones y variables
+  top-level). Los locales se resuelven en compile-time y rara vez
+  generan este error en runtime.
+- Una sola sugerencia (la más cercana), no una lista.
+
+### Tests añadidos
+
+- `tests/unit/test_bytecode_sugerencias.c` — 7 tests: typo en
+  built-in, typo en `imprimir`, typo en variable de usuario, typo en
+  nombre de función, sin sugerencia cuando nada se parece, error base
+  presente igual, no sugiere nombres internos (`$...`).
+- **179/179 tests verde**.
+
 ## [1.34.0] — 2026-05-14 — Generator expressions inline
 
 `(expr para v en iter [si guarda])` — el equivalente lazy de una

@@ -698,6 +698,73 @@ static ResultadoVM ejecutar_llamar_nativa(VM *vm, CallFrame **frame_inout,
     return VM_OK;
 }
 
+/*
+ * v1.35: distancia de edición de Levenshtein entre dos cadenas (bytes).
+ * Usada para sugerir "¿quisiste decir X?" en ErrorDeNombre. Tope de
+ * longitud 64 — nombres más largos no se sugieren (raro y la matriz
+ * crecería). Retorna un valor grande (>64) si alguna excede el tope.
+ */
+static int distancia_levenshtein(const char *a, int alen,
+                                   const char *b, int blen) {
+    if (alen > 64 || blen > 64) return 999;
+    int fila_prev[65];
+    int fila_act[65];
+    for (int j = 0; j <= blen; j++) fila_prev[j] = j;
+    for (int i = 1; i <= alen; i++) {
+        fila_act[0] = i;
+        for (int j = 1; j <= blen; j++) {
+            int costo = (a[i - 1] == b[j - 1]) ? 0 : 1;
+            int borrar = fila_prev[j] + 1;
+            int insertar = fila_act[j - 1] + 1;
+            int sustituir = fila_prev[j - 1] + costo;
+            int min = borrar < insertar ? borrar : insertar;
+            if (sustituir < min) min = sustituir;
+            fila_act[j] = min;
+        }
+        for (int j = 0; j <= blen; j++) fila_prev[j] = fila_act[j];
+    }
+    return fila_prev[blen];
+}
+
+/*
+ * v1.35: busca en un diccionario de nombres (globales) el más cercano
+ * a `objetivo` por distancia de Levenshtein. Si encuentra uno con
+ * distancia ≤ umbral, lo copia a `out` y retorna true. Umbral: 2 para
+ * nombres ≥ 4 chars, 1 para nombres más cortos (evita sugerencias
+ * absurdas con nombres de 1-2 letras).
+ */
+static bool sugerir_nombre_cercano(const Diccionario *d,
+                                     const char *objetivo, int obj_len,
+                                     char *out, size_t out_cap) {
+    if (!d || obj_len <= 0 || obj_len > 64) return false;
+    int umbral = obj_len >= 4 ? 2 : 1;
+    int mejor_dist = umbral + 1;
+    const char *mejor = NULL;
+    int mejor_len = 0;
+    for (int i = 0; i < d->capacidad; i++) {
+        const EntradaDicc *e = &d->entradas[i];
+        if (!e->ocupada || e->clave.tipo != VAL_CADENA) continue;
+        const char *cand = e->clave.como.cadena.texto;
+        int cand_len = e->clave.como.cadena.longitud;
+        if (cand_len <= 0 || cand_len > 64) continue;
+        /* Saltar nombres internos ($iter, $comp_acc, etc.). */
+        if (cand[0] == '$') continue;
+        int dist = distancia_levenshtein(objetivo, obj_len, cand, cand_len);
+        if (dist < mejor_dist) {
+            mejor_dist = dist;
+            mejor = cand;
+            mejor_len = cand_len;
+        }
+    }
+    if (mejor && mejor_dist <= umbral) {
+        int n = mejor_len < (int)out_cap - 1 ? mejor_len : (int)out_cap - 1;
+        memcpy(out, mejor, (size_t)n);
+        out[n] = '\0';
+        return true;
+    }
+    return false;
+}
+
 /* Helper interno para reportar error con printf-style desde un helper. */
 static void llamar_set_error(VM *vm, CallFrame *frame, const char *fmt, ...) {
     vm->error.tuvo_error = true;
@@ -2387,10 +2454,22 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 if (!dicc_obtener_y_slot(vm->globales, nombre, &v, &slot_idx)) {
                     vm->error.tuvo_error = true;
                     vm->error.linea = linea_actual_frame(frame);
-                    snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                        "ErrorDeNombre: nombre '%.*s' no esta definido",
-                        nombre->como.cadena.longitud,
-                        nombre->como.cadena.texto);
+                    char sug[80];
+                    if (sugerir_nombre_cercano(vm->globales,
+                            nombre->como.cadena.texto,
+                            nombre->como.cadena.longitud,
+                            sug, sizeof(sug))) {
+                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                            "ErrorDeNombre: nombre '%.*s' no esta definido "
+                            "(¿quisiste decir '%s'?)",
+                            nombre->como.cadena.longitud,
+                            nombre->como.cadena.texto, sug);
+                    } else {
+                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                            "ErrorDeNombre: nombre '%.*s' no esta definido",
+                            nombre->como.cadena.longitud,
+                            nombre->como.cadena.texto);
+                    }
                     return VM_ERROR_RUNTIME;
                 }
                 /*
@@ -2424,10 +2503,22 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 if (!dicc_contiene(vm->globales, nombre)) {
                     vm->error.tuvo_error = true;
                     vm->error.linea = linea_actual_frame(frame);
-                    snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                        "ErrorDeNombre: nombre '%.*s' no esta definido",
-                        nombre->como.cadena.longitud,
-                        nombre->como.cadena.texto);
+                    char sug[80];
+                    if (sugerir_nombre_cercano(vm->globales,
+                            nombre->como.cadena.texto,
+                            nombre->como.cadena.longitud,
+                            sug, sizeof(sug))) {
+                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                            "ErrorDeNombre: nombre '%.*s' no esta definido "
+                            "(¿quisiste decir '%s'?)",
+                            nombre->como.cadena.longitud,
+                            nombre->como.cadena.texto, sug);
+                    } else {
+                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                            "ErrorDeNombre: nombre '%.*s' no esta definido",
+                            nombre->como.cadena.longitud,
+                            nombre->como.cadena.texto);
+                    }
                     return VM_ERROR_RUNTIME;
                 }
                 Valor clave_clon = valor_clonar(nombre);
