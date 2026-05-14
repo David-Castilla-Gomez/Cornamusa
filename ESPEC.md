@@ -1,8 +1,8 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 0.11.4
-**Estado:** Estable (camino a v1.0).
-**Última revisión:** 2026-04-30 — actualizada tras [B9 small-int tagging](decisiones/B9-small-int-tagging.md) y [B10 scope de v1.0](decisiones/B10-scope-de-v1.md).
+**Versión del documento:** 1.40.0
+**Estado:** Estable.
+**Última revisión:** 2026-05-14 — actualizada a v1.40 (pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers, stdlib amplia).
 
 Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
 
@@ -78,9 +78,9 @@ Todas las palabras clave son **ASCII puro, sin tildes ni `ñ`, en minúscula** (
 | `super` | acceso a la superclase |
 | `importar` | importación de módulo |
 | `desde` | importación selectiva (`desde X importar Y`) |
-| `como` | renombrado en import o except |
-| `global` | declarar variable global |
-| `nolocal` | declarar variable no-local en closure |
+| `como` | renombrado en import, `atrapar` o patrón de `coincidir` |
+| `nolocal` | declarar variable no-local en closure (escritura a upvalue) |
+| `producir` | producir un valor desde un generador (`producir`, `producir desde`) |
 
 #### Manejo de excepciones
 | Keyword | Significado |
@@ -107,11 +107,14 @@ Todas las palabras clave son **ASCII puro, sin tildes ni `ñ`, en minúscula** (
 | `falso` | booleano falso |
 | `nulo` | ausencia de valor |
 
-#### Implementadas en versiones recientes
-`con` (v1.13, context managers), `coincidir`/`cuando` (v1.15, pattern matching).
+#### Control de bloques adicionales
+| Keyword | Significado |
+|---|---|
+| `con` | context manager (`con expr como x:`, v1.13) |
+| `coincidir` / `cuando` | pattern matching (v1.15) |
 
 #### Reservadas para futuro
-`producir`, `asincrono`, `esperar`, `borrar`.
+`global` (declarar global escribible — reservada, sin implementar en la VM), `asincrono`, `esperar` (async/await, v2.x), `borrar` (`del` de Python).
 
 ### 2.4 Operadores y puntuación
 
@@ -150,23 +153,24 @@ distancia = 1.496e11                  # notación científica
 gugol = 10 ** 100                     # entero de 101 dígitos, sin overflow
 ```
 
-**Formato castellano en E/S**: el módulo `formato` de la biblioteca estándar (Fase 9) ofrece:
+**Formato en E/S**: el módulo `formato` de la biblioteca estándar ofrece presentación numérica:
 
 ```cornamusa
-desde formato importar formatear, leer_numero
+importar formato
 
-imprimir(formatear(3.14, locale="es"))      # → "3,14"
-imprimir(formatear(1000000, locale="es"))   # → "1.000.000"
-n = leer_numero("3,14", locale="es")        # → 3.14
+imprimir(formato.con_decimales(3.14159, 2))           # → "3.14"
+imprimir(formato.numero_con_separador(1000000))       # → "1_000_000"
+imprimir(formato.porcentaje(0.215))                   # → "21.50%"
+imprimir(formato.como_hex(255))                       # → "0xff"
 ```
 
 #### Cadenas
 - Comilla simple: `'hola'`
 - Comilla doble: `"hola"`
 - Triple comilla (multilínea): `"""..."""` o `'''...'''`
-- Prefijo `f` (interpolación, **completo desde v1.1**): `f"hola, {nombre}, en {edad+10} anos"`. Cada `{expr}` se evalúa como expresión Cornamusa completa y se concatena con las partes literales. Llaves dobles `{{` y `}}` se preservan como llave literal. Anidación soportada (`f"{f'{x}'}"`). Triples (`f"""..."""`) reservadas para v1.2.
-- Prefijo `b` (bytes): `b"\x00\xff"` — **reservado para v1.x**, aún no implementado.
-- Prefijo `r` (raw, sin escapes): `r"C:\ruta"` — **reservado para v1.x**, aún no implementado.
+- Prefijo `f` (interpolación, **completo desde v1.1**): `f"hola, {nombre}, en {edad+10} anos"`. Cada `{expr}` se evalúa como expresión Cornamusa completa y se concatena con las partes literales. Llaves dobles `{{` y `}}` se preservan como llave literal. Anidación soportada (`f"{f'{x}'}"`). Triples f-cadenas (`f"""..."""`) soportadas desde v1.14.
+- Prefijo `b` (bytes): `b"\x00\xff"` — **reservado**, aún no implementado.
+- Prefijo `r` (raw, sin escapes): `r"C:\ruta"` — **reservado**, aún no implementado.
 
 **Secuencias de escape:** `\n`, `\t`, `\r`, `\\`, `\'`, `\"`, `\0`, `\xHH`, `\uHHHH`, `\u{HHHHHH}`.
 
@@ -276,14 +280,16 @@ fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
 | `booleano` | `verdadero` / `falso` | sí |
 | `nulo` | Único valor: `nulo` | sí |
 | `cadena` | Texto Unicode UTF-8 | sí |
-| `bytes` | Secuencia inmutable de bytes | sí |
 | `lista` | Secuencia mutable indexada | no |
 | `tupla` | Secuencia inmutable indexada | sí |
-| `diccionario` | Mapa hash mutable. **Orden de inserción NO preservado en v0.11.5** (`claves(d)` y `valores(d)` devuelven orden de tabla hash interna). Preservar el orden está reservado para v1.x. | no |
+| `diccionario` | Mapa hash mutable. **Preserva el orden de inserción** desde v1.20 (`claves(d)` y `valores(d)` siguen el orden en que se insertaron las claves). | no |
 | `conjunto` | Conjunto hash mutable | no |
-| `función` | Callable de primera clase | — |
+| `funcion` | Callable de primera clase (funciones, lambdas, nativas, métodos ligados) | — |
+| `generador` | Estado suspendible de una función con `producir`; iterable perezoso (v1.31) | — |
 | `clase` | Plantilla de objetos | — |
-| `instancia` | Objeto creado a partir de una clase | — |
+| `instancia` | Objeto creado a partir de una clase | instancia: no |
+
+> El tipo `bytes` (y los literales `b"..."`) está **reservado**, aún no implementado.
 
 ---
 
@@ -291,7 +297,7 @@ fin           # ✗ ErrorDeSintaxis: 'fin' requiere etiqueta ('fin si')
 
 ### 4.1 Funciones globales
 
-Esta es la lista **real** de built-ins disponibles en v1.1.0 (registrados en `src/nativos.c`).
+Esta es la lista **real** de built-ins disponibles (registrados en `src/nativos.c`).
 
 #### E/S y conversión
 | Cornamusa | Equivalente Python | Descripción |
@@ -334,7 +340,11 @@ Esta es la lista **real** de built-ins disponibles en v1.1.0 (registrados en `sr
 | `ErrorDeValor(mensaje)` | Valor de tipo correcto pero inválido (e.g. `factorial(-1)`). |
 | `ErrorDeIndice(mensaje)` | Índice fuera de rango. |
 | `ErrorDeClave(mensaje)` | Clave no presente en diccionario. |
-| `ErrorDeNombre(mensaje)` | Identificador no definido (lanzado automáticamente por la VM). |
+| `ErrorDeNombre(mensaje)` | Identificador no definido. |
+| `ErrorDeSistema(mensaje)` | Fallo del sistema operativo. |
+| `ErrorDeIO(mensaje)` | Fallo de entrada/salida. |
+
+`ErrorDeAtributo` (atributo/método inexistente en instancia o módulo) lo lanza la VM; es atrapable aunque no tenga constructor global.
 
 #### Sistema y memoria
 | Cornamusa | Descripción |
@@ -348,39 +358,20 @@ Esta es la lista **real** de built-ins disponibles en v1.1.0 (registrados en `sr
 |---|---|---|
 | `absoluto(n)` | `abs(n)` | Valor absoluto de entero (incluido bignum), decimal o booleano. |
 | `redondear(n)`, `redondear(n, k)` | `round(n)` (half-away-from-zero) | A entero (1 arg) o a decimal con `k` cifras (2 args). |
-| `instancia_de(obj, clase)` | `isinstance(obj, clase)` | Verdadero si `obj` es instancia de `clase` o subclase. Tipos primitivos siempre falso. |
+| `instancia_de(obj, clase)` | `isinstance(obj, clase)` | Verdadero si `obj` es instancia de `clase` (de usuario) o subclase. |
 | `subclase_de(A, B)` | `issubclass(A, B)` | Verdadero si A == B o A hereda de B. Reflexivo. |
 | `id(obj)` | `id(obj)` | Entero único de la identidad del objeto. |
 | `repr(obj)` | `repr(obj)` | Cadena con la representación literal (con comillas para cadenas). |
 
-### 4.2 Built-ins planeados (no en v1.1.0)
+#### Built-ins de bajo nivel (envueltos por la stdlib)
 
-**Implementados en v1.11**:
+Registrados como globales pero pensados para usarse a través del módulo de stdlib correspondiente (§4.4), que ofrece nombres legibles:
 
-- `absoluto`, `redondear`, `instancia_de`, `subclase_de`, `id`, `repr` —
-  built-ins globales en C. Ver §4.1.
-- `mapear`, `filtrar`, `reducir`, `enumerar`, `enumerar_desde`, `suma`,
-  `suma_desde`, `mínimo`/`minimo`, `máximo`/`maximo`, `cualquiera`,
-  `todos` — viven en el módulo importable `funcionales` (Cornamusa
-  puro). Ejemplo:
+`archivo_leer`, `archivo_escribir`, `archivo_existe`, `archivo_lineas`, `archivo_agregar` (→ módulo `archivos`); `json_parsear`, `json_serializar` (→ `json`); `tiempo_actual`, `tiempo_descomponer`, `tiempo_componer`, `tiempo_formato` (→ `fechas`); `azar_decimal`, `azar_entero`, `azar_semilla` (→ `azar`); `proceso_ejecutar` (→ `proceso`); `regex_coincide`, `regex_buscar`, `regex_todos`, `regex_reemplazar` (→ `regex`); `red_http_obtener` (→ `red`).
 
-  ```cornamusa
-  importar funcionales
-  total = funcionales.reducir(lambda a, x: a + x, [1, 2, 3], 0)
-  ```
+### 4.2 Identificadores reservados sin implementar
 
-**Aplazados a v1.13+** (requieren cambios al runtime o a la sintaxis):
-
-- `abrir(ruta, modo)` → context manager con `__entrar__`/`__salir__`
-  (planeado para v1.13 con keyword `con`).
-- `siguiente` → iteración lazy con dunder `__siguiente__`. **`__iterar__`
-  ya funciona en v1.12** (clases iterables con `para x en obj`); el
-  dunder debe retornar un iterable nativo. La iteración lazy con
-  `__siguiente__` se aplazó a una versión futura.
-- `resumen` → reservado, sin diseño cerrado.
-
-Hasta entonces, escribir `abrir(...)` o cualquier nombre aplazado da
-`ErrorDeNombre` igual que cualquier identificador no definido.
+`abrir(ruta, modo)` y `siguiente(it)` (iteración perezosa con `__siguiente__`) están reservados pero **no implementados**: invocarlos da `ErrorDeNombre` como cualquier identificador no definido. La iteración de clases se hace hoy con `__iterar__` (§4.3), que devuelve un iterable nativo. La I/O de archivos vive en el módulo `archivos`.
 
 ### 4.3 Métodos especiales (dunders)
 
@@ -449,73 +440,51 @@ Reglas:
 - Para `==`, `<`, etc. el resultado se interpreta según las reglas de truthiness §6.2 cuando se usa en `si`.
 - `==` y `!=` NO se auto-derivan: si defines solo `__igual__`, `obj != obj` cae al path de identidad por defecto.
 
-**Aplazados a v1.4+**: dunders de iteración (`__iterar__`, `__siguiente__`), `__hash__` y `__es_hashable__`.
-
 ```cornamusa
 clase Persona:
-    funcion __iniciar__(yo, nombre):       # ← este SÍ se invoca por Persona("Ana")
+    funcion __iniciar__(yo, nombre):       # invocado por Persona("Ana")
         yo.nombre = nombre
     fin funcion
 
-    funcion __sumar__(yo, otro):           # ← invocado por p1 + p2 (v1.2)
+    funcion __sumar__(yo, otro):           # invocado por p1 + p2
         retornar Persona(yo.nombre + otro.nombre)
+    fin funcion
+
+    funcion __cadena__(yo):                # invocado por imprimir(p), f"{p}"
+        retornar f"Persona({yo.nombre})"
     fin funcion
 fin clase
 ```
 
-Para v1.x se planea soporte de los siguientes dunders (la sintaxis se acepta hoy para forward-compatibility):
-
-- **Construcción/representación**: `__cadena__`, `__repr__`, `__booleano__`, `__finalizar__`.
-- **Comparaciones**: `__igual__`, `__distinto__`, `__menor__`, `__menor_igual__`, `__mayor__`, `__mayor_igual__`, `__resumen__`.
-- **Colecciones**: `__longitud__`, `__obtener__`, `__establecer__`, `__borrar__`, `__contiene__`, `__iterar__`, `__siguiente__`.
-- **Aritméticos**: `__sumar__`, `__restar__`, `__multiplicar__`, `__dividir__`, `__div_entera__`, `__modulo__`, `__potencia__`, `__negar__`, `__positivar__`, `__absoluto__`.
-- **Llamada/contexto**: `__llamar__`, `__entrar__`, `__salir__` (con `con` también planeado).
-- **Atributos dinámicos**: `__obtener_atributo__`, `__establecer_atributo__`, `__borrar_atributo__`.
+**Reservados, aún no invocados**: `__hash__` (haría las instancias usables como claves de dict/conjunto), `__repr__` (lo usaría `repr(obj)`) y `__booleano__` (definiría la verdadez de la instancia). La sintaxis se acepta hoy para forward-compatibility, pero el runtime todavía no los despacha — una instancia es siempre verdadera y no hashable.
 
 ### 4.4 Biblioteca estándar (stdlib)
 
-En v0.11.4 hay tres módulos importables. Los archivos viven en `stdlib/*.cor` y se cargan via `importar`:
+Doce módulos. Los archivos viven en `stdlib/*.cor` y se cargan vía `importar`. La lista completa de funciones de cada módulo está en la [referencia rápida](docs/referencia.md#16-biblioteca-estándar-stdlib); aquí solo el resumen:
 
-#### `matematicas`
-Constantes y funciones matemáticas escritas en Cornamusa puro.
+| Módulo | Contenido |
+|---|---|
+| `matematicas` | `PI`, `E`, `cuadrado`, `cubo`, `absoluto`, `maximo`, `minimo`, `signo`, `factorial`, `suma_rango`, `es_par`, `es_impar`, `mcd` |
+| `cadenas` | `repetir`, `unir`, `separar`, `reemplazar`, `recortar`(`_izquierda`/`_derecha`), `empieza_con`, `termina_con`, `contiene`, `indice_de`, `contar`, `caracter`, `mayusculas_ascii`, `minusculas_ascii`, `es_vacia` |
+| `funcionales` | `mapear`, `filtrar`, `reducir`, `enumerar`, `cualquiera`, `todos`, `suma`, `minimo`, `maximo` |
+| `formato` | `rellenar`, `alinear_derecha`, `centrar`, `con_decimales`, `numero_con_separador`, `porcentaje`, `como_hex`, `como_binario`, `linea`, `fila` |
+| `archivos` | `leer`, `escribir`, `agregar`, `lineas`, `existe` |
+| `json` | `parsear`, `serializar`, `serializar_indentado` |
+| `fechas` | `ahora`, `componentes`, `construir`, `formato`, `iso8601`, `legible`, aritmética de fechas, calendario; constantes `SEGUNDO`…`SEMANA` |
+| `azar` | `decimal`, `entero`, `semilla`, `elegir`, `barajar`, `muestra`, `booleano`, `uniforme` |
+| `proceso` | `ejecutar`, `capturar`, `codigo` — lanzar procesos externos (cross-platform) |
+| `regex` | `coincide`, `buscar`, `todos`, `reemplazar`, `contiene`, `extraer` — motor backtracking propio |
+| `red` | `obtener`, `descargar_cuerpo`, `parsear_cabeceras` — cliente HTTP/1.1 plano (sin TLS) |
+| `sistema` | `argv` — argumentos del programa |
 
 ```cornamusa
 importar matematicas
-imprimir(matematicas.PI)              # 3.141592653589793
-imprimir(matematicas.E)               # 2.718281828459045
-imprimir(matematicas.cuadrado(5))     # 25
-imprimir(matematicas.cubo(4))         # 64
-imprimir(matematicas.absoluto(-3))    # 3
-imprimir(matematicas.maximo(7, 2))    # 7
-imprimir(matematicas.minimo(7, 2))    # 2
-imprimir(matematicas.signo(-5))       # -1
 imprimir(matematicas.factorial(10))   # 3628800
-imprimir(matematicas.suma_rango(1, 11))   # 1+2+...+10 = 55
-imprimir(matematicas.es_par(4))       # verdadero
-imprimir(matematicas.es_impar(7))     # verdadero
-imprimir(matematicas.mcd(12, 18))     # 6
-```
 
-#### `cadenas`
-Operaciones sobre texto que requieren indexación UTF-8 (introducidas en v0.9.1).
+importar funcionales
+imprimir(funcionales.mapear(lambda x: x * x, [1, 2, 3]))   # [1, 4, 9]
 
-```cornamusa
-importar cadenas
-imprimir(cadenas.repetir("=", 20))                # "===================="
-imprimir(cadenas.empieza_con("hola.cor", "hola")) # verdadero
-imprimir(cadenas.termina_con("foo.txt", ".txt"))  # verdadero
-imprimir(cadenas.contar("aaabaa", "aa"))          # 2
-imprimir(cadenas.caracter("Cornamusa", 4))        # "a"
-```
-
-#### `sistema`
-Acceso a metadatos del proceso.
-
-```cornamusa
 importar sistema
-para arg en sistema.argv:
-    imprimir(arg)
-fin para
 si longitud(sistema.argv) < 2:
     imprimir("Uso: programa <archivo>")
     salir(1)
@@ -545,13 +514,14 @@ sent_compuesta ← sent_si
                 / sent_clase
                 / sent_intentar
                 / sent_con
+                / sent_coincidir
 
 sent_simple    ← sent_asignacion
                 / sent_expresion
                 / sent_retornar
                 / sent_lanzar
+                / sent_producir
                 / sent_importar
-                / sent_global
                 / sent_nolocal
                 / "romper"
                 / "continuar"
@@ -567,9 +537,11 @@ sent_mientras  ← "mientras" expr ":" cuerpo
                 ("sino" ":" cuerpo)?
                 "fin" "mientras"
 
-sent_para      ← "para" lista_objetivos "en" expr ":" cuerpo
+sent_para      ← "para" IDENT "en" expr ":" cuerpo
                 ("sino" ":" cuerpo)?
                 "fin" "para"
+# Nota: el destino de `para` es un único IDENT. Para desempaquetar
+# pares se destructura dentro del cuerpo (`clave, valor = par`).
 
 # ───── Funciones ─────
 sent_funcion   ← decoradores? ("función" / "funcion")
@@ -577,7 +549,9 @@ sent_funcion   ← decoradores? ("función" / "funcion")
                 "fin" ("función" / "funcion")
 
 parametros     ← parametro ("," parametro)*
-parametro      ← IDENT (":" expr)? ("=" expr)?
+parametro      ← "**" IDENT                 # **kwargs (recoge en dict)
+                / "*" IDENT                 # *args   (recoge en tupla)
+                / IDENT (":" expr)? ("=" expr)?   # fijo, anotación, default
 
 anot_retorno   ← "->" expr
 
@@ -585,6 +559,28 @@ anot_retorno   ← "->" expr
 sent_clase     ← decoradores? "clase" IDENT
                 ("extiende" expr ("," expr)*)? ":" cuerpo
                 "fin" "clase"
+
+# ───── Context managers ─────
+sent_con       ← "con" expr ("como" IDENT)? ":" cuerpo
+                "fin" "con"
+
+# ───── Pattern matching ─────
+sent_coincidir ← "coincidir" expr ":" LF
+                ("cuando" patron ("si" expr)? ":" cuerpo)+
+                "fin" "coincidir"
+patron         ← patron_or
+patron_or      ← patron_atomo ("|" patron_atomo)*    # OR-pattern
+patron_atomo   ← literal                             # literal
+                / "_"                                # comodín
+                / IDENT "(" ")" ("como" IDENT)?      # type-match + bind
+                / "[" (patron ("," patron)* ("," "*" IDENT)?)? "]"   # lista, con *resto
+                / "(" patron ("," patron)* ")"       # tupla (anidable)
+                / IDENT                              # bind
+
+# ───── Generadores ─────
+# Una función cuyo cuerpo contiene `producir` es un generador.
+sent_producir  ← "producir" "desde" expr      # delegación (yield from)
+                / "producir" expr             # produce un valor
 
 # ───── Excepciones ─────
 sent_intentar  ← "intentar" ":" cuerpo
@@ -603,8 +599,17 @@ sent_importar  ← "importar" ruta_modulo ("como" IDENT)?
 ruta_modulo    ← IDENT ("." IDENT)*
 
 # ───── Asignación ─────
+# El objetivo puede ser un nombre, un índice, un atributo, o un patrón
+# de destructuring (tupla/lista de objetivos, anidable).
 sent_asignacion ← lista_objetivos "=" expr
                 / objetivo aug_op expr      # +=, -=, etc.
+
+objetivo       ← IDENT
+                / expr_postfijo ("[" rebanada "]" / "." IDENT)   # xs[i], obj.campo
+lista_objetivos ← objetivo_destr ("," objetivo_destr)*           # a, b = ...
+objetivo_destr ← objetivo
+                / "[" lista_objetivos "]"   # [a, b] = ...  (anidable)
+                / "(" lista_objetivos ")"   # (a, (b, c)) = ...
 
 aug_op         ← "+=" / "-=" / "*=" / "/=" / "//=" / "%=" / "**="
                 / "&=" / "|=" / "^=" / "<<=" / ">>="
@@ -639,8 +644,25 @@ postfijo       ← "(" args? ")"
                 / "[" rebanada "]"
                 / "." IDENT
 
-expr_atomo     ← literal / IDENT / "(" expr ")" / lista_lit / dicc_lit
+# Argumentos de llamada: posicionales, *spread, keyword, **spread.
+# Restricción: no se puede combinar `*` con keyword/`**` en una misma
+# llamada (se rechaza en compilación).
+args           ← arg ("," arg)*
+arg            ← "**" expr            # **dict spread
+                / "*" expr            # *iterable spread
+                / IDENT "=" expr      # keyword argument
+                / expr                # posicional
+
+expr_atomo     ← literal / IDENT / lista_lit / dicc_lit / conj_lit
+                / "(" expr ")" / "(" expr_para ")"   # paréntesis o generator expression
                 / "yo" / "super" "." IDENT / cadena_f / lambda_lit
+
+# Comprehensions y generator expressions comparten la cláusula `para`.
+lista_lit      ← "[" (expr_para / (expr ("," expr)*)?) "]"   # lista o list-comp
+dicc_lit       ← "{" (expr ":" expr expr_para
+                      / (expr ":" expr ("," expr ":" expr)*)?) "}"   # dict o dict-comp
+conj_lit       ← "{" (expr expr_para / expr ("," expr)*) "}"          # conjunto o set-comp
+expr_para      ← "para" IDENT "en" expr ("si" expr)?   # cláusula de comprehension
 
 lambda_lit     ← "lambda" parametros? ":" expr
 ```
@@ -655,7 +677,7 @@ lambda_lit     ← "lambda" parametros? ":" expr
 
 - **Léxico** (estilo Python).
 - Resolución LEGB-equivalente: Local → Enclosing (closures) → Global (módulo) → Builtins.
-- Variables se definen por asignación; `global` y `nolocal` requeridos para escribir en scopes externos.
+- Las variables se definen por asignación en el scope local. `nolocal` declara que un nombre pertenece a un scope envolvente y permite escribirlo (§6.8). `global` (escritura a global desde una función) está reservada pero **no implementada** en la VM.
 
 ### 6.2 Verdadez (truthiness)
 
@@ -669,28 +691,26 @@ Todo lo demás es **verdadero**.
 
 ### 6.4 Iteración
 
-`para x en y:` invoca `iterar(y)` y luego `siguiente(it)` hasta que se levante `FinDeIteración`.
+`para x en y:` itera sobre `y` si es un iterable nativo (lista, tupla, conjunto, diccionario —itera claves—, cadena, rango, generador). Si `y` es una instancia, la VM invoca su dunder `__iterar__`, que debe devolver un iterable nativo, y recorre el resultado. Los generadores se reanudan bajo demanda hasta agotarse (§6.12).
 
 ### 6.5 Excepciones
 
-Jerarquía mínima:
+Tipos de excepción atrapables (todos derivan de `Excepcion`):
+
 ```
-Excepción
-├── ErrorRuntime
-│   ├── ErrorDeTipo
-│   ├── ErrorDeValor
-│   ├── ErrorDeNombre
-│   ├── ErrorDeAtributo
-│   ├── ErrorDeIndice
-│   ├── ErrorDeClave
-│   ├── ErrorDivisiónPorCero
-│   └── DesbordeDePila
-├── ErrorDeSintaxis
-├── ErrorDeImportación
-├── ErrorDeIO
-├── FinDeIteración    # señal, no error
-└── InterrupciónTeclado
+Excepcion
+├── ErrorAritmetico    # división por cero, overflow lógico
+├── ErrorDeTipo        # operación sobre tipo incorrecto
+├── ErrorDeValor       # valor del tipo correcto pero inválido
+├── ErrorDeIndice      # índice fuera de rango
+├── ErrorDeClave       # clave no presente en diccionario
+├── ErrorDeNombre      # identificador no definido
+├── ErrorDeAtributo    # atributo/método inexistente (lanzado por la VM)
+├── ErrorDeSistema     # fallo del sistema operativo
+└── ErrorDeIO          # fallo de entrada/salida
 ```
+
+`atrapar Excepcion` captura cualquiera de ellas. Cuando una excepción no se atrapa, la VM imprime un **traceback multi-frame** con la cadena de llamadas y la línea de fuente. Los errores de sintaxis y de importación se reportan en fase de carga, antes de ejecutar, y no son atrapables.
 
 ### 6.6 Modelo de objetos
 
@@ -723,15 +743,15 @@ Los operadores se desazucaran a llamadas a dunders. Por ejemplo:
 
 | Sintaxis | Búsqueda en runtime |
 |---|---|
-| `a + b` | `tipo(a).__sumar__(a, b)`; si no existe o devuelve `NoImplementado`, prueba `tipo(b).__sumar_derecha__(b, a)` |
-| `longitud(x)` | `tipo(x).__longitud__(x)` |
-| `x en y` | `tipo(y).__contiene__(y, x)` |
-| `para x en y:` | `it = tipo(y).__iterar__(y); valor = tipo(it).__siguiente__(it); ...` |
-| `obj[k]` | `tipo(obj).__obtener__(obj, k)` |
+| `a + b` | `__sumar__(a, b)` sobre la clase de `a`; si `a` no lo define, prueba `__sumar_derecho__(b, a)` sobre la clase de `b` |
+| `imprimir(x)`, `cadena(x)`, `f"{x}"` | `__cadena__(x)` |
+| `longitud(x)` | `__longitud__(x)` |
+| `para v en x:` | `__iterar__(x)` (debe devolver un iterable nativo) |
+| `obj[k]` / `obj[k] = v` | `__indice__(obj, k)` / `__asignar_indice__(obj, k, v)` |
+| `obj(args)` | `__llamar__(obj, args)` |
+| `con obj como x:` | `__entrar__(obj)` al entrar, `__salir__(obj)` al salir |
 
-Si la clase no implementa el dunder correspondiente, el runtime lanza `ErrorDeTipo` con mensaje específico (ej. *"el tipo `Persona` no soporta el operador `+`"*).
-
-> **Nota v0.11.4**: solo `__iniciar__` se invoca automáticamente. Los demás se mencionan aquí como contrato de diseño para v1.x. Ver §4.3.
+Lista completa de dunders en §4.3. Si la clase no implementa el dunder correspondiente, el runtime lanza `ErrorDeTipo` con un mensaje específico (p.ej. *"el tipo `Persona` no soporta el operador `+`"*).
 
 ### 6.7 Módulos
 
@@ -772,7 +792,7 @@ PI = 3.0    # local del importador, NO afecta a matematicas.PI
 imprimir(area_circulo(2))   # 12.566... usando matematicas.PI, no el local
 ```
 
-#### Limitaciones (v0.11.4)
+#### Limitaciones
 
 - `desde X importar *` no soportado (anti-patrón).
 - Los módulos no soportan `__iniciar__` ni código de inicialización condicional avanzada — todo el cuerpo del módulo se ejecuta secuencialmente al cargar.
@@ -808,10 +828,9 @@ imprimir(c())   # 3
 ```cornamusa
 cuadrado = lambda x: x * x
 imprimir(cuadrado(7))   # 49
-
-# Útil con primitivas que aceptan callables:
-ordenar(personas, clave=lambda p: p.edad)   # (clave= aún no implementado en ordenar v0.11)
 ```
+
+Las lambdas admiten defaults, `*args` y `**kwargs` igual que las funciones con nombre.
 
 Los upvalues se cierran (capturan el valor actual del slot del frame enclosing) cuando la función enclosing retorna, manteniendo viva la closure incluso después.
 
@@ -830,7 +849,8 @@ imprimir(xs[::2])    # [10, 30, 50]
 s = "Cornamusa"
 imprimir(s[0])       # "C"
 imprimir(s[-2])      # "s"
-# (slicing de cadenas planeado para v1.x; en v0.11.4 solo s[i] de un carácter.)
+imprimir(s[0:4])     # "Corn" — slicing de cadenas (UTF-8 correcto)
+imprimir(s[::-1])    # "asumanroC"
 ```
 
 Los **diccionarios** se indexan por clave (no por posición):
@@ -859,6 +879,28 @@ Los enteros son de **precisión arbitraria** (decisión [B3](decisiones/B3-repre
 - Las operaciones SMALL+SMALL se ejecutan inline con detección de overflow; cuando un resultado excede 63 bits se promueve a BIG transparentemente.
 
 Esta distinción es **invisible al programa**: `tipo(5)` y `tipo(2 ** 1000)` ambos devuelven `"entero"`. Los programas no necesitan distinguir SMALL de BIG.
+
+### 6.12 Generadores y comprehensions
+
+Una función cuyo cuerpo contiene `producir` es un **generador**. Llamarla no ejecuta el cuerpo: devuelve un valor de tipo `generador` con su frame congelado. Cada iteración (`para v en gen`) reanuda el frame —restaurando locales y posición— hasta el siguiente `producir`, que entrega un valor y vuelve a suspender. Cuando la función retorna, el generador queda **agotado** y no produce más valores.
+
+- `producir EXPR` entrega un valor.
+- `producir desde ITERABLE` delega: produce todos los valores de un sub-generador o iterable.
+- Un generador se consume una sola vez; volver a iterarlo no produce nada.
+
+Las **comprehensions** construyen una colección en una expresión: `[expr para v en iter si guarda]` (lista), `{k: v para ...}` (dict), `{expr para ...}` (conjunto). La variable del `para` es un único nombre y la guarda `si` es opcional. Entre paréntesis, `(expr para v en iter)` es una **generator expression**: perezosa, no materializa, captura variables externas como upvalues.
+
+### 6.13 Destructuring
+
+El lado izquierdo de `=` puede ser un patrón de nombres en lugar de un único objetivo: `a, b = par`, `[x, y, z] = lista`, `(a, (b, c)) = anidado`. El lado derecho debe ser iterable y de la aridad correcta; en caso contrario se lanza `ErrorDeValor` (aridad) o `ErrorDeTipo` (no iterable), ambos atrapables. El idiom `a, b = b, a` intercambia sin variable temporal. El destino de `para` **no** admite destructuring: se desempaqueta dentro del cuerpo.
+
+### 6.14 Argumentos de función
+
+- **Por defecto**: `funcion f(a, b=10):` — los parámetros con default son opcionales.
+- **`*args`**: `funcion f(*resto):` recoge los posicionales sobrantes en una tupla.
+- **`**kwargs`**: `funcion f(**kw):` recoge los keyword args no declarados en un diccionario.
+- **Keyword en la llamada**: `f(x=1, y=2)` — pasa argumentos por nombre, en cualquier orden.
+- **Spread en la llamada**: `f(*iterable)` expande posicionales; `f(**dict)` expande keyword args. No se puede combinar `*` con `**`/keyword en la misma llamada.
 
 ---
 
@@ -899,7 +941,7 @@ clase Animal:
     fin funcion
 
     funcion hablar(yo):
-        lanzar ErrorRuntime("método abstracto")
+        lanzar ErrorDeTipo("método abstracto")
     fin funcion
 fin clase
 
@@ -909,17 +951,36 @@ clase Perro extiende Animal:
     fin funcion
 fin clase
 
-# Manejo de excepciones
+# Manejo de excepciones e I/O
+importar archivos
+
 intentar:
-    archivo = abrir("datos.txt")
-    contenido = archivo.leer()
+    contenido = archivos.leer("datos.txt")
+    imprimir(contenido)
 atrapar ErrorDeIO como e:
     imprimir(f"No se pudo leer: {e}")
 finalmente:
-    si archivo no es nulo:
-        archivo.cerrar()
-    fin si
+    imprimir("listo")
 fin intentar
+
+# Pattern matching, comprehensions y generadores
+funcion pares_hasta(n):
+    para i en rango(n):
+        si i % 2 == 0:
+            producir i
+        fin si
+    fin para
+fin funcion
+
+dobles = [x * 2 para x en pares_hasta(10)]
+coincidir longitud(dobles):
+    cuando 0:
+        imprimir("vacío")
+    cuando n si n > 3:
+        imprimir(f"{n} elementos")
+    cuando _:
+        imprimir("pocos")
+fin coincidir
 ```
 
 ---
@@ -957,25 +1018,34 @@ fin intentar
 | B9 | Small-int tagging (i63 inline) | ✅ `decisiones/B9-small-int-tagging.md` (v0.11.0) |
 | B10 | Scope de v1.0 (docs sobre GC generacional) | ✅ `decisiones/B10-scope-de-v1.md` |
 
-### Reservas para v1.x (no implementadas en v0.11.4)
+### Implementado desde v1.1 (eran reservas en versiones anteriores)
 
-1. **F-strings con expresiones**. ✅ Implementadas en v1.1.0. Triples en v1.14.0.
-2. **`con` (context managers)**. ✅ Implementada en v1.13.0.
-3. **Pattern matching (`coincidir`)**. ✅ Implementada en v1.15.0 (literales, bind, wildcard, guardas). Patrones estructurales pendientes.
-4. **`borrar` (`del` de Python)**. Reservada.
-5. **Generadores (`producir` ≈ `yield`)**. Reservada.
-6. **Async/await (`asincrono`/`esperar`)**. Reservadas. v2.0+.
-7. **Tipos numéricos exactos**. `Fraccion`, `Decimal` en stdlib; v1.x.
-8. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta pero el runtime las ignora.
-9. **Decoradores (`@deco`)**. La gramática los acepta. Runtime: parcial.
-10. **Dunders distintos de `__iniciar__`**. Reservados. v1.x.
+- **F-strings con expresiones** (v1.1) y triples (v1.14).
+- **Dunders** completos: aritméticos y de coerción (v1.2), reflejados / `__llamar__` / `__longitud__` (v1.3), `__iterar__` (v1.12), `__entrar__`/`__salir__` (v1.13).
+- **`nolocal`** — escritura a upvalue (v1.4).
+- **`con` (context managers)** (v1.13).
+- **Pattern matching `coincidir`** (v1.15-v1.16): literales, bind, wildcard, guardas, patrones estructurales, OR-patterns, star-patterns, type-match.
+- **Destructuring**, `*args`, keyword args, `**kwargs`, spread `*`/`**` (v1.21-v1.25).
+- **Comprehensions** y **generadores** (`producir`, `producir desde`, generator expressions) (v1.30-v1.34).
+- **Stdlib amplia** — doce módulos (v1.8-v1.29).
+
+### Reservas pendientes (la sintaxis puede aceptarse, el runtime no las implementa)
+
+1. **`borrar` (`del` de Python)**. Keyword reservada; `quitar(...)` cubre el caso por ahora.
+2. **`global`** (escritura a global desde función). Keyword reservada, sin implementar en la VM.
+3. **Async/await (`asincrono`/`esperar`)**. Keywords reservadas. v2.x.
+4. **Dunders `__hash__`, `__repr__`, `__booleano__`**. Reservados; el runtime aún no los despacha.
+5. **Prefijos de cadena `r"..."` (raw) y `b"..."` (bytes)**. Reservados.
+6. **Tipos numéricos exactos** (`Fraccion`, `Decimal`). En stdlib, futuro.
+7. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta; el runtime las ignora.
+8. **Decoradores (`@deco`)**. Soporte parcial en el parser.
 
 ### Trabajo de runtime pendiente (no afecta a la sintaxis)
 
-- **GC generacional** — postergado a post-v1.0 (decisión B10). El GC mark-sweep tri-color actual es suficiente para los workloads conocidos.
-- **Threaded code dispatch** — descartado tras análisis ROI/coste post-v0.11.
-- **JIT / tracing** — Fase 12+ del plan; aplazadas indefinidamente.
-- **Concurrencia / hilos** — decisión I3 aplazada al post-v1.0.
+- **GC generacional** — postergado (decisión B10). El GC mark-sweep tri-color actual es suficiente para los workloads conocidos.
+- **Computed-goto y PGO** en el dispatch — evaluados y descartados con datos (regresión o sin mejora medible); ver `benchmarks/RESULTS.md`. `vm.c` usa `switch` + `-O3` + LTO.
+- **JIT / tracing** — aplazado indefinidamente.
+- **Concurrencia / hilos** — aplazada a post-v1.x.
 
 ---
 
