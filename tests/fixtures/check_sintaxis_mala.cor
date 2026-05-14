@@ -1,0 +1,6 @@
+# Fixture para tests de `--check`: este archivo tiene un error de
+# sintaxis deliberado (paréntesis sin cerrar en la definición de
+# función). `cornamusa --check` sobre él debe salir con código 65.
+funcion incompleta(
+    retornar 1
+fin funcion

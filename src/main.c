@@ -66,6 +66,8 @@ static void imprimir_uso(const char *programa) {
         "      --bytecode   Ejecuta el archivo con el motor bytecode (Fase 6)\n"
         "                   en lugar del tree-walking. v0.6 sin SENT_PARA;\n"
         "                   programas que usan `para` deben usar el default.\n"
+        "      --check      Valida sintaxis y compilación sin ejecutar.\n"
+        "                   Exit 0 si OK, 65 si hay errores. Para CI/editores.\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -507,6 +509,61 @@ static int volcar_tokens_archivo(const char *ruta) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * --check: valida sintaxis + compilación SIN ejecutar.
+ *
+ * Pipeline: lex → parse → compilar. Si todo OK, imprime una línea de
+ * confirmación y sale con 0. Si hay error de parseo o compilación, lo
+ * reporta y sale con 65. Pensado para CI, hooks de pre-commit y
+ * editores que quieran validar al guardar sin correr el programa.
+ * ────────────────────────────────────────────────────────────────── */
+
+static int validar_archivo(const char *ruta) {
+    FuenteCargada fc = fuente_cargar_archivo(ruta);
+    if (fc.codigo != FUENTE_OK) {
+        fprintf(stderr, "Error al cargar '%s': %s\n", ruta, fc.mensaje_error);
+        return 74;
+    }
+
+    Lexer l;
+    lexer_iniciar(&l, fc.fuente, ruta);
+
+    Arena a;
+    arena_iniciar(&a, 16384);
+
+    Parser p;
+    parser_iniciar(&p, &l, &a, fc.fuente, ruta);
+
+    int n = 0;
+    Sent **sents = parser_parsear_programa(&p, &n);
+
+    if (p.tuvo_error) {
+        arena_destruir(&a);
+        fuente_destruir(&fc);
+        fprintf(stderr, "\n%s: fallo de sintaxis.\n", ruta);
+        return 65;
+    }
+
+    Chunk chunk;
+    chunk_iniciar(&chunk);
+    Compilador c;
+    compilador_iniciar(&c, &chunk);
+    if (!compilador_compilar_programa(&c, sents, n)) {
+        EvalError er = c.error;
+        imprimir_error_runtime(&er, fc.fuente, ruta);
+        chunk_destruir(&chunk); arena_destruir(&a); fuente_destruir(&fc);
+        fprintf(stderr, "\n%s: fallo de compilacion.\n", ruta);
+        return 65;
+    }
+
+    chunk_destruir(&chunk);
+    arena_destruir(&a);
+    fuente_destruir(&fc);
+    printf("%s: OK (%d sentencia%s, sin errores de sintaxis ni compilacion)\n",
+           ruta, n, n == 1 ? "" : "s");
+    return 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Entry point
  * ────────────────────────────────────────────────────────────────── */
 
@@ -517,6 +574,7 @@ int main(int argc, char **argv) {
     bool volcar_tokens = false;
     bool volcar_ast = false;
     bool usar_bytecode = false;
+    bool solo_validar = false;
     int idx_archivo = -1;
 
     for (int i = 1; i < argc; i++) {
@@ -543,6 +601,10 @@ int main(int argc, char **argv) {
             usar_bytecode = true;
             continue;
         }
+        if (strcmp(arg, "--check") == 0 || strcmp(arg, "--validar") == 0) {
+            solo_validar = true;
+            continue;
+        }
         if (arg[0] == '-') {
             fprintf(stderr, "Opción no reconocida: %s\n", arg);
             imprimir_uso(argv[0]);
@@ -562,16 +624,18 @@ int main(int argc, char **argv) {
     }
 
     if (archivo != NULL) {
+        if (solo_validar)  return validar_archivo(archivo);
         if (volcar_ast)    return parsear_y_volcar_ast(archivo);
         if (volcar_tokens) return volcar_tokens_archivo(archivo);
         if (usar_bytecode) return ejecutar_archivo_bytecode(archivo);
         return ejecutar_archivo(archivo);
     }
 
-    if (volcar_tokens || volcar_ast || usar_bytecode) {
+    if (volcar_tokens || volcar_ast || usar_bytecode || solo_validar) {
         fprintf(stderr, "%s requiere un archivo .cor\n",
             volcar_ast ? "--ast" :
-            volcar_tokens ? "--tokens" : "--bytecode");
+            volcar_tokens ? "--tokens" :
+            solo_validar ? "--check" : "--bytecode");
         return 64;
     }
 

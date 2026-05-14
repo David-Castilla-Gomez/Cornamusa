@@ -6,6 +6,62 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.39.0] — 2026-05-14 — Flag `--check` (validar sin ejecutar)
+
+`cornamusa --check archivo.cor` valida **sintaxis y compilación** sin
+ejecutar el programa. Pensado para integración continua, hooks de
+pre-commit y editores que quieran validar al guardar.
+
+### Uso
+
+```sh
+$ cornamusa --check script.cor
+script.cor: OK (42 sentencias, sin errores de sintaxis ni compilacion)
+$ echo $?
+0
+
+$ cornamusa --check con_error.cor
+ErrorDeSintaxis en con_error.cor:2:5
+    retornar 1
+    ^^^^^^^^
+se esperaba un nombre de parámetro
+
+con_error.cor: fallo de sintaxis.
+$ echo $?
+65
+```
+
+### Pipeline
+
+`lex → parse → compilar`. Se detiene tras la compilación — **nunca
+ejecuta la VM**. Detecta:
+
+- Errores de sintaxis (parser): paréntesis sin cerrar, tokens
+  inesperados, bloques mal anidados...
+- Errores de compilación: `'producir' fuera de funcion`, `'**kw' debe
+  ser el ultimo parametro`, demasiadas constantes...
+
+Lo que NO detecta (son errores de runtime): nombres indefinidos,
+errores de tipo, índices fuera de rango. Para eso hay que ejecutar.
+
+### Exit codes
+
+- `0` — sin errores de sintaxis ni compilación.
+- `65` — error de sintaxis o compilación (`EX_DATAERR`).
+- `74` — no se pudo leer el archivo (`EX_IOERR`).
+
+`--validar` es alias de `--check`.
+
+### Tests añadidos
+
+- `tests/fixtures/check_sintaxis_mala.cor` — fixture con error de
+  sintaxis deliberado.
+- `check_ejemplo_valido` — `--check` sobre un ejemplo válido pasa
+  (exit 0, salida contiene "OK").
+- `check_sintaxis_mala` — `--check` sobre el fixture falla
+  (`WILL_FAIL TRUE`).
+- **185/185 tests verde**.
+
 ## [1.38.0] — 2026-05-14 — Traceback multi-frame
 
 Cuando un error de runtime fatal ocurre dentro de funciones

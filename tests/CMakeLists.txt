@@ -23,6 +23,29 @@ foreach(test_src ${TEST_SOURCES})
     add_test(NAME ${test_name} COMMAND ${test_name})
 endforeach()
 
+# ───── v1.39: tests del flag --check ─────
+# --check valida sintaxis + compilación sin ejecutar. Verificamos que
+# un ejemplo válido pasa (exit 0) y que un fixture con error de
+# sintaxis falla (exit != 0, vía WILL_FAIL).
+add_test(
+    NAME check_ejemplo_valido
+    COMMAND $<TARGET_FILE:cornamusa> --check
+            ${CMAKE_SOURCE_DIR}/examples/01_hola_mundo.cor
+)
+set_tests_properties(check_ejemplo_valido PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "OK"
+)
+add_test(
+    NAME check_sintaxis_mala
+    COMMAND $<TARGET_FILE:cornamusa> --check
+            ${CMAKE_CURRENT_SOURCE_DIR}/fixtures/check_sintaxis_mala.cor
+)
+set_tests_properties(check_sintaxis_mala PROPERTIES
+    LABELS "integracion"
+    WILL_FAIL TRUE
+)
+
 # ───── Tests de integración: lexar los ejemplos en examples/ ─────
 # Cada ejemplo se tokeniza con `cornamusa --tokens <archivo>`. Exit
 # code 0 indica que el lexer no encontró errores. Solo verifica el
