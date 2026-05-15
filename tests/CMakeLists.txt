@@ -623,6 +623,18 @@ set_tests_properties(bc_run_58_repr_booleano PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 58"
 )
 
+# v1.42: instancias hashables con __hash__ + __igual__.
+add_test(
+    NAME bc_run_59_hashable
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/59_hashable.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_59_hashable PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 59"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

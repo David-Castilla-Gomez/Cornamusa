@@ -32,6 +32,10 @@ typedef enum {
     /* v1.31: solo retornados desde dispatch en modo generador. */
     VM_OK_YIELD,         /* OP_PRODUCIR; valor en vm->valor_yield_pendiente */
     VM_OK_GEN_AGOTADO,   /* OP_RETORNAR del frame del generador */
+    /* v1.42: solo retornado desde dispatch en modo sub-call síncrono.
+       OP_RETORNAR del frame del dunder despachado por hash_valor /
+       valor_iguales. El valor de retorno queda en el TOS del caller. */
+    VM_OK_SUB_RETURN,
 } ResultadoVM;
 
 #define VM_PILA_MAX 8192
@@ -189,6 +193,20 @@ typedef struct {
     int frame_techo;
     bool modo_yield;
     Valor valor_yield_pendiente;
+
+    /* v1.42: cooperación con sub-call síncrono. Cuando `modo_sub_call`
+       es true, OP_RETORNAR del frame que cae por debajo de
+       `frame_techo` retorna VM_OK_SUB_RETURN preservando el valor de
+       retorno en el TOS del caller. Usado por `hash_valor` y
+       `valor_iguales` para despachar `__hash__` / `__igual__` en
+       instancias sin abandonar la operación principal.
+
+       `handler_techo` limita la búsqueda de OP_LANZAR a los handlers
+       instalados DESDE que comenzó el sub-call. Sin esto, una
+       excepción dentro del dunder se desenroscaría más allá del
+       sub-VM y dejaría el C-stack inconsistente. */
+    bool modo_sub_call;
+    int handler_techo;
 
     /* v1.38: traceback de la cadena de llamadas, capturado cuando un
        error de runtime fatal sale del dispatch. Vacío ("") si no hay

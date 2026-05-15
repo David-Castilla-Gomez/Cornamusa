@@ -274,6 +274,44 @@ void dicc_liberar(Diccionario *d);
    no son hashables. */
 bool valor_es_hashable(const Valor *v);
 
+/* ──────────────────────────────────────────────────────────────────
+ * v1.42: hooks para despachar dunders desde valor.c sin acoplarse
+ * con vm.h. La VM los registra al iniciarse (`vm_iniciar` →
+ * `valor_set_hooks`); `hash_valor` y `valor_iguales` los consultan
+ * cuando aparece una instancia con el dunder definido. El hook
+ * implementa el sub-call síncrono y devuelve el resultado del dunder.
+ *
+ * Tri-estado de retorno:
+ *   DUNDER_HOOK_OK         — éxito, out_* contiene el resultado.
+ *   DUNDER_HOOK_NO_DUNDER  — la clase no define el dunder; el caller
+ *                             debe caer a la semántica por defecto
+ *                             (hash por identidad / igualdad por
+ *                             identidad).
+ *   DUNDER_HOOK_ERROR      — el dunder erró (lanzó, retornó tipo
+ *                             incorrecto, etc.); `vm->error` ya tiene
+ *                             el mensaje. El caller debe propagar.
+ * ────────────────────────────────────────────────────────────────── */
+typedef enum {
+    DUNDER_HOOK_OK,
+    DUNDER_HOOK_NO_DUNDER,
+    DUNDER_HOOK_ERROR,
+} ValorDunderHookResultado;
+
+typedef ValorDunderHookResultado (*ValorHashDunderHook)(
+    void *vm_ctx, Instancia *inst, uint64_t *out_hash);
+typedef ValorDunderHookResultado (*ValorIgualesDunderHook)(
+    void *vm_ctx, Instancia *inst, const Valor *otro, bool *out_iguales);
+
+void valor_set_hooks(void *vm_ctx,
+                     ValorHashDunderHook hash_hook,
+                     ValorIgualesDunderHook iguales_hook);
+
+/* True si el último hook reportó DUNDER_HOOK_ERROR — el caller
+   (típicamente un OP de la VM) lo consulta tras llamar a `dicc_*` /
+   `conj_*` para detectar errores que viajaron a través de `hash_valor`
+   o `valor_iguales`. Se limpia al consultar. */
+bool valor_dunder_hubo_error_y_limpiar(void);
+
 /* Inserta o actualiza. Toma posesión de `clave` y `valor`. Devuelve
    true si OK; false si OOM o clave no hashable. */
 bool dicc_asignar(Diccionario *d, Valor clave, Valor valor);
@@ -485,6 +523,14 @@ struct Instancia {
     Clase *clase;             /* referencia compartida (refcount) */
     Diccionario *atributos;   /* dicc cadena → Valor */
     int refcount;
+    /* v1.42: cache perezoso del hash. Cuando la clase define
+       `__hash__`, la VM lo despacha la primera vez que la instancia
+       se usa como clave y guarda el entero retornado aquí. Sucesivos
+       usos reutilizan el cache (Python: `__hash__` debe ser estable
+       durante toda la vida del objeto). Si `cache_hash_valido` es
+       falso, el caller cae al hash por identidad (puntero). */
+    uint64_t cache_hash;
+    bool cache_hash_valido;
 };
 
 Instancia *instancia_nueva(Clase *c);

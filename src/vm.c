@@ -134,6 +134,13 @@ static int opcode_a_token_binario(OpCode op) {
 /* Forward decl del adapter; definición tras vm_iniciar. */
 static void gc_marcar_raices_adapter(void *ctx);
 
+/* v1.42: forward decls de los hooks de dunders en instancias.
+   Definición tras `vm_ejecutar_dunder_sync`. */
+static ValorDunderHookResultado vm_hash_dunder_hook(
+    void *vm_ctx, Instancia *inst, uint64_t *out_hash);
+static ValorDunderHookResultado vm_iguales_dunder_hook(
+    void *vm_ctx, Instancia *inst, const Valor *otro, bool *out_iguales);
+
 /* ──────────────────────────────────────────────────────────────────
  * Carga de módulos (Fase 9)
  *
@@ -265,6 +272,13 @@ void vm_iniciar(VM *vm) {
     vm->frame_techo = 0;
     vm->modo_yield = false;
     vm->valor_yield_pendiente = valor_nulo();
+    /* v1.42: sub-call síncrono (despacho de __hash__/__igual__). */
+    vm->modo_sub_call = false;
+    vm->handler_techo = 0;
+    /* v1.42: registrar hooks en valor.c para que `hash_valor` y
+       `valor_iguales` puedan despachar dunders en instancias sin
+       acoplarse al header de vm. */
+    valor_set_hooks(vm, vm_hash_dunder_hook, vm_iguales_dunder_hook);
     /* v1.38: traceback. */
     vm->traceback[0] = '\0';
     /*
@@ -676,6 +690,10 @@ static ResultadoVM ejecutar_llamar_nativa(VM *vm, CallFrame **frame_inout,
     int linea = linea_actual_frame(frame);
     Valor *args = base_nuevo + 1;
     Valor r = base_nuevo->como.nativa.fn(&vm->error, n_args, args, linea, 0);
+    /* v1.42: consume y limpia la bandera one-shot — la rama de éxito
+       NO debe propagarla, y la rama de error ya verá `vm->error.
+       tuvo_error` (los hooks lo setean igualmente). */
+    (void)valor_dunder_hubo_error_y_limpiar();
     if (vm->error.tuvo_error) {
         valor_destruir(&r);
         /* v1.10: si hay handler activo, convertir el error en
@@ -1424,6 +1442,166 @@ static ResultadoVM ejecutar_dunder_unario(VM *vm, CallFrame **frame_inout,
 }
 
 /*
+ * v1.42: ejecuta un dunder de forma SÍNCRONA — empuja frame, lanza un
+ * sub-loop del dispatcher y vuelve con el valor de retorno del dunder.
+ *
+ * Usado por `hash_valor` y `valor_iguales` cuando una instancia tiene
+ * `__hash__` / `__igual__` definidos. A diferencia de los demás
+ * `ejecutar_dunder_*` (que configuran un frame y dejan que el
+ * dispatcher continúe — patrón asíncrono), aquí necesitamos el
+ * resultado AHORA mismo porque `hash_valor` está a mitad de búsqueda
+ * de slot.
+ *
+ * Mecánica:
+ *   1. Verificar aridad y límites de pila/frames.
+ *   2. Push closure + receptor + args en la pila.
+ *   3. Push CallFrame.
+ *   4. Activar `modo_sub_call` y fijar `frame_techo = n_frames` para
+ *      que OP_RETORNAR de este frame retorne VM_OK_SUB_RETURN con el
+ *      valor de retorno empujado en la pila del caller.
+ *   5. Llamar a `vm_ejecutar_dispatch_impl` con `inicial=false`.
+ *   6. Restaurar flags previos.
+ *   7. Si VM_OK_SUB_RETURN: pop TOS al `out` y devolver true.
+ *   8. Cualquier otro resultado: devolver false (el error ya está en
+ *      `vm->error`).
+ */
+static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
+                                                Valor *resultado_out,
+                                                bool inicial);
+
+static bool vm_ejecutar_dunder_sync(VM *vm, Closure *m,
+                                      Instancia *receptor,
+                                      const Valor *args, int n_args,
+                                      Valor *resultado_out) {
+    FuncionBC *fn = m->plantilla;
+    int aridad_esperada = 1 + n_args;
+    if (fn->aridad != aridad_esperada) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "ErrorDeTipo: dunder esperaba %d argumento(s), tiene %d",
+            aridad_esperada, fn->aridad);
+        return false;
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "desbordamiento de pila de llamadas (>%d frames)", VM_FRAMES_MAX);
+        return false;
+    }
+    if ((vm->tope - vm->pila) + aridad_esperada >= VM_PILA_MAX) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "Desbordamiento de pila");
+        return false;
+    }
+
+    /* Push closure, receptor, args en la pila — la convención
+       habitual de llamada. El frame ocupa (aridad + 1) slots:
+       base[0]=callee, base[1..aridad]=args. */
+    closure_retener(m);
+    empujar(vm, valor_closure(m));
+    instancia_retener(receptor);
+    empujar(vm, valor_instancia(receptor));
+    for (int i = 0; i < n_args; i++) {
+        empujar(vm, valor_clonar(&args[i]));
+    }
+
+    Valor *base_nuevo = vm->tope - (aridad_esperada + 1);
+    CallFrame *nf = &vm->frames[vm->n_frames++];
+    nf->chunk = &fn->chunk;
+    nf->ip = fn->chunk.codigo;
+    nf->base_pila = base_nuevo;
+    nf->closure = m;
+    nf->es_constructor = false;
+    nf->modulo_en_carga = NULL;
+    nf->globales_pre_modulo = NULL;
+    nf->chunk_modulo = NULL;
+    if (m->globales_definicion != NULL
+        && m->globales_definicion != vm->globales) {
+        nf->globales_pre_llamada = vm->globales;
+        vm->globales = m->globales_definicion;
+    } else {
+        nf->globales_pre_llamada = NULL;
+    }
+    nf->modulo_binding_name = NULL;
+    nf->modulo_binding_len = 0;
+    nf->desde_import = false;
+
+    /* Activar sub-call mode. */
+    int prev_frame_techo = vm->frame_techo;
+    bool prev_modo_yield = vm->modo_yield;
+    bool prev_modo_sub_call = vm->modo_sub_call;
+    int prev_handler_techo = vm->handler_techo;
+    vm->frame_techo = vm->n_frames;   /* salir cuando este frame retorne */
+    vm->modo_sub_call = true;
+    vm->modo_yield = false;            /* sub-call no es generador */
+    vm->handler_techo = vm->n_handlers;  /* exc del dunder no escapa */
+
+    /* Sub-dispatch. */
+    ResultadoVM rc = vm_ejecutar_dispatch_impl(vm, NULL, NULL, false);
+
+    /* Restaurar. */
+    vm->frame_techo = prev_frame_techo;
+    vm->modo_yield = prev_modo_yield;
+    vm->modo_sub_call = prev_modo_sub_call;
+    vm->handler_techo = prev_handler_techo;
+
+    if (rc == VM_OK_SUB_RETURN) {
+        /* El valor de retorno del dunder quedó en TOS. */
+        *resultado_out = sacar(vm);
+        return true;
+    }
+    /* Error o estado inesperado — error ya está en vm->error. */
+    return false;
+}
+
+/*
+ * v1.42: hook para `hash_valor` — invoca `__hash__(yo)` y devuelve el
+ * entero como uint64_t. Tri-estado: OK / NO_DUNDER / ERROR.
+ */
+static ValorDunderHookResultado vm_hash_dunder_hook(
+        void *vm_ctx, Instancia *inst, uint64_t *out_hash) {
+    VM *vm = (VM *)vm_ctx;
+    Closure *m = clase_obtener_metodo(inst->clase, "__hash__", 8);
+    if (!m) return DUNDER_HOOK_NO_DUNDER;
+    Valor resultado;
+    if (!vm_ejecutar_dunder_sync(vm, m, inst, NULL, 0, &resultado)) {
+        return DUNDER_HOOK_ERROR;   /* error en vm->error */
+    }
+    int64_t i64;
+    if (!valor_es_entero(&resultado) || !valor_entero_a_i64(&resultado, &i64)) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "ErrorDeTipo: __hash__ debe retornar entero, no '%s'",
+            valor_nombre_tipo(&resultado));
+        valor_destruir(&resultado);
+        return DUNDER_HOOK_ERROR;
+    }
+    valor_destruir(&resultado);
+    *out_hash = (uint64_t)i64;
+    return DUNDER_HOOK_OK;
+}
+
+/*
+ * v1.42: hook para `valor_iguales` — invoca `__igual__(yo, otro)`.
+ * Tri-estado: OK / NO_DUNDER / ERROR.
+ */
+static ValorDunderHookResultado vm_iguales_dunder_hook(
+        void *vm_ctx, Instancia *inst, const Valor *otro,
+        bool *out_iguales) {
+    VM *vm = (VM *)vm_ctx;
+    Closure *m = clase_obtener_metodo(inst->clase, "__igual__", 9);
+    if (!m) return DUNDER_HOOK_NO_DUNDER;
+    Valor resultado;
+    if (!vm_ejecutar_dunder_sync(vm, m, inst, otro, 1, &resultado)) {
+        return DUNDER_HOOK_ERROR;
+    }
+    *out_iguales = valor_es_verdadero(&resultado);
+    valor_destruir(&resultado);
+    return DUNDER_HOOK_OK;
+}
+
+/*
  * v1.2: prepara un frame para invocar un dunder ternario sobre el TOS.
  *
  * Pre:  stack = [..., obj, k, v], obj es VAL_INSTANCIA y su clase
@@ -2047,8 +2225,18 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 int tt = opcode_a_token_binario(op);
                 Valor r = evaluador_aplicar_binario(&vm->error, tt,
                                                       a, b, linea, 0);
-                if (vm->error.tuvo_error) {
+                /* v1.42: si __hash__/__igual__ erró durante OP_EN
+                   (o el evaluador), `vm->error` ya tiene el mensaje.
+                   Limpiamos la bandera one-shot independientemente. */
+                bool dunder_err = valor_dunder_hubo_error_y_limpiar();
+                if (vm->error.tuvo_error || dunder_err) {
                     valor_destruir(&r);
+                    if (!vm->error.tuvo_error) {
+                        /* dunder_err sin vm->error: caso raro. */
+                        vm->error.tuvo_error = true;
+                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                            "ErrorDeTipo: error en dunder durante comparacion");
+                    }
                     RAISE_OR_DIE();
                 }
                 empujar(vm, r);
@@ -2248,6 +2436,19 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     }
                     valor_destruir(&r);
                     return VM_OK_GEN_AGOTADO;
+                }
+                /* v1.42: si estamos en modo sub-call síncrono y el
+                   frame del dunder acaba de retornar, salir del
+                   dispatch preservando el valor de retorno en el TOS
+                   del caller. Lo lee `vm_ejecutar_dunder_sync`. */
+                if (vm->modo_sub_call && vm->n_frames < vm->frame_techo) {
+                    /* Liberar slots del dunder. */
+                    while (vm->tope > frame->base_pila) {
+                        Valor v = *(--vm->tope);
+                        valor_destruir(&v);
+                    }
+                    empujar(vm, r);   /* result al stack del caller */
+                    return VM_OK_SUB_RETURN;
                 }
                 /* Liberar todos los slots del frame que termina. */
                 while (vm->tope > frame->base_pila) {
@@ -2643,6 +2844,18 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         return VM_ERROR_RUNTIME;
                     }
                     dicc_asignar(d, k, v);
+                    /* v1.42: si `__hash__` o `__igual__` (en colisión)
+                       de una clave instancia erró, propagar. k/v ya
+                       fueron consumidos por dicc_asignar. */
+                    if (valor_dunder_hubo_error_y_limpiar()) {
+                        for (int j = i + 1; j < n_pares; j++) {
+                            valor_destruir(&base[j * 2]);
+                            valor_destruir(&base[j * 2 + 1]);
+                        }
+                        dicc_liberar(d);
+                        vm->tope = base;
+                        RAISE_OR_DIE();
+                    }
                 }
                 vm->tope = base;
                 empujar(vm, valor_diccionario(d));
@@ -2667,6 +2880,13 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         return VM_ERROR_RUNTIME;
                     }
                     conj_agregar(cj, el);
+                    /* v1.42: error en __hash__/__igual__ del elemento. */
+                    if (valor_dunder_hubo_error_y_limpiar()) {
+                        for (int j = i + 1; j < n; j++) valor_destruir(&base[j]);
+                        conj_liberar(cj);
+                        vm->tope = base;
+                        RAISE_OR_DIE();
+                    }
                 }
                 vm->tope = base;
                 empujar(vm, valor_conjunto(cj));
@@ -2745,7 +2965,14 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         valor_destruir(&key); valor_destruir(&obj);
                         return VM_ERROR_RUNTIME;
                     }
-                    if (!dicc_obtener(obj.como.dicc, &key, &r)) {
+                    bool encontrado = dicc_obtener(obj.como.dicc, &key, &r);
+                    /* v1.42: error en __hash__/__igual__ — propagar. */
+                    if (valor_dunder_hubo_error_y_limpiar()) {
+                        valor_destruir(&r);
+                        valor_destruir(&key); valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                    }
+                    if (!encontrado) {
                         char buf[128];
                         valor_a_repr(&key, buf, sizeof(buf));
                         VM_ERROR("ErrorDeClave: %s", buf);
@@ -2880,6 +3107,11 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     }
                     dicc_asignar(obj.como.dicc, key, valor);
                     /* `key` y `valor` transferidos. */
+                    /* v1.42: error en __hash__/__igual__ — propagar. */
+                    if (valor_dunder_hubo_error_y_limpiar()) {
+                        valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                    }
                     valor_destruir(&obj);
                     empujar(vm, valor_nulo());
                 } else {
@@ -3535,7 +3767,11 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     valor_destruir(&exc_v);
                     return VM_ERROR_RUNTIME;
                 }
-                if (vm->n_handlers == 0) {
+                /* v1.42: handler_techo limita la búsqueda al scope del
+                   sub-VM actual. Una excepción dentro de __hash__/
+                   __igual__ no se desenrosca más allá del sub-call —
+                   se reporta como error de runtime al hook que llamó. */
+                if (vm->n_handlers <= vm->handler_techo) {
                     /* Excepción sin atrapar: produce error en el VM
                        con clase + mensaje. */
                     const Excepcion *ex = exc_v.como.excepcion;
@@ -4200,6 +4436,10 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     break;
                 }
                 conj_agregar(s_slot->como.conjunto, v);
+                /* v1.42: error en __hash__/__igual__. */
+                if (valor_dunder_hubo_error_y_limpiar()) {
+                    RAISE_OR_DIE();
+                }
                 break;
             }
             case OP_LISTA_EXTENDER: {
@@ -4262,6 +4502,10 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 if (!dicc_asignar(d_slot->como.dicc, key, val)) {
                     VM_ERROR("memoria insuficiente al agregar par a dict");
                     return VM_ERROR_RUNTIME;
+                }
+                /* v1.42: error en __hash__/__igual__. */
+                if (valor_dunder_hubo_error_y_limpiar()) {
+                    RAISE_OR_DIE();
                 }
                 break;
             }

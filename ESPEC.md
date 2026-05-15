@@ -1,8 +1,8 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 1.41.0
+**Versión del documento:** 1.42.0
 **Estado:** Estable.
-**Última revisión:** 2026-05-15 — actualizada a v1.41 (dunders de coerción `__repr__` y `__booleano__`).
+**Última revisión:** 2026-05-15 — actualizada a v1.42 (`__hash__` + `__igual__` despachados; instancias hashables por valor).
 
 Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
 
@@ -465,7 +465,18 @@ fin clase
 
 `__repr__` debe retornar cadena (la VM lo valida — `ErrorDeTipo` atrapable si no). `__booleano__` debe retornar booleano; si retorna otra instancia con `__booleano__` se cae en recursión, cortada por el límite de frames.
 
-**Reservados, aún no invocados**: `__hash__` (haría las instancias usables como claves de dict/conjunto por valor — hoy se hashean por identidad). La sintaxis se acepta para forward-compatibility.
+**Añadidos en v1.42**:
+
+| Dunder | Operador / built-in | Aridad |
+|---|---|---|
+| `__hash__` | clave de dict/conjunto (`d[obj]`, `obj en s`, `{obj: ...}`) | 1 (yo) |
+| `__igual__` (despacho en dicc/conj) | colisiones de hash en dict/conjunto | 2 (yo, otro) |
+
+Las instancias siempre son hashables — por identidad por defecto, por valor si definen `__hash__`. Para usarlas como claves por valor define **ambos** dunders coherentes: si dos instancias son iguales según `__igual__`, deben dar el mismo `__hash__`. La VM cachea el hash por instancia tras el primer despacho (Python: `__hash__` debe ser estable).
+
+`__hash__` debe retornar entero (`ErrorDeTipo` atrapable si no). Internamente la VM ejecuta el dunder vía sub-VM síncrono: empuja un frame, corre un sub-loop del dispatcher, vuelve con el valor. Excepciones dentro del dunder se propagan al `intentar/atrapar` del caller mediante una bandera one-shot (`handler_techo` impide que escapen sin control).
+
+**Reservados, aún no invocados**: `__siguiente__` (iteradores lazy stateful — hoy `__iterar__` debe devolver iterable nativo; ver §6.12). La sintaxis se acepta para forward-compatibility.
 
 ### 4.4 Biblioteca estándar (stdlib)
 
@@ -1043,7 +1054,7 @@ fin coincidir
 1. **`borrar` (`del` de Python)**. Keyword reservada; `quitar(...)` cubre el caso por ahora.
 2. **`global`** (escritura a global desde función). Keyword reservada, sin implementar en la VM.
 3. **Async/await (`asincrono`/`esperar`)**. Keywords reservadas. v2.x.
-4. **Dunder `__hash__`**. Reservado. `__repr__` y `__booleano__` ya se invocan desde v1.41.
+4. **Dunder `__siguiente__`** (iteradores lazy stateful). Reservado. (`__hash__` ya se invoca desde v1.42, `__repr__` y `__booleano__` desde v1.41.)
 5. **Prefijos de cadena `r"..."` (raw) y `b"..."` (bytes)**. Reservados.
 6. **Tipos numéricos exactos** (`Fraccion`, `Decimal`). En stdlib, futuro.
 7. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta; el runtime las ignora.

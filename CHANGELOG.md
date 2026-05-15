@@ -6,6 +6,100 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.42.0] — 2026-05-15 — Instancias hashables: `__hash__` + `__igual__`
+
+Segundo release de la **Fase 4 — completar el modelo de datos**. Las
+instancias de clase ahora pueden usarse como claves de dict/conjunto
+**por valor**, no solo por identidad — el patrón record-clase, esencial
+para programación con datos.
+
+### Lo nuevo
+
+- **`__hash__(yo)` → entero**. Invocado por `hash_valor` cuando la
+  instancia se usa como clave (`d[obj]`, `obj en s`, `{obj: v}`, …).
+  El runtime cachea el resultado por instancia tras el primer despacho:
+  llamadas siguientes son O(1) sin re-ejecutar el dunder. Python:
+  `__hash__` debe ser estable durante la vida del objeto.
+
+- **`__igual__(yo, otro)`** ya existía para `==`, pero ahora la VM
+  también lo despacha desde **`valor_iguales`** — la función interna
+  que usan `dicc_buscar_slot` y `conj_buscar_slot` para resolver
+  colisiones de hash. Sin este despacho, dos instancias con mismo
+  `__hash__` pero objetos distintos quedaban como entradas separadas;
+  ahora se mergean correctamente.
+
+```cornamusa
+clase Punto:
+    funcion __iniciar__(yo, x, y): yo.x = x; yo.y = y; fin funcion
+    funcion __hash__(yo): retornar yo.x * 31 + yo.y; fin funcion
+    funcion __igual__(yo, otro): retornar yo.x == otro.x y yo.y == otro.y; fin funcion
+fin clase
+
+distancias = {Punto(3, 4): 5, Punto(3, 4): 5, Punto(6, 8): 10}
+longitud(distancias)         # 2 — Punto(3, 4) deduplica
+distancias[Punto(3, 4)]      # 5 — encuentra por valor
+Punto(3, 4) en {Punto(3, 4)} # verdadero
+```
+
+- Las instancias **sin** `__hash__`/`__igual__` siguen siendo
+  hashables — por identidad de puntero, como en Python con un objeto
+  sin `__hash__` redefinido. Cambio respecto a versiones previas:
+  antes `valor_es_hashable` rechazaba VAL_INSTANCIA; ahora la acepta.
+
+### Implementación
+
+Reto principal: `hash_valor` y `valor_iguales` viven en `valor.c`, que
+**no incluye `vm.h`**. Despachar un dunder requiere acceso a la VM
+(empujar un frame, correr el dispatch). Solución:
+
+- **Hooks** declarados en `valor.h` (`ValorHashDunderHook` y
+  `ValorIgualesDunderHook`) con tri-estado de retorno (`OK` /
+  `NO_DUNDER` / `ERROR`). `vm_iniciar` registra implementaciones vía
+  `valor_set_hooks`.
+- **Sub-VM síncrono**: `vm_ejecutar_dunder_sync` empuja un frame,
+  activa `vm->modo_sub_call`, fija `vm->frame_techo`, llama a
+  `vm_ejecutar_dispatch_impl` con `inicial=false`. El nuevo código de
+  retorno `VM_OK_SUB_RETURN` indica "el frame del dunder retornó;
+  valor en TOS del caller". Restaurar estado, leer TOS, devolver.
+- **`vm->handler_techo`** limita la búsqueda de `OP_LANZAR` a los
+  handlers instalados dentro del sub-VM. Sin esto, una excepción
+  dentro del dunder se desenroscaría más allá del sub-call y dejaría
+  el C-stack inconsistente. Una bandera one-shot
+  (`valor_dunder_hubo_error_y_limpiar`) avisa al OP llamante para
+  propagar el error vía `RAISE_OR_DIE`.
+- **Cache**: dos campos nuevos en `Instancia` — `uint64_t cache_hash`
+  y `bool cache_hash_valido`. El cache se inicializa perezosamente en
+  el primer uso (sea con dunder o por identidad).
+
+### Cobertura
+
+- **Operadores**: `d[k]` (OP_INDICE), `d[k] = v` (OP_ASIGNAR_INDICE),
+  `k en d/s` (OP_EN), `{k1: v1, …}` (OP_BUILD_DICC), `{k1, …}`
+  (OP_BUILD_CONJUNTO), comprehensions (OP_DICC_AGREGAR_PAR,
+  OP_CONJUNTO_AGREGAR).
+- **Built-ins**: `agregar(s, k)`, `quitar(d, k)`, `quitar(s, k)`,
+  `conjunto(iter)` con instancias — el error de un dunder viaja por
+  el path `vm->error` que ya conecta natives ↔ atrapar (sin código
+  extra; OP_LLAMAR_NATIVA simplemente limpia la bandera one-shot).
+
+### Tests
+
+- **189/189 tests verde** (12 nuevos en `test_bytecode_hashable.c` +
+  `lex_59` + `bc_run_59_hashable`).
+- Ejemplo `examples/59_hashable.cor`: Punto 2D como clave, deduplicación
+  por valor, cache verificado con contador, errores atrapables.
+
+### Limitaciones aceptadas
+
+- Para que la dedupe-por-valor funcione, **ambos** `__hash__` y
+  `__igual__` deben estar definidos coherentes (iguales ⇒ mismo hash).
+  Con solo `__hash__` y sin `__igual__`, dos instancias con mismo hash
+  quedan separadas porque la igualdad cae a identidad de puntero. Es
+  responsabilidad del usuario (Python: misma convención).
+- `__hash__` que retorna otra instancia con `__hash__` (caso degenerado)
+  se corta vía el límite de frames del VM. Recomendación: `__hash__`
+  debe ser puro y retornar un entero.
+
 ## [1.41.0] — 2026-05-15 — Dunders de coerción: `__repr__` y `__booleano__`
 
 Primer release de la **Fase 4 — completar el modelo de datos**. Dos

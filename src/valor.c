@@ -473,6 +473,30 @@ static bool valor_a_int64_si_cabe(const Valor *v, int64_t *out) {
  * (entero/booleano/decimal con mismo valor matemático) hashean igual,
  * conservando la invariante `a == b ⇒ hash(a) == hash(b)`.
  */
+/* v1.42: hooks registrados por la VM para despachar __hash__/__igual__
+   desde valor.c sin tener visibilidad de la VM struct. */
+static void *g_vm_ctx = NULL;
+static ValorHashDunderHook g_hash_hook = NULL;
+static ValorIgualesDunderHook g_iguales_hook = NULL;
+/* Bandera one-shot: el hook la pone a true al retornar
+   DUNDER_HOOK_ERROR; el OP de la VM la consulta tras dicc_/conj_
+   para propagar el error vía RAISE_OR_DIE. */
+static bool g_dunder_hubo_error = false;
+
+void valor_set_hooks(void *vm_ctx,
+                     ValorHashDunderHook hash_hook,
+                     ValorIgualesDunderHook iguales_hook) {
+    g_vm_ctx = vm_ctx;
+    g_hash_hook = hash_hook;
+    g_iguales_hook = iguales_hook;
+}
+
+bool valor_dunder_hubo_error_y_limpiar(void) {
+    bool e = g_dunder_hubo_error;
+    g_dunder_hubo_error = false;
+    return e;
+}
+
 static uint64_t hash_valor(const Valor *v) {
     /* Camino rápido para numéricos que caben en int64. */
     int64_t n;
@@ -526,6 +550,40 @@ static uint64_t hash_valor(const Valor *v) {
             }
             return h;
         }
+        case VAL_INSTANCIA: {
+            /* v1.42: si la clase define `__hash__`, despachamos el
+               dunder (vía hook hacia la VM) la primera vez y cacheamos.
+               Sin dunder caemos a hash por identidad (puntero). En caso
+               de error del dunder, marcamos la bandera one-shot para
+               que el OP de la VM la consulte y propague. */
+            Instancia *inst = v->como.instancia;
+            if (inst->cache_hash_valido) {
+                return inst->cache_hash;
+            }
+            if (g_hash_hook && g_vm_ctx) {
+                uint64_t h;
+                ValorDunderHookResultado r = g_hash_hook(g_vm_ctx, inst, &h);
+                if (r == DUNDER_HOOK_OK) {
+                    inst->cache_hash = h;
+                    inst->cache_hash_valido = true;
+                    return h;
+                }
+                if (r == DUNDER_HOOK_ERROR) {
+                    g_dunder_hubo_error = true;
+                    /* Devolvemos un hash deterministico (identidad) para
+                       que el dicc_/conj_ no se confunda; el caller
+                       verá el flag y abortará. */
+                }
+                /* DUNDER_HOOK_NO_DUNDER → caemos a identidad. */
+            }
+            /* Identidad: hash del puntero. Cachear para estabilidad
+               (Python: id-based hash es estable durante la vida del
+               objeto). */
+            uint64_t h = fnv1a_64((const uint8_t *)&inst, sizeof(inst));
+            inst->cache_hash = h;
+            inst->cache_hash_valido = true;
+            return h;
+        }
         default:
             return 0;  /* unhashable; el llamador debe rechazar antes */
     }
@@ -541,12 +599,17 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_ITERADOR:
         case VAL_PLANTILLA_BC:
         case VAL_EXCEPCION:
-        case VAL_CLASE:
-        case VAL_INSTANCIA:
         case VAL_METODO_LIGADO:
         case VAL_MODULO:
         case VAL_GENERADOR:
             return false;
+        case VAL_CLASE:
+        case VAL_INSTANCIA:
+            /* v1.42: instancias siempre son hashables — por identidad
+               por defecto, o por `__hash__` si la clase lo define. Las
+               clases también son hashables por identidad (útil como
+               valores en cache, etc.). */
+            return true;
         case VAL_TUPLA:
             /* Tupla es hashable solo si todos sus elementos lo son. */
             for (int i = 0; i < v->como.tupla->cuenta; i++) {
@@ -1309,6 +1372,8 @@ Instancia *instancia_nueva(Clase *c) {
     i->clase = c;
     i->atributos = atr;
     i->refcount = 1;
+    i->cache_hash = 0;             /* v1.42: lazy, poblado al primer uso */
+    i->cache_hash_valido = false;
     return i;
 }
 
@@ -2165,8 +2230,20 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return a->como.excepcion == b->como.excepcion;
         case VAL_CLASE:
             return a->como.clase == b->como.clase;
-        case VAL_INSTANCIA:
-            return a->como.instancia == b->como.instancia;
+        case VAL_INSTANCIA: {
+            /* v1.42: si la clase de `a` define `__igual__`, despachamos
+               el dunder. Identidad como fallback. En error, marcar
+               flag para que el caller propague. */
+            if (a->como.instancia == b->como.instancia) return true;
+            if (g_iguales_hook && g_vm_ctx) {
+                bool resultado;
+                ValorDunderHookResultado r = g_iguales_hook(
+                    g_vm_ctx, a->como.instancia, b, &resultado);
+                if (r == DUNDER_HOOK_OK) return resultado;
+                if (r == DUNDER_HOOK_ERROR) g_dunder_hubo_error = true;
+            }
+            return false;   /* identidad ya fallida arriba */
+        }
         case VAL_METODO_LIGADO:
             return a->como.metodo_ligado == b->como.metodo_ligado;
         case VAL_MODULO:

@@ -579,19 +579,21 @@ Se invocan automáticamente al usar el operador correspondiente:
 | `__cadena__(yo)` | `cadena(obj)`, `imprimir(obj)`, f-strings |
 | `__repr__(yo)` | `repr(obj)` (v1.41) |
 | `__booleano__(yo)` | `si obj:`, `mientras obj:`, `y`/`o`, `no obj` (v1.41) |
+| `__hash__(yo)` | clave de dict/conjunto — debe retornar entero (v1.42) |
 | `__longitud__(yo)` | `longitud(obj)` |
 | `__iterar__(yo)` | `para x en obj` |
 | `__llamar__(yo, ...)` | `obj(...)` |
 | `__indice__(yo, i)` | `obj[i]` |
 | `__asignar_indice__(yo, i, v)` | `obj[i] = v` |
 | `__entrar__(yo)` / `__salir__(yo)` | bloque `con` |
-| `__igual__` `__distinto__` | `==` `!=` |
+| `__igual__(yo, otro)` | `==`, **igualdad en dict/conjunto** (v1.42) |
+| `__distinto__` | `!=` |
 | `__menor__` `__menor_igual__` `__mayor__` `__mayor_igual__` | `<` `<=` `>` `>=` |
 | `__sumar__` `__restar__` `__multiplicar__` `__dividir__` | `+` `-` `*` `/` |
 | `__dividir_entero__` `__modulo__` `__potencia__` | `//` `%` `**` |
 | `__sumar_derecho__`, etc. | operador con la instancia a la derecha (`5 + obj`) |
 
-> `__hash__` está reservado pero aún no se invoca — instancias se hashean por identidad. `__repr__` debe retornar cadena (validado en runtime con `se esperaba cadena, no '<tipo>'`).
+> Para usar instancias como **claves por valor** define `__hash__` + `__igual__` coherentes (iguales ⇒ mismo hash). El runtime cachea `__hash__` por instancia tras el primer despacho. Sin estos dunders, las instancias siguen siendo hashables — por identidad.
 
 ---
 
@@ -853,7 +855,7 @@ Sintaxis aceptada (parcialmente) por el parser pero **no implementada** en el ru
 | `asincrono` / `esperar` (async/await) | keywords reservadas; v2.x |
 | Anotaciones de tipo (`p: tipo`) | el parser las acepta; el runtime las ignora |
 | Decoradores (`@deco`) | soporte parcial en el parser |
-| Dunder `__hash__` | reservado; instancias se hashean por identidad. (`__repr__` y `__booleano__` ya se invocan desde v1.41) |
+| Dunders `__hash__`, `__repr__`, `__booleano__` | ya se invocan (v1.41-v1.42). El único dunder reservado pendiente es `__siguiente__` (iteradores lazy stateful). |
 | Prefijos de cadena `r"..."` (raw), `b"..."` (bytes) | reservados |
 
 ---

@@ -826,6 +826,9 @@ static Valor nativa_agregar(EvalError *err, int n_args, Valor *args,
         if (!conj_agregar(args[0].como.conjunto, copia)) {
             return error_nativa(err, linea, columna, "memoria insuficiente");
         }
+        /* v1.42: si __hash__/__igual__ erró durante conj_agregar, el
+           hook ya estableció `err->tuvo_error` (err = &vm->error). El
+           llamador OP_LLAMAR_NATIVA detecta y propaga. */
         return valor_nulo();
     }
     return error_nativa(err, linea, columna,

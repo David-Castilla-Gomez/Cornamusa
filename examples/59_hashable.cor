@@ -1,0 +1,138 @@
+# Ejemplo 59 — Instancias hashables con `__hash__` + `__igual__` (v1.42)
+#
+# v1.42 cierra el modelo de datos en el lado de "objetos como claves":
+#
+#   - `__hash__(yo)` devuelve un entero que determina en qué slot del
+#     dict/conjunto vive la instancia. Si dos instancias devuelven
+#     el mismo hash, se las considera "candidatas a ser iguales".
+#
+#   - `__igual__(yo, otro)` confirma la igualdad por valor cuando dos
+#     instancias caen en el mismo slot. Sin él, la igualdad cae a
+#     identidad de puntero (cada instancia es su propia clave).
+#
+# Para usar instancias como claves de dict/conjunto **por valor** (no
+# por identidad) debes definir AMBOS y hacerlos coherentes: si dos
+# instancias son iguales según `__igual__`, deben hashear igual.
+#
+# Sin ninguno de los dos, las instancias siguen siendo hashables —
+# se hashean por identidad, como en Python con objetos sin `__hash__`.
+
+imprimir("=== __hash__ + __igual__ (v1.42) ===")
+imprimir("")
+
+# ─── Caso 1: Punto 2D como clave por valor ───
+imprimir("1) Punto como clave de dict — dedupe por valor")
+
+clase Punto:
+    funcion __iniciar__(yo, px, py):
+        yo.px = px
+        yo.py = py
+    fin funcion
+    funcion __hash__(yo):
+        # Combinamos los dos componentes en un solo entero. La calidad
+        # del hash importa para el rendimiento, no para la corrección.
+        retornar yo.px * 31 + yo.py
+    fin funcion
+    funcion __igual__(yo, otro):
+        retornar yo.px == otro.px y yo.py == otro.py
+    fin funcion
+    funcion __cadena__(yo):
+        retornar f"({yo.px}, {yo.py})"
+    fin funcion
+fin clase
+
+distancias = {}
+distancias[Punto(0, 0)] = 0
+distancias[Punto(3, 4)] = 5
+distancias[Punto(3, 4)] = 5    # mismo punto -> mismo slot, sobreescribe
+distancias[Punto(6, 8)] = 10
+
+imprimir("  longitud (esperado 3):", longitud(distancias))
+imprimir("  distancias[Punto(3, 4)]:", distancias[Punto(3, 4)])
+imprimir("")
+
+# ─── Caso 2: Conjunto sin duplicados ───
+imprimir("2) Conjunto deduplica por valor")
+vertices = {Punto(0, 0), Punto(1, 0), Punto(0, 1), Punto(0, 0), Punto(1, 0)}
+imprimir("  longitud (esperado 3):", longitud(vertices))
+imprimir("  ¿Punto(1, 0) en vertices?:", Punto(1, 0) en vertices)
+imprimir("  ¿Punto(9, 9) en vertices?:", Punto(9, 9) en vertices)
+imprimir("")
+
+# ─── Caso 3: Sin __hash__ ni __igual__ → identidad ───
+imprimir("3) Sin dunders, identidad como fallback")
+
+clase Cosa:
+    pasar
+fin clase
+
+a = Cosa()
+b = Cosa()
+ids = {a: "uno", b: "dos"}
+# a y b son instancias distintas → 2 claves
+imprimir("  longitud (esperado 2):", longitud(ids))
+imprimir("  ids[a]:", ids[a])
+# Cosa() fresca no encuentra ninguna entrada existente.
+imprimir("  ¿Cosa() en ids?:", Cosa() en ids)
+imprimir("")
+
+# ─── Caso 4: built-ins agregar / quitar / `en` ───
+imprimir("4) built-ins respetan __hash__/__igual__")
+nombres = conjunto()
+agregar(nombres, Punto(1, 1))
+agregar(nombres, Punto(2, 2))
+agregar(nombres, Punto(1, 1))   # duplicado por valor — no se añade
+imprimir("  tras agregar 3 (2 únicos):", longitud(nombres))
+
+quitar(nombres, Punto(1, 1))
+imprimir("  tras quitar Punto(1, 1):", longitud(nombres))
+imprimir("  ¿Punto(1, 1) en nombres?:", Punto(1, 1) en nombres)
+imprimir("")
+
+# ─── Caso 5: cache del hash es perezoso y estable ───
+imprimir("5) `__hash__` se ejecuta UNA vez por instancia (cache)")
+contador = [0]
+clase Espia:
+    funcion __hash__(yo):
+        contador[0] = contador[0] + 1
+        retornar 42
+    fin funcion
+fin clase
+
+p = Espia()
+d = {}
+d[p] = "x"
+_ = p en d
+_ = d[p]
+imprimir("  __hash__ llamado", contador[0], "vez(es)")
+imprimir("")
+
+# ─── Caso 6: errores en los dunders ───
+imprimir("6) errores atrapables")
+
+clase Quejica:
+    funcion __hash__(yo):
+        lanzar ErrorDeValor("hashearme me duele")
+    fin funcion
+fin clase
+
+intentar:
+    d = {Quejica(): 1}
+atrapar ErrorDeValor como e:
+    imprimir("  __hash__ lanzó →", cadena(e))
+fin intentar
+
+clase TipoMalo:
+    funcion __hash__(yo):
+        retornar "deberia ser entero"
+    fin funcion
+fin clase
+
+intentar:
+    d = {TipoMalo(): 1}
+atrapar ErrorDeTipo como e:
+    imprimir("  __hash__ retorno no-entero →", cadena(e))
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 59 ===")
