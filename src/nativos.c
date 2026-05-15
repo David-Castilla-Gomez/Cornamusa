@@ -1139,13 +1139,18 @@ static Valor nativa_conjunto(EvalError *err, int n_args, Valor *args,
 static Valor crear_excepcion(EvalError *err, const char *clase_default,
                               int n_args, Valor *args,
                               int linea, int columna) {
-    /* Si solo se pasa un argumento, es el mensaje y la clase se toma
-       de `clase_default`. Si se pasan dos, son (clase, mensaje). */
+    /* Convenciones:
+       - 0 argumentos: clase por defecto, mensaje vacío (v1.43 —
+         útil para señales como `ErrorDeIteracion` sin contexto).
+       - 1 argumento: la cadena es el mensaje, clase por defecto.
+       - 2 argumentos: (clase, mensaje). */
     const char *cls = clase_default;
     int len_cls = (int)strlen(clase_default);
     const char *msg = "";
     int len_msg = 0;
-    if (n_args == 1) {
+    if (n_args == 0) {
+        /* Defaults ya están listos. */
+    } else if (n_args == 1) {
         if (args[0].tipo != VAL_CADENA) {
             return error_nativa(err, linea, columna,
                 "ErrorDeTipo: %s() espera una cadena con el mensaje",
@@ -1164,7 +1169,7 @@ static Valor crear_excepcion(EvalError *err, const char *clase_default,
         len_msg = args[1].como.cadena.longitud;
     } else {
         return error_nativa(err, linea, columna,
-            "ErrorDeTipo: %s() acepta 1 o 2 argumentos, recibio %d",
+            "ErrorDeTipo: %s() acepta 0, 1 o 2 argumentos, recibio %d",
             clase_default, n_args);
     }
     Excepcion *e = excepcion_nueva(cls, len_cls, msg, len_msg);
@@ -1188,6 +1193,10 @@ DEFINIR_EXC_NATIVA(ErrorDeNombre)
 /* v1.27: para stdlib `proceso` (y futura `red`, `archivos` avanzado). */
 DEFINIR_EXC_NATIVA(ErrorDeSistema)
 DEFINIR_EXC_NATIVA(ErrorDeIO)
+/* v1.43: señal de fin para iteradores lazy con `__siguiente__`. La VM
+   la atrapa internamente en OP_ITER_SIGUIENTE para terminar el bucle
+   `para`; también puede atraparse explícitamente por el usuario. */
+DEFINIR_EXC_NATIVA(ErrorDeIteracion)
 
 #undef DEFINIR_EXC_NATIVA
 
@@ -3146,6 +3155,7 @@ static const EntradaNativa NATIVAS[] = {
     {"ErrorDeNombre",   13, nativa_exc_ErrorDeNombre},
     {"ErrorDeSistema",  14, nativa_exc_ErrorDeSistema},
     {"ErrorDeIO",       9,  nativa_exc_ErrorDeIO},
+    {"ErrorDeIteracion", 16, nativa_exc_ErrorDeIteracion},
     /* GC manual (v0.8.1). */
     {"recolectar",      10, nativa_recolectar},
     /* Sistema (v0.9.2). */

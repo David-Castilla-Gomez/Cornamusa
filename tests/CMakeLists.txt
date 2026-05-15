@@ -635,6 +635,18 @@ set_tests_properties(bc_run_59_hashable PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 59"
 )
 
+# v1.43: iteradores lazy con __siguiente__.
+add_test(
+    NAME bc_run_60_iteradores_lazy
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/60_iteradores_lazy.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_60_iteradores_lazy PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 60"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

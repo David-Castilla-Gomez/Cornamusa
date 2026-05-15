@@ -62,6 +62,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Performance: `-O3` + LTO | v1.40 | ✅ |
 | Dunders de coerción `__repr__` y `__booleano__` | v1.41 | ✅ |
 | `__hash__` + `__igual__` — instancias hashables por valor | v1.42 | ✅ |
+| `__siguiente__` — iteradores lazy stateful | v1.43 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

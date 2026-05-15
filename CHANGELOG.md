@@ -6,6 +6,93 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.43.0] — 2026-05-15 — Iteradores lazy con `__siguiente__`
+
+Tercer release de la **Fase 4 — modelo de datos**. Cierra el protocolo
+de iteración: una clase puede ahora ser un iterador stateful sin tener
+que materializar sus valores en una lista. Aprovecha directamente la
+infraestructura de sub-VM síncrono construida en v1.42.
+
+### Lo nuevo
+
+- **`__siguiente__(yo)` → cualquier valor**. La VM lo invoca en cada
+  paso de `para x en obj`. Al agotarse, el dunder debe lanzar
+  `ErrorDeIteracion()` (nueva excepción built-in) — el `para` la
+  atrapa internamente y termina el bucle.
+
+- **`__iterar__(yo)`** puede ahora devolver una **instancia** con
+  `__siguiente__` (no solo un iterable nativo). Patrón Python
+  `__iter__(self): return self` soportado: si la instancia define
+  ambos dunders, `__siguiente__` tiene prioridad — la instancia
+  funciona como su propio iterador.
+
+- **Instancias con solo `__siguiente__`** son iterables directamente
+  (sin `__iterar__`): `para v en MiIter():`.
+
+```cornamusa
+clase Contador:
+    funcion __iniciar__(yo, ini, tope):
+        yo.i = ini; yo.tope = tope
+    fin funcion
+    funcion __iterar__(yo): retornar yo; fin funcion
+    funcion __siguiente__(yo):
+        si yo.i >= yo.tope:
+            lanzar ErrorDeIteracion()
+        fin si
+        v = yo.i
+        yo.i = yo.i + 1
+        retornar v
+    fin funcion
+fin clase
+
+para n en Contador(0, 5):
+    imprimir(n)   # 0 1 2 3 4
+fin para
+```
+
+### Implementación
+
+- **`OP_ITER_INICIAR`**: la instancia con `__siguiente__` tiene
+  prioridad y se conserva en el slot del iterador tal cual; sin
+  `__siguiente__` se busca `__iterar__` (comportamiento previo).
+- **`OP_ITER_SIGUIENTE`**: si el slot es VAL_INSTANCIA, despacha
+  `__siguiente__` vía `vm_ejecutar_dunder_sync` (la misma rutina que
+  v1.42 usa para `__hash__`/`__igual__`). Si el dunder lanza
+  `ErrorDeIteracion`, se detecta por prefijo del mensaje en
+  `vm->error.mensaje`, se limpia el error y se salta al fin del bucle.
+  Cualquier otra excepción se propaga al `atrapar` del caller.
+- **Constructor `ErrorDeIteracion(...)`** añadido a la lista de
+  excepciones built-in. Por conveniencia (es una señal sin contexto),
+  los constructores de **todas** las excepciones built-in ahora aceptan
+  0 argumentos (mensaje vacío) además de los 1-2 anteriores.
+
+### Bug fix tangencial: cleanup del sub-VM en excepción no atrapada
+
+`vm_ejecutar_dunder_sync` no limpiaba la pila ni los frames cuando el
+dunder lanzaba una excepción que escapaba del sub-VM (caso normal en
+`__siguiente__`). Resultado: corrupción de estado que solo se notaba
+tras varias operaciones siguientes — la VM ejecutaba bytecode basura
+y reportaba errores fantasma como `'nulo' no es invocable` o
+`operando '-' entre 'nulo' y 'cadena'`. Fix: capturar
+`n_frames`/`tope` ANTES de los pushes y restaurarlos en el path de
+error.
+
+### Tests
+
+- **199/199 tests verde** (7 nuevos en `test_bytecode_iter_lazy.c` +
+  `lex_60` + `bc_run_60_iteradores_lazy`).
+- Ejemplo `examples/60_iteradores_lazy.cor`: Contador, iterador
+  stateful sin `__iterar__`, colección con iterador separado, filtro
+  perezoso encadenado, `romper`, `ErrorDeIteracion` manual.
+
+### Estado del data model
+
+Con v1.43 **todos los dunders fundamentales están implementados** —
+no quedan dunders reservados sin invocar en `vm.c`. El plan original
+de la Fase 4 cubre la coerción (v1.41), el hashing (v1.42) y la
+iteración lazy (v1.43). Lo que sigue es sintaxis idiomática
+(ternaria, slicing assignment, format specifiers, multi-recurso `con`).
+
 ## [1.42.0] — 2026-05-15 — Instancias hashables: `__hash__` + `__igual__`
 
 Segundo release de la **Fase 4 — completar el modelo de datos**. Las

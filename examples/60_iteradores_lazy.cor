@@ -1,0 +1,160 @@
+# Ejemplo 60 — Iteradores lazy con `__siguiente__` (v1.43)
+#
+# Hasta v1.42, una clase iterable debía implementar `__iterar__` y
+# devolver un **iterable nativo** (lista, tupla, conjunto, rango,
+# cadena o generador). Útil pero limitante: si querías un iterador
+# stateful sin pasar por la maquinaria de generadores, había que
+# materializar todo en una lista.
+#
+# v1.43 completa el protocolo de iteración:
+#
+#   - `__iterar__(yo)` puede devolver una INSTANCIA — no solo un
+#     iterable nativo. La instancia debe definir `__siguiente__`.
+#
+#   - `__siguiente__(yo)` se invoca en cada paso del bucle `para`.
+#     Devuelve el próximo valor. Cuando el iterador se agota, **lanza**
+#     `ErrorDeIteracion`. La VM atrapa la señal internamente y
+#     termina el bucle limpiamente.
+#
+# Mecanismo interno: la VM despacha `__siguiente__` vía sub-VM síncrono
+# (el mismo de v1.42 para `__hash__`/`__igual__`). El handler_techo
+# del sub-VM atrapa `ErrorDeIteracion` sin que escape al usuario,
+# salvo que éste la atrape explícitamente.
+
+imprimir("=== iteradores lazy (v1.43) ===")
+imprimir("")
+
+# ─── Caso 1: contador simple ───
+imprimir("1) Contador como iterador propio")
+clase Contador:
+    funcion __iniciar__(yo, ini, tope):
+        yo.i = ini
+        yo.tope = tope
+    fin funcion
+    funcion __iterar__(yo):
+        # patrón Python: `__iter__(self): return self`. La instancia
+        # es a la vez la colección y el iterador.
+        retornar yo
+    fin funcion
+    funcion __siguiente__(yo):
+        si yo.i >= yo.tope:
+            lanzar ErrorDeIteracion()
+        fin si
+        v = yo.i
+        yo.i = yo.i + 1
+        retornar v
+    fin funcion
+fin clase
+
+para n en Contador(0, 5):
+    imprimir("  ", n)
+fin para
+imprimir("")
+
+# ─── Caso 2: iterador stateful sin `__iterar__` ───
+imprimir("2) instancia con sólo `__siguiente__` (sin __iterar__)")
+clase Tres:
+    funcion __iniciar__(yo):
+        yo.n = 0
+    fin funcion
+    funcion __siguiente__(yo):
+        yo.n = yo.n + 1
+        si yo.n > 3:
+            lanzar ErrorDeIteracion()
+        fin si
+        retornar yo.n * 10
+    fin funcion
+fin clase
+
+para v en Tres():
+    imprimir("  ", v)
+fin para
+imprimir("")
+
+# ─── Caso 3: colección con iterador separado ───
+imprimir("3) colección + iterador como clases distintas")
+clase RecorrerLista:
+    funcion __iniciar__(yo, datos):
+        yo.datos = datos
+        yo.i = 0
+    fin funcion
+    funcion __siguiente__(yo):
+        si yo.i >= longitud(yo.datos):
+            lanzar ErrorDeIteracion()
+        fin si
+        v = yo.datos[yo.i]
+        yo.i = yo.i + 1
+        retornar v
+    fin funcion
+fin clase
+
+clase MiColeccion:
+    funcion __iniciar__(yo, xs):
+        yo.xs = xs
+    fin funcion
+    funcion __iterar__(yo):
+        # cada llamada devuelve un iterador FRESCO — la colección
+        # puede iterarse varias veces sin agotarse.
+        retornar RecorrerLista(yo.xs)
+    fin funcion
+fin clase
+
+datos = MiColeccion(["sol", "luna", "estrella"])
+para x en datos:
+    imprimir("  primera vuelta:", x)
+fin para
+para x en datos:
+    imprimir("  segunda vuelta:", x)
+fin para
+imprimir("")
+
+# ─── Caso 4: iterador que filtra perezosamente ───
+imprimir("4) iterador derivado: filtrar perezoso sin materializar")
+clase FiltroPerezoso:
+    funcion __iniciar__(yo, fuente, pred):
+        yo.fuente = fuente
+        yo.pred = pred
+    fin funcion
+    funcion __siguiente__(yo):
+        mientras verdadero:
+            v = yo.fuente.__siguiente__()
+            si yo.pred(v):
+                retornar v
+            fin si
+        fin mientras
+    fin funcion
+fin clase
+
+# Combinamos Contador (1..20) con un filtro de impares.
+imprimir("  impares de 1..20:")
+fuente = Contador(1, 21)
+filtro = FiltroPerezoso(fuente, lambda x: x % 2 == 1)
+para v en filtro:
+    imprimir("  ", v)
+fin para
+imprimir("")
+
+# ─── Caso 5: romper antes de agotar ───
+imprimir("5) romper antes de agotar el iterador")
+c = Contador(0, 1000000)
+total = 0
+para n en c:
+    si n >= 5:
+        romper
+    fin si
+    total = total + n
+fin para
+imprimir("  total tras romper:", total)
+imprimir("  estado del iterador (i):", c.i)
+imprimir("")
+
+# ─── Caso 6: atrapar ErrorDeIteracion explícitamente ───
+imprimir("6) ErrorDeIteracion es atrapable")
+intentar:
+    lanzar ErrorDeIteracion("señal manual")
+atrapar ErrorDeIteracion como e:
+    imprimir("  atrapado →", cadena(e))
+fin intentar
+
+imprimir("")
+imprimir("=== fin ejemplo 60 ===")

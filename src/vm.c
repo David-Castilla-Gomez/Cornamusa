@@ -1495,6 +1495,12 @@ static bool vm_ejecutar_dunder_sync(VM *vm, Closure *m,
         return false;
     }
 
+    /* Capturar n_frames y tope ANTES de tocar la pila, para poder
+       restaurar exactamente al estado pre-call si el dunder lanza una
+       excepción no atrapada y rompe la convención normal de OP_RETORNAR. */
+    int n_frames_pre_call = vm->n_frames;
+    Valor *tope_pre_call = vm->tope;
+
     /* Push closure, receptor, args en la pila — la convención
        habitual de llamada. El frame ocupa (aridad + 1) slots:
        base[0]=callee, base[1..aridad]=args. */
@@ -1551,7 +1557,15 @@ static bool vm_ejecutar_dunder_sync(VM *vm, Closure *m,
         *resultado_out = sacar(vm);
         return true;
     }
-    /* Error o estado inesperado — error ya está en vm->error. */
+    /* Error: el dunder lanzó una excepción que no se atrapó dentro del
+       sub-VM. OP_LANZAR dejó el frame y los slots del dunder sin
+       limpiar. Lo hacemos aquí para que el caller siga con la pila y
+       los frames como estaban antes de la llamada. */
+    while (vm->n_frames > n_frames_pre_call) vm->n_frames--;
+    while (vm->tope > tope_pre_call) {
+        Valor v = *(--vm->tope);
+        valor_destruir(&v);
+    }
     return false;
 }
 
@@ -3335,21 +3349,31 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                  * retrocedemos 1 byte (sobre el propio OP_ITER_INICIAR)
                  * antes de despachar. El dispatcher empuja un frame
                  * para el dunder; cuando este retorne, su valor de
-                 * retorno (que DEBE ser un iterable nativo: lista,
-                 * tupla, conjunto, dicc, rango o cadena) queda en TOS,
-                 * y el IP apunta otra vez al opcode que ya procesará
-                 * normalmente el iterable nativo. Dos pasadas, una
-                 * sola línea de bytecode.
+                 * retorno queda en TOS y el IP apunta otra vez al
+                 * opcode que ya procesará lo que devolvió.
                  *
-                 * Restricción intencional de v1.12: `__iterar__` debe
-                 * retornar un iterable nativo (no otra instancia con
-                 * `__siguiente__`). El usuario materializa explícitamente
-                 * con una lista. Iteración lazy con `__siguiente__` se
-                 * deja para v1.13+ si surge demanda. */
+                 * v1.43: además, si TOS es una instancia con
+                 * `__siguiente__` (directo o tras `__iterar__`), se
+                 * deja COMO está y el slot del iterador apunta a la
+                 * propia instancia. OP_ITER_SIGUIENTE despachará el
+                 * dunder en cada paso. Esto habilita iteradores lazy
+                 * con estado custom — sin pasar por la maquinaria de
+                 * generadores.
+                 *
+                 * Prioridad: si la instancia define ambos dunders, se
+                 * usa `__siguiente__` directamente (patrón Python
+                 * `__iter__(self): return self`). */
                 if (vm->tope[-1].tipo == VAL_INSTANCIA) {
-                    Closure *m = clase_obtener_metodo(
-                        vm->tope[-1].como.instancia->clase,
-                        "__iterar__", 10);
+                    Clase *cls = vm->tope[-1].como.instancia->clase;
+                    /* v1.43: __siguiente__ tiene prioridad — la
+                       instancia ya es el iterador. */
+                    if (clase_obtener_metodo(cls, "__siguiente__", 13)) {
+                        /* El valor en TOS se interpreta directamente
+                           como iterador en OP_ITER_SIGUIENTE. No
+                           necesitamos envolverlo. */
+                        break;
+                    }
+                    Closure *m = clase_obtener_metodo(cls, "__iterar__", 10);
                     if (m) {
                         frame->ip--;  /* re-ejecutar este opcode tras el dunder */
                         ResultadoVM rc = ejecutar_dunder_unario(
@@ -3357,11 +3381,10 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         if (rc != VM_OK) RAISE_OR_DIE();
                         break;
                     }
-                    /* VAL_INSTANCIA sin __iterar__: ErrorDeTipo claro,
-                       no decir "no soporta 'instancia'". */
-                    VM_ERROR("ErrorDeTipo: la clase '%.*s' no define '__iterar__'",
-                             vm->tope[-1].como.instancia->clase->longitud_nombre,
-                             vm->tope[-1].como.instancia->clase->nombre);
+                    /* VAL_INSTANCIA sin __iterar__ ni __siguiente__:
+                       ErrorDeTipo claro, no decir "no soporta 'instancia'". */
+                    VM_ERROR("ErrorDeTipo: la clase '%.*s' no define '__iterar__' ni '__siguiente__'",
+                             cls->longitud_nombre, cls->nombre);
                     Valor descartar = sacar(vm);
                     valor_destruir(&descartar);
                     RAISE_OR_DIE();
@@ -3400,7 +3423,10 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                    push valor. Si no, deja el slot intacto (se libera con
                    el frame al final) y salta `offset_fin` bytes adelante.
 
-                   v1.31: el slot también puede ser VAL_GENERADOR. */
+                   v1.31: el slot también puede ser VAL_GENERADOR.
+                   v1.43: el slot también puede ser VAL_INSTANCIA con
+                   `__siguiente__`; despachamos el dunder vía sub-VM
+                   síncrono y atrapamos `ErrorDeIteracion` como fin. */
                 uint8_t slot = LEER_BYTE();
                 uint8_t hi = LEER_BYTE();
                 uint8_t lo = LEER_BYTE();
@@ -3417,6 +3443,35 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         }
                         frame->ip += offset;
                     }
+                    break;
+                }
+                if (iter_v->tipo == VAL_INSTANCIA) {
+                    /* v1.43: iterador lazy custom. Despacho de
+                       `__siguiente__(yo)` vía sub-VM síncrono. */
+                    Clase *cls = iter_v->como.instancia->clase;
+                    Closure *m = clase_obtener_metodo(cls, "__siguiente__", 13);
+                    if (!m) {
+                        VM_ERROR("estado interno corrupto: iterador instancia sin __siguiente__");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    Valor v;
+                    if (vm_ejecutar_dunder_sync(vm, m,
+                            iter_v->como.instancia, NULL, 0, &v)) {
+                        empujar(vm, v);
+                        break;
+                    }
+                    /* Falló. Si el error es ErrorDeIteracion, lo
+                       interpretamos como señal de fin: limpiar el
+                       error y saltar al final del bucle. Otros errores
+                       se propagan al `atrapar` del caller. */
+                    if (vm->error.tuvo_error
+                        && strncmp(vm->error.mensaje, "ErrorDeIteracion", 16) == 0) {
+                        vm->error.tuvo_error = false;
+                        vm->error.mensaje[0] = '\0';
+                        frame->ip += offset;
+                        break;
+                    }
+                    RAISE_OR_DIE();
                     break;
                 }
                 if (iter_v->tipo != VAL_ITERADOR) {

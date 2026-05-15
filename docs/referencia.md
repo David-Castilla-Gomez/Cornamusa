@@ -581,7 +581,8 @@ Se invocan automáticamente al usar el operador correspondiente:
 | `__booleano__(yo)` | `si obj:`, `mientras obj:`, `y`/`o`, `no obj` (v1.41) |
 | `__hash__(yo)` | clave de dict/conjunto — debe retornar entero (v1.42) |
 | `__longitud__(yo)` | `longitud(obj)` |
-| `__iterar__(yo)` | `para x en obj` |
+| `__iterar__(yo)` | `para x en obj` — devuelve un iterable nativo o una instancia con `__siguiente__` |
+| `__siguiente__(yo)` | siguiente valor de un iterador lazy; lanza `ErrorDeIteracion` al agotarse (v1.43) |
 | `__llamar__(yo, ...)` | `obj(...)` |
 | `__indice__(yo, i)` | `obj[i]` |
 | `__asignar_indice__(yo, i, v)` | `obj[i] = v` |
@@ -645,6 +646,7 @@ fin intentar
 | `ErrorDeAtributo` | Atributo/método inexistente en instancia o módulo |
 | `ErrorDeSistema` | Fallo del sistema operativo |
 | `ErrorDeIO` | Fallo de entrada/salida |
+| `ErrorDeIteracion` | Señal de fin de un iterador lazy (`__siguiente__`); el `para` la atrapa internamente. v1.43 |
 
 Cuando un error no se atrapa, Cornamusa imprime un **traceback** multi-frame con la cadena de llamadas y la línea de fuente.
 
@@ -855,7 +857,7 @@ Sintaxis aceptada (parcialmente) por el parser pero **no implementada** en el ru
 | `asincrono` / `esperar` (async/await) | keywords reservadas; v2.x |
 | Anotaciones de tipo (`p: tipo`) | el parser las acepta; el runtime las ignora |
 | Decoradores (`@deco`) | soporte parcial en el parser |
-| Dunders `__hash__`, `__repr__`, `__booleano__` | ya se invocan (v1.41-v1.42). El único dunder reservado pendiente es `__siguiente__` (iteradores lazy stateful). |
+| Dunders `__hash__`, `__repr__`, `__booleano__`, `__siguiente__` | ya se invocan (v1.41-v1.43). No quedan dunders reservados sin implementar en el data model. |
 | Prefijos de cadena `r"..."` (raw), `b"..."` (bytes) | reservados |
 
 ---

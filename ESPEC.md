@@ -1,8 +1,8 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 1.42.0
+**Versión del documento:** 1.43.0
 **Estado:** Estable.
-**Última revisión:** 2026-05-15 — actualizada a v1.42 (`__hash__` + `__igual__` despachados; instancias hashables por valor).
+**Última revisión:** 2026-05-15 — actualizada a v1.43 (`__siguiente__` + `ErrorDeIteracion`: iteradores lazy stateful).
 
 Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
 
@@ -476,7 +476,17 @@ Las instancias siempre son hashables — por identidad por defecto, por valor si
 
 `__hash__` debe retornar entero (`ErrorDeTipo` atrapable si no). Internamente la VM ejecuta el dunder vía sub-VM síncrono: empuja un frame, corre un sub-loop del dispatcher, vuelve con el valor. Excepciones dentro del dunder se propagan al `intentar/atrapar` del caller mediante una bandera one-shot (`handler_techo` impide que escapen sin control).
 
-**Reservados, aún no invocados**: `__siguiente__` (iteradores lazy stateful — hoy `__iterar__` debe devolver iterable nativo; ver §6.12). La sintaxis se acepta para forward-compatibility.
+**Añadidos en v1.43**:
+
+| Dunder | Operador / built-in | Aridad |
+|---|---|---|
+| `__siguiente__` | siguiente valor de un iterador lazy (despachado por OP_ITER_SIGUIENTE en `para`) | 1 (yo) |
+
+`__iterar__` puede ahora devolver **una instancia** con `__siguiente__` (no solo iterables nativos). En cada iteración la VM despacha el dunder vía sub-VM síncrono. El fin se señala lanzando `ErrorDeIteracion`, que el `para` atrapa internamente — el usuario también puede atraparlo manualmente.
+
+Patrón Python `__iter__(self): return self` soportado: si la instancia define ambos dunders, `__siguiente__` tiene prioridad y la instancia se usa como iterador directamente.
+
+**Todos los dunders del modelo de datos están implementados desde v1.43.** No quedan `Reservados, aún no invocados` en esta sección.
 
 ### 4.4 Biblioteca estándar (stdlib)
 
@@ -1054,7 +1064,7 @@ fin coincidir
 1. **`borrar` (`del` de Python)**. Keyword reservada; `quitar(...)` cubre el caso por ahora.
 2. **`global`** (escritura a global desde función). Keyword reservada, sin implementar en la VM.
 3. **Async/await (`asincrono`/`esperar`)**. Keywords reservadas. v2.x.
-4. **Dunder `__siguiente__`** (iteradores lazy stateful). Reservado. (`__hash__` ya se invoca desde v1.42, `__repr__` y `__booleano__` desde v1.41.)
+4. **Dunders del modelo de datos** — todos implementados (v1.41 `__repr__`/`__booleano__`, v1.42 `__hash__`, v1.43 `__siguiente__`).
 5. **Prefijos de cadena `r"..."` (raw) y `b"..."` (bytes)**. Reservados.
 6. **Tipos numéricos exactos** (`Fraccion`, `Decimal`). En stdlib, futuro.
 7. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta; el runtime las ignora.
