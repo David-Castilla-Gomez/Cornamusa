@@ -611,6 +611,18 @@ set_tests_properties(bc_run_57_sugerencias PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 57"
 )
 
+# v1.41: dunders de coerción `__repr__` y `__booleano__`.
+add_test(
+    NAME bc_run_58_repr_booleano
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/58_repr_booleano.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_58_repr_booleano PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 58"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

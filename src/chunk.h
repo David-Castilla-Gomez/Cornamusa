@@ -277,9 +277,27 @@ typedef enum {
      * OP_ASEGURAR_CADENA (v1.2): verifica que el TOS sea VAL_CADENA;
      * si no, emite ErrorDeTipo claro mencionando que `__cadena__` debe
      * retornar cadena. Sin operandos. Usado tras OP_FORMATO_F en
-     * f-cadenas para validar el retorno de `__cadena__`.
+     * f-cadenas para validar el retorno de `__cadena__`. Reusado por
+     * OP_REPR para validar el retorno de `__repr__`.
      */
     OP_ASEGURAR_CADENA,
+
+    /*
+     * OP_REPR (v1.41): pop TOS y empuja su representación "inspeccionable"
+     * como VAL_CADENA — cadenas entre comillas, listas como `[a, b]`,
+     * etc. — la salida de la función global `repr()`.
+     *
+     * Si TOS es VAL_INSTANCIA y su clase define `__repr__`, la VM
+     * invoca el dunder (despachando un frame). El compilador SIEMPRE
+     * emite `OP_ASEGURAR_CADENA` justo después, que valida que el
+     * resultado sea cadena y emite ErrorDeTipo si no. Sin instancia o
+     * sin dunder, OP_REPR delega en `valor_a_repr` y deja una cadena
+     * directamente.
+     *
+     * Atajo del compilador para `repr(arg)` con un solo arg, análogo
+     * al atajo de `cadena(arg)` que emite OP_FORMATO_F.
+     */
+    OP_REPR,
 
     /*
      * OP_LONGITUD (v1.3): pop TOS, push longitud (entero).

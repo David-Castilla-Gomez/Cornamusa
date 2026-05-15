@@ -6,6 +6,107 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.41.0] — 2026-05-15 — Dunders de coerción: `__repr__` y `__booleano__`
+
+Primer release de la **Fase 4 — completar el modelo de datos**. Dos
+dunders que estaban reservados desde hacía versiones ahora se invocan
+de verdad. Mismo patrón de despacho que `__cadena__` (v1.2): cuando el
+operando es una instancia y la clase define el dunder, la VM empuja
+un frame para ejecutarlo; si no, fallback a la semántica por defecto.
+
+### `__repr__(yo)` → cadena
+
+Invocado por el built-in `repr(obj)`. Devuelve la representación
+"inspeccionable" del objeto, útil para depurar — puede ser distinta
+de `__cadena__` (lo que ve el usuario final).
+
+```cornamusa
+clase Punto:
+    funcion __iniciar__(yo, a, b):
+        yo.a = a
+        yo.b = b
+    fin funcion
+    funcion __cadena__(yo):
+        retornar f"({yo.a}, {yo.b})"        # → "(3, 4)"
+    fin funcion
+    funcion __repr__(yo):
+        retornar f"Punto(a={yo.a}, b={yo.b})" # → "Punto(a=3, b=4)"
+    fin funcion
+fin clase
+
+p = Punto(3, 4)
+imprimir(cadena(p))   # (3, 4)
+imprimir(repr(p))     # Punto(a=3, b=4)
+```
+
+Sin `__repr__`, `repr(obj)` mantiene la representación canónica
+anterior (fallback a `valor_a_repr`).
+
+**Implementación**: nuevo `OP_REPR`. El compilador detecta el call
+`repr(arg)` con un solo argumento y emite `OP_REPR + OP_ASEGURAR_CADENA`
+— mismo atajo que `cadena(arg)` para `__cadena__`. La nativa `repr`
+queda como fallback indirecto (vía `f = repr; f(x)` no pasa por el
+atajo).
+
+### `__booleano__(yo)` → booleano
+
+Invocado en cualquier contexto que evalúe la **verdadez** de una
+instancia: `si obj:`, `mientras obj:`, operandos de `y`/`o`,
+`no obj`. Sin él, una instancia es siempre verdadera (mismo
+comportamiento que Python para objetos sin `__bool__`).
+
+```cornamusa
+clase Bolsa:
+    funcion __iniciar__(yo, items):
+        yo.items = items
+    fin funcion
+    funcion __booleano__(yo):
+        retornar longitud(yo.items) > 0
+    fin funcion
+fin clase
+
+cola = Bolsa(["a", "b", "c"])
+mientras cola:
+    quitar(cola.items, 0)
+fin mientras   # termina cuando __booleano__(cola) devuelve falso
+```
+
+**Implementación**: dispatch inline en `OP_NO` y `OP_SALTAR_SI_FALSO`.
+Si TOS es VAL_INSTANCIA con `__booleano__` definido, se rebobina IP al
+opcode actual y se empuja el frame del dunder; cuando éste retorna,
+re-ejecutamos el opcode con el valor de retorno en TOS. No requiere
+nuevos opcodes ni inflar el bytecode con coerciones antes de cada
+conditional branch.
+
+**Contrato**: `__booleano__` debe retornar un booleano. Si retorna
+otra instancia con `__booleano__` se entra en recursión y el límite
+de frames la cortará — análogo a cualquier dunder mal definido.
+
+### Otros cambios menores
+
+- Mensaje de `OP_ASEGURAR_CADENA` generalizado: antes era
+  "`__cadena__` debe retornar cadena", ahora es "se esperaba cadena,
+  no '<tipo>'". Aplica también al validador de `__repr__`. Un test de
+  `test_bytecode_dunders.c` se actualizó al nuevo mensaje.
+
+### Tests
+
+- **188/188 tests verde** (185 anteriores + nuevo
+  `test_bytecode_dunders_coercion` con 12 tests + `lex_58_repr_booleano`
+  + `bc_run_58_repr_booleano`).
+- Nuevo ejemplo `examples/58_repr_booleano.cor` ejercitando ambos
+  dunders, fallbacks y errores atrapables.
+
+### Limitaciones aceptadas
+
+- `__hash__` sigue **reservado, sin invocar**. Las instancias se
+  hashean por identidad (lo que ya hacían). Sería v1.42.
+- `booleano(obj)` (built-in) sigue **sin invocar** `__booleano__` — usa
+  identidad por defecto. La inconsistencia con `si obj:` se documenta;
+  el atajo de compilador equivalente al de `repr` queda como patch
+  para .x.1 si surge demanda. Mientras tanto: `si obj: ... sino:` da
+  el comportamiento correcto.
+
 ## [1.40.0] — 2026-05-14 — Performance: `-O3` + LTO
 
 Primer release de la línea de **performance**. Sube la build Release

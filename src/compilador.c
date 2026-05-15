@@ -634,6 +634,23 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
                 return true;
             }
+            /* v1.41: atajo `repr(arg)` → OP_REPR + OP_ASEGURAR_CADENA.
+             * Hace que `repr(obj)` invoque `__repr__` cuando la clase lo
+             * define. La nativa `repr` queda como fallback indirecto
+             * (vía `f = repr; f(x)`) y conserva el comportamiento sin
+             * dunder. */
+            bool es_repr =
+                callee->tipo == EXPR_IDENT
+                && callee->como.ident.longitud == 4
+                && memcmp(callee->como.ident.nombre, "repr", 4) == 0
+                && n_args == 1
+                && buscar_local(c->actual, "repr", 4) < 0;
+            if (es_repr) {
+                if (!compilador_compilar_expr(c, e->como.llamada.args[0])) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_REPR, e->linea);
+                chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                return true;
+            }
             /* v1.22: si la llamada tiene algún `*expr` (spread arg),
                construimos una lista runtime con todos los args
                expandidos y usamos OP_LLAMAR_SPREAD. */

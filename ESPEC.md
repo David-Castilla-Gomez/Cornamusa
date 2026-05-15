@@ -1,8 +1,8 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 1.40.0
+**Versión del documento:** 1.41.0
 **Estado:** Estable.
-**Última revisión:** 2026-05-14 — actualizada a v1.40 (pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers, stdlib amplia).
+**Última revisión:** 2026-05-15 — actualizada a v1.41 (dunders de coerción `__repr__` y `__booleano__`).
 
 Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
 
@@ -456,7 +456,16 @@ clase Persona:
 fin clase
 ```
 
-**Reservados, aún no invocados**: `__hash__` (haría las instancias usables como claves de dict/conjunto), `__repr__` (lo usaría `repr(obj)`) y `__booleano__` (definiría la verdadez de la instancia). La sintaxis se acepta hoy para forward-compatibility, pero el runtime todavía no los despacha — una instancia es siempre verdadera y no hashable.
+**Añadidos en v1.41**:
+
+| Dunder | Operador / built-in | Aridad |
+|---|---|---|
+| `__repr__` | `repr(obj)` | 1 (yo) |
+| `__booleano__` | `si obj:`, `mientras obj:`, `y`, `o`, `no obj` | 1 (yo) |
+
+`__repr__` debe retornar cadena (la VM lo valida — `ErrorDeTipo` atrapable si no). `__booleano__` debe retornar booleano; si retorna otra instancia con `__booleano__` se cae en recursión, cortada por el límite de frames.
+
+**Reservados, aún no invocados**: `__hash__` (haría las instancias usables como claves de dict/conjunto por valor — hoy se hashean por identidad). La sintaxis se acepta para forward-compatibility.
 
 ### 4.4 Biblioteca estándar (stdlib)
 
@@ -1034,7 +1043,7 @@ fin coincidir
 1. **`borrar` (`del` de Python)**. Keyword reservada; `quitar(...)` cubre el caso por ahora.
 2. **`global`** (escritura a global desde función). Keyword reservada, sin implementar en la VM.
 3. **Async/await (`asincrono`/`esperar`)**. Keywords reservadas. v2.x.
-4. **Dunders `__hash__`, `__repr__`, `__booleano__`**. Reservados; el runtime aún no los despacha.
+4. **Dunder `__hash__`**. Reservado. `__repr__` y `__booleano__` ya se invocan desde v1.41.
 5. **Prefijos de cadena `r"..."` (raw) y `b"..."` (bytes)**. Reservados.
 6. **Tipos numéricos exactos** (`Fraccion`, `Decimal`). En stdlib, futuro.
 7. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta; el runtime las ignora.

@@ -162,7 +162,7 @@ Cortocircuito como Python: `a y b` no evalúa `b` si `a` es falso.
 ### Verdadez (truthy/falsy)
 
 **Falsos**: `falso`, `nulo`, `0`, `0.0`, `""`, `[]`, `()`, `{}` (dicc vacío), `conjunto()`.
-**Verdaderos**: todo lo demás. Las instancias pueden redefinirlo con `__booleano__` *(reservado)*; hoy una instancia es siempre verdadera.
+**Verdaderos**: todo lo demás. Las instancias pueden redefinir su verdadez con el dunder `__booleano__` (v1.41); sin él una instancia es siempre verdadera.
 
 ---
 
@@ -577,6 +577,8 @@ Se invocan automáticamente al usar el operador correspondiente:
 |---|---|
 | `__iniciar__(yo, ...)` | construcción `Clase(...)` |
 | `__cadena__(yo)` | `cadena(obj)`, `imprimir(obj)`, f-strings |
+| `__repr__(yo)` | `repr(obj)` (v1.41) |
+| `__booleano__(yo)` | `si obj:`, `mientras obj:`, `y`/`o`, `no obj` (v1.41) |
 | `__longitud__(yo)` | `longitud(obj)` |
 | `__iterar__(yo)` | `para x en obj` |
 | `__llamar__(yo, ...)` | `obj(...)` |
@@ -589,7 +591,7 @@ Se invocan automáticamente al usar el operador correspondiente:
 | `__dividir_entero__` `__modulo__` `__potencia__` | `//` `%` `**` |
 | `__sumar_derecho__`, etc. | operador con la instancia a la derecha (`5 + obj`) |
 
-> `__hash__`, `__repr__` y `__booleano__` están reservados pero aún no se invocan.
+> `__hash__` está reservado pero aún no se invoca — instancias se hashean por identidad. `__repr__` debe retornar cadena (validado en runtime con `se esperaba cadena, no '<tipo>'`).
 
 ---
 
@@ -851,7 +853,7 @@ Sintaxis aceptada (parcialmente) por el parser pero **no implementada** en el ru
 | `asincrono` / `esperar` (async/await) | keywords reservadas; v2.x |
 | Anotaciones de tipo (`p: tipo`) | el parser las acepta; el runtime las ignora |
 | Decoradores (`@deco`) | soporte parcial en el parser |
-| Dunders `__hash__`, `__repr__`, `__booleano__` | reservados; aún no se invocan |
+| Dunder `__hash__` | reservado; instancias se hashean por identidad. (`__repr__` y `__booleano__` ya se invocan desde v1.41) |
 | Prefijos de cadena `r"..."` (raw), `b"..."` (bytes) | reservados |
 
 ---

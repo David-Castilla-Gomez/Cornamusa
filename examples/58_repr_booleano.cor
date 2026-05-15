@@ -1,0 +1,126 @@
+# Ejemplo 58 — Dunders de coerción `__repr__` y `__booleano__` (v1.41)
+#
+# v1.41 completa el lado de coerción del modelo de datos:
+#
+#   - `__repr__(yo)` → cadena. Lo invoca `repr(obj)`. Es la
+#     representación "inspeccionable" del objeto (la que ayuda a
+#     depurar) y puede ser distinta de `__cadena__` (lo que ve el
+#     usuario final).
+#
+#   - `__booleano__(yo)` → booleano. Define la verdadez de la
+#     instancia: lo consultan `si obj:`, `mientras obj:`, `y`, `o`,
+#     `no`. Sin él, una instancia es siempre verdadera (como en
+#     Python con un objeto sin `__bool__`).
+#
+# Mismo patrón de despacho que `__cadena__` (v1.2): si la clase los
+# define la VM los invoca automáticamente.
+
+imprimir("=== __repr__ + __booleano__ (v1.41) ===")
+imprimir("")
+
+# ─── Caso 1: __repr__ distinto de __cadena__ ───
+imprimir("1) __repr__ vs __cadena__")
+clase Punto:
+    funcion __iniciar__(yo, a, b):
+        yo.a = a
+        yo.b = b
+    fin funcion
+    funcion __cadena__(yo):
+        # Pensado para el usuario: minimal.
+        retornar "(" + cadena(yo.a) + ", " + cadena(yo.b) + ")"
+    fin funcion
+    funcion __repr__(yo):
+        # Pensado para depurar: indica la clase y los nombres.
+        retornar f"Punto(a={yo.a}, b={yo.b})"
+    fin funcion
+fin clase
+
+p = Punto(3, 4)
+imprimir("  cadena(p) =", cadena(p))      # (3, 4)
+imprimir("  repr(p)   =", repr(p))         # Punto(a=3, b=4)
+imprimir("")
+
+# ─── Caso 2: repr sobre tipos primitivos (fallback) ───
+imprimir("2) repr sobre primitivos (sin dunder)")
+imprimir("  repr(42)      =", repr(42))
+imprimir("  repr('hola')  =", repr("hola"))
+imprimir("  repr([1, 2])  =", repr([1, 2]))
+imprimir("  repr((1, 2))  =", repr((1, 2)))
+imprimir("")
+
+# ─── Caso 3: __booleano__ define la verdadez de una colección custom ───
+imprimir("3) __booleano__ — colección custom que se siente vacía")
+clase Bolsa:
+    funcion __iniciar__(yo, items):
+        yo.items = items
+    fin funcion
+    funcion __booleano__(yo):
+        retornar longitud(yo.items) > 0
+    fin funcion
+    funcion __cadena__(yo):
+        retornar f"Bolsa({yo.items})"
+    fin funcion
+fin clase
+
+llena = Bolsa([1, 2, 3])
+vacia = Bolsa([])
+
+si llena:
+    imprimir("  llena se evalúa verdadera ✓")
+fin si
+
+si no vacia:
+    imprimir("  no vacia es verdadero ✓")
+fin si
+
+# ─── Caso 4: usado en `mientras` para consumir hasta vaciar ───
+imprimir("")
+imprimir("4) __booleano__ controlando un bucle")
+cola = Bolsa(["primero", "segundo", "tercero"])
+mientras cola:
+    imprimir("  procesando:", cola.items[0])
+    quitar(cola.items, 0)
+fin mientras
+imprimir("  cola final:", cola)
+imprimir("")
+
+# ─── Caso 5: Optional/Maybe — patron `__booleano__` + `__repr__` juntos ───
+imprimir("5) tipo `Opcional` aprovechando ambos dunders")
+clase Opcional:
+    funcion __iniciar__(yo, valor):
+        yo.valor = valor
+    fin funcion
+    funcion __booleano__(yo):
+        retornar yo.valor != nulo
+    fin funcion
+    funcion __repr__(yo):
+        si yo.valor == nulo:
+            retornar "Opcional()"
+        fin si
+        retornar f"Opcional({repr(yo.valor)})"
+    fin funcion
+fin clase
+
+opciones = [Opcional(7), Opcional(nulo), Opcional("hola"), Opcional(nulo)]
+representaciones = [repr(opt) para opt en opciones]
+imprimir("  contenido:", representaciones)
+con_valor = [opt para opt en opciones si opt]
+imprimir("  con valor:", longitud(con_valor), "/", longitud(opciones))
+imprimir("")
+
+# ─── Caso 6: errores atrapables ───
+imprimir("6) errores atrapables")
+clase Malo:
+    funcion __repr__(yo):
+        retornar 42       # debería ser cadena
+    fin funcion
+fin clase
+
+intentar:
+    _ = repr(Malo())
+atrapar ErrorDeTipo como e:
+    imprimir("  __repr__ no devuelve cadena →", cadena(e))
+fin intentar
+imprimir("")
+
+imprimir("=== fin ejemplo 58 ===")

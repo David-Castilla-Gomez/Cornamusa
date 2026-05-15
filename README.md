@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.40.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.41.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.40.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ (pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers) y una stdlib de doce módulos útil para scripting real. 185 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.41.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ (pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers) y una stdlib de doce módulos útil para scripting real. Dunders de coerción completos (`__cadena__`, `__repr__`, `__booleano__`). 188 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -145,6 +145,7 @@ Hoja de ruta resumida:
 | **v1.38** | **Traceback multi-frame en errores fatales (cadena de llamadas)** | ✅ |
 | **v1.39** | **Flag `--check` — valida sintaxis y compilación sin ejecutar (CI/editores)** | ✅ |
 | **v1.40** | **Performance: `-O3` + LTO (−16/−36% en benchmarks) + fix de UB latente en `nolocal`** | ✅ |
+| **v1.41** | **Dunders de coerción `__repr__` y `__booleano__` — instancias controlan su representación inspeccionable y su verdadez** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

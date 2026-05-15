@@ -2095,6 +2095,30 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 break;
             }
             case OP_NO: {
+                /* v1.41: si TOS es VAL_INSTANCIA con `__booleano__`
+                 * definido, despachamos el dunder ANTES de negar. El
+                 * dunder retorna lo que la clase considere verdadez de
+                 * la instancia; OP_NO se re-ejecuta tras el retorno
+                 * (`frame->ip--` apunta de nuevo al opcode) y esta vez
+                 * negará el valor retornado.
+                 *
+                 * Contrato: `__booleano__` debe retornar un booleano.
+                 * Si retorna otra instancia con `__booleano__` se entra
+                 * en recursión y el límite de frames la cortará. */
+                const Valor *tope_peek = vm->tope - 1;
+                if (tope_peek->tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        tope_peek->como.instancia->clase,
+                        "__booleano__", 12);
+                    if (m) {
+                        frame->ip--;
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__booleano__", 12) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
                 int linea = linea_actual_frame(frame);
                 Valor v = sacar(vm);
                 Valor r = evaluador_aplicar_unario(&vm->error, TT_NO, v,
@@ -3277,14 +3301,66 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
             }
 
             case OP_ASEGURAR_CADENA: {
+                /* Reusado tras OP_FORMATO_F (`__cadena__`) y OP_REPR
+                   (`__repr__`) — el mensaje es genérico para ambos. */
                 if (vm->tope[-1].tipo != VAL_CADENA) {
                     Valor v = sacar(vm);
                     const char *tn = valor_nombre_tipo(&v);
                     valor_destruir(&v);
-                    VM_ERROR("ErrorDeTipo: __cadena__ debe retornar cadena, "
+                    VM_ERROR("ErrorDeTipo: se esperaba cadena, "
                              "no '%s'", tn);
                     RAISE_OR_DIE();
                 }
+                break;
+            }
+
+            case OP_REPR: {
+                /* v1.41: pop TOS, push representación inspeccionable
+                 * (lo que devuelve `repr(x)`).
+                 *
+                 * Si TOS es VAL_INSTANCIA con `__repr__` definido,
+                 * despachamos al dunder; OP_ASEGURAR_CADENA, emitido
+                 * inmediatamente después por el compilador, valida que
+                 * el resultado sea cadena.
+                 *
+                 * Mismo patrón que OP_FORMATO_F + __cadena__. */
+                if (vm->tope[-1].tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        vm->tope[-1].como.instancia->clase,
+                        "__repr__", 8);
+                    if (m) {
+                        const DunderInlineDesc *desc =
+                            &m->plantilla->inline_desc;
+                        if (desc->tipo == DUNDER_INLINE_UNARIO_ATTR) {
+                            Valor key = valor_cadena_referencia(
+                                desc->attr_yo, desc->len_attr_yo);
+                            Valor val;
+                            if (dicc_obtener(
+                                    vm->tope[-1].como.instancia->atributos,
+                                    &key, &val)) {
+                                Valor obj = sacar(vm);
+                                valor_destruir(&obj);
+                                empujar(vm, val);
+                                break;
+                            }
+                        }
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__repr__", 8) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
+                /* Fallback: no instancia o sin dunder — `valor_a_repr`
+                   con buffer estático. Misma semántica que la nativa
+                   `repr`. */
+                char buffer[4096];
+                int n = valor_a_repr(&vm->tope[-1], buffer, sizeof(buffer));
+                if (n < 0) n = 0;
+                if (n >= (int)sizeof(buffer)) n = (int)sizeof(buffer) - 1;
+                Valor v = sacar(vm);
+                valor_destruir(&v);
+                empujar(vm, valor_cadena_duplicar(buffer, n));
                 break;
             }
 
@@ -3346,10 +3422,30 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 break;
             }
             case OP_SALTAR_SI_FALSO: {
+                /* v1.41: si TOS es VAL_INSTANCIA con `__booleano__`
+                 * definido, despachamos el dunder antes de evaluar la
+                 * verdadez. Rebobinamos IP al byte del opcode para
+                 * re-ejecutar este OP_SALTAR_SI_FALSO cuando el dunder
+                 * retorne: en la re-ejecución TOS será el valor que
+                 * retornó `__booleano__` (boolean esperado) y la rama
+                 * fast path lo usará con `valor_es_verdadero`. */
+                const Valor *tope = vm->tope - 1;
+                if (tope->tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        tope->como.instancia->clase,
+                        "__booleano__", 12);
+                    if (m) {
+                        frame->ip--;
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__booleano__", 12) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
                 uint8_t hi = LEER_BYTE();
                 uint8_t lo = LEER_BYTE();
                 uint16_t offset = ((uint16_t)hi << 8) | lo;
-                const Valor *tope = vm->tope - 1;
                 if (!valor_es_verdadero(tope)) frame->ip += offset;
                 break;
             }

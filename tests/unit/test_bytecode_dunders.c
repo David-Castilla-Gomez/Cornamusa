@@ -218,7 +218,7 @@ static void test_cadena_dunder_error(void) {
                     "  fin funcion\n"
                     "fin clase\n"
                     "x = f\"{V(1, 2)}\"",
-                    "__cadena__ debe retornar cadena");
+                    "se esperaba cadena");
 }
 
 /* ───── Indexación ───── */
