@@ -1967,6 +1967,7 @@ void evaluador_ejecutar_sent(Evaluador *ev, const Sent *s) {
         case SENT_GLOBAL:
         case SENT_NOLOCAL:
         case SENT_COINCIDIR:
+        case SENT_BORRAR:
             sent_set_error(ev, s,
                 "esta forma de sentencia no esta implementada en v0.4");
             return;

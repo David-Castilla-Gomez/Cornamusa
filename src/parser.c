@@ -1871,6 +1871,16 @@ Sent *parser_parsear_sentencia(Parser *p) {
         case TT_GLOBAL:    return parsear_global_o_nolocal(p, true);
         case TT_NOLOCAL:   return parsear_global_o_nolocal(p, false);
 
+        case TT_BORRAR: {
+            /* v1.56: `borrar destino` donde destino es `d[k]` (indice)
+             * o `obj.attr` (atributo). El compilador rechaza otros
+             * tipos de destino con un mensaje claro. */
+            avanzar(p);  /* consume 'borrar' */
+            Expr *destino = parser_parsear_expr(p);
+            if (destino == NULL) return NULL;
+            return sent_borrar(p->arena, destino, linea, col);
+        }
+
         default:
             return parsear_asignar_o_expr(p);
     }

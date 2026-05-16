@@ -674,6 +674,22 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             visitar_expr_quizas(s->como.lanzar.valor, ctx);
             break;
 
+        case SENT_BORRAR:
+            /* `borrar destino`: visitamos el destino para que lecturas
+             * sub-expresion (p.ej. el `obj` de `obj.attr`) marquen
+             * usado. El nombre eliminado en si no se desreferencia
+             * como lectura. */
+            if (s->como.borrar.destino) {
+                Expr *d = s->como.borrar.destino;
+                if (d->tipo == EXPR_INDICE) {
+                    visitar_expr_quizas(d->como.indice.objeto, ctx);
+                    visitar_expr_quizas(d->como.indice.indice, ctx);
+                } else if (d->tipo == EXPR_ATRIBUTO) {
+                    visitar_expr_quizas(d->como.atributo.objeto, ctx);
+                }
+            }
+            break;
+
         case SENT_IMPORTAR: {
             /* `importar a.b.c` introduce el nombre `a` en el scope (a menos
              * que se use `como X`, en cuyo caso es `X`). */

@@ -1839,6 +1839,56 @@ static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
         return true;
     }
 
+    /* v1.56: `obj.attr op= valor` se desazucara a:
+     *
+     *   compile obj           ; stack: [obj]
+     *   OP_DUP                ; stack: [obj, obj]
+     *   OP_OBTENER_ATRIBUTO   ; pop obj, push obj.attr → [obj, obj.attr]
+     *                         ; (6 bytes: opcode + idx + 4 bytes cache)
+     *   compile valor         ; [obj, obj.attr, valor]
+     *   OP_op                 ; [obj, resultado]
+     *   OP_ASIGNAR_ATRIBUTO   ; pop resultado + obj, set obj.attr → push nulo
+     *   OP_DESCARTAR          ; descarta el nulo
+     */
+    if (destino->tipo == EXPR_ATRIBUTO) {
+        TipoToken op_aug = s->como.asignar_aug.op;
+        int op_byte = -1;
+        switch (op_aug) {
+            case TT_ASIGNAR_MAS:         op_byte = OP_SUMAR; break;
+            case TT_ASIGNAR_MENOS:       op_byte = OP_RESTAR; break;
+            case TT_ASIGNAR_ASTERISCO:   op_byte = OP_MULTIPLICAR; break;
+            case TT_ASIGNAR_BARRA:       op_byte = OP_DIVIDIR; break;
+            case TT_ASIGNAR_DOBLE_BARRA: op_byte = OP_DIVIDIR_ENTERO; break;
+            case TT_ASIGNAR_PORCENTAJE:  op_byte = OP_MODULO; break;
+            case TT_ASIGNAR_DOBLE_ASTER: op_byte = OP_POTENCIA; break;
+            default:
+                error_compilacion(c, s->linea, s->columna,
+                    "operador de asignacion aumentada desconocido");
+                return false;
+        }
+        if (!compilador_compilar_expr(c, destino->como.atributo.objeto)) return false;
+        int idx = chunk_agregar_constante(c->actual->chunk,
+            valor_cadena_duplicar(destino->como.atributo.nombre,
+                                    destino->como.atributo.longitud));
+        if (idx < 0 || idx > 255) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiadas constantes para 'obj.attr op= valor'");
+            return false;
+        }
+        chunk_emitir_byte(c->actual->chunk, OP_DUP, s->linea);
+        /* OP_OBTENER_ATRIBUTO: 6 bytes (opcode + idx + 4 cache bytes). */
+        chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
+                            (uint8_t)idx, s->linea);
+        chunk_emitir_byte2(c->actual->chunk, 0, 0, s->linea);
+        chunk_emitir_byte2(c->actual->chunk, 0, 0, s->linea);
+        if (!compilador_compilar_expr(c, s->como.asignar_aug.valor)) return false;
+        chunk_emitir_byte(c->actual->chunk, (uint8_t)op_byte, s->linea);
+        chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_ATRIBUTO,
+                            (uint8_t)idx, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        return true;
+    }
+
     if (destino->tipo != EXPR_IDENT) {
         error_compilacion(c, s->linea, s->columna,
             "ErrorDeSintaxis: destino de asignacion aumentada no soportado en bytecode v0.6");
@@ -2918,6 +2968,40 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             error_compilacion(c, s->linea, s->columna,
                 "esta sentencia aun no esta implementada en bytecode v0.9");
             return false;
+
+        case SENT_BORRAR: {
+            /* v1.56: `borrar d[k]` o `borrar obj.attr`. */
+            Expr *destino = s->como.borrar.destino;
+            if (destino == NULL) {
+                error_compilacion(c, s->linea, s->columna,
+                    "ErrorDeSintaxis: 'borrar' requiere un destino");
+                return false;
+            }
+            if (destino->tipo == EXPR_INDICE) {
+                /* Compila obj, indice, OP_BORRAR_INDICE. */
+                if (!compilador_compilar_expr(c, destino->como.indice.objeto)) return false;
+                if (!compilador_compilar_expr(c, destino->como.indice.indice)) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_BORRAR_INDICE, s->linea);
+                return true;
+            }
+            if (destino->tipo == EXPR_ATRIBUTO) {
+                if (!compilador_compilar_expr(c, destino->como.atributo.objeto)) return false;
+                int idx = chunk_agregar_constante(c->actual->chunk,
+                    valor_cadena_duplicar(destino->como.atributo.nombre,
+                                            destino->como.atributo.longitud));
+                if (idx < 0 || idx > 255) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "demasiadas constantes (operando byte) para 'borrar obj.attr'");
+                    return false;
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_BORRAR_ATRIBUTO,
+                                    (uint8_t)idx, s->linea);
+                return true;
+            }
+            error_compilacion(c, s->linea, s->columna,
+                "ErrorDeSintaxis: 'borrar' requiere `d[k]` o `obj.attr` como destino");
+            return false;
+        }
     }
     error_compilacion(c, s->linea, s->columna,
         "tipo de sentencia desconocido");

@@ -1,0 +1,92 @@
+# `borrar` y aug-assign sobre atributos (v1.56).
+#
+# Cierra dos gaps del lenguaje:
+#   - `borrar d[k]`, `borrar lst[i]`, `borrar conj[v]`, `borrar obj.attr`.
+#   - `obj.attr += 1` (y todos los demas: -=, *=, /=, //=, %=, **=).
+
+# ─── 1. `borrar` sobre diccionario, lista y conjunto ─────────────
+config = {"host": "localhost", "puerto": 8080, "extra": "ignora"}
+borrar config["extra"]
+imprimir("Config sin extra:", config)
+
+cola = ["a", "b", "c", "d"]
+borrar cola[0]
+imprimir("Cola sin cabeza:", cola)
+
+vistos = {1, 2, 3, 4, 5}
+borrar vistos[3]
+imprimir("Vistos sin 3:", vistos)
+
+# ─── 2. `borrar` sobre atributos de instancia ────────────────────
+clase Cache:
+    funcion __iniciar__(yo):
+        yo.entradas = {}
+        yo.dirty = verdadero
+    fin funcion
+
+    funcion invalidar(yo):
+        # Suponiendo que `dirty` es un flag opcional que solo existe
+        # mientras hay cambios pendientes.
+        si "dirty" en dir(yo):
+            borrar yo.dirty
+        fin si
+    fin funcion
+fin clase
+
+c = Cache()
+imprimir("Antes:", c.dirty)
+borrar c.dirty
+intentar:
+    imprimir(c.dirty)
+atrapar ErrorDeAtributo:
+    imprimir("dirty borrado correctamente")
+fin intentar
+
+# ─── 3. Aug-assign sobre atributos ───────────────────────────────
+# Antes de v1.56 habia que escribir `yo.x = yo.x + 1`.
+clase Contador:
+    funcion __iniciar__(yo, inicial=0):
+        yo.valor = inicial
+    fin funcion
+
+    funcion inc(yo, n=1):
+        yo.valor += n
+    fin funcion
+
+    funcion doblar(yo):
+        yo.valor *= 2
+    fin funcion
+
+    funcion mitad(yo):
+        yo.valor //= 2
+    fin funcion
+
+    funcion potencia(yo, p):
+        yo.valor **= p
+    fin funcion
+fin clase
+
+cnt = Contador(10)
+cnt.inc(5)
+imprimir(cnt.valor)        # 15
+cnt.doblar()
+imprimir(cnt.valor)        # 30
+cnt.mitad()
+imprimir(cnt.valor)        # 15
+cnt.potencia(2)
+imprimir(cnt.valor)        # 225
+
+# ─── 4. Atrapar errores de `borrar` ──────────────────────────────
+intentar:
+    d = {"a": 1}
+    borrar d["no_existe"]
+atrapar ErrorDeClave como e:
+    imprimir("ErrorDeClave atrapado:", e)
+fin intentar
+
+intentar:
+    l = [1, 2]
+    borrar l[99]
+atrapar ErrorDeIndice como e:
+    imprimir("ErrorDeIndice atrapado:", e)
+fin intentar

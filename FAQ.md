@@ -223,6 +223,32 @@ fin funcion
 
 O reestructura para que la función **devuelva** el nuevo valor y el llamador lo reasigne.
 
+### ¿Funciona `borrar d[k]` y `obj.x += 1`?
+
+Sí desde v1.56:
+
+```cornamusa
+# `borrar` para diccionarios, listas, conjuntos e instancias:
+d = {"a": 1, "b": 2}
+borrar d["a"]
+
+lst = [10, 20, 30]
+borrar lst[1]               # quita el indice 1, desplaza el resto
+
+conj = {1, 2, 3}
+borrar conj[2]
+
+obj.cache = "data"
+borrar obj.cache             # quita el atributo de la instancia
+
+# Aug-assign sobre atributos (todos los operadores: +=, -=, *=, /=, //=, %=, **=):
+funcion incrementar(yo, n=1):
+    yo.contador += n          # antes habia que escribir: yo.contador = yo.contador + 1
+fin funcion
+```
+
+Errores atrapables: `ErrorDeClave` (clave inexistente en dict/conjunto), `ErrorDeIndice` (índice fuera de rango en lista), `ErrorDeAtributo` (atributo no presente en instancia), `ErrorDeTipo` (objeto no soporta `borrar`).
+
 ---
 
 ## Sobre el rendimiento

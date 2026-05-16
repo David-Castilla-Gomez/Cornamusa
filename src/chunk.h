@@ -370,6 +370,26 @@ typedef enum {
     OP_ES_TUPLA,
     OP_ES_LISTA,
 
+    /*
+     * OP_BORRAR_INDICE (v1.56): `borrar obj[clave]` para dict/lista/conjunto.
+     *   Stack: [..., obj, clave]  →  [...]
+     *   Pop ambos. Mutate `obj`:
+     *     - Dicc: quita la entrada con esa clave. Error si no existe.
+     *     - Lista: clave debe ser entero; borra el elemento desplazando.
+     *     - Conjunto: quita el elemento. Error si no existe.
+     *   Otros tipos: ErrorDeTipo.
+     */
+    OP_BORRAR_INDICE,
+
+    /*
+     * OP_BORRAR_ATRIBUTO (v1.56): `borrar obj.attr` para instancias.
+     *   [byte name_idx]
+     *   Stack: [..., obj]  →  [...]
+     *   Pop obj (debe ser VAL_INSTANCIA), quita el atributo del
+     *   diccionario de atributos. Error si no existe.
+     */
+    OP_BORRAR_ATRIBUTO,
+
     /* ---- Retorno ---- */
     OP_RETORNAR,
 } OpCode;

@@ -365,6 +365,7 @@ typedef enum {
     SENT_GLOBAL,         /* `global a, b, c` */
     SENT_NOLOCAL,        /* `nolocal a, b, c` */
     SENT_COINCIDIR,      /* `coincidir expr: cuando ... fin coincidir` (v1.15) */
+    SENT_BORRAR,         /* `borrar d[k]` o `borrar obj.attr` (v1.56) */
 } TipoSent;
 
 /*
@@ -582,6 +583,13 @@ struct Sent {
             ClausulaCuando *clausulas;
             int n_clausulas;
         } coincidir;
+
+        /* v1.56: `borrar destino`. El destino debe ser EXPR_INDICE
+         * (`d[k]`, `lst[i]`) o EXPR_ATRIBUTO (`obj.attr`). Otros
+         * destinos los rechaza el compilador. */
+        struct {
+            Expr *destino;
+        } borrar;
     } como;
 };
 
@@ -620,6 +628,7 @@ Sent *sent_desde_importar(Arena *a, Nombre *segmentos_modulo, int n_seg,
                            bool importa_todo, int linea, int col);
 Sent *sent_global(Arena *a, Nombre *nombres, int n_nombres, int linea, int col);
 Sent *sent_nolocal(Arena *a, Nombre *nombres, int n_nombres, int linea, int col);
+Sent *sent_borrar(Arena *a, Expr *destino, int linea, int col);
 Sent *sent_coincidir(Arena *a, Expr *sujeto,
                      ClausulaCuando *clausulas, int n_clausulas,
                      int linea, int col);

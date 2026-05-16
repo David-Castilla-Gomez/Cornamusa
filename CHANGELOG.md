@@ -6,6 +6,135 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.56.0] — 2026-05-16 — Lenguaje core: `borrar` y aug-assign sobre atributos
+
+Vuelta al lenguaje tras el arco de tooling de Fase 5. Cierra dos gaps
+del lenguaje que se hicieron evidentes en el housekeeping de v1.55.1
+(donde tuve que reescribir ejemplos que usaban estas features).
+
+### Lo nuevo
+
+#### 1. `borrar` para colecciones e instancias
+
+Hasta v1.55, `borrar` era keyword reservada por el lexer pero el
+parser la rechazaba con "se esperaba una expresión". Ahora funciona:
+
+```cornamusa
+# Diccionario: quita la entrada con esa clave.
+d = {"a": 1, "b": 2}
+borrar d["a"]
+imprimir(d)  # {"b": 2}
+
+# Lista: quita el elemento del indice, desplaza el resto.
+lst = [10, 20, 30, 40]
+borrar lst[1]
+imprimir(lst)  # [10, 30, 40]
+
+# Conjunto: quita el elemento.
+s = {1, 2, 3}
+borrar s[2]
+imprimir(s)  # {1, 3}
+
+# Atributo de instancia: quita del dicc interno de atributos.
+obj.cache = "data"
+borrar obj.cache
+# obj.cache  → ErrorDeAtributo
+```
+
+**Errores atrapables**:
+- `ErrorDeClave`: clave no presente en dict/conjunto.
+- `ErrorDeIndice`: indice fuera de rango en lista.
+- `ErrorDeAtributo`: atributo no presente en instancia.
+- `ErrorDeTipo`: el objeto no soporta `borrar` (p. ej. cadenas).
+
+#### 2. Aug-assign sobre atributos: `obj.x op= valor`
+
+Hasta v1.55, `obj.x += 1` daba `ErrorDeSintaxis: destino de asignacion
+aumentada no soportado en bytecode v0.6`. Había que escribir
+`obj.x = obj.x + 1`. Ahora funciona todo el set:
+
+```cornamusa
+clase Contador:
+    funcion __iniciar__(yo, inicial=0):
+        yo.valor = inicial
+    fin funcion
+fin clase
+
+cnt = Contador(10)
+cnt.valor += 5      # 15
+cnt.valor -= 2      # 13
+cnt.valor *= 3      # 39
+cnt.valor //= 4     # 9
+cnt.valor %= 5      # 4
+cnt.valor **= 3     # 64
+```
+
+El compilador desazucara `obj.x op= v` a:
+```
+compile obj                ; [obj]
+OP_DUP                     ; [obj, obj]
+OP_OBTENER_ATRIBUTO        ; [obj, obj.x]
+compile v                  ; [obj, obj.x, v]
+OP_op                      ; [obj, resultado]
+OP_ASIGNAR_ATRIBUTO        ; pop ambos, set obj.x = resultado
+OP_DESCARTAR
+```
+
+Hace una sola evaluación del objeto (correcta cuando hay efectos
+secundarios) y reusa el OP_OBTENER_ATRIBUTO cacheable.
+
+### Implementación
+
+#### AST + parser
+- `SENT_BORRAR { Expr *destino }` añadido al AST.
+- Parser: handler para `TT_BORRAR` que parsea la expresión siguiente
+  y construye SENT_BORRAR.
+- Pretty-printer en `ast.c`: `(borrar destino)`.
+
+#### Compilador
+- SENT_BORRAR: si destino es EXPR_INDICE emite `OP_BORRAR_INDICE`;
+  si es EXPR_ATRIBUTO emite `OP_BORRAR_ATRIBUTO` con índice de
+  nombre. Otros destinos: ErrorDeSintaxis claro.
+- SENT_ASIGNAR_AUG con destino EXPR_ATRIBUTO: nueva rama que emite
+  la secuencia descrita arriba.
+
+#### Bytecode (chunk.h)
+- Nuevos opcodes:
+  - `OP_BORRAR_INDICE` (1 byte): stack `[obj, clave]` → quita.
+  - `OP_BORRAR_ATRIBUTO` (2 bytes: opcode + name_idx): stack `[obj]` → quita.
+
+#### VM (vm.c)
+- Handler de `OP_BORRAR_INDICE`: dispatch por tipo (dict/list/conjunto)
+  → llama a `dicc_quitar`/desplazamiento manual/`conj_quitar`.
+- Handler de `OP_BORRAR_ATRIBUTO`: requiere VAL_INSTANCIA, llama a
+  `dicc_quitar` sobre el dicc de atributos.
+
+#### Linter (linter.c)
+- Visita SENT_BORRAR como referencia (no asignación). El `obj` de
+  `borrar obj.attr` y el `obj` + `key` de `borrar obj[k]` se marcan
+  como usados en su scope.
+
+### Verificación
+
+- **209/209 tests verde**. Nuevo `test_bytecode_borrar_augattr` con
+  14 asserts:
+  - `borrar d[k]` (dict).
+  - `borrar lst[i]` (lista, desplaza).
+  - `borrar obj.attr` (instancia).
+  - `ErrorDeClave` atrapable.
+  - `obj.x += / -= / **=` (3 variantes).
+- Nuevo `examples/64_borrar_y_aug_attr.cor` ejecuta correctamente
+  con `--bytecode`.
+- 0 regresiones en los tests existentes.
+
+### Pendiente (scope para v1.57+)
+
+- `global X` declarado en función no transfiere asignaciones al
+  scope de módulo (la keyword existe, el linter la trata, pero el
+  compilador la rechaza con "no implementada en bytecode v0.9").
+- `borrar variable_local` (sin índice ni atributo) — no soportado;
+  para limpiar referencias en Cornamusa usa `var = nulo`.
+
 ## [1.55.1] — 2026-05-16 — Housekeeping: dogfooding del toolkit sobre el propio repo
 
 Release de _housekeeping_ (sin features nuevas). Aplica el toolkit

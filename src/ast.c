@@ -713,6 +713,14 @@ Sent *sent_coincidir(Arena *a, Expr *sujeto,
     return s;
 }
 
+Sent *sent_borrar(Arena *a, Expr *destino, int linea, int col) {
+    Sent *s = nuevo_sent(a, SENT_BORRAR, linea, col);
+    if (s) {
+        s->como.borrar.destino = destino;
+    }
+    return s;
+}
+
 /* ───── Patrones (v1.15) ───── */
 
 static Patron *nuevo_patron(Arena *a, TipoPatron tipo, int linea, int col) {
@@ -1107,6 +1115,12 @@ static void sent_a_buffer(const Sent *s, EscrituraBuffer *eb) {
                 sent_a_buffer(cw->cuerpo, eb);
                 wb_escribir(eb, ")");
             }
+            wb_escribir(eb, ")");
+            break;
+
+        case SENT_BORRAR:
+            wb_escribir(eb, "(borrar ");
+            expr_a_buffer(s->como.borrar.destino, eb);
             wb_escribir(eb, ")");
             break;
     }

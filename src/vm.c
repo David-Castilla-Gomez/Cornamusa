@@ -3892,6 +3892,106 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 break;
             }
 
+            /* v1.56: `borrar obj[clave]`. */
+            case OP_BORRAR_INDICE: {
+                Valor clave = sacar(vm);
+                Valor obj = sacar(vm);
+                if (obj.tipo == VAL_DICCIONARIO) {
+                    if (!valor_es_hashable(&clave)) {
+                        VM_ERROR("ErrorDeTipo: clave no hashable");
+                        valor_destruir(&clave); valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    Valor extraido;
+                    if (!dicc_quitar(obj.como.dicc, &clave, &extraido)) {
+                        char buf[256];
+                        valor_a_repr(&clave, buf, sizeof(buf));
+                        VM_ERROR("ErrorDeClave: clave %s no presente en diccionario", buf);
+                        valor_destruir(&clave); valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    valor_destruir(&extraido);
+                    valor_destruir(&clave); valor_destruir(&obj);
+                } else if (obj.tipo == VAL_LISTA) {
+                    int64_t i64;
+                    if (!valor_entero_a_i64(&clave, &i64)) {
+                        VM_ERROR("ErrorDeTipo: indice de lista debe ser entero");
+                        valor_destruir(&clave); valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    Lista *l = obj.como.lista;
+                    long i = (long)i64;
+                    if (i < 0) i += l->cuenta;
+                    if (i < 0 || i >= l->cuenta) {
+                        VM_ERROR("ErrorDeIndice: indice fuera de rango (lista de %d)",
+                                  l->cuenta);
+                        valor_destruir(&clave); valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    /* Extraer y desplazar el resto del array. */
+                    Valor extraido = l->elementos[i];
+                    for (int k = (int)i; k < l->cuenta - 1; k++) {
+                        l->elementos[k] = l->elementos[k + 1];
+                    }
+                    l->cuenta--;
+                    valor_destruir(&extraido);
+                    valor_destruir(&clave); valor_destruir(&obj);
+                } else if (obj.tipo == VAL_CONJUNTO) {
+                    if (!valor_es_hashable(&clave)) {
+                        VM_ERROR("ErrorDeTipo: elemento no hashable");
+                        valor_destruir(&clave); valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    if (!conj_quitar(obj.como.conjunto, &clave)) {
+                        char buf[256];
+                        valor_a_repr(&clave, buf, sizeof(buf));
+                        VM_ERROR("ErrorDeClave: elemento %s no presente en conjunto", buf);
+                        valor_destruir(&clave); valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    valor_destruir(&clave); valor_destruir(&obj);
+                } else {
+                    VM_ERROR("ErrorDeTipo: 'borrar' no soporta '%s'",
+                              valor_nombre_tipo(&obj));
+                    valor_destruir(&clave); valor_destruir(&obj);
+                    RAISE_OR_DIE();
+                }
+                break;
+            }
+
+            /* v1.56: `borrar obj.attr` para instancias. */
+            case OP_BORRAR_ATRIBUTO: {
+                uint8_t name_idx = LEER_BYTE();
+                const Valor *nombre = &frame->chunk->constantes[name_idx];
+                Valor obj = sacar(vm);
+                if (obj.tipo != VAL_INSTANCIA) {
+                    VM_ERROR("ErrorDeTipo: 'borrar obj.attr' requiere instancia, no '%s'",
+                              valor_nombre_tipo(&obj));
+                    valor_destruir(&obj);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                Instancia *ins = obj.como.instancia;
+                Valor extraido;
+                if (!dicc_quitar(ins->atributos, nombre, &extraido)) {
+                    VM_ERROR("ErrorDeAtributo: '%.*s' no es atributo de la instancia",
+                              nombre->como.cadena.longitud,
+                              nombre->como.cadena.texto);
+                    valor_destruir(&obj);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                valor_destruir(&extraido);
+                valor_destruir(&obj);
+                break;
+            }
+
             case OP_IMPRIMIR: {
                 uint8_t n = LEER_BYTE();
                 /* v1.2: el compilador emite OP_FORMATO_F + OP_ASEGURAR_CADENA

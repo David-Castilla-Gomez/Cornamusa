@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.55.1-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.56.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.55.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de doce módulos útil para scripting real. El **linter gana tres nuevos checks**: `shadow` (local sombrea variable de scope exterior), `unused-loop-var` (`para X en ...:` sin usar X) y `mutable-default` (defaults `=[]`, `={}`, `={1,2}` — bug clásico Python). Total: **9 categorías**. El barrido del repo confirma 0 falsos positivos. v1.54 trajo goto-def + formatting al LSP; v1.53 hover + parse errors estructurados. 208 tests en verde con 48 asserts en el linter. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.56.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de doce módulos útil para scripting real. Vuelta al **lenguaje core**: implementa `borrar d[k]` / `borrar obj.attr` (keyword reservada desde v0.5 pero rechazada por el parser) y **aug-assign sobre atributos**: `obj.x += 1`, `obj.x *= 2`, etc. (antes había que escribir `obj.x = obj.x + 1`). Cierra dos gaps que se mostraron como evidencia durante el housekeeping de v1.55.1. v1.55 trajo 3 checks nuevos al linter; v1.54 goto-def + formatting al LSP. 209 tests en verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -160,6 +160,7 @@ Hoja de ruta resumida:
 | **v1.53** | **LSP polish — parse errors estructurados + `textDocument/hover` para funciones y clases top-level (firma + doc + metodos)** | ✅ |
 | **v1.54** | **LSP completion basico — `textDocument/definition` (goto-def) + `textDocument/formatting` (delega al formateador integrado)** | ✅ |
 | **v1.55** | **Linter: 3 checks nuevos — `shadow` (variables que sombrean outer), `unused-loop-var`, `mutable-default` (defaults `=[]`/`={}`)** | ✅ |
+| **v1.56** | **Lenguaje core: `borrar d[k]` / `borrar obj.attr` (keyword desde v0.5, ahora implementado) + aug-assign sobre atributos (`obj.x += 1`)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
