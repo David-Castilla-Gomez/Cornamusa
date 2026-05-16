@@ -1,7 +1,9 @@
 # Diccionarios: contar la frecuencia de palabras en un texto.
 
+desde cadenas importar separar
+
 texto = "el gato come pescado y el perro come carne y el gato duerme"
-palabras = texto.dividir(" ")
+palabras = separar(texto, " ")
 
 frecuencias = {}
 para palabra en palabras:
@@ -12,6 +14,6 @@ para palabra en palabras:
     fin si
 fin para
 
-para palabra, conteo en frecuencias.elementos():
-    imprimir(f"{palabra}: {conteo}")
+para palabra en frecuencias:
+    imprimir(f"{palabra}: {frecuencias[palabra]}")
 fin para

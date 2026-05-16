@@ -15,20 +15,17 @@ clase Animal:
     fin funcion
 fin clase
 
-
 clase Perro extiende Animal:
     funcion hablar(yo):
         retornar f"{yo.nombre} dice ¡guau!"
     fin funcion
 fin clase
 
-
 clase Gato extiende Animal:
     funcion hablar(yo):
         retornar f"{yo.nombre} dice ¡miau!"
     fin funcion
 fin clase
-
 
 animales = [Perro("Rex", 5), Gato("Misi", 3), Perro("Toby", 2)]
 

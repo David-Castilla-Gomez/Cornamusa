@@ -32,7 +32,6 @@
 #   regex.todos("\\w+", "hola mundo amigo")  # ["hola", "mundo", "amigo"]
 #   regex.reemplazar("\\d+", "ano 2026", "N") # "ano N"
 
-
 # ¿El patrón matchea todo el texto? (fullmatch)
 funcion coincide(patron, texto):
     retornar regex_coincide(patron, texto)
@@ -55,13 +54,13 @@ fin funcion
 
 # Atajo: ¿hay al menos una ocurrencia en el texto?
 funcion contiene(patron, texto):
-    retornar buscar(patron, texto) != nulo
+    retornar buscar(patron, texto) no es nulo
 fin funcion
 
 # Atajo: extrae la subcadena del primer match, o nulo si no hay.
 funcion extraer(patron, texto):
     r = buscar(patron, texto)
-    si r == nulo:
+    si r es nulo:
         retornar nulo
     fin si
     ini, fn = r

@@ -20,7 +20,6 @@
 #   - `barajar` muta la lista; `muestra` devuelve una nueva.
 #   - Para distribución normal, ver TODO en `normal()` abajo.
 
-
 # Uniforme [0.0, 1.0). 53 bits de mantisa.
 funcion decimal():
     retornar azar_decimal()

@@ -9,25 +9,25 @@
 # 1. Vector con suma reflejada: la suma es conmutativa, así que
 #    `5 + v` debe dar el mismo resultado que `v + 5`.
 clase Vec:
-  funcion __iniciar__(yo, x):
-    yo.x = x
-  fin funcion
+    funcion __iniciar__(yo, x):
+        yo.x = x
+    fin funcion
 
-  funcion __sumar__(yo, otro):
-    si tipo(otro) == "instancia":
-      retornar Vec(yo.x + otro.x)
-    fin si
-    retornar Vec(yo.x + otro)
-  fin funcion
+    funcion __sumar__(yo, otro):
+        si tipo(otro) == "instancia":
+            retornar Vec(yo.x + otro.x)
+        fin si
+        retornar Vec(yo.x + otro)
+    fin funcion
 
-  funcion __sumar_derecho__(yo, otro):
-    # Aprovechamos la conmutatividad de la suma.
-    retornar yo + otro
-  fin funcion
+    funcion __sumar_derecho__(yo, otro):
+        # Aprovechamos la conmutatividad de la suma.
+        retornar yo + otro
+    fin funcion
 
-  funcion __cadena__(yo):
-    retornar f"Vec({yo.x})"
-  fin funcion
+    funcion __cadena__(yo):
+        retornar f"Vec({yo.x})"
+    fin funcion
 fin clase
 
 v = Vec(10)
@@ -37,13 +37,13 @@ imprimir(v + v + 100)           # Vec(120)
 
 # 2. Multiplicador como instancia callable.
 clase Multiplicador:
-  funcion __iniciar__(yo, factor):
-    yo.factor = factor
-  fin funcion
+    funcion __iniciar__(yo, factor):
+        yo.factor = factor
+    fin funcion
 
-  funcion __llamar__(yo, n):
-    retornar n * yo.factor
-  fin funcion
+    funcion __llamar__(yo, n):
+        retornar n * yo.factor
+    fin funcion
 fin clase
 
 doblar = Multiplicador(2)
@@ -57,25 +57,25 @@ imprimir(triplicar(doblar(7)))
 
 # 3. Pila con __longitud__.
 clase Pila:
-  funcion __iniciar__(yo):
-    yo.items = []
-  fin funcion
+    funcion __iniciar__(yo):
+        yo.items = []
+    fin funcion
 
-  funcion meter(yo, x):
-    agregar(yo.items, x)
-  fin funcion
+    funcion meter(yo, x):
+        agregar(yo.items, x)
+    fin funcion
 
-  funcion sacar(yo):
-    retornar quitar(yo.items)
-  fin funcion
+    funcion sacar(yo):
+        retornar quitar(yo.items)
+    fin funcion
 
-  funcion __longitud__(yo):
-    retornar longitud(yo.items)
-  fin funcion
+    funcion __longitud__(yo):
+        retornar longitud(yo.items)
+    fin funcion
 
-  funcion __cadena__(yo):
-    retornar f"Pila({yo.items})"
-  fin funcion
+    funcion __cadena__(yo):
+        retornar f"Pila({yo.items})"
+    fin funcion
 fin clase
 
 p = Pila()
@@ -90,14 +90,14 @@ imprimir(longitud(p))           # 2
 
 # 4. Counter como callable + estado interno (closure de instancia).
 clase Contador:
-  funcion __iniciar__(yo):
-    yo.cuenta = 0
-  fin funcion
+    funcion __iniciar__(yo):
+        yo.cuenta = 0
+    fin funcion
 
-  funcion __llamar__(yo):
-    yo.cuenta = yo.cuenta + 1
-    retornar yo.cuenta
-  fin funcion
+    funcion __llamar__(yo):
+        yo.cuenta = yo.cuenta + 1
+        retornar yo.cuenta
+    fin funcion
 fin clase
 
 c = Contador()

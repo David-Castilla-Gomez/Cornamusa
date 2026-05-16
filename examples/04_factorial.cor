@@ -10,6 +10,5 @@ funcion factorial(n):
     retornar resultado
 fin funcion
 
-
 imprimir(f"5! = {factorial(5)}")
 imprimir(f"10! = {factorial(10)}")

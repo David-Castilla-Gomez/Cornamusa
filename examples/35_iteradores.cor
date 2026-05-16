@@ -112,13 +112,13 @@ clase Nodo:
 
     funcion insertar(yo, v):
         si v < yo.valor:
-            si yo.izq == nulo:
+            si yo.izq es nulo:
                 yo.izq = Nodo(v)
             sino:
                 yo.izq.insertar(v)
             fin si
         sino:
-            si yo.der == nulo:
+            si yo.der es nulo:
                 yo.der = Nodo(v)
             sino:
                 yo.der.insertar(v)
@@ -127,11 +127,11 @@ clase Nodo:
     fin funcion
 
     funcion en_orden(yo, salida):
-        si yo.izq != nulo:
+        si yo.izq no es nulo:
             yo.izq.en_orden(salida)
         fin si
         agregar(salida, yo.valor)
-        si yo.der != nulo:
+        si yo.der no es nulo:
             yo.der.en_orden(salida)
         fin si
     fin funcion

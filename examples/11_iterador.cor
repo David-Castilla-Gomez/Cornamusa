@@ -13,13 +13,14 @@ clase RangoInverso:
     fin funcion
 
     funcion __siguiente__(yo):
-        si yo.actual <= yo.limite: lanzar FinDeIteración()
+        si yo.actual <= yo.limite:
+            lanzar ErrorDeIteracion()
+        fin si
         valor = yo.actual
-        yo.actual -= 1
+        yo.actual = yo.actual - 1
         retornar valor
     fin funcion
 fin clase
-
 
 para n en RangoInverso(10, 0):
     imprimir(n)

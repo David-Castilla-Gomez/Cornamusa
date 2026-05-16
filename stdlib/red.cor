@@ -22,14 +22,12 @@
 # Para HTTPS, scraping moderno, sesiones autenticadas o anti-bots,
 # usa el fetch-toolkit externo (separate dependency).
 
-
 # GET sobre `url`. Retorna dict {codigo, cabeceras, cuerpo}.
 # `cabeceras_extra` es cadena con CRLFs ("Header: valor\r\n...") o nulo.
 # `timeout` en segundos (default 10).
 funcion obtener(url, cabeceras_extra=nulo, timeout=10):
     retornar red_http_obtener(url, cabeceras_extra, timeout)
 fin funcion
-
 
 # Atajo: solo el cuerpo como cadena. Si codigo != 2xx, lanza
 # ErrorDeSistema.
@@ -42,7 +40,6 @@ funcion descargar_cuerpo(url):
     fin si
     retornar r["cuerpo"]
 fin funcion
-
 
 # Parsea las cabeceras de una respuesta en un diccionario
 # {nombre_lowercase: valor}. Es útil cuando vienen como cadena cruda.

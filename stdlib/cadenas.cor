@@ -16,7 +16,7 @@ funcion repetir(s, n):
         lanzar ErrorDeValor("repetir requiere n >= 0")
     fin si
     resultado = ""
-    para i en rango(n):
+    para _ en rango(n):
         resultado = resultado + s
     fin para
     retornar resultado

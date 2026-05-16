@@ -5,7 +5,6 @@ funcion fib_recursivo(n):
     retornar fib_recursivo(n - 1) + fib_recursivo(n - 2)
 fin funcion
 
-
 funcion fib_iterativo(n):
     a = 0
     b = 1
@@ -14,7 +13,6 @@ funcion fib_iterativo(n):
     fin para
     retornar a
 fin funcion
-
 
 para i en rango(10):
     imprimir(f"fib({i}) = {fib_iterativo(i)}")

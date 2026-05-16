@@ -24,7 +24,6 @@
 #   - Sin cambio de directorio de trabajo.
 #   - Salida limitada a 10 MB por stream (stdout, stderr cada uno).
 
-
 # Ejecuta `programa` con los args extra. Retorna un diccionario:
 #   { "stdout": cadena, "stderr": cadena, "codigo": entero }
 #
@@ -40,7 +39,6 @@ funcion ejecutar(programa, *args):
     retornar proceso_ejecutar(programa, argv)
 fin funcion
 
-
 # Atajo: solo stdout como cadena. Si el proceso falla (exit != 0)
 # lanza ErrorDeSistema con clase y stderr embedded.
 funcion capturar(programa, *args):
@@ -52,7 +50,6 @@ funcion capturar(programa, *args):
     fin si
     retornar r["stdout"]
 fin funcion
-
 
 # Atajo: solo retorna el exit code, descartando output. Útil para
 # probar si un comando funciona sin importar qué imprime.

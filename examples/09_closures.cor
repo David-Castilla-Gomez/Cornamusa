@@ -12,7 +12,6 @@ funcion crear_contador(inicio=0):
     retornar incrementar
 fin funcion
 
-
 contador = crear_contador()
 imprimir(contador())     # 1
 imprimir(contador())     # 2
@@ -23,7 +22,6 @@ imprimir(contador(10))   # 12
 funcion crear_multiplicador(factor):
     retornar lambda x: x * factor
 fin funcion
-
 
 doblar = crear_multiplicador(2)
 triplicar = crear_multiplicador(3)

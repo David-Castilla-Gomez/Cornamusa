@@ -6,6 +6,61 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.55.1] — 2026-05-16 — Housekeeping: dogfooding del toolkit sobre el propio repo
+
+Release de _housekeeping_ (sin features nuevas). Aplica el toolkit
+construido en releases anteriores al propio repo. Cierre simbólico
+del arco de Fase 5: el repo entero pasa sus propios checks.
+
+### Cambios
+
+- **`== nulo` → `es nulo` y `!= nulo` → `no es nulo`** en 4 archivos
+  donde el linter reportaba `eq-nulo` (10 sitios en total):
+  - `examples/32_json_archivos.cor:47`
+  - `examples/35_iteradores.cor:115,121,130,134`
+  - `examples/58_repr_booleano.cor:94,97`
+  - `stdlib/regex.cor:58,64`
+
+- **`para i en rango(n)` → `para _ en rango(n)`** en `stdlib/cadenas.cor:19`
+  (el contador no se usa — convención `_` para descartes).
+
+- **Bugs preexistentes en `examples/06_diccionarios.cor` arreglados**:
+  - Usaba `texto.dividir(" ")` (método inexistente) → cambiado a
+    `desde cadenas importar separar` + `separar(texto, " ")`.
+  - Usaba destructuring en `para` (`para palabra, conteo en
+    frecuencias.elementos():`) — no soportado. Cambiado al idiom
+    canónico: `para palabra en frecuencias: ... frecuencias[palabra]`.
+
+- **Bug preexistente en `examples/11_iterador.cor` arreglado**:
+  - Usaba `lanzar FinDeIteración()` (nombre incorrecto con tilde) →
+    `lanzar ErrorDeIteracion()` (nombre real desde v1.43).
+  - Usaba `yo.actual -= 1` (augmented assign sobre atributo, no
+    soportado en bytecode) → `yo.actual = yo.actual - 1`.
+  - One-liner `si cond: lanzar ...` → forma multi-línea con `fin si`.
+
+- **`cornamusa fmt` aplicado a 12 archivos** que necesitaban reformat
+  (mayoritariamente: colapsar 2 líneas en blanco a 1, normalizar
+  trailing newlines).
+
+### Estado tras housekeeping
+
+- **0 archivos** con parse-error en `examples/` y `stdlib/`.
+- **0 archivos** necesitan reformat (`cornamusa fmt --check` limpio
+  sobre todos).
+- **1 archivo** con un único warning del linter:
+  `examples/42_defaults.cor:35` — `mutable-default`. **Intencional**:
+  el ejemplo demuestra el footgun, con comentario "CUIDADO: el mismo
+  objeto se reutiliza entre llamadas" justo arriba.
+- **208/208 tests** verde.
+- Ejemplos arreglados verificados ejecutando con `--bytecode`.
+
+### Significado
+
+Esto cierra el arco que empezó en v1.47. El proyecto ahora puede
+afirmar: "todo el código del repo pasa los propios checks del
+toolkit, salvo casos didácticos explícitamente documentados". Es la
+señal de salud que un proyecto maduro debería poder dar.
+
 ## [1.55.0] — 2026-05-16 — Linter: shadow + loop-var + mutable-default
 
 Novena release de la **Fase 5 — Tooling**. Tres checks nuevos en el

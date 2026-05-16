@@ -44,7 +44,7 @@ imprimir("---")
 imprimir("Comparaciones tras round-trip:")
 imprimir("estable es verdadero?", recargado["estable"] == verdadero)
 imprimir("deprecado es falso?", recargado["deprecado"] == falso)
-imprimir("config_extra es nulo?", recargado["config_extra"] == nulo)
+imprimir("config_extra es nulo?", recargado["config_extra"] es nulo)
 imprimir(f"autor: {recargado['metadatos']['autor']}")
 imprimir(f"anio: {recargado['metadatos']['anio']}")
 

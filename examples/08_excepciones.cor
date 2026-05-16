@@ -9,10 +9,8 @@ funcion dividir_seguro(a, b):
     fin intentar
 fin funcion
 
-
 imprimir(dividir_seguro(10, 2))
 imprimir(dividir_seguro(10, 0))
-
 
 # Lectura de archivo con cleanup en finalmente.
 archivo = nulo

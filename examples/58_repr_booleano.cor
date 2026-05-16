@@ -91,10 +91,10 @@ clase Opcional:
         yo.valor = valor
     fin funcion
     funcion __booleano__(yo):
-        retornar yo.valor != nulo
+        retornar yo.valor no es nulo
     fin funcion
     funcion __repr__(yo):
-        si yo.valor == nulo:
+        si yo.valor es nulo:
             retornar "Opcional()"
         fin si
         retornar f"Opcional({repr(yo.valor)})"
