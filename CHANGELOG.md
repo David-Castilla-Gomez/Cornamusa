@@ -6,6 +6,89 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.48.0] — 2026-05-16 — Formateador integrado `cornamusa fmt`
+
+Segundo release de la **Fase 5 — Tooling**. Cornamusa ahora trae un
+formateador integrado al binario, con reglas conservadoras pensadas
+para no romper código existente y ser ejecutables en pipelines de CI.
+
+### Lo nuevo
+
+- **Subcomando `cornamusa fmt`** con modos:
+  - `cornamusa fmt archivo.cor` — reescribe el archivo si difiere.
+  - `cornamusa fmt --check archivo.cor` — exit 0 si ya está formateado,
+    1 si no. Pensado para `pre-commit` y CI.
+  - `cornamusa fmt --stdout archivo.cor` — imprime resultado a stdout
+    sin tocar el archivo.
+  - `cornamusa fmt -` — lee stdin → escribe stdout.
+
+### Reglas aplicadas
+
+- **Reindentación a 4 espacios** derivada mecánicamente de la
+  profundidad de bloques. Bloques se abren con línea que termina en
+  `:` y se cierran con `fin <etiqueta>`. Mid-block markers (`sino`,
+  `atrapar`, `finalmente`) se dedentan al nivel del abridor.
+- **`cuando` consecutivo dentro de `coincidir`** se trata correctamente
+  via mini-pila: el segundo `cuando` cierra el case anterior antes de
+  abrir el nuevo. `fin coincidir` auto-cierra el `cuando` colgante.
+- **Trailing whitespace** eliminado en todas las líneas.
+- **Líneas en blanco** en runs de ≥2 se colapsan a 1.
+- **Trailing newline** normalizado: exactamente uno si el archivo no
+  está vacío.
+- **Líneas de continuación** (dentro de `()`, `[]`, `{}` o
+  triple-quoted strings) **preservan el leading whitespace original**
+  — el formateador no realinea contenido entre brackets, solo trimea
+  trailing.
+- **Comentarios `# ...` preservados** verbatim (incluyendo comentarios
+  alineados en mitad de línea de código).
+
+### Lo que NO hace (scope para v1.49+)
+
+- No toca espaciado de operadores (`x+1` no se convierte a `x + 1`).
+- No rompe líneas largas.
+- No reordena imports.
+- No añade ni elimina paréntesis ni `pasar` implícitos.
+
+Decisión deliberada: este release prioriza **conservadurismo e
+idempotencia garantizada** sobre cobertura. Un pulido más agresivo del
+estilo es trabajo de releases posteriores.
+
+### Implementación
+
+Nuevo módulo `src/formateador.{c,h}` (~250 líneas, sin dependencias
+del lexer/parser — caminata textual con tracking de cadenas y
+brackets). El estado por archivo es:
+- Profundidad de bloque (entero).
+- Profundidad de paréntesis/corchetes/llaves (entero).
+- `en_triple` + delimitador (para que triple-quoted strings con `\n`
+  internos se traten como continuación).
+- Pila ligera de tipos de bloque, usada solo para resolver `cuando`
+  consecutivo y `fin <X>` que auto-cierra cases colgantes.
+
+### Verificación
+
+- **Suite completa: 204/204 tests verde**, incluyendo nuevo
+  `test_formateador` con 32 asserts: idempotencia, mid-block dedent
+  (`sino`/`atrapar`/`finalmente`/`cuando`), continuaciones,
+  comentarios, strings con `#`, archivo vacío, flag `cambiada`.
+- **63 ejemplos + 12 módulos de stdlib**: el formateador no rompe
+  ninguno que parseaba antes (verificado tras `--check`). 2 ejemplos
+  (`06_diccionarios.cor`, `11_iterador.cor`) ya tenían errores de
+  sintaxis preexistentes (destructuring en `para` no soportado) que
+  el formateador no introduce — son arreglo aparte.
+- **Idempotencia**: `fmt(fmt(x)) == fmt(x)` verificada sobre todos
+  los archivos del repo.
+
+### Limitaciones reconocidas
+
+- **No alinea continuaciones**: si la indentación dentro de un bracket
+  multilínea es inconsistente, el formateador la deja como está.
+- **No detecta one-liners malformados**: `funcion f(): retornar 1`
+  (sin `fin funcion`) ya no se separa en líneas. Es un parse error
+  aguas abajo de todos modos.
+- **No introduce 2 líneas en blanco entre funciones top-level** (estilo
+  PEP-8). El proyecto prefiere 1 línea consistentemente.
+
 ## [1.47.0] — 2026-05-16 — REPL con line editing e historial (abre Fase 5: tooling)
 
 Primer release de la **Fase 5 — Tooling**. La prioridad nº1 declarada

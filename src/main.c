@@ -33,6 +33,7 @@
 #include "entorno.h"
 #include "errores.h"
 #include "evaluador.h"
+#include "formateador.h"
 #include "fuente.h"
 #include "lexer.h"
 #include "nativos.h"
@@ -69,6 +70,14 @@ static void imprimir_uso(const char *programa) {
         "                   programas que usan `para` deben usar el default.\n"
         "      --check      Valida sintaxis y compilación sin ejecutar.\n"
         "                   Exit 0 si OK, 65 si hay errores. Para CI/editores.\n"
+        "\n"
+        "Subcomandos:\n"
+        "  fmt [opciones] <archivo>   Reformatea el archivo in-place.\n"
+        "                             Opciones:\n"
+        "                               --check    no escribe; exit 0 si ya\n"
+        "                                          esta formateado, 1 si no.\n"
+        "                               --stdout   imprime resultado a stdout.\n"
+        "                             Usa '-' como archivo para leer stdin.\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -599,11 +608,149 @@ static int validar_archivo(const char *ruta) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Subcomando `fmt` (v1.48 - Fase 5 tooling).
+ *
+ * Reformatea fuente Cornamusa con reglas conservadoras:
+ * reindentacion a 4 espacios, trim de trailing whitespace, colapso de
+ * blancas y trailing newline normalizado. Los detalles viven en
+ * `src/formateador.c`.
+ *
+ * Modos:
+ *   in-place : reescribe el archivo si la salida difiere.
+ *   --check  : no escribe; exit 0 si ya estaba formateado, 1 si no.
+ *   --stdout : imprime resultado a stdout (deja archivo intacto).
+ *   `-`      : lee stdin → escribe stdout (siempre).
+ * ────────────────────────────────────────────────────────────────── */
+
+static int leer_stdin_completo(char **out_buf, size_t *out_len) {
+    size_t cap = 4096;
+    size_t len = 0;
+    char *buf = (char *)malloc(cap);
+    if (!buf) return -1;
+    for (;;) {
+        if (len + 1 >= cap) {
+            cap *= 2;
+            char *nuevo = (char *)realloc(buf, cap);
+            if (!nuevo) { free(buf); return -1; }
+            buf = nuevo;
+        }
+        size_t leido = fread(buf + len, 1, cap - len - 1, stdin);
+        len += leido;
+        if (leido == 0) break;
+    }
+    buf[len] = '\0';
+    *out_buf = buf;
+    *out_len = len;
+    return 0;
+}
+
+static int subcomando_fmt(int argc, char **argv) {
+    bool modo_check = false;
+    bool modo_stdout = false;
+    const char *archivo = NULL;
+
+    for (int i = 2; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "--check") == 0) { modo_check = true; continue; }
+        if (strcmp(arg, "--stdout") == 0) { modo_stdout = true; continue; }
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--ayuda") == 0
+            || strcmp(arg, "--help") == 0) {
+            imprimir_uso(argv[0]);
+            return 0;
+        }
+        if (arg[0] == '-' && strcmp(arg, "-") != 0) {
+            fprintf(stderr, "Opción no reconocida para fmt: %s\n", arg);
+            return 64;
+        }
+        if (archivo != NULL) {
+            fprintf(stderr, "fmt acepta un solo archivo (recibido también: %s)\n", arg);
+            return 64;
+        }
+        archivo = arg;
+    }
+
+    if (archivo == NULL) {
+        fprintf(stderr, "fmt: se requiere un archivo .cor (o '-' para stdin)\n");
+        return 64;
+    }
+
+    char *fuente_buf = NULL;
+    size_t fuente_len = 0;
+    bool fuente_es_stdin = (strcmp(archivo, "-") == 0);
+
+    if (fuente_es_stdin) {
+        if (leer_stdin_completo(&fuente_buf, &fuente_len) != 0) {
+            fprintf(stderr, "fmt: error leyendo stdin\n");
+            return 74;
+        }
+    } else {
+        FuenteCargada fc = fuente_cargar_archivo(archivo);
+        if (fc.codigo != FUENTE_OK) {
+            fprintf(stderr, "fmt: no se pudo cargar '%s': %s\n",
+                    archivo, fc.mensaje_error);
+            fuente_destruir(&fc);
+            return 74;
+        }
+        fuente_len = strlen(fc.fuente);
+        fuente_buf = (char *)malloc(fuente_len + 1);
+        if (!fuente_buf) {
+            fuente_destruir(&fc);
+            return 71;
+        }
+        memcpy(fuente_buf, fc.fuente, fuente_len + 1);
+        fuente_destruir(&fc);
+    }
+
+    FormatoResultado r = formateador_formatear(fuente_buf);
+    if (r.mensaje_error != NULL) {
+        fprintf(stderr, "fmt: %s\n", r.mensaje_error);
+        formato_resultado_destruir(&r);
+        free(fuente_buf);
+        return 70;
+    }
+
+    int rc = 0;
+
+    if (fuente_es_stdin) {
+        /* stdin → stdout siempre. */
+        fwrite(r.fuente, 1, r.longitud, stdout);
+    } else if (modo_check) {
+        if (r.cambiada) {
+            fprintf(stderr, "%s\n", archivo);
+            rc = 1;
+        }
+    } else if (modo_stdout) {
+        fwrite(r.fuente, 1, r.longitud, stdout);
+    } else {
+        if (r.cambiada) {
+            FILE *f = fopen(archivo, "wb");
+            if (!f) {
+                fprintf(stderr, "fmt: no se pudo escribir '%s'\n", archivo);
+                rc = 73;
+            } else {
+                fwrite(r.fuente, 1, r.longitud, f);
+                fclose(f);
+                fprintf(stderr, "formateado: %s\n", archivo);
+            }
+        }
+    }
+
+    formato_resultado_destruir(&r);
+    free(fuente_buf);
+    return rc;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Entry point
  * ────────────────────────────────────────────────────────────────── */
 
 int main(int argc, char **argv) {
     configurar_consola_utf8();
+
+    /* Subcomandos antes de flags planas (estilo `git`, `gofmt`). */
+    if (argc >= 2 && strcmp(argv[1], "fmt") == 0) {
+        return subcomando_fmt(argc, argv);
+    }
 
     const char *archivo = NULL;
     bool volcar_tokens = false;

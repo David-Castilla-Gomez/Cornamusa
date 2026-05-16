@@ -77,6 +77,19 @@ Pulsa Ctrl-D (Ctrl-Z en Windows) o escribe `salir` para terminar. El REPL acumul
 
 Desde v1.47 el REPL tiene **edición de línea** (cursores ←/→, Home/End, Backspace, Delete) y **navegación de historial** con ↑/↓. El historial se guarda en `~/.cornamusa_historial` (`%USERPROFILE%\.cornamusa_historial` en Windows) y persiste entre sesiones.
 
+### ¿Hay un formateador integrado?
+
+Sí desde v1.48:
+
+```bash
+./build/cornamusa fmt programa.cor             # reescribe in-place
+./build/cornamusa fmt --check programa.cor     # exit 1 si no esta formateado (CI)
+./build/cornamusa fmt --stdout programa.cor    # imprime resultado, no toca archivo
+cat programa.cor | ./build/cornamusa fmt -     # stdin → stdout
+```
+
+Reglas conservadoras: reindenta a 4 espacios, normaliza líneas en blanco y trailing whitespace, preserva comentarios. No toca espaciado de operadores ni rompe líneas largas — eso queda para releases posteriores.
+
 ---
 
 ## Sobre la sintaxis

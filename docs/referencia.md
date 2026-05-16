@@ -861,6 +861,11 @@ cornamusa -v / --version              # versión
 cornamusa -h / --ayuda                # ayuda
 cornamusa                             # REPL interactivo (history en ~/.cornamusa_historial)
 cornamusa --bytecode prog.cor a b c   # pasa "a", "b", "c" a sistema.argv
+
+cornamusa fmt programa.cor            # formatea in-place (v1.48)
+cornamusa fmt --check programa.cor    # exit 0 si ya formateado, 1 si no
+cornamusa fmt --stdout programa.cor   # formato a stdout, no toca archivo
+cornamusa fmt -                       # lee stdin → escribe stdout
 ```
 
 ---
