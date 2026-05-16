@@ -3012,6 +3012,50 @@ static Valor nativa_base64_decodificar(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Hashing (v1.60) — motor en src/hashing.c.
+ *
+ * Wrappers de SHA-256 y MD5. Ambos toman una cadena (los bytes
+ * UTF-8 subyacentes) y devuelven el digest como cadena hexadecimal
+ * en minusculas.
+ * ────────────────────────────────────────────────────────────────── */
+
+#include "hashing.h"
+
+static Valor nativa_sha256(EvalError *err, int n_args, Valor *args,
+                             int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: sha256(cadena) requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: sha256() requiere una cadena");
+    }
+    char hex[65];
+    hashing_sha256_hex((const uint8_t *)args[0].como.cadena.texto,
+                         (size_t)args[0].como.cadena.longitud, hex);
+    return valor_cadena_duplicar(hex, 64);
+}
+
+static Valor nativa_md5(EvalError *err, int n_args, Valor *args,
+                          int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: md5(cadena) requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: md5() requiere una cadena");
+    }
+    char hex[33];
+    hashing_md5_hex((const uint8_t *)args[0].como.cadena.texto,
+                      (size_t)args[0].como.cadena.longitud, hex);
+    return valor_cadena_duplicar(hex, 32);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Regex (v1.28) — motor en src/regex.c. El módulo `regex.cor` envuelve.
  * ────────────────────────────────────────────────────────────────── */
 
@@ -3364,6 +3408,9 @@ static const EntradaNativa NATIVAS[] = {
     /* Base64 (v1.59). */
     {"base64_codificar",    16, nativa_base64_codificar},
     {"base64_decodificar",  18, nativa_base64_decodificar},
+    /* Hashing (v1.60). */
+    {"hash_sha256",         11, nativa_sha256},
+    {"hash_md5",             8, nativa_md5},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

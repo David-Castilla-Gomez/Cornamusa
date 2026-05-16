@@ -14,7 +14,7 @@ No es una traducción literal de Python: las palabras clave se eligieron para qu
 
 ### ¿Es un toy language o se puede usar en serio?
 
-Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de catorce módulos (`archivos`, `json`, `csv`, `base64`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
+Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de quince módulos (`archivos`, `json`, `csv`, `base64`, `hashing`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
 
 Lo que todavía le falta para producción seria:
 
@@ -305,6 +305,34 @@ Cobertura:
 Variante URL-safe (`-` y `_` en lugar de `+` y `/`) queda para v1.60+.
 
 Implementación nativa en C — rápida incluso para inputs grandes.
+
+### ¿Cómo calculo un hash SHA-256 o MD5?
+
+Desde **v1.60** con el módulo `hashing`:
+
+```cornamusa
+importar hashing
+
+hashing.sha256("hola mundo")
+# → "0b894166d3336435c800bea36ff21b29eaa801a52f584c006c49289a0dcf6e2f"
+
+hashing.md5("hola mundo")
+# → "0ad066a5d29f3f2a2a1c7c17dd082a79"
+
+# Checksum de un archivo:
+importar archivos
+checksum = hashing.sha256(archivos.leer("documento.pdf"))
+```
+
+Ambos algoritmos están implementados nativamente en C (rápidos) y validados contra los test vectors canónicos:
+- **SHA-256**: FIPS 180-4 / RFC 6234, incluyendo el vector de 1 millón de "a".
+- **MD5**: RFC 1321 §A.5.
+
+**Notas de seguridad**:
+- **MD5 está criptográficamente roto desde 2004**. Sigue siendo útil para integridad casual o compatibilidad con sistemas legacy, pero **no para firmas, hashes de passwords, ni nada que requiera resistencia a colisiones**.
+- **SHA-256** sigue considerado seguro para integridad y como parte de protocolos (HMAC, TLS, Bitcoin). **Para hashes de passwords** usa scrypt/argon2 — no provistos por Cornamusa.
+
+Lo que no incluye v1.60: SHA-1 (obsoleto), SHA-384/512, SHA-3, HMAC, hashing incremental.
 
 ### ¿Funciona `borrar d[k]` y `obj.x += 1`?
 

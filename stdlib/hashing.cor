@@ -1,0 +1,47 @@
+# Cornamusa stdlib: hashing.cor
+#
+# Funciones hash criptograficas (RFC). Implementacion nativa en C
+# (rapida) que toma una cadena y devuelve el digest como cadena
+# hexadecimal en minusculas.
+#
+# Funciones disponibles:
+#   - sha256(cadena) → cadena de 64 chars hex (FIPS 180-4 / RFC 6234).
+#   - md5(cadena)    → cadena de 32 chars hex (RFC 1321).
+#
+# Uso:
+#   importar hashing
+#
+#   # Checksum de un archivo:
+#   importar archivos
+#   contenido = archivos.leer("documento.pdf")
+#   imprimir("SHA-256:", hashing.sha256(contenido))
+#
+#   # Fingerprint para cache:
+#   clave = hashing.md5(url + cabeceras)
+#
+# Notas de seguridad:
+#   - MD5 esta CRIPTOGRAFICAMENTE ROTO desde 2004 (colisiones
+#     practicas). Sigue siendo util para integridad casual o
+#     compatibilidad con sistemas legacy. NO usar para firmas,
+#     hashes de passwords, ni nada que requiera resistencia a
+#     colisiones.
+#   - SHA-256 sigue considerado seguro para integridad y como
+#     parte de protocolos (HMAC, TLS, Bitcoin). Para hashes de
+#     passwords usa scrypt/argon2 (no provistos por Cornamusa).
+#
+# Lo que NO incluye (v1.60):
+#   - SHA-1 (obsoleto, no añadido).
+#   - SHA-384, SHA-512 (scope para v1.61+ si surge demanda).
+#   - SHA-3 / Keccak (scope futuro).
+#   - HMAC (usar manualmente con SHA-256: HMAC se construye con
+#     dos llamadas a sha256 y un par de XORs sobre la clave).
+#   - Hashing incremental (procesar archivo en chunks). El input
+#     es toda la cadena de una vez.
+
+funcion sha256(cadena):
+    retornar hash_sha256(cadena)
+fin funcion
+
+funcion md5(cadena):
+    retornar hash_md5(cadena)
+fin funcion

@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.59.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.60.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.59.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una **stdlib de catorce módulos** (sumando `base64` en esta release). Nuevo módulo `base64` (RFC 4648): codificación/decodificación nativa en C (rápido), valida los 7 test vectors del RFC, soporta whitespace en decode (MIME-style), errores atrapables para input inválido. Casos de uso típicos: HTTP Basic Auth, Data URIs, JSON Web Tokens. v1.58 trajo `csv`; v1.57 cerró el lenguaje core. 217 tests en verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.60.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una **stdlib de quince módulos** (sumando `hashing` en esta release). Nuevo módulo `hashing` con **SHA-256** (FIPS 180-4 / RFC 6234) y **MD5** (RFC 1321) implementados nativamente en C. Validados contra los test vectors canónicos incluyendo el clásico de 1 millón de "a". v1.59 trajo `base64`; v1.58 trajo `csv`. La trilogía de codificación/digest (json + csv + base64 + hashing) está completa. 220 tests en verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -164,6 +164,7 @@ Hoja de ruta resumida:
 | **v1.57** | **`global X` implementado en bytecode VM (keyword desde v0.5, parseada desde v1.4, ejecutable desde hoy)** | ✅ |
 | **v1.58** | **Stdlib `csv` — parser/writer RFC 4180-like (quoted, escapes, separadores configurables, round-trip)** | ✅ |
 | **v1.59** | **Stdlib `base64` — codec RFC 4648 nativo (HTTP Basic Auth, Data URIs, JWT)** | ✅ |
+| **v1.60** | **Stdlib `hashing` — SHA-256 (FIPS 180-4) + MD5 (RFC 1321) nativos** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

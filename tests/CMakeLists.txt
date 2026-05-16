@@ -215,6 +215,18 @@ set_tests_properties(bc_run_67_base64 PROPERTIES
     PASS_REGULAR_EXPRESSION "Q29ybmFtdXNhIGhhYmxhIGNhc3RlbGxhbm8="
 )
 
+# v1.60: ejemplo del modulo hashing. SHA-256 abc test vector.
+add_test(
+    NAME bc_run_68_hashing
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/68_hashing.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_68_hashing PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+)
+
 # v0.6.1: tests bytecode adicionales que ahora pasan gracias a iteradores
 # y aug-assign con destino indice.
 add_test(

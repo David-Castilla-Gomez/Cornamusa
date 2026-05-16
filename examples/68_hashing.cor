@@ -1,0 +1,60 @@
+# Modulo `hashing` (v1.60): SHA-256 y MD5 nativos.
+#
+# Demuestra:
+#   - Test vectors RFC para SHA-256 y MD5.
+#   - Caso de uso: checksum de archivo.
+#   - Avalanche effect: cambio de 1 caracter -> hash completamente distinto.
+#   - Fingerprint de cache via MD5 (rapido, no critico).
+#   - Documentacion del estatus criptografico de cada algoritmo.
+
+importar hashing
+
+# ─── 1. Test vectors clasicos ────────────────────────────────────
+imprimir("SHA-256:")
+imprimir(f"  '': {hashing.sha256('')}")
+imprimir(f"  'abc': {hashing.sha256('abc')}")
+imprimir(f"  'hola mundo': {hashing.sha256('hola mundo')}")
+
+imprimir("\nMD5:")
+imprimir(f"  '': {hashing.md5('')}")
+imprimir(f"  'abc': {hashing.md5('abc')}")
+imprimir(f"  'hola mundo': {hashing.md5('hola mundo')}")
+
+# ─── 2. Avalanche effect ────────────────────────────────────────
+# Una sola letra cambia -> hash totalmente distinto. Propiedad
+# fundamental de un buen hash criptografico.
+imprimir("\nAvalanche (1 caracter cambiado):")
+imprimir(f"  fox dog: {hashing.sha256('The quick brown fox jumps over the lazy dog')}")
+imprimir(f"  fox cog: {hashing.sha256('The quick brown fox jumps over the lazy cog')}")
+
+# ─── 3. Checksum de archivo ──────────────────────────────────────
+importar archivos
+
+# Creamos un archivo, lo hasheamos, lo recreamos y verificamos.
+contenido = "linea 1\nlinea 2\nlinea 3\n"
+archivos.escribir("/tmp/cornamusa_hash_demo.txt", contenido)
+
+leido = archivos.leer("/tmp/cornamusa_hash_demo.txt")
+checksum = hashing.sha256(leido)
+imprimir(f"\nChecksum del archivo: {checksum}")
+
+# Modificamos y verificamos que cambia:
+archivos.escribir("/tmp/cornamusa_hash_demo.txt", contenido + "extra\n")
+checksum_modificado = hashing.sha256(archivos.leer("/tmp/cornamusa_hash_demo.txt"))
+imprimir(f"Tras modificar:      {checksum_modificado}")
+imprimir(f"Coinciden? {checksum == checksum_modificado}")
+
+# ─── 4. Cache fingerprint con MD5 ───────────────────────────────
+# MD5 es rapido y suficiente para keys de cache (donde colisiones
+# accidentales tienen probabilidad ~0 en uso normal).
+funcion clave_cache(url, cabeceras):
+    retornar hashing.md5(url + "|" + cabeceras)
+fin funcion
+
+imprimir(f"\nCache key: {clave_cache('/api/users', 'Accept: json')}")
+imprimir(f"           {clave_cache('/api/users', 'Accept: xml')}")
+
+# ─── 5. Aviso: NO usar MD5 para passwords ───────────────────────
+imprimir("\nIMPORTANTE: MD5 esta criptograficamente roto desde 2004.")
+imprimir("Para passwords usa scrypt/argon2 (no provistos por Cornamusa).")
+imprimir("Para integridad casual o fingerprints, MD5 sigue siendo util.")

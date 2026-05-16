@@ -6,6 +6,111 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.60.0] — 2026-05-16 — Stdlib `hashing` (SHA-256 + MD5 nativos)
+
+Tercera release consecutiva expandiendo la stdlib (`csv` en v1.58,
+`base64` en v1.59, `hashing` ahora). **Stdlib pasa de 14 a 15 módulos.**
+
+Cierra la trilogía de "infraestructura de scripting":
+- **json** (intercambio universal de datos estructurados, v1.9).
+- **csv** (datos tabulares, v1.58).
+- **base64** (text ↔ binary representation, v1.59).
+- **hashing** (integrity / fingerprinting / signatures, v1.60).
+
+### API
+
+```cornamusa
+importar hashing
+
+hashing.sha256(cadena)   → cadena hex de 64 chars
+hashing.md5(cadena)      → cadena hex de 32 chars
+```
+
+Implementación nativa en C (`src/hashing.{c,h}` siguiendo el patrón
+de `regex` y `red`). Wrappers `nativa_sha256` y `nativa_md5` en
+`nativos.c` exponen `hash_sha256` y `hash_md5` como builtins; el
+módulo `stdlib/hashing.cor` los re-exporta con nombres limpios.
+
+### Vectors validados
+
+**SHA-256** (FIPS 180-4 §B / RFC 6234):
+- `""` → `e3b0c442...b855`.
+- `"abc"` → `ba7816bf...15ad`.
+- `"abcdbcdecdefdef...nopq"` (56 bytes, ejercita 2-block padding) → `248d6a61...06c1`.
+- `"The quick brown fox jumps over the lazy dog"` → `d7a8fbb3...e592`.
+- `"...lazy cog"` (1 char distinto: avalanche) → `e4c4d8f3...81be`.
+- **1 millón de "a"** (FIPS B.3, streaming multi-bloque) → `cdc76e5c...12cd0`.
+
+**MD5** (RFC 1321 §A.5):
+- `""` → `d41d8cd9...427e`.
+- `"a"` → `0cc175b9...2661`.
+- `"abc"` → `90015098...7f72`.
+- `"message digest"` → `f96b697d...61d0`.
+- `"abcdefghijklmnopqrstuvwxyz"` → `c3fcd3d7...e13b`.
+- `"ABC...XYZabc...xyz0...9"` → `d174ab98...9d9f`.
+- `"1234...80digits"` → `57edf4a2...b67a`.
+- 56-byte vector compartido con SHA-256 → `8215ef07...664a`.
+
+### Implementación
+
+`src/hashing.c` (~200 líneas C, sin dependencias externas):
+
+- **SHA-256**: estado de 8 × `uint32_t`, procesa bloques de 64 bytes,
+  64 rondas con la tabla constante de cube-roots-of-primes (K[64]),
+  funciones `rotr32` + `Σ0/Σ1/Maj/Ch` clásicas, padding `0x80` +
+  zeros + 64-bit BE length.
+
+- **MD5**: estado de 4 × `uint32_t`, procesa bloques de 64 bytes con
+  las 4 funciones de ronda (F/G/H/I), 64 rondas con tabla de
+  `floor(2^32 × abs(sin(i+1)))` (K[64]) y shifts per-round (S[64]),
+  padding mismo esquema pero longitud en LE (no BE).
+
+Helpers compartidos: `escribir_hex`, `leer_be32`/`escribir_be32`,
+`leer_le32`/`escribir_le32`, `rotr32`/`rotl32`.
+
+### Verificación
+
+- **220/220 tests verde**.
+- Nuevo `test_hashing` con **14 asserts** contra test vectors RFC.
+- Nuevo `bc_run_68_hashing` integration test.
+- Nuevo `examples/68_hashing.cor` demuestra: test vectors, avalanche
+  effect, checksum de archivo, cache key con MD5, aviso sobre uso
+  seguro.
+- `cornamusa lint stdlib/hashing.cor` → 0 warnings.
+- `cornamusa fmt --check stdlib/hashing.cor` → ya canónico.
+
+### Notas de seguridad
+
+Documentado explícitamente en `stdlib/hashing.cor`:
+
+- **MD5 está criptográficamente roto desde 2004** (colisiones
+  prácticas). Sigue siendo útil para:
+  - Integridad casual (detectar corrupción accidental).
+  - Cache keys (probabilidad de colisión accidental ~0).
+  - Compatibilidad con sistemas legacy.
+  - **NO** usar para firmas, hashes de passwords, ni cualquier cosa
+    que requiera resistencia a colisiones.
+
+- **SHA-256** sigue considerado seguro para:
+  - Integridad de archivos.
+  - Construcción de HMAC (manualmente: 2 llamadas + XORs).
+  - Como parte de protocolos (TLS, Bitcoin, JWT...).
+  - **Para passwords** usa scrypt/argon2 — no provistos por
+    Cornamusa.
+
+### Lo que NO incluye (scope para v1.61+)
+
+- **SHA-1**: obsoleto, no añadido a propósito.
+- **SHA-384, SHA-512**: posibles en v1.61 si surge demanda (mismo
+  algoritmo que SHA-256 con words de 64 bits y constantes
+  distintas).
+- **SHA-3 / Keccak**: algoritmo distinto (sponge), scope futuro.
+- **HMAC**: construible sobre `sha256` manualmente; un wrapper en
+  stdlib quedará para v1.61 si surge demanda.
+- **Hashing incremental** (procesar archivo en chunks de megabytes):
+  el input es toda la cadena de una vez. Para archivos pequeños
+  (<10 MB) sigue siendo rápido.
+
 ## [1.59.0] — 2026-05-16 — Stdlib `base64` (RFC 4648 codec nativo)
 
 Continúa la expansión de stdlib tras `csv` en v1.58. Nuevo módulo
