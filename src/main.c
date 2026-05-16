@@ -36,6 +36,7 @@
 #include "formateador.h"
 #include "fuente.h"
 #include "lexer.h"
+#include "linter.h"
 #include "nativos.h"
 #include "parser.h"
 #include "repl_line.h"
@@ -78,6 +79,8 @@ static void imprimir_uso(const char *programa) {
         "                                          esta formateado, 1 si no.\n"
         "                               --stdout   imprime resultado a stdout.\n"
         "                             Usa '-' como archivo para leer stdin.\n"
+        "  lint <archivo>             Analiza y reporta avisos de estilo.\n"
+        "                             Exit 0 sin avisos, 1 con avisos.\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -741,6 +744,85 @@ static int subcomando_fmt(int argc, char **argv) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Subcomando `lint` (v1.49 - Fase 5 tooling).
+ *
+ * Parsea el archivo y aplica analisis estatico ligero via `linter.c`.
+ * Reporta cada aviso en el formato `archivo:linea:col: warning [tipo]: mensaje`.
+ * Exit 0 si no hay avisos; 1 si los hay.
+ * ────────────────────────────────────────────────────────────────── */
+
+static int subcomando_lint(int argc, char **argv) {
+    const char *archivo = NULL;
+    for (int i = 2; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--ayuda") == 0
+            || strcmp(arg, "--help") == 0) {
+            imprimir_uso(argv[0]);
+            return 0;
+        }
+        if (arg[0] == '-' && strcmp(arg, "-") != 0) {
+            fprintf(stderr, "Opcion no reconocida para lint: %s\n", arg);
+            return 64;
+        }
+        if (archivo) {
+            fprintf(stderr, "lint acepta un solo archivo\n");
+            return 64;
+        }
+        archivo = arg;
+    }
+    if (!archivo) {
+        fprintf(stderr, "lint: se requiere un archivo .cor\n");
+        return 64;
+    }
+
+    FuenteCargada fc = fuente_cargar_archivo(archivo);
+    if (fc.codigo != FUENTE_OK) {
+        fprintf(stderr, "lint: no se pudo cargar '%s': %s\n",
+                archivo, fc.mensaje_error);
+        fuente_destruir(&fc);
+        return 74;
+    }
+
+    Lexer l;
+    lexer_iniciar(&l, fc.fuente, archivo);
+
+    Arena a;
+    arena_iniciar(&a, 16384);
+
+    Parser p;
+    parser_iniciar(&p, &l, &a, fc.fuente, archivo);
+
+    int n = 0;
+    Sent **sents = parser_parsear_programa(&p, &n);
+
+    if (p.tuvo_error) {
+        arena_destruir(&a);
+        fuente_destruir(&fc);
+        fprintf(stderr, "\n%s: fallo de sintaxis (lint omitido).\n", archivo);
+        return 65;
+    }
+
+    LinterResultado r = linter_analizar(sents, n);
+
+    int rc = 0;
+    if (r.n > 0) {
+        for (int i = 0; i < r.n; i++) {
+            Warning *w = &r.avisos[i];
+            fprintf(stdout, "%s:%d:%d: warning [%s]: %s\n",
+                    archivo, w->linea, w->columna,
+                    linter_tipo_nombre(w->tipo), w->mensaje);
+        }
+        fprintf(stdout, "%d aviso%s.\n", r.n, r.n == 1 ? "" : "s");
+        rc = 1;
+    }
+
+    linter_resultado_destruir(&r);
+    arena_destruir(&a);
+    fuente_destruir(&fc);
+    return rc;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Entry point
  * ────────────────────────────────────────────────────────────────── */
 
@@ -750,6 +832,9 @@ int main(int argc, char **argv) {
     /* Subcomandos antes de flags planas (estilo `git`, `gofmt`). */
     if (argc >= 2 && strcmp(argv[1], "fmt") == 0) {
         return subcomando_fmt(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "lint") == 0) {
+        return subcomando_lint(argc, argv);
     }
 
     const char *archivo = NULL;

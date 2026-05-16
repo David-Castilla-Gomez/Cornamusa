@@ -1,0 +1,529 @@
+#include "linter.h"
+
+#include <stdarg.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#include "lexer.h"
+
+/* ──────────────────────────────────────────────────────────────────
+ * Almacen de imports vs referencias.
+ *
+ * Para detectar imports no usados hacemos dos pasadas implicitas en
+ * la misma travesia del AST: cuando vemos un `importar` registramos
+ * el nombre (con su posicion); cuando vemos un `EXPR_IDENT` lo
+ * marcamos como referenciado. Al final, los imports no marcados
+ * generan warnings.
+ *
+ * Los nombres apuntan al buffer fuente — no se copian.
+ * ────────────────────────────────────────────────────────────────── */
+
+typedef struct {
+    const char *texto;
+    int longitud;
+    int linea;
+    int columna;
+    bool usado;
+} ImportEntry;
+
+#define MAX_IMPORTS 256
+
+typedef struct {
+    Warning *avisos;
+    int n;
+    int capacidad;
+
+    ImportEntry imports[MAX_IMPORTS];
+    int n_imports;
+} Ctx;
+
+/* ──────────────────────────────────────────────────────────────────
+ * Helpers de Warning.
+ * ────────────────────────────────────────────────────────────────── */
+
+static void emitir(Ctx *ctx, TipoWarning tipo, int linea, int columna,
+                    const char *fmt, ...) {
+    if (ctx->n >= ctx->capacidad) {
+        int nuevo = ctx->capacidad ? ctx->capacidad * 2 : 16;
+        Warning *nv = (Warning *)realloc(ctx->avisos, sizeof(Warning) * (size_t)nuevo);
+        if (!nv) return;
+        ctx->avisos = nv;
+        ctx->capacidad = nuevo;
+    }
+    char buf[512];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    Warning *w = &ctx->avisos[ctx->n++];
+    w->tipo = tipo;
+    w->linea = linea;
+    w->columna = columna;
+    w->mensaje = strdup(buf);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Imports: registrar y marcar.
+ * ────────────────────────────────────────────────────────────────── */
+
+static void registrar_import(Ctx *ctx, const char *texto, int longitud,
+                              int linea, int columna) {
+    if (ctx->n_imports >= MAX_IMPORTS) return;
+    ImportEntry *e = &ctx->imports[ctx->n_imports++];
+    e->texto = texto;
+    e->longitud = longitud;
+    e->linea = linea;
+    e->columna = columna;
+    e->usado = false;
+}
+
+static void marcar_ident_usado(Ctx *ctx, const char *texto, int longitud) {
+    for (int i = 0; i < ctx->n_imports; i++) {
+        ImportEntry *e = &ctx->imports[i];
+        if (e->longitud == longitud
+            && memcmp(e->texto, texto, (size_t)longitud) == 0) {
+            e->usado = true;
+        }
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Visitor del AST.
+ * ────────────────────────────────────────────────────────────────── */
+
+static void visitar_expr(Expr *e, Ctx *ctx);
+static void visitar_sent(Sent *s, Ctx *ctx);
+
+static void visitar_expr_quizas(Expr *e, Ctx *ctx) {
+    if (e) visitar_expr(e, ctx);
+}
+
+static void visitar_sent_quizas(Sent *s, Ctx *ctx) {
+    if (s) visitar_sent(s, ctx);
+}
+
+/* True si `op` es == o != (comparacion de igualdad). */
+static bool es_eq_o_neq(TipoToken op) {
+    return op == TT_IGUAL || op == TT_DISTINTO;
+}
+
+static void visitar_patron(Patron *p, Ctx *ctx) {
+    if (!p) return;
+    switch (p->tipo) {
+        case PATRON_LITERAL:
+            visitar_expr_quizas(p->como.literal, ctx);
+            break;
+        case PATRON_TUPLA:
+        case PATRON_LISTA:
+        case PATRON_OR:
+            for (int i = 0; i < p->como.estructural.n; i++) {
+                visitar_patron(p->como.estructural.elementos[i], ctx);
+            }
+            break;
+        case PATRON_WILDCARD:
+        case PATRON_BIND:
+        case PATRON_STAR_BIND:
+        case PATRON_TIPO:
+        default:
+            break;
+    }
+}
+
+static void visitar_expr(Expr *e, Ctx *ctx) {
+    if (!e) return;
+    switch (e->tipo) {
+        case EXPR_LITERAL_ENTERO:
+        case EXPR_LITERAL_DECIMAL:
+        case EXPR_LITERAL_CADENA:
+        case EXPR_LITERAL_BOOLEANO:
+        case EXPR_LITERAL_NULO:
+            break;
+
+        case EXPR_IDENT:
+            marcar_ident_usado(ctx, e->como.ident.nombre, e->como.ident.longitud);
+            break;
+
+        case EXPR_BINARIO: {
+            /* Check 3: `x == nulo` / `x != nulo` */
+            if (es_eq_o_neq(e->como.binario.op)) {
+                Expr *iz = e->como.binario.izq;
+                Expr *de = e->como.binario.der;
+                bool iz_nulo = iz && iz->tipo == EXPR_LITERAL_NULO;
+                bool de_nulo = de && de->tipo == EXPR_LITERAL_NULO;
+                if (iz_nulo || de_nulo) {
+                    const char *op_txt = (e->como.binario.op == TT_IGUAL) ? "==" : "!=";
+                    const char *sug = (e->como.binario.op == TT_IGUAL) ? "es nulo" : "no es nulo";
+                    emitir(ctx, LINT_EQ_NULO, e->linea, e->columna,
+                            "comparacion con nulo via '%s' — prefiere '%s'",
+                            op_txt, sug);
+                }
+            }
+            visitar_expr_quizas(e->como.binario.izq, ctx);
+            visitar_expr_quizas(e->como.binario.der, ctx);
+            break;
+        }
+
+        case EXPR_UNARIO:
+            visitar_expr_quizas(e->como.unario.operando, ctx);
+            break;
+
+        case EXPR_LOGICA:
+            visitar_expr_quizas(e->como.logica.izq, ctx);
+            visitar_expr_quizas(e->como.logica.der, ctx);
+            break;
+
+        case EXPR_LLAMADA:
+            visitar_expr_quizas(e->como.llamada.callee, ctx);
+            for (int i = 0; i < e->como.llamada.n_args; i++) {
+                visitar_expr_quizas(e->como.llamada.args[i], ctx);
+            }
+            break;
+
+        case EXPR_ATRIBUTO:
+            visitar_expr_quizas(e->como.atributo.objeto, ctx);
+            break;
+
+        case EXPR_GRUPO:
+            visitar_expr_quizas(e->como.grupo.interna, ctx);
+            break;
+
+        case EXPR_LAMBDA:
+            for (int i = 0; i < e->como.lambda.n_parametros; i++) {
+                visitar_expr_quizas(e->como.lambda.parametros[i].valor_defecto, ctx);
+            }
+            visitar_expr_quizas(e->como.lambda.cuerpo, ctx);
+            break;
+
+        case EXPR_LISTA:
+        case EXPR_CONJUNTO:
+        case EXPR_TUPLA:
+            for (int i = 0; i < e->como.secuencia.n_elementos; i++) {
+                visitar_expr_quizas(e->como.secuencia.elementos[i], ctx);
+            }
+            break;
+
+        case EXPR_DICCIONARIO:
+            for (int i = 0; i < e->como.diccionario.n_pares; i++) {
+                visitar_expr_quizas(e->como.diccionario.claves[i], ctx);
+                visitar_expr_quizas(e->como.diccionario.valores[i], ctx);
+            }
+            break;
+
+        case EXPR_COMPREHENSION:
+            visitar_expr_quizas(e->como.comprehension.iterable, ctx);
+            visitar_expr_quizas(e->como.comprehension.guarda, ctx);
+            visitar_expr_quizas(e->como.comprehension.expr_elem, ctx);
+            visitar_expr_quizas(e->como.comprehension.expr_valor, ctx);
+            break;
+
+        case EXPR_INDICE:
+            visitar_expr_quizas(e->como.indice.objeto, ctx);
+            visitar_expr_quizas(e->como.indice.indice, ctx);
+            break;
+
+        case EXPR_REBANADA:
+            visitar_expr_quizas(e->como.rebanada.objeto, ctx);
+            visitar_expr_quizas(e->como.rebanada.inicio, ctx);
+            visitar_expr_quizas(e->como.rebanada.fin, ctx);
+            visitar_expr_quizas(e->como.rebanada.paso, ctx);
+            break;
+
+        case EXPR_SUPER:
+            break;
+
+        case EXPR_TERNARIA:
+            visitar_expr_quizas(e->como.ternaria.cond, ctx);
+            visitar_expr_quizas(e->como.ternaria.si_si, ctx);
+            visitar_expr_quizas(e->como.ternaria.si_no, ctx);
+            break;
+
+        case EXPR_LITERAL_F_CADENA:
+            for (int i = 0; i < e->como.f_cadena.n_partes; i++) {
+                visitar_expr_quizas(e->como.f_cadena.partes[i].expr, ctx);
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+/* True si la sentencia es un "terminator" estructural: no transfiere
+ * control al siguiente statement del bloque. */
+static bool sentencia_termina_flujo(Sent *s) {
+    if (!s) return false;
+    switch (s->tipo) {
+        case SENT_RETORNAR:
+        case SENT_ROMPER:
+        case SENT_CONTINUAR:
+        case SENT_LANZAR:
+            return true;
+        default:
+            return false;
+    }
+}
+
+static void visitar_bloque(Sent *bloque, Ctx *ctx) {
+    if (!bloque || bloque->tipo != SENT_BLOQUE) {
+        visitar_sent_quizas(bloque, ctx);
+        return;
+    }
+    Sent **ss = bloque->como.bloque.sentencias;
+    int n = bloque->como.bloque.n_sentencias;
+
+    /* Check 1: codigo inalcanzable. Solo la primera sentencia tras el
+     * terminator se reporta; las posteriores se asume que vienen del
+     * mismo bug. */
+    for (int i = 0; i + 1 < n; i++) {
+        if (sentencia_termina_flujo(ss[i])) {
+            Sent *siguiente = ss[i + 1];
+            const char *cual =
+                ss[i]->tipo == SENT_RETORNAR ? "retornar" :
+                ss[i]->tipo == SENT_ROMPER ? "romper" :
+                ss[i]->tipo == SENT_CONTINUAR ? "continuar" : "lanzar";
+            emitir(ctx, LINT_UNREACHABLE, siguiente->linea, siguiente->columna,
+                    "codigo inalcanzable tras '%s'", cual);
+            break;
+        }
+    }
+
+    /* Check 2: `pasar` redundante en bloque con otras sentencias. */
+    if (n > 1) {
+        for (int i = 0; i < n; i++) {
+            if (ss[i]->tipo == SENT_PASAR) {
+                emitir(ctx, LINT_REDUNDANT_PASAR, ss[i]->linea, ss[i]->columna,
+                        "'pasar' redundante en bloque no vacio");
+            }
+        }
+    }
+
+    for (int i = 0; i < n; i++) {
+        visitar_sent_quizas(ss[i], ctx);
+    }
+}
+
+static void visitar_sent(Sent *s, Ctx *ctx) {
+    if (!s) return;
+    switch (s->tipo) {
+        case SENT_EXPR:
+            visitar_expr_quizas(s->como.expr.expr, ctx);
+            break;
+
+        case SENT_ASIGNAR:
+            /* No visitamos `destino` si es solo un EXPR_IDENT — eso es la
+             * declaracion, no una lectura. Si es atributo o indice si que
+             * lee el objeto. */
+            if (s->como.asignar.destino) {
+                Expr *d = s->como.asignar.destino;
+                if (d->tipo == EXPR_ATRIBUTO) {
+                    visitar_expr_quizas(d->como.atributo.objeto, ctx);
+                } else if (d->tipo == EXPR_INDICE) {
+                    visitar_expr_quizas(d->como.indice.objeto, ctx);
+                    visitar_expr_quizas(d->como.indice.indice, ctx);
+                } else if (d->tipo == EXPR_REBANADA) {
+                    visitar_expr_quizas(d->como.rebanada.objeto, ctx);
+                    visitar_expr_quizas(d->como.rebanada.inicio, ctx);
+                    visitar_expr_quizas(d->como.rebanada.fin, ctx);
+                    visitar_expr_quizas(d->como.rebanada.paso, ctx);
+                } else if (d->tipo == EXPR_TUPLA || d->tipo == EXPR_LISTA) {
+                    /* Destructuring: cada elemento es un destino, no una
+                     * lectura. No visitamos. */
+                } else {
+                    /* Cualquier otro destino — tratamos como expresion. */
+                    visitar_expr_quizas(d, ctx);
+                }
+            }
+            visitar_expr_quizas(s->como.asignar.valor, ctx);
+            break;
+
+        case SENT_ASIGNAR_AUG:
+            /* `x += y` lee y escribe x — el destino SI cuenta como lectura. */
+            visitar_expr_quizas(s->como.asignar_aug.destino, ctx);
+            visitar_expr_quizas(s->como.asignar_aug.valor, ctx);
+            break;
+
+        case SENT_PASAR:
+        case SENT_ROMPER:
+        case SENT_CONTINUAR:
+            break;
+
+        case SENT_RETORNAR:
+            visitar_expr_quizas(s->como.retornar.valor, ctx);
+            break;
+
+        case SENT_PRODUCIR:
+            visitar_expr_quizas(s->como.producir.valor, ctx);
+            break;
+
+        case SENT_SI:
+            for (int i = 0; i < s->como.si.n_ramas; i++) {
+                visitar_expr_quizas(s->como.si.ramas[i].condicion, ctx);
+                visitar_bloque(s->como.si.ramas[i].cuerpo, ctx);
+            }
+            break;
+
+        case SENT_MIENTRAS:
+            visitar_expr_quizas(s->como.mientras.condicion, ctx);
+            visitar_bloque(s->como.mientras.cuerpo, ctx);
+            visitar_bloque(s->como.mientras.sino, ctx);
+            break;
+
+        case SENT_PARA:
+            /* `objetivo` es destino (no lectura). */
+            visitar_expr_quizas(s->como.para.iterable, ctx);
+            visitar_bloque(s->como.para.cuerpo, ctx);
+            visitar_bloque(s->como.para.sino, ctx);
+            break;
+
+        case SENT_BLOQUE:
+            visitar_bloque(s, ctx);
+            break;
+
+        case SENT_FUNCION:
+            for (int i = 0; i < s->como.funcion.n_parametros; i++) {
+                visitar_expr_quizas(s->como.funcion.parametros[i].valor_defecto, ctx);
+            }
+            visitar_bloque(s->como.funcion.cuerpo, ctx);
+            break;
+
+        case SENT_CLASE:
+            for (int i = 0; i < s->como.clase.n_superclases; i++) {
+                visitar_expr_quizas(s->como.clase.superclases[i], ctx);
+            }
+            visitar_bloque(s->como.clase.cuerpo, ctx);
+            break;
+
+        case SENT_INTENTAR:
+            visitar_bloque(s->como.intentar.cuerpo, ctx);
+            for (int i = 0; i < s->como.intentar.n_atrapadores; i++) {
+                visitar_expr_quizas(s->como.intentar.atrapadores[i].tipo, ctx);
+                visitar_bloque(s->como.intentar.atrapadores[i].cuerpo, ctx);
+            }
+            visitar_bloque(s->como.intentar.sino, ctx);
+            visitar_bloque(s->como.intentar.finalmente, ctx);
+            break;
+
+        case SENT_LANZAR:
+            visitar_expr_quizas(s->como.lanzar.valor, ctx);
+            break;
+
+        case SENT_IMPORTAR: {
+            /* `importar a.b.c` introduce el nombre `a` en el scope (a menos
+             * que se use `como X`, en cuyo caso es `X`). */
+            const char *nombre;
+            int longitud;
+            if (s->como.importar.alias.texto) {
+                nombre = s->como.importar.alias.texto;
+                longitud = s->como.importar.alias.longitud;
+            } else if (s->como.importar.n_segmentos > 0) {
+                nombre = s->como.importar.segmentos[0].texto;
+                longitud = s->como.importar.segmentos[0].longitud;
+            } else {
+                break;
+            }
+            registrar_import(ctx, nombre, longitud, s->linea, s->columna);
+            break;
+        }
+
+        case SENT_DESDE_IMPORTAR:
+            /* `desde X importar Y como Z, W, ...` introduce los aliases Z, W. */
+            for (int i = 0; i < s->como.desde_importar.n_items; i++) {
+                ItemImportado *it = &s->como.desde_importar.items[i];
+                const char *nombre;
+                int longitud;
+                if (it->alias.texto) {
+                    nombre = it->alias.texto;
+                    longitud = it->alias.longitud;
+                } else {
+                    nombre = it->nombre.texto;
+                    longitud = it->nombre.longitud;
+                }
+                registrar_import(ctx, nombre, longitud, it->linea, it->columna);
+            }
+            /* `desde X importar *`: no podemos saber que se importo — no
+             * generamos warning de unused-import. */
+            break;
+
+        case SENT_GLOBAL:
+        case SENT_NOLOCAL:
+            break;
+
+        case SENT_COINCIDIR:
+            visitar_expr_quizas(s->como.coincidir.sujeto, ctx);
+            for (int i = 0; i < s->como.coincidir.n_clausulas; i++) {
+                ClausulaCuando *c = &s->como.coincidir.clausulas[i];
+                visitar_patron(c->patron, ctx);
+                visitar_expr_quizas(c->guarda, ctx);
+                visitar_bloque(c->cuerpo, ctx);
+            }
+            break;
+
+        default:
+            break;
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Sort y API publica.
+ * ────────────────────────────────────────────────────────────────── */
+
+static int comparar_warning(const void *a, const void *b) {
+    const Warning *wa = (const Warning *)a;
+    const Warning *wb = (const Warning *)b;
+    if (wa->linea != wb->linea) return wa->linea - wb->linea;
+    return wa->columna - wb->columna;
+}
+
+LinterResultado linter_analizar(Sent **sents, int n) {
+    Ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+
+    for (int i = 0; i < n; i++) {
+        visitar_sent_quizas(sents[i], &ctx);
+    }
+
+    /* Emitir warnings de imports no usados. */
+    for (int i = 0; i < ctx.n_imports; i++) {
+        ImportEntry *e = &ctx.imports[i];
+        if (!e->usado) {
+            char buf[256];
+            snprintf(buf, sizeof(buf),
+                "modulo importado pero no usado: '%.*s'",
+                e->longitud, e->texto);
+            emitir(&ctx, LINT_UNUSED_IMPORT, e->linea, e->columna, "%s", buf);
+        }
+    }
+
+    /* Orden estable por linea/columna para output determinista. */
+    if (ctx.n > 1) {
+        qsort(ctx.avisos, (size_t)ctx.n, sizeof(Warning), comparar_warning);
+    }
+
+    LinterResultado r;
+    r.avisos = ctx.avisos;
+    r.n = ctx.n;
+    r.capacidad = ctx.capacidad;
+    return r;
+}
+
+void linter_resultado_destruir(LinterResultado *r) {
+    if (!r) return;
+    for (int i = 0; i < r->n; i++) {
+        free(r->avisos[i].mensaje);
+    }
+    free(r->avisos);
+    r->avisos = NULL;
+    r->n = 0;
+    r->capacidad = 0;
+}
+
+const char *linter_tipo_nombre(TipoWarning t) {
+    switch (t) {
+        case LINT_UNREACHABLE:     return "unreachable";
+        case LINT_REDUNDANT_PASAR: return "redundant-pasar";
+        case LINT_EQ_NULO:         return "eq-nulo";
+        case LINT_UNUSED_IMPORT:   return "unused-import";
+        default:                   return "warning";
+    }
+}

@@ -866,7 +866,12 @@ cornamusa fmt programa.cor            # formatea in-place (v1.48)
 cornamusa fmt --check programa.cor    # exit 0 si ya formateado, 1 si no
 cornamusa fmt --stdout programa.cor   # formato a stdout, no toca archivo
 cornamusa fmt -                       # lee stdin → escribe stdout
+
+cornamusa lint programa.cor           # avisos de estilo (v1.49)
+                                       # exit 0 sin avisos, 1 con avisos
 ```
+
+Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`.
 
 ---
 

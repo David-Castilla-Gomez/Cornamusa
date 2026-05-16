@@ -6,6 +6,90 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.49.0] — 2026-05-16 — Linter integrado `cornamusa lint`
+
+Tercera release de la **Fase 5 — Tooling**. Cornamusa ahora detecta
+automáticamente errores comunes de estilo y bugs latentes a través de
+un linter integrado al binario.
+
+### Lo nuevo
+
+- **Subcomando `cornamusa lint archivo.cor`**:
+  - Parsea el archivo (si hay errores de sintaxis, el linter no
+    ejecuta — el parser ya los reporta).
+  - Recorre el AST aplicando 4 checks ortogonales.
+  - Imprime avisos al stdout con formato
+    `archivo:linea:col: warning [tipo]: mensaje`.
+  - Exit 0 si no hay avisos, 1 si los hay — apto para `pre-commit`
+    y CI.
+
+### Checks aplicados
+
+- **`unreachable`**: detecta sentencias tras un terminator de flujo
+  (`retornar`, `romper`, `continuar`, `lanzar`) en el mismo bloque.
+  Solo se reporta la primera tras el terminator — las posteriores se
+  asumen consecuencia del mismo bug.
+
+- **`redundant-pasar`**: `pasar` dentro de un bloque con otras
+  sentencias. `pasar` solo tiene sentido como marcador en cuerpos
+  vacíos (`clase X: pasar fin clase`).
+
+- **`eq-nulo`**: comparación con `nulo` usando `==` o `!=`. Sugiere
+  el operador idiomático `es nulo` / `no es nulo`. Detecta tanto
+  `x == nulo` como `nulo == x`.
+
+- **`unused-import`**: módulo importado pero nunca referenciado en el
+  programa. Maneja las tres formas:
+  - `importar mat` → registra `mat`.
+  - `importar mat como m` → registra `m`.
+  - `desde mat importar PI, factorial` → registra `PI` y `factorial`
+    por separado.
+  - `desde mat importar *` → no se warnea (no se sabe qué se trajo).
+
+### Lo que NO chequea (queda para v1.50+)
+
+- **Variables locales no usadas**: requiere análisis de scope completo
+  (función, comprehension, clausula `cuando` con bind, etc.) — trabajo
+  más grande que el resto.
+- **Sombras entre scopes**.
+- **Aridades incorrectas en llamadas**: el runtime ya las detecta con
+  buen mensaje, y el linter no tiene la info de aridad de built-ins.
+- **Tipos**: Cornamusa es dinámico; tipado opcional es trabajo lejano.
+
+### Implementación
+
+Nuevo módulo `src/linter.{c,h}` (~400 líneas). Una sola pasada
+recursiva por el AST emite los 4 tipos de aviso. La detección de
+imports no usados usa una mini-tabla (`MAX_IMPORTS=256`) que registra
+nombres importados durante la travesía y los marca cuando aparece un
+`EXPR_IDENT` con el mismo nombre. Tras la travesía, los no marcados
+se reportan.
+
+Los avisos se ordenan por (línea, columna) para output determinista.
+
+### Verificación
+
+- **205/205 tests verde**, incluyendo nuevo `test_linter` con 22
+  asserts cubriendo: cada categoría aisladamente, combinaciones,
+  código limpio sin falsos positivos, las tres formas de import.
+- **63 ejemplos + 12 módulos de stdlib**: solo 3 ejemplos
+  (`32_json_archivos`, `35_iteradores`, `58_repr_booleano`) y
+  1 módulo (`stdlib/regex`) generan avisos — todos son
+  `eq-nulo` legítimos en código real (deuda pequeña aparte que
+  podría limpiarse en una release minor).
+
+### Limitaciones reconocidas
+
+- **No analiza scope**: un import "no usado" se mide a nivel
+  programa, no por scope. Si un import se usa solo dentro de una
+  función, sigue contando como usado — correcto.
+- **No detecta `pasar` redundante dentro de `coincidir`**: cada
+  rama de `cuando` es su propio bloque; si una tiene solo `pasar`
+  es válida y no warneada.
+- **`unused-import` no atrapa shadowing**: si después de
+  `importar mat` alguien hace `mat = 1`, el ident `mat` cuenta
+  como uso. Aceptable para v1.
+
 ## [1.48.0] — 2026-05-16 — Formateador integrado `cornamusa fmt`
 
 Segundo release de la **Fase 5 — Tooling**. Cornamusa ahora trae un

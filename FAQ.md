@@ -90,6 +90,26 @@ cat programa.cor | ./build/cornamusa fmt -     # stdin → stdout
 
 Reglas conservadoras: reindenta a 4 espacios, normaliza líneas en blanco y trailing whitespace, preserva comentarios. No toca espaciado de operadores ni rompe líneas largas — eso queda para releases posteriores.
 
+### ¿Hay linter integrado?
+
+Sí desde v1.49:
+
+```bash
+./build/cornamusa lint programa.cor
+# programa.cor:3:1: warning [unused-import]: modulo importado pero no usado: 'fechas'
+# programa.cor:7:10: warning [eq-nulo]: comparacion con nulo via '==' — prefiere 'es nulo'
+# 2 avisos.
+```
+
+Categorías chequeadas en v1.49:
+
+- `unreachable` — código tras `retornar`, `romper`, `continuar` o `lanzar` en el mismo bloque.
+- `redundant-pasar` — `pasar` dentro de un bloque que tiene otras sentencias.
+- `eq-nulo` — comparación con `nulo` usando `==`/`!=` (sugiere `es nulo` / `no es nulo`).
+- `unused-import` — módulo importado pero nunca referenciado en el programa.
+
+Exit 0 sin avisos, 1 si los hay — apto para `pre-commit` y CI.
+
 ---
 
 ## Sobre la sintaxis
