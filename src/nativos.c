@@ -2862,22 +2862,33 @@ static Valor nativa_red_http_obtener(EvalError *err, int n_args, Valor *args,
 static const char B64_ALFABETO[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static Valor nativa_base64_codificar(EvalError *err, int n_args, Valor *args,
-                                       int linea, int columna) {
-    if (n_args != 1) {
-        return error_nativa(err, linea, columna,
-            "ErrorDeTipo: base64_codificar(cadena) requiere 1 argumento, recibio %d",
-            n_args);
-    }
-    if (args[0].tipo != VAL_CADENA) {
-        return error_nativa(err, linea, columna,
-            "ErrorDeTipo: base64_codificar() requiere una cadena");
-    }
-    const unsigned char *in = (const unsigned char *)args[0].como.cadena.texto;
-    int n = args[0].como.cadena.longitud;
+/* v1.66: alfabeto URL-safe segun RFC 4648 §5. Mismo orden, los dos
+ * ultimos chars cambiados: `+/` → `-_`. Por convencion (JWT, etc.)
+ * la variante URL-safe se emite SIN padding `=`. */
+static const char B64_ALFABETO_URL[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
 
-    /* Output size: 4 chars por cada 3 bytes, redondeado hacia arriba. */
-    int out_n = 4 * ((n + 2) / 3);
+/* Helper compartido por las dos variantes (estandar + URL-safe).
+ * `alfabeto` apunta a los 64 chars del alfabeto. Si `con_padding`,
+ * se rellena con `=` al final cuando la entrada no es multiplo de 3. */
+static Valor base64_codificar_impl(EvalError *err, int linea, int columna,
+                                    const Valor *arg, const char *alfabeto,
+                                    bool con_padding) {
+    if (arg->tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: base64 codificar requiere una cadena");
+    }
+    const unsigned char *in = (const unsigned char *)arg->como.cadena.texto;
+    int n = arg->como.cadena.longitud;
+
+    /* Output size: 4 chars por cada 3 bytes. Sin padding ahorra hasta 2 chars. */
+    int out_n;
+    int resto = n % 3;
+    if (con_padding) {
+        out_n = 4 * ((n + 2) / 3);
+    } else {
+        out_n = (n / 3) * 4 + (resto == 0 ? 0 : (resto + 1));
+    }
     char *out = (char *)malloc((size_t)out_n + 1);
     if (!out) return error_nativa(err, linea, columna, "memoria insuficiente");
 
@@ -2886,21 +2897,31 @@ static Valor nativa_base64_codificar(EvalError *err, int n_args, Valor *args,
         unsigned x = ((unsigned)in[i] << 16)
                     | ((unsigned)in[i + 1] << 8)
                     | (unsigned)in[i + 2];
-        out[j]     = B64_ALFABETO[(x >> 18) & 0x3F];
-        out[j + 1] = B64_ALFABETO[(x >> 12) & 0x3F];
-        out[j + 2] = B64_ALFABETO[(x >> 6)  & 0x3F];
-        out[j + 3] = B64_ALFABETO[x         & 0x3F];
+        out[j]     = alfabeto[(x >> 18) & 0x3F];
+        out[j + 1] = alfabeto[(x >> 12) & 0x3F];
+        out[j + 2] = alfabeto[(x >> 6)  & 0x3F];
+        out[j + 3] = alfabeto[x         & 0x3F];
     }
-    /* Resto: 1 o 2 bytes con padding `=`. */
+    /* Resto: 1 o 2 bytes. Padding opcional. */
     if (i < n) {
         int rest = n - i;
         unsigned x = (unsigned)in[i] << 16;
         if (rest == 2) x |= (unsigned)in[i + 1] << 8;
-        out[j]     = B64_ALFABETO[(x >> 18) & 0x3F];
-        out[j + 1] = B64_ALFABETO[(x >> 12) & 0x3F];
-        out[j + 2] = (rest == 2) ? B64_ALFABETO[(x >> 6) & 0x3F] : '=';
-        out[j + 3] = '=';
-        j += 4;
+        out[j]     = alfabeto[(x >> 18) & 0x3F];
+        out[j + 1] = alfabeto[(x >> 12) & 0x3F];
+        if (rest == 2) {
+            out[j + 2] = alfabeto[(x >> 6) & 0x3F];
+            if (con_padding) { out[j + 3] = '='; j += 4; }
+            else j += 3;
+        } else {
+            if (con_padding) {
+                out[j + 2] = '=';
+                out[j + 3] = '=';
+                j += 4;
+            } else {
+                j += 2;
+            }
+        }
     }
     out[j] = '\0';
 
@@ -2909,13 +2930,39 @@ static Valor nativa_base64_codificar(EvalError *err, int n_args, Valor *args,
     return v;
 }
 
-/* Lookup inverso: char base64 → valor 0-63, o -1 si invalido. */
+static Valor nativa_base64_codificar(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: base64_codificar(cadena) requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    return base64_codificar_impl(err, linea, columna, &args[0],
+                                   B64_ALFABETO, /*con_padding=*/true);
+}
+
+/* v1.66: URL-safe base64 sin padding (RFC 4648 §5). */
+static Valor nativa_base64_codificar_url(EvalError *err, int n_args, Valor *args,
+                                           int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: base64_codificar_url(cadena) requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    return base64_codificar_impl(err, linea, columna, &args[0],
+                                   B64_ALFABETO_URL, /*con_padding=*/false);
+}
+
+/* Lookup inverso: char base64 → valor 0-63, o -1 si invalido.
+ * v1.66: acepta tanto el alfabeto estandar (+/) como URL-safe (-_)
+ * — el decoder es tolerante a ambos, util cuando no sabes de
+ * antemano que variante usaste. */
 static int b64_decode_char(unsigned char c) {
     if (c >= 'A' && c <= 'Z') return c - 'A';
     if (c >= 'a' && c <= 'z') return c - 'a' + 26;
     if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
+    if (c == '+' || c == '-') return 62;
+    if (c == '/' || c == '_') return 63;
     return -1;
 }
 
@@ -2962,11 +3009,22 @@ static Valor nativa_base64_decodificar(EvalError *err, int n_args, Valor *args,
         return error_nativa(err, linea, columna,
             "ErrorDeValor: base64 invalido (demasiado padding)");
     }
-    /* Tras filtrar, m + padding debe ser multiplo de 4. */
-    if (((m + padding) % 4) != 0) {
-        free(limpio);
-        return error_nativa(err, linea, columna,
-            "ErrorDeValor: longitud de base64 no es multiplo de 4");
+    /* v1.66: si hay padding, total debe ser multiplo de 4 (clasico).
+     * Si no hay padding (URL-safe), m debe terminar en 0, 2 o 3
+     * caracteres dentro del ultimo bloque (1 char solitario es
+     * imposible: codifica 6 bits sueltos sin sentido). */
+    if (padding > 0) {
+        if (((m + padding) % 4) != 0) {
+            free(limpio);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: longitud de base64 no es multiplo de 4 con padding");
+        }
+    } else {
+        if ((m % 4) == 1) {
+            free(limpio);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: base64 sin padding termina en 1 char (incompleto)");
+        }
     }
 
     int out_cap = (m / 4) * 3 + 3;
@@ -3635,9 +3693,12 @@ static const EntradaNativa NATIVAS[] = {
     {"regex_reemplazar",    16, nativa_regex_reemplazar},
     /* Red (v1.29). */
     {"red_http_obtener",    16, nativa_red_http_obtener},
-    /* Base64 (v1.59). */
-    {"base64_codificar",    16, nativa_base64_codificar},
-    {"base64_decodificar",  18, nativa_base64_decodificar},
+    /* Base64 (v1.59 estandar, v1.66 URL-safe). */
+    {"base64_codificar",       16, nativa_base64_codificar},
+    {"base64_decodificar",     18, nativa_base64_decodificar},
+    {"base64_codificar_url",   20, nativa_base64_codificar_url},
+    /* base64_decodificar_url no se necesita: nativa_base64_decodificar
+     * acepta `-_` ademas de `+/`, y tolera entrada sin padding. */
     /* Hashing (v1.60, v1.65 HMAC). */
     {"hash_sha256",         11, nativa_sha256},
     {"hash_md5",             8, nativa_md5},

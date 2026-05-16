@@ -33,9 +33,10 @@
 #   - Errores atrapables: ErrorDeValor si la entrada contiene caracteres
 #     fuera del alfabeto o tiene longitud o padding invalidos.
 #
-# Lo que NO incluye (v1.59):
-#   - Variante URL-safe (RFC 4648 §5, usa `-` y `_` en lugar de `+` y `/`).
-#     Scope para v1.60+.
+# Disponible desde v1.66:
+#   - `codificar_url(s)` / `decodificar_url(s)` para la variante
+#     URL-safe (RFC 4648 §5, `-_` en lugar de `+/`, sin padding).
+#     Util para JWTs, OAuth, parametros HTTP.
 
 funcion codificar(cadena):
     retornar base64_codificar(cadena)
@@ -43,4 +44,19 @@ fin funcion
 
 funcion decodificar(cadena):
     retornar base64_decodificar(cadena)
+fin funcion
+
+# v1.66: variante URL-safe (RFC 4648 §5). Mismo algoritmo pero:
+#   - chars `+/` reemplazados por `-_` (seguros en URLs/JSON).
+#   - SIN padding `=` (convencion para JWT, OAuth, etc.).
+#
+# Para decodificar, usa `decodificar(...)` — el decoder es tolerante
+# a ambas variantes (acepta `-_` igual que `+/`, y entrada con o sin
+# padding).
+funcion codificar_url(cadena):
+    retornar base64_codificar_url(cadena)
+fin funcion
+
+funcion decodificar_url(cadena):
+    retornar base64_decodificar(cadena)   # tolerante a ambas variantes
 fin funcion

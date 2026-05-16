@@ -6,6 +6,75 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.66.0] — 2026-05-16 — base64 URL-safe (RFC 4648 §5)
+
+Antes de v1.66, el módulo `base64` solo soportaba el alfabeto
+estándar (`+/=`). v1.66 añade la **variante URL-safe** (RFC 4648 §5)
+que reemplaza `+/` por `-_` y omite el padding `=`. Esta variante es
+**estándar en JWTs, OAuth, cookies y parámetros HTTP** — caracteres
+seguros en URLs sin escape.
+
+### API nueva
+
+```cornamusa
+importar base64
+
+# Codificar URL-safe (sin padding):
+base64.codificar_url("?>?")       # "Pz4_"   (vs "Pz4/" estandar)
+base64.codificar_url("Hola")      # "SG9sYQ" (vs "SG9sYQ==" estandar)
+
+# Decodificar: el decoder es TOLERANTE a ambas variantes
+# (acepta `-_` igual que `+/`, con o sin padding).
+base64.decodificar_url("SG9sYQ")        # "Hola"
+base64.decodificar_url("SG9sYQ==")      # "Hola" (también funciona)
+base64.decodificar("dXNlYXJpbzo0Mg")    # mismo decoder, alias para legibilidad
+```
+
+### Comportamiento del decoder
+
+Para reducir fricción, el decoder estándar **acepta cualquier
+variante**:
+
+- `+` y `-` ambos → carácter 62.
+- `/` y `_` ambos → carácter 63.
+- Padding `=` opcional. Si hay, el total debe ser múltiplo de 4. Si
+  no hay, el resto del último bloque puede ser 0, 2 o 3 chars (un
+  solo char sobrante es inválido — codifica 6 bits sueltos).
+
+`base64.decodificar_url(s)` es un alias de `base64.decodificar(s)`
+— mismo decoder, nombre que clarifica intención.
+
+### Implementación
+
+- `nativos.c`: refactor mínimo del codec en un helper
+  `base64_codificar_impl(alfabeto, con_padding)` parametrizado.
+  - Standard: alfabeto clásico + padding.
+  - URL-safe: alfabeto con `-_` sin padding.
+- Nuevo constante `B64_ALFABETO_URL[]` con `-_` en posiciones 62, 63.
+- `nativa_base64_codificar_url` expone la variante.
+- Decoder: extendido `b64_decode_char` para aceptar `-_` además de
+  `+/`. Relajado check de longitud para entrada sin padding (rest
+  `% 4` puede ser 0, 2, o 3).
+- ~40 líneas de cambio sobre la implementación de v1.59.
+
+### Verificación
+
+- **221/221 tests verde**. `test_base64` extendido a **30 asserts**
+  (vs 18 antes):
+  - URL-safe sin padding: `"any carnal pleasure."` → 27 chars (no 28).
+  - URL chars: `"?>?"` produce `Pz4_` no `Pz4/`.
+  - Decoder tolerante: `Pz4_` decodifica igual que `Pz4/`.
+  - Decoder sin padding: `SG9sYQ` decodifica a `Hola`.
+  - Round-trip URL-safe para 7 tamaños (0..11 bytes).
+- `examples/67_base64.cor` extendido con sección §6 "URL-safe".
+
+### Prerequisito para v1.67
+
+JWT (JSON Web Token, RFC 7519) usa exactamente esta variante en sus
+3 partes (header, payload, signature). v1.67 añadirá `stdlib/jwt.cor`
+combinando `base64.codificar_url` + `json.serializar` +
+`hashing.hmac_sha256`.
+
 ## [1.65.0] — 2026-05-16 — HMAC en `hashing` (RFC 2104 / RFC 4231)
 
 Antes de v1.65, el módulo `hashing` cubría SHA-256 y MD5 puros.

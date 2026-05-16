@@ -40,7 +40,22 @@ imprimir("\nData URI (truncado):", data_uri)
 mime_b64 = "U29ueSBwYW5lbCB5IHN1IGFsbWE=\n  "
 imprimir("\nMIME-style:", base64.decodificar(mime_b64))
 
-# ─── 6. Errores atrapables ───────────────────────────────────────
+# ─── 6. URL-safe (v1.66, RFC 4648 §5) ───────────────────────────
+# Para JWTs, OAuth, parametros HTTP: `-_` en lugar de `+/`, sin
+# padding. El decoder es tolerante y acepta ambas variantes.
+imprimir("\nEstandar vs URL-safe (mismos bytes con `?>?`):")
+imprimir("  Estandar:", base64.codificar("?>?"))       # Pz4/
+imprimir("  URL-safe:", base64.codificar_url("?>?"))   # Pz4_
+
+# Sin padding `=` al final
+imprimir("\nSin padding `=`:")
+imprimir("  Estandar:", base64.codificar("Hola"))          # SG9sYQ==
+imprimir("  URL-safe:", base64.codificar_url("Hola"))      # SG9sYQ
+
+# Decoder tolerante (acepta ambas formas):
+imprimir("  Decode:", base64.decodificar_url("SG9sYQ"))    # Hola
+
+# ─── 7. Errores atrapables ───────────────────────────────────────
 intentar:
     base64.decodificar("ABC@D")
 atrapar Excepcion como e:

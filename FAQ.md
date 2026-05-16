@@ -322,7 +322,15 @@ Cobertura:
 - Decodificador tolerante a whitespace (espacios, `\n`, `\r`, `\t`) — útil para input MIME-style con line-wrap.
 - Errores atrapables: `ErrorDeValor` si la entrada tiene caracteres fuera del alfabeto, padding inválido, o longitud no múltiplo de 4.
 
-Variante URL-safe (`-` y `_` en lugar de `+` y `/`) queda para v1.60+.
+**Variante URL-safe** (desde v1.66, RFC 4648 §5):
+
+```cornamusa
+# `-_` en vez de `+/`, sin padding `=` — listo para JWTs, OAuth:
+url_token = base64.codificar_url("usuario:42")    # "dXNlYXJpbzo0Mg"
+
+# El decoder es tolerante a ambas variantes:
+base64.decodificar("dXNlYXJpbzo0Mg")    # también funciona sin padding
+```
 
 Implementación nativa en C — rápida incluso para inputs grandes.
 

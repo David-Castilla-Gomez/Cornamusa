@@ -135,6 +135,67 @@ int main(void) {
     chequear_cod("user:pass", "dXNlcjpwYXNz", "basic_auth_cod");
     chequear_dec("dXNlcjpwYXNz", "user:pass", "basic_auth_dec");
 
+    /* ─── URL-safe (v1.66) ─── */
+
+    /* Sin padding por defecto. */
+    {
+        char prog[256];
+        snprintf(prog, sizeof(prog),
+            "r = base64_codificar_url(\"any carnal pleasure.\")\n");
+        char out[256];
+        int n = ejecutar_r(prog, out, sizeof(out));
+        AFIRMAR(n == 27, "url_sin_padding_len");
+        AFIRMAR(strcmp(out, "YW55IGNhcm5hbCBwbGVhc3VyZS4") == 0, "url_sin_padding");
+    }
+
+    /* Chars `-_` en vez de `+/` para bytes que disparan esos chars. */
+    {
+        char prog[256];
+        snprintf(prog, sizeof(prog),
+            "r = base64_codificar_url(\"?>?\")\n");
+        char out[256];
+        ejecutar_r(prog, out, sizeof(out));
+        AFIRMAR(strcmp(out, "Pz4_") == 0, "url_underscore");
+    }
+
+    /* Decoder tolera ambas variantes — `-_` equivalente a `+/`. */
+    {
+        char prog[256];
+        snprintf(prog, sizeof(prog),
+            "r = base64_decodificar(\"Pz4_\")\n");
+        char out[256];
+        int n = ejecutar_r(prog, out, sizeof(out));
+        AFIRMAR(n == 3 && strcmp(out, "?>?") == 0, "decode_url_chars");
+    }
+
+    /* Decoder tolera entrada sin padding. */
+    {
+        char prog[256];
+        snprintf(prog, sizeof(prog),
+            "r = base64_decodificar(\"SG9sYQ\")\n");  /* "Hola" sin = al final */
+        char out[256];
+        int n = ejecutar_r(prog, out, sizeof(out));
+        AFIRMAR(n == 4 && strcmp(out, "Hola") == 0, "decode_sin_padding");
+    }
+
+    /* Round-trip URL-safe para varios tamanos. */
+    {
+        const char *inputs[] = {"", "a", "ab", "abc", "abcd", "abcde", "Hola mundo!"};
+        for (size_t i = 0; i < sizeof(inputs) / sizeof(inputs[0]); i++) {
+            char prog[512];
+            snprintf(prog, sizeof(prog),
+                "tmp = base64_codificar_url(\"%s\")\n"
+                "r = base64_decodificar(tmp)\n", inputs[i]);
+            char out[256];
+            int n = ejecutar_r(prog, out, sizeof(out));
+            char etiq[64];
+            snprintf(etiq, sizeof(etiq), "url_roundtrip_%zu", i);
+            AFIRMAR(n == (int)strlen(inputs[i])
+                    && memcmp(out, inputs[i], strlen(inputs[i])) == 0,
+                    etiq);
+        }
+    }
+
     if (fallos == 0) {
         printf("base64: %d asserts, todos verde\n", casos);
         return 0;

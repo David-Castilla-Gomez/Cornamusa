@@ -85,6 +85,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Linter `concat-in-loop` (10ª categoría) — detecta `x = x + cadena` dentro de bucles | v1.63 | ✅ |
 | Linter `# noqa: <categoria>` directive — supresión selectiva por línea | v1.64 | ✅ |
 | HMAC-SHA-256 + HMAC-MD5 nativos (RFC 2104/4231) en `hashing` | v1.65 | ✅ |
+| base64 URL-safe (RFC 4648 §5, `-_` sin padding, prerequisito JWT) | v1.66 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.65.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.66.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.65.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de quince módulos. **`hashing` gana HMAC** (RFC 2104 / RFC 4231): `hashing.hmac_sha256(clave, mensaje)` y `hashing.hmac_md5(clave, mensaje)` para autenticación de mensajes (JWT signing, webhooks, sesiones). Validado contra los test vectors canónicos del RFC 4231 incluyendo el caso de clave > 64 bytes (clave-grande hasheada-y-rellena). HMAC-MD5 sigue siendo seguro como MAC pese a que MD5 está roto para hashing simple. v1.64 trajo `# noqa` directives al linter. 221 tests verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.66.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de quince módulos. **`base64` gana URL-safe** (RFC 4648 §5): `base64.codificar_url(s)` emite `-_` en lugar de `+/` y sin padding `=`, listo para JWTs, OAuth y parámetros HTTP. El decoder es tolerante: acepta ambas variantes y entrada con o sin padding. Es el prerequisito para un módulo JWT (planeado para v1.67) que combinará base64-url + HMAC-SHA-256 + json. v1.65 trajo HMAC al hashing. 221 tests verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -170,6 +170,7 @@ Hoja de ruta resumida:
 | **v1.63** | **Linter `concat-in-loop` — detecta automáticamente el patrón cazado en v1.61-62 (10ª categoría)** | ✅ |
 | **v1.64** | **Linter `# noqa: <categoria>` — supresión selectiva por línea (bare o por categoría)** | ✅ |
 | **v1.65** | **HMAC-SHA-256 + HMAC-MD5 (RFC 2104/4231) — autenticación de mensajes con clave secreta** | ✅ |
+| **v1.66** | **base64 URL-safe (RFC 4648 §5) — `-_` sin padding, prerequisito para JWT** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
