@@ -1,0 +1,66 @@
+# `global` en funciones (v1.57).
+#
+# Hasta v1.56, la keyword `global` era rechazada por el compilador.
+# Ahora funciona: dentro de una funcion, `global X` indica que las
+# asignaciones a X (incluyendo `+=`, `*=`, etc.) van al scope del
+# modulo en lugar de crear un local nuevo.
+
+# ─── 1. Contador compartido entre funciones ──────────────────────
+total_clientes = 0
+
+funcion registrar(nombre):
+    global total_clientes
+    total_clientes += 1
+    imprimir(f"#{total_clientes} → {nombre}")
+fin funcion
+
+registrar("Ana")
+registrar("Luis")
+registrar("Eva")
+imprimir(f"Total: {total_clientes}")
+
+# ─── 2. Configuracion mutable a nivel modulo ─────────────────────
+config = {"modo": "dev", "nivel": 0}
+
+funcion modo_produccion():
+    global config
+    config["modo"] = "produccion"
+    config["nivel"] = 1
+fin funcion
+
+modo_produccion()
+imprimir(config)
+
+# ─── 3. global crea la variable si no existia ───────────────────
+funcion lazy_init():
+    global cache_lazy
+    cache_lazy = {"ready": verdadero}
+fin funcion
+
+lazy_init()
+imprimir(cache_lazy)
+
+# ─── 4. Sin global: la asignacion crea local nuevo ──────────────
+x = "global"
+
+funcion local_solo():
+    x = "local"           # NO modifica el global (sin `global`)
+    imprimir("dentro:", x)
+fin funcion
+
+local_solo()
+imprimir("fuera:", x)     # "global" intacto
+
+# ─── 5. Varios nombres en una declaracion ───────────────────────
+contador_a = 0
+contador_b = 0
+
+funcion incrementar_ambos():
+    global contador_a, contador_b
+    contador_a += 1
+    contador_b += 2
+fin funcion
+
+incrementar_ambos()
+incrementar_ambos()
+imprimir(f"a={contador_a}, b={contador_b}")

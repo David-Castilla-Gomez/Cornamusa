@@ -211,17 +211,39 @@ Sin `nolocal`, una asignación dentro de la función anidada crea un local nuevo
 
 ### ¿Cómo modifico una variable global desde dentro de una función?
 
-La keyword `global` está reservada pero **aún no está implementada** en la VM bytecode. Mientras tanto, si necesitas estado mutable compartido, usa un contenedor mutable (lista o diccionario) a nivel de módulo:
+Desde **v1.57**, declarando `global X` al inicio del cuerpo:
 
 ```cornamusa
-estado = {"contador": 0}
+contador = 0
 
 funcion incrementar():
-    estado["contador"] = estado["contador"] + 1   # muta el dict, no reasigna
+    global contador
+    contador += 1
 fin funcion
+
+incrementar()
+incrementar()
+imprimir(contador)   # 2
 ```
 
-O reestructura para que la función **devuelva** el nuevo valor y el llamador lo reasigne.
+`global` también funciona si la variable **no existía antes** — la primera asignación la crea a nivel módulo:
+
+```cornamusa
+funcion configurar():
+    global config
+    config = {"modo": "produccion"}
+fin funcion
+
+configurar()
+imprimir(config)
+```
+
+Validaciones del compilador:
+- `global` fuera de función → `ErrorDeSintaxis`.
+- `global X` cuando X ya es local del scope actual → `ErrorDeSintaxis` (contradictorio).
+- `global X` cuando X ya es `nolocal` → `ErrorDeSintaxis` (solo uno o el otro).
+
+Antes de v1.57 había que usar un contenedor mutable a nivel módulo (`estado = {"contador": 0}; estado["contador"] += 1`) — sigue funcionando, pero `global` es más limpio para estado primitivo.
 
 ### ¿Funciona `borrar d[k]` y `obj.x += 1`?
 

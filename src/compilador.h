@@ -113,6 +113,12 @@ typedef struct ScopeCompilador {
     NolocalMarker nolocales[COMPILADOR_NOLOCALES_MAX];
     int n_nolocales;
 
+    /* v1.57: nombres declarados como `global` en este scope. La lectura
+       o asignación del nombre va al scope de módulo (top-level) en vez
+       de a local/upvalue. */
+    NolocalMarker globales[COMPILADOR_NOLOCALES_MAX];
+    int n_globales;
+
     /* Pointer a la `FuncionBC` que estamos compilando (para llenar la
        metadata `info_upvalues` a medida que el scope captura). NULL en
        el scope raíz. */

@@ -37,6 +37,7 @@ static void scope_iniciar(ScopeCompilador *s, Chunk *chunk, bool es_funcion,
        "demasiadas declaraciones nolocal" (o corrompía el array index
        → segfault). UB latente desde que se añadió `nolocal` (v1.4). */
     s->n_nolocales = 0;
+    s->n_globales = 0;
     s->funcion = NULL;
     s->padre = padre;
     if (es_funcion) {
@@ -67,6 +68,20 @@ static int buscar_local(const ScopeCompilador *s, const char *nombre, int len) {
         }
     }
     return -1;
+}
+
+/* v1.57: true si `nombre` fue declarado `global` en el scope actual
+ * (vía `SENT_GLOBAL`). Las asignaciones y lecturas posteriores deben
+ * dirigirse al scope de modulo en lugar de local/upvalue. */
+static bool es_global_declarado(const ScopeCompilador *s,
+                                  const char *nombre, int len) {
+    for (int i = 0; i < s->n_globales; i++) {
+        if (s->globales[i].longitud_nombre == len
+            && memcmp(s->globales[i].nombre, nombre, (size_t)len) == 0) {
+            return true;
+        }
+    }
+    return false;
 }
 
 /* Añade un local en el scope actual y devuelve su slot. Reporta error
@@ -508,22 +523,31 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         }
 
         case EXPR_IDENT: {
+            /* v1.57: si fue declarada `global` en este scope, saltar
+               directo a OP_OBTENER_GLOBAL ignorando locales/upvalues. */
+            bool forzar_global = c->actual->es_funcion
+                && es_global_declarado(c->actual,
+                                        e->como.ident.nombre,
+                                        e->como.ident.longitud);
+
             /* Prioridad: local del scope actual → upvalue (búsqueda
                recursiva en scopes padres) → global. */
-            int slot = buscar_local(c->actual, e->como.ident.nombre,
-                                       e->como.ident.longitud);
-            if (slot >= 0) {
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                                    (uint8_t)slot, e->linea);
-                return true;
-            }
-            int upv = resolver_upvalue(c, c->actual,
-                                          e->como.ident.nombre,
-                                          e->como.ident.longitud, e->linea);
-            if (upv >= 0) {
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_UPVALUE,
-                                    (uint8_t)upv, e->linea);
-                return true;
+            if (!forzar_global) {
+                int slot = buscar_local(c->actual, e->como.ident.nombre,
+                                           e->como.ident.longitud);
+                if (slot >= 0) {
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                        (uint8_t)slot, e->linea);
+                    return true;
+                }
+                int upv = resolver_upvalue(c, c->actual,
+                                              e->como.ident.nombre,
+                                              e->como.ident.longitud, e->linea);
+                if (upv >= 0) {
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_UPVALUE,
+                                        (uint8_t)upv, e->linea);
+                    return true;
+                }
             }
             int idx = agregar_nombre_global(c, e->como.ident.nombre,
                                               e->como.ident.longitud);
@@ -1736,24 +1760,43 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
     /*
      * Dentro de función: prioridad local → upvalue → nuevo local.
      * En el scope raíz (top-level): toda asignación va a globales.
+     * v1.57: si `global X` se declaro antes, saltar a global directo.
      */
     if (c->actual->es_funcion) {
-        int slot = buscar_local(c->actual, destino->como.ident.nombre,
-                                   destino->como.ident.longitud);
-        if (slot >= 0) {
-            /* Local existente: empujar valor, asignar al slot. */
+        bool forzar_global = es_global_declarado(c->actual,
+                                                    destino->como.ident.nombre,
+                                                    destino->como.ident.longitud);
+        if (!forzar_global) {
+            int slot = buscar_local(c->actual, destino->como.ident.nombre,
+                                       destino->como.ident.longitud);
+            if (slot >= 0) {
+                /* Local existente: empujar valor, asignar al slot. */
+                if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+                chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                    (uint8_t)slot, s->linea);
+                return true;
+            }
+            int upv = resolver_upvalue(c, c->actual,
+                                          destino->como.ident.nombre,
+                                          destino->como.ident.longitud, s->linea);
+            if (upv >= 0) {
+                if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+                chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
+                                    (uint8_t)upv, s->linea);
+                return true;
+            }
+        } else {
+            /* `global X`: empujar valor y guardar en globales. */
             if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
-            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
-                                (uint8_t)slot, s->linea);
-            return true;
-        }
-        int upv = resolver_upvalue(c, c->actual,
-                                      destino->como.ident.nombre,
-                                      destino->como.ident.longitud, s->linea);
-        if (upv >= 0) {
-            if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
-            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
-                                (uint8_t)upv, s->linea);
+            int gidx = agregar_nombre_global(c, destino->como.ident.nombre,
+                                                destino->como.ident.longitud);
+            if (gidx < 0 || gidx > 255) {
+                error_compilacion(c, s->linea, s->columna,
+                    "demasiadas constantes para 'global' en bytecode v0.6");
+                return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                                (uint8_t)gidx, s->linea);
             return true;
         }
         /*
@@ -1895,13 +1938,19 @@ static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
         return false;
     }
 
+    /* v1.57: si fue declarada `global`, saltar a global directo. */
+    bool forzar_global = c->actual->es_funcion
+        && es_global_declarado(c->actual,
+                                destino->como.ident.nombre,
+                                destino->como.ident.longitud);
+
     /* Decidir si es local, upvalue o global. */
-    int slot_local = c->actual->es_funcion
+    int slot_local = (c->actual->es_funcion && !forzar_global)
         ? buscar_local(c->actual, destino->como.ident.nombre,
                           destino->como.ident.longitud)
         : -1;
     int slot_upv = -1;
-    if (slot_local < 0 && c->actual->es_funcion) {
+    if (slot_local < 0 && c->actual->es_funcion && !forzar_global) {
         slot_upv = resolver_upvalue(c, c->actual,
                                        destino->como.ident.nombre,
                                        destino->como.ident.longitud,
@@ -2963,11 +3012,61 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             }
             return true;
         }
-        /* Sin soporte aún. */
-        case SENT_GLOBAL:
-            error_compilacion(c, s->linea, s->columna,
-                "esta sentencia aun no esta implementada en bytecode v0.9");
-            return false;
+        case SENT_GLOBAL: {
+            /*
+             * v1.57: declara que los nombres listados pertenecen al
+             * scope de modulo (top-level). Asignaciones y lecturas
+             * posteriores se enrutan a OP_DEFINIR_GLOBAL /
+             * OP_OBTENER_GLOBAL en lugar de local/upvalue.
+             *
+             * A diferencia de `nolocal`, NO requerimos que el nombre
+             * ya exista a nivel modulo — su primera asignacion puede
+             * ser la que lo crea (semantica Python).
+             */
+            if (!c->actual->es_funcion) {
+                error_compilacion(c, s->linea, s->columna,
+                    "ErrorDeSintaxis: `global` solo se permite dentro de una funcion");
+                return false;
+            }
+            int n = s->como.global_o_nolocal.n_nombres;
+            for (int i = 0; i < n; i++) {
+                const Nombre *nm = &s->como.global_o_nolocal.nombres[i];
+                /* No debe ya ser local del scope actual (eso seria
+                 * contradictorio). */
+                if (buscar_local(c->actual, nm->texto, nm->longitud) >= 0) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "ErrorDeSintaxis: '%.*s' es local del scope actual; "
+                        "no se puede declarar `global`",
+                        nm->longitud, nm->texto);
+                    return false;
+                }
+                /* Tampoco debe estar marcada como `nolocal`. */
+                for (int j = 0; j < c->actual->n_nolocales; j++) {
+                    NolocalMarker *m = &c->actual->nolocales[j];
+                    if (m->longitud_nombre == nm->longitud
+                        && memcmp(m->nombre, nm->texto, (size_t)nm->longitud) == 0) {
+                        error_compilacion(c, s->linea, s->columna,
+                            "ErrorDeSintaxis: '%.*s' ya declarada `nolocal`; "
+                            "no puede ser tambien `global`",
+                            nm->longitud, nm->texto);
+                        return false;
+                    }
+                }
+                /* Idempotencia: si ya esta marcado global, no duplicar. */
+                if (es_global_declarado(c->actual, nm->texto, nm->longitud)) {
+                    continue;
+                }
+                if (c->actual->n_globales >= COMPILADOR_NOLOCALES_MAX) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "demasiadas declaraciones `global` en un mismo scope");
+                    return false;
+                }
+                c->actual->globales[c->actual->n_globales].nombre = nm->texto;
+                c->actual->globales[c->actual->n_globales].longitud_nombre = nm->longitud;
+                c->actual->n_globales++;
+            }
+            return true;
+        }
 
         case SENT_BORRAR: {
             /* v1.56: `borrar d[k]` o `borrar obj.attr`. */

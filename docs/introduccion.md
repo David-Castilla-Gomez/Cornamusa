@@ -76,6 +76,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | LSP: `textDocument/definition` (goto-def) + `textDocument/formatting` (delega al formateador) | v1.54 | ✅ |
 | Linter: `shadow`, `unused-loop-var`, `mutable-default` (9 categorias en total) | v1.55 | ✅ |
 | `borrar d[k]` / `borrar obj.attr` + aug-assign sobre atributos (`obj.x += 1`) | v1.56 | ✅ |
+| `global X` implementado en bytecode VM (asignaciones a scope de módulo desde función) | v1.57 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

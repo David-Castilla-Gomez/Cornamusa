@@ -6,6 +6,121 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.57.0] — 2026-05-16 — `global X` implementado en bytecode VM
+
+Cierra el último gap real del lenguaje core. Con esto, **el cuarteto
+de scoping queda completo**: locales (default), `nolocal` (v1.4),
+`global` (v1.57), y closures (upvalues automáticos).
+
+### Lo nuevo
+
+Dentro de una función, `global X` declara que las asignaciones (y
+aug-assigns) sobre X van al scope del módulo en lugar de crear una
+local nueva. Sin la declaración, el comportamiento por defecto en
+Cornamusa es: la asignación dentro de función crea local — el global
+permanece intacto.
+
+```cornamusa
+contador = 0
+
+funcion incrementar():
+    global contador
+    contador += 1
+fin funcion
+
+incrementar()
+incrementar()
+imprimir(contador)   # 2
+```
+
+Diferencia con el patrón pre-v1.57 (workaround vía dict mutable):
+
+```cornamusa
+# v1.56 y antes: workaround con dict.
+estado = {"contador": 0}
+funcion inc():
+    estado["contador"] += 1   # muta el dict — no reasigna
+
+# v1.57: idiom natural con global.
+contador = 0
+funcion inc():
+    global contador
+    contador += 1
+```
+
+`global` también puede **crear** la variable a nivel módulo si no
+existía antes (semántica Python):
+
+```cornamusa
+funcion lazy_init():
+    global cache
+    cache = {"ready": verdadero}
+fin funcion
+
+lazy_init()
+imprimir(cache)   # {"ready": verdadero}
+```
+
+### Validaciones del compilador
+
+- `global` fuera de cualquier función → `ErrorDeSintaxis`.
+- `global X` cuando X ya es local del scope actual → `ErrorDeSintaxis`
+  (contradictorio: no puede ser local y global a la vez).
+- `global X` cuando X ya está marcado `nolocal` en el mismo scope →
+  `ErrorDeSintaxis` (solo uno o el otro).
+- Múltiples nombres en una declaración: `global a, b, c` — válido.
+- Declaraciones duplicadas (`global x; global x`) — idempotente, no
+  error.
+
+### Implementación
+
+Cambios en `ScopeCompilador` (`src/compilador.h`):
+- Nuevo array `globales[COMPILADOR_NOLOCALES_MAX]` paralelo a
+  `nolocales[]`. Cada entrada guarda (nombre, longitud_nombre).
+- Contador `n_globales`.
+
+Cambios en `src/compilador.c`:
+- Helper `es_global_declarado(scope, name, len)`.
+- Caso `SENT_GLOBAL`: valida no-conflict con local/nolocal, registra
+  cada nombre en el array.
+- En `EXPR_IDENT` (lectura): si `es_global_declarado`, salta los
+  intentos de local/upvalue y emite `OP_OBTENER_GLOBAL`.
+- En `compilar_asignar` con destino `EXPR_IDENT`: si declarado
+  global, emite `OP_DEFINIR_GLOBAL` en lugar de `OP_ASIGNAR_LOCAL`.
+- En `compilar_asignar_aug` con destino `EXPR_IDENT`: mismo
+  bypass — fuerza el path global tanto en el load como en el store.
+
+Sin cambios en VM o bytecode — reusa `OP_OBTENER_GLOBAL` /
+`OP_DEFINIR_GLOBAL` existentes.
+
+### Verificación
+
+- **211/211 tests verde**.
+- Nuevo `test_bytecode_global` con **13 asserts**:
+  - `global X` modifica el global existente.
+  - `global X` con aug-assign (`+=`).
+  - `global X` crea nuevo si no existía.
+  - Sin `global`: crea local, no modifica global.
+  - Errores: `global` top-level / conflict con local / conflict con `nolocal`.
+  - Múltiples nombres en declaración.
+- Nuevo `examples/65_global.cor` ejecuta correctamente.
+- 0 regresiones en suite existente.
+
+### Estado del lenguaje core
+
+Con `global` cerrado, el modelo de scoping de Cornamusa está
+completo:
+
+| Mecanismo | Significado |
+|---|---|
+| Default | Asignación crea local en función |
+| Read implícito | Lookup: local → upvalue (closure) → global → builtin |
+| `nolocal X` (v1.4) | X refiere a local del scope enclosing |
+| `global X` (v1.57) | X refiere al scope de módulo |
+| Closures | Capturan locales automáticamente (lectura) |
+
+No hay otros gaps de scoping/aliasing conocidos.
+
 ## [1.56.0] — 2026-05-16 — Lenguaje core: `borrar` y aug-assign sobre atributos
 
 Vuelta al lenguaje tras el arco de tooling de Fase 5. Cierra dos gaps
