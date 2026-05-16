@@ -6,6 +6,122 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.54.0] — 2026-05-16 — LSP: goto-definition + formatting
+
+Octava release de la **Fase 5 — Tooling**. El LSP gana dos capacidades
+estándar: navegación (goto-definition) y formato del archivo entero
+delegado al formateador interno. Con esto cubre las 4 acciones
+"básicas" que un usuario espera de un editor con soporte de lenguaje:
+diagnostics, hover, goto-def, formatting.
+
+### Lo nuevo
+
+#### `textDocument/definition` (goto-def)
+
+Capability nueva: `definitionProvider: true`.
+
+Al hacer **Ctrl-click** o **F12** sobre el nombre de una función o
+clase top-level, el editor salta a la declaración. La respuesta es
+una `Location` con `uri` + `range` apuntando exactamente al nombre
+en su declarador:
+
+```json
+{
+  "uri": "file:///t.cor",
+  "range": {
+    "start": {"line": 0, "character": 8},
+    "end":   {"line": 0, "character": 17}
+  }
+}
+```
+
+El rango cubre el nombre exacto (no toda la línea) para que el
+editor pueda resaltar el símbolo.
+
+**Cómo funciona**:
+
+1. Recibe `(line, character)` del cliente.
+2. Extrae la palabra bajo el cursor.
+3. Re-parsea el documento.
+4. Busca SENT_FUNCION o SENT_CLASE top-level con ese nombre.
+5. Calcula offset del nombre en el texto fuente
+   (`s->como.funcion.nombre - texto`).
+6. Convierte offset → `(line_0, col_0)`.
+7. Emite Location con rango = `[col_0, col_0 + len(nombre))`.
+
+Si el cursor no está sobre un identificador o el símbolo no existe
+como top-level → `result: null`.
+
+#### `textDocument/formatting`
+
+Capability nueva: `documentFormattingProvider: true`.
+
+"Format Document" del editor invoca al formateador interno
+(`cornamusa fmt`) sobre el documento abierto y devuelve un solo
+`TextEdit` que reemplaza el contenido entero:
+
+```json
+[
+  {
+    "range": {
+      "start": {"line": 0, "character": 0},
+      "end":   {"line": 9999, "character": 0}
+    },
+    "newText": "...código formateado..."
+  }
+]
+```
+
+El rango `end` con línea muy alta se clampea automáticamente al
+final real del documento por el editor (comportamiento estándar LSP).
+
+**Opciones ignoradas**: `options.tabSize` y `options.insertSpaces` se
+ignoran — Cornamusa siempre usa 4 espacios (decisión B1).
+Documentado como limitación.
+
+### Capabilities anunciadas
+
+```json
+{
+  "textDocumentSync": 1,
+  "hoverProvider": true,
+  "definitionProvider": true,
+  "documentFormattingProvider": true
+}
+```
+
+### Verificación
+
+- **208/208 tests verde**. Sin tests unitarios nuevos —
+  goto-def/formatting requieren state del LSP (document store) y se
+  prueban por integración.
+- **Script Python end-to-end** verifica:
+  - Goto-def sobre referencia a función → location correcta (línea/col
+    del nombre).
+  - Goto-def sobre nombre de clase → location correcta.
+  - Goto-def sobre carácter no-identificador → `null`.
+  - Formatting sobre documento mal indentado → TextEdit con el doc
+    reformateado correctamente (mismo output que `cornamusa fmt`).
+
+### Lo que NO incluye (scope para v1.55+)
+
+- **Goto-def para parámetros, locales, atributos** (necesita scope
+  analysis runtime).
+- **Goto-def para símbolos importados** (`importar mat; mat.PI`).
+- **`textDocument/completion`** (sugerencias al teclear) — bigger
+  lift, requiere análisis de scope completo + lista de built-ins.
+- **`workspace/symbol`** (índice de todos los símbolos del workspace).
+- **Incremental document sync**.
+- **Range formatting** (`textDocument/rangeFormatting`) — formato
+  parcial de una selección.
+
+### Notas
+
+Con esto el LSP cubre lo que un usuario espera de un servidor "básico
+pero útil": real-time diagnostics, hover docs, goto-def, formatting.
+Lo que falta (completion, refactoring) es propio de servidores
+avanzados.
+
 ## [1.53.0] — 2026-05-16 — LSP polish: parse errors estructurados + hover
 
 Séptima release de la **Fase 5 — Tooling**. Pulido del LSP MVP de

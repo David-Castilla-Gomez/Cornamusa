@@ -149,14 +149,17 @@ El servidor implementa el subset mínimo del [LSP](https://microsoft.github.io/l
 
 Para conectar desde VS Code necesitas un cliente LSP (extensión genérica como [generic-lsp-client](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.lldb-dap)) configurado para ejecutar `cornamusa lsp` con `*.cor` como tipo de archivo. Documentación detallada en [docs/editor-setup.md](docs/editor-setup.md) (próxima release).
 
-**Capacidades desde v1.53**:
-- `hoverProvider`: pasar el cursor sobre una función o clase top-level muestra firma + comentarios doc + lista de métodos.
-- Parse errors detallados (línea/col/mensaje del parser tal cual).
+**Capacidades anunciadas** (v1.54):
+- `textDocumentSync: 1` (sincronización full-document, no incremental).
+- `hoverProvider`: cursor sobre función/clase top-level → popup con firma + doc + métodos.
+- `definitionProvider`: Ctrl-click sobre una referencia a función/clase salta a su declaración.
+- `documentFormattingProvider`: "Format Document" del editor reformatea reusando el `cornamusa fmt` interno.
+- `publishDiagnostics` con parse errors detallados + warnings del linter.
 
 **Limitaciones actuales**:
-- Hover solo funciona para símbolos top-level (funciones y clases). Variables, parámetros, atributos y métodos en uso aún no.
-- Sin completion, goto-definition, ni formatting via LSP (queda para v1.54+).
-- Document sync solo en modo completo (no incremental).
+- Hover y goto-def solo funcionan para símbolos top-level (funciones y clases). Variables, parámetros, atributos y métodos `obj.metodo` aún no.
+- Sin completion (`textDocument/completion`).
+- Document sync solo en modo completo.
 
 ---
 

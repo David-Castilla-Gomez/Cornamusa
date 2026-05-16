@@ -6,6 +6,7 @@
 
 #include "arena.h"
 #include "ast.h"
+#include "formateador.h"
 #include "json_min.h"
 #include "lexer.h"
 #include "linter.h"
@@ -276,11 +277,15 @@ static void responder_initialize(long id) {
                 json_buf_key(&b, "textDocumentSync"); json_buf_int(&b, 1);
                 /* v1.53: hover sobre identificadores top-level. */
                 json_buf_key(&b, "hoverProvider"); json_buf_bool(&b, true);
+                /* v1.54: goto-definition para top-level. */
+                json_buf_key(&b, "definitionProvider"); json_buf_bool(&b, true);
+                /* v1.54: formatting via formateador integrado. */
+                json_buf_key(&b, "documentFormattingProvider"); json_buf_bool(&b, true);
             json_buf_obj_end(&b);
             json_buf_key(&b, "serverInfo");
             json_buf_obj_start(&b);
                 json_buf_key(&b, "name");    json_buf_string(&b, "cornamusa-lsp");
-                json_buf_key(&b, "version"); json_buf_string(&b, "1.53.0");
+                json_buf_key(&b, "version"); json_buf_string(&b, "1.54.0");
             json_buf_obj_end(&b);
         json_buf_obj_end(&b);
     json_buf_obj_end(&b);
@@ -653,6 +658,231 @@ static void responder_hover(DocStore *store, long id, JsonValue *params) {
     free(contenido);
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Goto-definition (v1.54).
+ *
+ * Para una posicion del cursor, identifica la palabra bajo el cursor,
+ * encuentra el simbolo top-level (funcion o clase) con ese nombre, y
+ * responde con una Location apuntando a la declaracion.
+ *
+ * Solo top-level por ahora — locals/params/atributos requieren scope
+ * analysis y resolucion de tipos (scope para v1.55+).
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Calcula (linea_0, col_0) del offset `off` dentro de `texto`. */
+static void offset_a_pos(const char *texto, size_t off,
+                          int *linea_out, int *col_out) {
+    int linea = 0, col = 0;
+    for (size_t i = 0; i < off && texto[i]; i++) {
+        if (texto[i] == '\n') { linea++; col = 0; }
+        else col++;
+    }
+    *linea_out = linea;
+    *col_out = col;
+}
+
+/* Devuelve la posicion 0-indexed (line, character) del nombre del
+ * simbolo (funcion o clase). Asume que `texto` corresponde al fuente
+ * que parseo el AST. */
+static void posicion_nombre_simbolo(const char *texto, Sent *s,
+                                       int *linea_out, int *col_out,
+                                       int *longitud_nombre) {
+    const char *nombre = NULL;
+    int len = 0;
+    if (s->tipo == SENT_FUNCION) {
+        nombre = s->como.funcion.nombre;
+        len = s->como.funcion.longitud_nombre;
+    } else if (s->tipo == SENT_CLASE) {
+        nombre = s->como.clase.nombre;
+        len = s->como.clase.longitud_nombre;
+    }
+    if (!nombre) {
+        *linea_out = s->linea - 1;
+        *col_out = s->columna - 1;
+        *longitud_nombre = 0;
+        return;
+    }
+    size_t off = (size_t)(nombre - texto);
+    offset_a_pos(texto, off, linea_out, col_out);
+    *longitud_nombre = len;
+}
+
+static void emit_location_or_null(long id, bool tiene_loc,
+                                    const char *uri,
+                                    int start_line, int start_char,
+                                    int end_line, int end_char) {
+    JsonBuf b; json_buf_init(&b);
+    json_buf_obj_start(&b);
+        json_buf_key(&b, "jsonrpc"); json_buf_string(&b, "2.0");
+        json_buf_key(&b, "id");      json_buf_int(&b, id);
+        json_buf_key(&b, "result");
+        if (tiene_loc) {
+            json_buf_obj_start(&b);
+                json_buf_key(&b, "uri"); json_buf_string(&b, uri);
+                json_buf_key(&b, "range");
+                json_buf_obj_start(&b);
+                    json_buf_key(&b, "start");
+                    json_buf_obj_start(&b);
+                        json_buf_key(&b, "line"); json_buf_int(&b, start_line);
+                        json_buf_key(&b, "character"); json_buf_int(&b, start_char);
+                    json_buf_obj_end(&b);
+                    json_buf_key(&b, "end");
+                    json_buf_obj_start(&b);
+                        json_buf_key(&b, "line"); json_buf_int(&b, end_line);
+                        json_buf_key(&b, "character"); json_buf_int(&b, end_char);
+                    json_buf_obj_end(&b);
+                json_buf_obj_end(&b);
+            json_buf_obj_end(&b);
+        } else {
+            json_buf_null(&b);
+        }
+    json_buf_obj_end(&b);
+    if (b.data) enviar_mensaje(b.data, b.len);
+    json_buf_free(&b);
+}
+
+static void responder_definition(DocStore *store, long id, JsonValue *params) {
+    JsonValue *td = json_obj_get(params, "textDocument");
+    JsonValue *pos = json_obj_get(params, "position");
+    if (!td || !pos) { emit_location_or_null(id, false, "", 0, 0, 0, 0); return; }
+
+    const char *uri = json_string(json_obj_get(td, "uri"));
+    int linea  = (int)json_int(json_obj_get(pos, "line"));
+    int columna = (int)json_int(json_obj_get(pos, "character"));
+
+    int idx = docstore_find(store, uri);
+    if (idx < 0) { emit_location_or_null(id, false, "", 0, 0, 0, 0); return; }
+    const char *texto = store->docs[idx].text;
+
+    size_t off = pos_a_offset(texto, linea, columna);
+    const char *palabra;
+    size_t plen;
+    if (!extraer_palabra(texto, off, &palabra, &plen)) {
+        emit_location_or_null(id, false, "", 0, 0, 0, 0);
+        return;
+    }
+
+    Lexer l;
+    lexer_iniciar(&l, texto, uri);
+    Arena a;
+    arena_iniciar(&a, 16384);
+    Parser p;
+    parser_iniciar(&p, &l, &a, texto, uri);
+    ErroresParser perrs = {0};
+    p.capturar_errores = true;
+    p.errores_capturados = &perrs;
+    int n = 0;
+    Sent **sents = parser_parsear_programa(&p, &n);
+
+    bool encontrado = false;
+    int s_line = 0, s_col = 0, e_line = 0, e_col = 0;
+    if (!p.tuvo_error) {
+        Sent *s = buscar_top_level(sents, n, palabra, plen);
+        if (s) {
+            int nombre_len;
+            posicion_nombre_simbolo(texto, s, &s_line, &s_col, &nombre_len);
+            e_line = s_line;
+            e_col = s_col + nombre_len;
+            encontrado = true;
+        }
+    }
+    parser_errores_liberar(&perrs);
+    arena_destruir(&a);
+
+    emit_location_or_null(id, encontrado, uri, s_line, s_col, e_line, e_col);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Formatting (v1.54).
+ *
+ * Reusa `formateador_formatear` y devuelve un solo TextEdit que
+ * reemplaza el documento entero por su version formateada. El cliente
+ * (editor) aplica el edit y obtiene buffer formateado.
+ *
+ * Ignoramos `options` (tabSize, insertSpaces) — siempre 4 espacios.
+ * ────────────────────────────────────────────────────────────────── */
+
+static void responder_formatting(DocStore *store, long id, JsonValue *params) {
+    JsonValue *td = json_obj_get(params, "textDocument");
+    if (!td) {
+        JsonBuf b; json_buf_init(&b);
+        json_buf_obj_start(&b);
+            json_buf_key(&b, "jsonrpc"); json_buf_string(&b, "2.0");
+            json_buf_key(&b, "id");      json_buf_int(&b, id);
+            json_buf_key(&b, "result");  json_buf_null(&b);
+        json_buf_obj_end(&b);
+        if (b.data) enviar_mensaje(b.data, b.len);
+        json_buf_free(&b);
+        return;
+    }
+    const char *uri = json_string(json_obj_get(td, "uri"));
+    int idx = docstore_find(store, uri);
+    if (idx < 0) {
+        JsonBuf b; json_buf_init(&b);
+        json_buf_obj_start(&b);
+            json_buf_key(&b, "jsonrpc"); json_buf_string(&b, "2.0");
+            json_buf_key(&b, "id");      json_buf_int(&b, id);
+            json_buf_key(&b, "result");  json_buf_null(&b);
+        json_buf_obj_end(&b);
+        if (b.data) enviar_mensaje(b.data, b.len);
+        json_buf_free(&b);
+        return;
+    }
+    const char *texto = store->docs[idx].text;
+
+    FormatoResultado r = formateador_formatear(texto);
+    if (r.mensaje_error || !r.fuente) {
+        JsonBuf b; json_buf_init(&b);
+        json_buf_obj_start(&b);
+            json_buf_key(&b, "jsonrpc"); json_buf_string(&b, "2.0");
+            json_buf_key(&b, "id");      json_buf_int(&b, id);
+            json_buf_key(&b, "result");  json_buf_null(&b);
+        json_buf_obj_end(&b);
+        if (b.data) enviar_mensaje(b.data, b.len);
+        json_buf_free(&b);
+        formato_resultado_destruir(&r);
+        return;
+    }
+
+    /* Calcular fin del documento original (linea + col 0-indexed).
+     * Si no cambia, podriamos devolver array vacio, pero por
+     * simplicidad enviamos el edit completo igualmente — el editor
+     * lo aplicara como no-op si el texto coincide. */
+    int n_lineas = 0;
+    for (size_t i = 0; texto[i]; i++) if (texto[i] == '\n') n_lineas++;
+    /* end position: linea pasando la ultima, columna 0 — el editor lo
+     * clamps al final real del documento. */
+    int end_line = n_lineas + 1;
+
+    JsonBuf b; json_buf_init(&b);
+    json_buf_obj_start(&b);
+        json_buf_key(&b, "jsonrpc"); json_buf_string(&b, "2.0");
+        json_buf_key(&b, "id");      json_buf_int(&b, id);
+        json_buf_key(&b, "result");
+        json_buf_arr_start(&b);
+            json_buf_obj_start(&b);
+                json_buf_key(&b, "range");
+                json_buf_obj_start(&b);
+                    json_buf_key(&b, "start");
+                    json_buf_obj_start(&b);
+                        json_buf_key(&b, "line"); json_buf_int(&b, 0);
+                        json_buf_key(&b, "character"); json_buf_int(&b, 0);
+                    json_buf_obj_end(&b);
+                    json_buf_key(&b, "end");
+                    json_buf_obj_start(&b);
+                        json_buf_key(&b, "line"); json_buf_int(&b, end_line);
+                        json_buf_key(&b, "character"); json_buf_int(&b, 0);
+                    json_buf_obj_end(&b);
+                json_buf_obj_end(&b);
+                json_buf_key(&b, "newText"); json_buf_string(&b, r.fuente);
+            json_buf_obj_end(&b);
+        json_buf_arr_end(&b);
+    json_buf_obj_end(&b);
+    if (b.data) enviar_mensaje(b.data, b.len);
+    json_buf_free(&b);
+    formato_resultado_destruir(&r);
+}
+
 int lsp_run(void) {
     DocStore store = { .n = 0 };
     bool shutdown_recibido = false;
@@ -696,6 +926,10 @@ int lsp_run(void) {
             manejar_didClose(&store, params_v);
         } else if (strcmp(method, "textDocument/hover") == 0) {
             if (tiene_id) responder_hover(&store, id, params_v);
+        } else if (strcmp(method, "textDocument/definition") == 0) {
+            if (tiene_id) responder_definition(&store, id, params_v);
+        } else if (strcmp(method, "textDocument/formatting") == 0) {
+            if (tiene_id) responder_formatting(&store, id, params_v);
         }
         /* Otros metodos: ignorados silenciosamente (LSP permite que el
          * servidor no implemente todo). Para requests deberiamos
