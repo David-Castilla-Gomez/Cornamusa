@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.51.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.52.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.51.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de doce módulos útil para scripting real. La **Fase 5 — Tooling** suma un **generador de docs**: `cornamusa docs archivo.cor` emite Markdown con las firmas de funciones, métodos y clases del módulo, junto a la documentación extraída de los comentarios `#` precedentes (convención Go-style). v1.50 trajo análisis de scope al linter (`unused-local` + `unused-param`); v1.49 inauguró el linter con 4 checks AST-shape; v1.48 trajo el formateador `cornamusa fmt`; v1.47 añadió edición de línea + history en el REPL. Modelo de datos completo con todos los dunders fundamentales. 206 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.52.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de doce módulos útil para scripting real. La **Fase 5 — Tooling** culmina con un **Language Server Protocol (LSP) MVP**: `cornamusa lsp` arranca un servidor por stdio que expone diagnostics del linter en tiempo real al editor (VS Code, Neovim, Emacs vía cliente LSP genérico). v1.51 trajo el generador de docs; v1.50 análisis de scope en el linter; v1.49 los primeros checks; v1.48 el formateador. Modelo de datos completo con todos los dunders fundamentales. 207 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -156,6 +156,7 @@ Hoja de ruta resumida:
 | **v1.49** | **Linter integrado `cornamusa lint` — codigo inalcanzable, `pasar` redundante, `== nulo`, imports no usados** | ✅ |
 | **v1.50** | **Scope analysis en el linter — `unused-local` + `unused-param` con respeto a closures, `nolocal`/`global`, destructuring y skip de `_`/`yo`** | ✅ |
 | **v1.51** | **Generador de docs `cornamusa docs` — Markdown con firmas + comentarios precedentes, clases con metodos como subsecciones** | ✅ |
+| **v1.52** | **LSP server `cornamusa lsp` (MVP) — JSON-RPC por stdio, `publishDiagnostics` desde el linter en `didOpen`/`didChange`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

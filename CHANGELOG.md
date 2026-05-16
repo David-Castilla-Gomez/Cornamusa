@@ -6,6 +6,118 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.52.0] — 2026-05-16 — Language Server Protocol MVP (`cornamusa lsp`)
+
+Sexta y última release planeada de la **Fase 5 — Tooling**. Cornamusa
+ahora habla **LSP** (Language Server Protocol): el binario incluye un
+servidor que cualquier editor con cliente LSP (VS Code, Neovim, Emacs,
+Helix, etc.) puede conectar para recibir diagnostics del linter en
+tiempo real.
+
+### Lo nuevo
+
+- **Subcomando `cornamusa lsp`**: arranca el servidor por stdio con
+  framing JSON-RPC (`Content-Length: N\r\n\r\n` + body).
+- **Mini parser/builder JSON** en C: nuevo módulo `src/json_min.{c,h}`
+  (~450 líneas). No depende de librerías externas. Cubre lo necesario:
+  objetos, arrays, strings (con escapes básicos), numbers, bool, null.
+- **Servidor LSP** en `src/lsp.{c,h}` (~300 líneas).
+
+### Métodos LSP implementados
+
+- `initialize` → responde con capabilities `{ textDocumentSync: 1 }`
+  (sincronización full-document) y `serverInfo`.
+- `initialized` → notification, ack interno.
+- `shutdown` → responde `null`.
+- `exit` → process exit limpio.
+- `textDocument/didOpen` → guarda el documento, dispara linter,
+  emite `publishDiagnostics`.
+- `textDocument/didChange` → actualiza el documento, dispara linter,
+  emite `publishDiagnostics`.
+- `textDocument/didClose` → limpia diagnostics (envía array vacío),
+  elimina el documento del store.
+
+### Diagnostics
+
+Los avisos del linter se traducen a `Diagnostic` LSP:
+
+- `range`: línea/columna 1-indexed (linter) → 0-indexed (LSP). Single
+  character range (start == end + 1 char).
+- `severity`: 2 (Warning) para warnings del linter; 1 (Error) para
+  parse errors.
+- `source`: `"cornamusa"`.
+- `code`: la categoría (`unused-local`, `eq-nulo`, etc.).
+- `message`: el texto del aviso.
+
+Parse errors: emiten un solo diagnostic genérico en línea 1 con
+severidad Error. Los detalles específicos no se exponen porque el
+parser actual imprime errores a stderr; surfacing estructurado queda
+para v1.53.
+
+### Detalles de implementación
+
+- **Windows binary mode**: en el subcomando `lsp` se llama a
+  `_setmode(_fileno(stdin/stdout), _O_BINARY)` para evitar que el
+  modo texto convierta `\r\n` → `\n` y rompa el conteo de
+  Content-Length.
+- **Document store**: array simple URI → texto, capacidad 64
+  documentos abiertos (suficiente para casi cualquier sesión).
+- **stderr suprimido durante parse**: el parser imprime errores a
+  stderr — para que esos errores no escapen al stdout LSP, durante el
+  parse redirigimos `stderr` a `nul`/`devnull` y lo restauramos.
+- **Sincronización completa**: cada `didChange` envía el documento
+  entero (más sencillo y robusto para v1). Incremental sync es trabajo
+  futuro.
+
+### Verificación
+
+- **207/207 tests verde**. Nuevo `test_json_min` con **24 asserts**
+  cubre parse + build + escape + anidación + round-trip.
+- **3 tests de integración manuales** vía script Python que envía
+  mensajes JSON-RPC al binario y verifica las respuestas:
+  - Initialize + didOpen + diagnostic → OK.
+  - didOpen + didChange + didClose + cleanup → OK.
+  - Parse error → diagnostic Error en línea 1 → OK.
+
+### Cómo conectarlo a tu editor
+
+**VS Code** (extensión genérica LSP): configurar `serverOptions`
+para ejecutar `cornamusa lsp`, `documentSelector` para `*.cor`.
+
+**Neovim** (built-in LSP):
+```lua
+vim.lsp.start({
+  name = 'cornamusa',
+  cmd = { 'cornamusa', 'lsp' },
+  root_dir = vim.fn.getcwd(),
+})
+```
+
+**Helix** (`languages.toml`):
+```toml
+[[language]]
+name = "cornamusa"
+file-types = ["cor"]
+language-servers = ["cornamusa"]
+
+[language-server.cornamusa]
+command = "cornamusa"
+args = ["lsp"]
+```
+
+### Lo que NO incluye (scope para v1.53+)
+
+- `textDocument/hover` — mostrar firma + docstring al pasar el cursor
+  sobre un símbolo. Requiere mapear posición (línea/col) → nodo AST,
+  + reusar el `docs_generar` para extraer el doc del símbolo.
+- `textDocument/definition` (goto-def) — mismo problema de mapeo.
+- `textDocument/completion` — bigger lift, requiere análisis de
+  scope con resolución de imports/built-ins.
+- `textDocument/formatting` — invocar el formateador desde LSP.
+- Surfacing detallado de errores de parser (refactor del parser para
+  acumular errores en lugar de imprimir a stderr).
+- Incremental document sync.
+
 ## [1.51.0] — 2026-05-16 — Generador de docs `cornamusa docs`
 
 Quinta release de la **Fase 5 — Tooling**. Cornamusa ahora trae un

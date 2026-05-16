@@ -71,6 +71,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Linter integrado `cornamusa lint` (codigo inalcanzable, `pasar` redundante, `== nulo`, imports no usados) | v1.49 | ✅ |
 | Scope analysis en el linter (`unused-local`, `unused-param` con respeto a closures/`nolocal`) | v1.50 | ✅ |
 | Generador de documentacion `cornamusa docs` (Markdown desde firmas + comentarios) | v1.51 | ✅ |
+| LSP server `cornamusa lsp` (JSON-RPC por stdio, diagnostics en tiempo real al editor) | v1.52 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

@@ -872,6 +872,9 @@ cornamusa lint programa.cor           # avisos de estilo (v1.49)
 
 cornamusa docs programa.cor           # Markdown a stdout (v1.51)
 cornamusa docs programa.cor -o doc.md # Markdown a archivo
+
+cornamusa lsp                         # Language Server Protocol por stdio (v1.52)
+                                       # para integracion editor (VS Code, etc.)
 ```
 
 Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`.

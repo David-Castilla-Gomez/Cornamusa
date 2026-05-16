@@ -38,11 +38,17 @@
 #include "fuente.h"
 #include "lexer.h"
 #include "linter.h"
+#include "lsp.h"
 #include "nativos.h"
 #include "parser.h"
 #include "repl_line.h"
 #include "valor.h"
 #include "vm.h"
+
+#ifdef _WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #define LINEA_MAX 1024
 #define BUFFER_REPL_MAX 16384
@@ -84,6 +90,8 @@ static void imprimir_uso(const char *programa) {
         "                             Exit 0 sin avisos, 1 con avisos.\n"
         "  docs [-o salida.md] <arch> Extrae documentacion (firmas + comentarios)\n"
         "                             y emite Markdown a stdout o al archivo dado.\n"
+        "  lsp                        Inicia el Language Server Protocol (stdio,\n"
+        "                             JSON-RPC). Para integracion con editores.\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -956,6 +964,16 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "docs") == 0) {
         return subcomando_docs(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "lsp") == 0) {
+#ifdef _WIN32
+        /* En Windows stdin/stdout estan en text mode por defecto, lo
+         * que traduce \r\n a \n al leer — roto para el framing
+         * LSP que cuenta bytes literales. Modo binario obligatorio. */
+        _setmode(_fileno(stdin),  _O_BINARY);
+        _setmode(_fileno(stdout), _O_BINARY);
+#endif
+        return lsp_run();
     }
 
     const char *archivo = NULL;
