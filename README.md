@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.64.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.65.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.64.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de quince módulos. **Linter con supresión selectiva**: nueva directiva `# noqa: <categoria>` al final de línea silencia warnings específicos. Bare `# noqa` silencia todos. Multiples categorías con coma: `# noqa: cat1, cat2`. Esto permite que código didáctico (como `examples/42_defaults.cor` que demuestra el footgun `mutable-default`) pase el linter limpio. Repo entero pasa lint **0 warnings** ahora — antes había 1 intencional. 220 tests verde con 61 asserts en `test_linter`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.65.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de quince módulos. **`hashing` gana HMAC** (RFC 2104 / RFC 4231): `hashing.hmac_sha256(clave, mensaje)` y `hashing.hmac_md5(clave, mensaje)` para autenticación de mensajes (JWT signing, webhooks, sesiones). Validado contra los test vectors canónicos del RFC 4231 incluyendo el caso de clave > 64 bytes (clave-grande hasheada-y-rellena). HMAC-MD5 sigue siendo seguro como MAC pese a que MD5 está roto para hashing simple. v1.64 trajo `# noqa` directives al linter. 221 tests verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -169,6 +169,7 @@ Hoja de ruta resumida:
 | **v1.62** | **Perf round 2 cont. — 5 nativas más en `cadenas` (indice_de, empieza_con, ...) tras audit de stdlib** | ✅ |
 | **v1.63** | **Linter `concat-in-loop` — detecta automáticamente el patrón cazado en v1.61-62 (10ª categoría)** | ✅ |
 | **v1.64** | **Linter `# noqa: <categoria>` — supresión selectiva por línea (bare o por categoría)** | ✅ |
+| **v1.65** | **HMAC-SHA-256 + HMAC-MD5 (RFC 2104/4231) — autenticación de mensajes con clave secreta** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

@@ -114,7 +114,9 @@ static void sha256_procesar_bloque(uint32_t H[8], const uint8_t bloque[64]) {
     H[4] += e; H[5] += f; H[6] += g; H[7] += h;
 }
 
-void hashing_sha256_hex(const uint8_t *datos, size_t len, char out_hex[65]) {
+/* Computa SHA-256 raw (32 bytes, no hex). Usado tanto por
+ * `hashing_sha256_hex` como por HMAC-SHA-256. */
+static void sha256_raw(const uint8_t *datos, size_t len, uint8_t digest[32]) {
     uint32_t H[8] = {
         0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a,
         0x510e527f, 0x9b05688c, 0x1f83d9ab, 0x5be0cd19
@@ -146,9 +148,13 @@ void hashing_sha256_hex(const uint8_t *datos, size_t len, char out_hex[65]) {
         sha256_procesar_bloque(H, pad + i * 64);
     }
 
-    /* Output 32 bytes big-endian → hex. */
-    uint8_t digest[32];
+    /* Output 32 bytes big-endian. */
     for (int i = 0; i < 8; i++) escribir_be32(H[i], digest + i * 4);
+}
+
+void hashing_sha256_hex(const uint8_t *datos, size_t len, char out_hex[65]) {
+    uint8_t digest[32];
+    sha256_raw(datos, len, digest);
     escribir_hex(digest, 32, out_hex);
 }
 
@@ -215,7 +221,9 @@ static void md5_procesar_bloque(uint32_t H[4], const uint8_t bloque[64]) {
     H[0] += A; H[1] += B; H[2] += C; H[3] += D;
 }
 
-void hashing_md5_hex(const uint8_t *datos, size_t len, char out_hex[33]) {
+/* Computa MD5 raw (16 bytes, no hex). Usado tanto por hashing_md5_hex
+ * como por HMAC-MD5. */
+static void md5_raw(const uint8_t *datos, size_t len, uint8_t digest[16]) {
     uint32_t H[4] = { 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476 };
 
     size_t bloques = len / 64;
@@ -241,8 +249,118 @@ void hashing_md5_hex(const uint8_t *datos, size_t len, char out_hex[33]) {
         md5_procesar_bloque(H, pad + i * 64);
     }
 
-    /* Output 16 bytes little-endian → hex. */
-    uint8_t digest[16];
+    /* Output 16 bytes little-endian. */
     for (int i = 0; i < 4; i++) escribir_le32(H[i], digest + i * 4);
+}
+
+void hashing_md5_hex(const uint8_t *datos, size_t len, char out_hex[33]) {
+    uint8_t digest[16];
+    md5_raw(datos, len, digest);
     escribir_hex(digest, 16, out_hex);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * HMAC (RFC 2104 / RFC 4231).
+ *
+ * HMAC(K, m) = H((K' XOR opad) || H((K' XOR ipad) || m))
+ *
+ *   K' = K si |K| <= B
+ *   K' = H(K) si |K| > B  (digest_len < B, padded con zeros)
+ *   ipad = 0x36 byte * B
+ *   opad = 0x5C byte * B
+ *
+ * B (block size) = 64 para SHA-256 y MD5.
+ * digest_len: 32 para SHA-256, 16 para MD5.
+ * ────────────────────────────────────────────────────────────────── */
+
+#define HMAC_BLOCK_SIZE 64
+
+/* Computa K' (clave ajustada a block size) en `out`. Out tiene
+ * tamanio HMAC_BLOCK_SIZE bytes. Si la clave excede B, primero se
+ * hashea con `hash_fn` que escribe `digest_len` bytes en out. Si la
+ * clave es <= B, se copia tal cual y el resto se rellena con zeros. */
+static void hmac_preparar_clave(const uint8_t *clave, size_t clave_len,
+                                  void (*hash_fn)(const uint8_t *, size_t, uint8_t *),
+                                  int digest_len,
+                                  uint8_t out[HMAC_BLOCK_SIZE]) {
+    memset(out, 0, HMAC_BLOCK_SIZE);
+    if (clave_len > HMAC_BLOCK_SIZE) {
+        hash_fn(clave, clave_len, out);
+        /* El resto de out (digest_len .. B) queda en cero por memset. */
+        (void)digest_len;
+    } else {
+        memcpy(out, clave, clave_len);
+    }
+}
+
+/* Wrappers que adaptan sha256_raw / md5_raw a la firma generica
+ * (uint8_t*) -> (uint8_t*). */
+static void sha256_raw_adapter(const uint8_t *in, size_t len, uint8_t *out) {
+    sha256_raw(in, len, out);
+}
+static void md5_raw_adapter(const uint8_t *in, size_t len, uint8_t *out) {
+    md5_raw(in, len, out);
+}
+
+void hashing_hmac_sha256_hex(const uint8_t *clave, size_t clave_len,
+                              const uint8_t *mensaje, size_t mensaje_len,
+                              char out_hex[65]) {
+    uint8_t k_prime[HMAC_BLOCK_SIZE];
+    hmac_preparar_clave(clave, clave_len, sha256_raw_adapter, 32, k_prime);
+
+    /* inner = H((K' XOR ipad) || mensaje). */
+    uint8_t k_xor_ipad[HMAC_BLOCK_SIZE];
+    for (int i = 0; i < HMAC_BLOCK_SIZE; i++) k_xor_ipad[i] = k_prime[i] ^ 0x36;
+
+    /* Buffer concatenado: (K' XOR ipad) || mensaje. */
+    uint8_t *buf = (uint8_t *)malloc(HMAC_BLOCK_SIZE + mensaje_len);
+    if (!buf) { out_hex[0] = '\0'; return; }
+    memcpy(buf, k_xor_ipad, HMAC_BLOCK_SIZE);
+    if (mensaje_len > 0) memcpy(buf + HMAC_BLOCK_SIZE, mensaje, mensaje_len);
+
+    uint8_t inner_digest[32];
+    sha256_raw(buf, HMAC_BLOCK_SIZE + mensaje_len, inner_digest);
+    free(buf);
+
+    /* outer = H((K' XOR opad) || inner). */
+    uint8_t k_xor_opad[HMAC_BLOCK_SIZE];
+    for (int i = 0; i < HMAC_BLOCK_SIZE; i++) k_xor_opad[i] = k_prime[i] ^ 0x5C;
+
+    uint8_t outer_buf[HMAC_BLOCK_SIZE + 32];
+    memcpy(outer_buf, k_xor_opad, HMAC_BLOCK_SIZE);
+    memcpy(outer_buf + HMAC_BLOCK_SIZE, inner_digest, 32);
+
+    uint8_t final_digest[32];
+    sha256_raw(outer_buf, HMAC_BLOCK_SIZE + 32, final_digest);
+    escribir_hex(final_digest, 32, out_hex);
+}
+
+void hashing_hmac_md5_hex(const uint8_t *clave, size_t clave_len,
+                           const uint8_t *mensaje, size_t mensaje_len,
+                           char out_hex[33]) {
+    uint8_t k_prime[HMAC_BLOCK_SIZE];
+    hmac_preparar_clave(clave, clave_len, md5_raw_adapter, 16, k_prime);
+
+    uint8_t k_xor_ipad[HMAC_BLOCK_SIZE];
+    for (int i = 0; i < HMAC_BLOCK_SIZE; i++) k_xor_ipad[i] = k_prime[i] ^ 0x36;
+
+    uint8_t *buf = (uint8_t *)malloc(HMAC_BLOCK_SIZE + mensaje_len);
+    if (!buf) { out_hex[0] = '\0'; return; }
+    memcpy(buf, k_xor_ipad, HMAC_BLOCK_SIZE);
+    if (mensaje_len > 0) memcpy(buf + HMAC_BLOCK_SIZE, mensaje, mensaje_len);
+
+    uint8_t inner_digest[16];
+    md5_raw(buf, HMAC_BLOCK_SIZE + mensaje_len, inner_digest);
+    free(buf);
+
+    uint8_t k_xor_opad[HMAC_BLOCK_SIZE];
+    for (int i = 0; i < HMAC_BLOCK_SIZE; i++) k_xor_opad[i] = k_prime[i] ^ 0x5C;
+
+    uint8_t outer_buf[HMAC_BLOCK_SIZE + 16];
+    memcpy(outer_buf, k_xor_opad, HMAC_BLOCK_SIZE);
+    memcpy(outer_buf + HMAC_BLOCK_SIZE, inner_digest, 16);
+
+    uint8_t final_digest[16];
+    md5_raw(outer_buf, HMAC_BLOCK_SIZE + 16, final_digest);
+    escribir_hex(final_digest, 16, out_hex);
 }

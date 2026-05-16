@@ -348,11 +348,28 @@ Ambos algoritmos están implementados nativamente en C (rápidos) y validados co
 - **SHA-256**: FIPS 180-4 / RFC 6234, incluyendo el vector de 1 millón de "a".
 - **MD5**: RFC 1321 §A.5.
 
+**HMAC** (desde v1.65, RFC 2104 / RFC 4231): autenticación de mensajes con clave secreta. Útil para JWT signing, webhooks, sesiones.
+
+```cornamusa
+firma = hashing.hmac_sha256("clave-secreta", "user_id=42")
+# → "410434e1769746896abe17c47551c15911c0cf2a3a9e1397cfd3c3bf69dc24c2"
+
+# Verificación: re-computar con misma clave da el mismo digest.
+firma_verif = hashing.hmac_sha256("clave-secreta", "user_id=42")
+verifica = (firma == firma_verif)   # verdadero
+
+# Con clave equivocada → digest distinto (autenticidad):
+falso = hashing.hmac_sha256("clave-mala", "user_id=42")
+diferente = (falso != firma)        # verdadero
+```
+
+Disponible también `hashing.hmac_md5(clave, mensaje)`. HMAC-MD5 sigue siendo **seguro como MAC** (no como hash plano), por la naturaleza del esquema HMAC.
+
 **Notas de seguridad**:
-- **MD5 está criptográficamente roto desde 2004**. Sigue siendo útil para integridad casual o compatibilidad con sistemas legacy, pero **no para firmas, hashes de passwords, ni nada que requiera resistencia a colisiones**.
+- **MD5 está criptográficamente roto desde 2004** para hashing simple. Pero **HMAC-MD5 sigue siendo seguro** como MAC.
 - **SHA-256** sigue considerado seguro para integridad y como parte de protocolos (HMAC, TLS, Bitcoin). **Para hashes de passwords** usa scrypt/argon2 — no provistos por Cornamusa.
 
-Lo que no incluye v1.60: SHA-1 (obsoleto), SHA-384/512, SHA-3, HMAC, hashing incremental.
+Lo que no incluye: SHA-1 (obsoleto), SHA-384/512, SHA-3, hashing incremental.
 
 ### ¿Funciona `borrar d[k]` y `obj.x += 1`?
 

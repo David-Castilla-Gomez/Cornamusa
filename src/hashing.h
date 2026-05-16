@@ -25,4 +25,23 @@
 void hashing_sha256_hex(const uint8_t *datos, size_t len, char out_hex[65]);
 void hashing_md5_hex(const uint8_t *datos, size_t len, char out_hex[33]);
 
+/*
+ * HMAC (v1.65) — RFC 2104 / RFC 4231.
+ *
+ * HMAC(K, m) = H((K' XOR opad) || H((K' XOR ipad) || m))
+ * donde K' = K si |K| <= B, sino H(K), padded con zeros a B.
+ * B (block size) = 64 para SHA-256 y MD5.
+ *
+ * Output: digest hexadecimal en minusculas, NUL-terminated.
+ *   HMAC-SHA-256: 64 chars + 1 NUL → buffer >= 65.
+ *   HMAC-MD5:     32 chars + 1 NUL → buffer >= 33.
+ */
+void hashing_hmac_sha256_hex(const uint8_t *clave, size_t clave_len,
+                              const uint8_t *mensaje, size_t mensaje_len,
+                              char out_hex[65]);
+
+void hashing_hmac_md5_hex(const uint8_t *clave, size_t clave_len,
+                           const uint8_t *mensaje, size_t mensaje_len,
+                           char out_hex[33]);
+
 #endif /* CORNAMUSA_HASHING_H */

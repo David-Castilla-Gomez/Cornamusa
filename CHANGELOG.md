@@ -6,6 +6,102 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.65.0] — 2026-05-16 — HMAC en `hashing` (RFC 2104 / RFC 4231)
+
+Antes de v1.65, el módulo `hashing` cubría SHA-256 y MD5 puros.
+Faltaba **HMAC** — el esquema estándar para autenticación de mensajes
+con clave secreta. Se construye sobre el hash subyacente y es la
+base de:
+
+- **JWT signing** (HMAC-SHA-256, alg = "HS256" en el header).
+- **Webhooks** de GitHub, Stripe, etc. (verificar payloads).
+- **Cookies de sesión firmadas**.
+- **API authentication** con shared secret.
+
+### API nueva
+
+```cornamusa
+importar hashing
+
+# Firmar un mensaje:
+firma = hashing.hmac_sha256(clave_secreta, mensaje)
+# → cadena de 64 chars hex
+
+firma_md5 = hashing.hmac_md5(clave_secreta, mensaje)
+# → cadena de 32 chars hex
+
+# Verificar: re-computar con la misma clave da el mismo digest.
+firma_recibida = "..."
+firma_calculada = hashing.hmac_sha256(clave_secreta, mensaje)
+es_valida = (firma_calculada == firma_recibida)
+```
+
+### Detalle algorítmico
+
+Implementa RFC 2104:
+
+```
+HMAC(K, m) = H((K' XOR opad) || H((K' XOR ipad) || m))
+```
+
+donde:
+- `K'` = K si |K| ≤ B; H(K) si |K| > B; padded con zeros a B.
+- `ipad` = 0x36 byte × B.
+- `opad` = 0x5C byte × B.
+- B (block size) = 64 para SHA-256 y MD5.
+
+### Test vectors validados
+
+**RFC 4231 HMAC-SHA-256** (los 5 vectors del documento):
+- Caso 1: Key=0x0b×20, Data="Hi There" → `b0344c61...32cff7`.
+- Caso 2: Key="Jefe", Data="what do ya want for nothing?" → `5bdcc146...c3843`.
+- Caso 3: Key=0xaa×20, Data=0xdd×50 → `773ea91e...65fe`.
+- Caso 4: Key=0x01..0x19, Data=0xcd×50 → `82558a38...665b`.
+- Caso 6: Key de 131 bytes (>B, requiere hash-then-pad) → `60e43159...7f54`.
+
+**RFC 2104 HMAC-MD5** (los 3 vectors):
+- Caso 1: Key=0x0b×16, Data="Hi There" → `9294727a...fc9d`.
+- Caso 2: Key="Jefe", Data="what do ya want for nothing?" → `750c783e...b738`.
+- Caso 3: Key=0xaa×16, Data=0xdd×50 → `56be3452...b3f6`.
+
+### Notas de seguridad
+
+- **HMAC-MD5 sigue siendo SEGURO como MAC** pese a que MD5 está
+  criptográficamente roto para hashing simple. El esquema HMAC
+  protege contra ataques de colisión-en-función-base.
+- **HMAC-SHA-256** es el estándar actual de la industria. Considerado
+  seguro indefinidamente.
+- **NO usar HMAC para hashing de passwords**. Para eso, scrypt/argon2
+  (no provistos por Cornamusa).
+
+### Implementación
+
+- Refactor mínimo en `src/hashing.c`: extraídos `sha256_raw` y
+  `md5_raw` (devuelven 32/16 bytes raw, no hex) compartidos por la
+  versión `_hex` original y por HMAC.
+- 2 funciones públicas nuevas: `hashing_hmac_sha256_hex` y
+  `hashing_hmac_md5_hex`.
+- Helper privado `hmac_preparar_clave` para el ajuste K'.
+- 2 nativas nuevas en `src/nativos.c`: `hash_hmac_sha256`,
+  `hash_hmac_md5`.
+- 2 wrappers en `stdlib/hashing.cor`.
+- Total: ~150 líneas C añadidas.
+
+### Verificación
+
+- **221/221 tests verde**. Nuevo `test_hmac` con **10 asserts**
+  cubriendo:
+  - 5 vectors de RFC 4231 (incluyendo clave > B).
+  - 3 vectors de RFC 2104 HMAC-MD5.
+  - 2 edge cases: clave vacía, mensaje vacío (no crashea).
+- Ejemplo `examples/68_hashing.cor` extendido con sección HMAC
+  (firma + verificación + caso de intruso con clave mala).
+
+### Lo que NO incluye (scope para v1.66+)
+
+- **HMAC-SHA-1**: SHA-1 obsoleto, no añadido a propósito.
+- **HMAC-SHA-512**: extensión natural cuando se añada SHA-512.
+
 ## [1.64.0] — 2026-05-16 — Linter: directiva `# noqa: <categoria>` para supresión selectiva
 
 Cierra una limitación práctica del linter. Hasta v1.63, cualquier

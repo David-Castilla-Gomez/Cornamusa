@@ -45,3 +45,18 @@ fin funcion
 funcion md5(cadena):
     retornar hash_md5(cadena)
 fin funcion
+
+# HMAC (v1.65, RFC 2104 / RFC 4231). Mensaje firmado con clave secreta.
+# Resistente a colisiones del hash subyacente: HMAC-MD5 sigue siendo
+# seguro como MAC pese a que MD5 esta roto para hashing simple.
+#
+# Caso de uso tipico (firmar tokens JWT, webhooks, sesiones):
+#   importar hashing
+#   firma = hashing.hmac_sha256("clave-secreta", "user_id=42&exp=...")
+funcion hmac_sha256(clave, mensaje):
+    retornar hash_hmac_sha256(clave, mensaje)
+fin funcion
+
+funcion hmac_md5(clave, mensaje):
+    retornar hash_hmac_md5(clave, mensaje)
+fin funcion

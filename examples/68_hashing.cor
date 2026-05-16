@@ -54,7 +54,30 @@ fin funcion
 imprimir(f"\nCache key: {clave_cache('/api/users', 'Accept: json')}")
 imprimir(f"           {clave_cache('/api/users', 'Accept: xml')}")
 
-# ─── 5. Aviso: NO usar MD5 para passwords ───────────────────────
+# ─── 5. HMAC: mensaje firmado (v1.65, RFC 2104/4231) ────────────
+# HMAC añade autenticidad: solo quien tiene la clave puede generar
+# (o verificar) la firma. Uso tipico: tokens JWT, webhooks, sesiones.
+clave_secreta = "no-le-cuentes-a-nadie"
+mensaje = "user_id=42&exp=1735689600"
+
+firma_sha = hashing.hmac_sha256(clave_secreta, mensaje)
+imprimir("\nHMAC-SHA-256:", firma_sha)
+
+# HMAC-MD5 sigue siendo SEGURO como MAC (a diferencia de MD5 plano)
+# por la naturaleza del esquema HMAC. Util si necesitas digest corto.
+firma_md5 = hashing.hmac_md5(clave_secreta, mensaje)
+imprimir("HMAC-MD5    :", firma_md5)
+
+# Verificacion: re-computar con la misma clave da el mismo digest.
+firma_verif = hashing.hmac_sha256(clave_secreta, mensaje)
+imprimir("Verifica?:", firma_verif == firma_sha)
+
+# Con clave distinta da digest distinto (autenticidad):
+firma_intruso = hashing.hmac_sha256("clave-equivocada", mensaje)
+imprimir("Intruso falla?:", firma_intruso != firma_sha)
+
+# ─── 6. Aviso: NO usar MD5 para passwords ───────────────────────
 imprimir("\nIMPORTANTE: MD5 esta criptograficamente roto desde 2004.")
 imprimir("Para passwords usa scrypt/argon2 (no provistos por Cornamusa).")
 imprimir("Para integridad casual o fingerprints, MD5 sigue siendo util.")
+imprimir("HMAC-MD5 sigue siendo seguro como MAC (no como hash).")

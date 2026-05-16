@@ -3249,6 +3249,42 @@ static Valor nativa_md5(EvalError *err, int n_args, Valor *args,
     return valor_cadena_duplicar(hex, 32);
 }
 
+static Valor nativa_hmac_sha256(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hmac_sha256(clave, mensaje) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hmac_sha256() requiere cadenas (clave, mensaje)");
+    }
+    char hex[65];
+    hashing_hmac_sha256_hex(
+        (const uint8_t *)args[0].como.cadena.texto, (size_t)args[0].como.cadena.longitud,
+        (const uint8_t *)args[1].como.cadena.texto, (size_t)args[1].como.cadena.longitud,
+        hex);
+    return valor_cadena_duplicar(hex, 64);
+}
+
+static Valor nativa_hmac_md5(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hmac_md5(clave, mensaje) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hmac_md5() requiere cadenas (clave, mensaje)");
+    }
+    char hex[33];
+    hashing_hmac_md5_hex(
+        (const uint8_t *)args[0].como.cadena.texto, (size_t)args[0].como.cadena.longitud,
+        (const uint8_t *)args[1].como.cadena.texto, (size_t)args[1].como.cadena.longitud,
+        hex);
+    return valor_cadena_duplicar(hex, 32);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Regex (v1.28) — motor en src/regex.c. El módulo `regex.cor` envuelve.
  * ────────────────────────────────────────────────────────────────── */
@@ -3602,9 +3638,11 @@ static const EntradaNativa NATIVAS[] = {
     /* Base64 (v1.59). */
     {"base64_codificar",    16, nativa_base64_codificar},
     {"base64_decodificar",  18, nativa_base64_decodificar},
-    /* Hashing (v1.60). */
+    /* Hashing (v1.60, v1.65 HMAC). */
     {"hash_sha256",         11, nativa_sha256},
     {"hash_md5",             8, nativa_md5},
+    {"hash_hmac_sha256",    16, nativa_hmac_sha256},
+    {"hash_hmac_md5",       13, nativa_hmac_md5},
     /* Cadenas perf (v1.61): unir O(n). */
     {"cadena_unir",         11, nativa_cadena_unir},
     /* Cadenas perf (v1.62): otras nativas O(bytes). */
