@@ -1,0 +1,101 @@
+# Ejemplo 62 — F-string format specifiers (v1.45)
+#
+# Hasta v1.44, `f"{x}"` solo permitía interpolar valores con su
+# representación canónica. v1.45 añade especificadores de formato
+# tras `:` — la sintaxis es paritaria con Python:
+#
+#   {expr:[relleno][alineación][ancho][.precisión][tipo]}
+#
+#   relleno:    cualquier carácter (default `' '`); requiere alineación
+#   alineación: `<` izq · `>` der · `^` centro
+#   ancho:      dígitos
+#   precisión:  `.N`  (decimales para `f`/`e`, truncado para `s`)
+#   tipo:       d enteros · f decimales · e científica · x/X hex · b bin · s cadena
+#
+# Defaults (Python): numéricos alineados a derecha; cadenas a izquierda.
+# Prefijo `0` antes del ancho ⇒ zero-padding a la derecha.
+
+imprimir("=== f-string format specifiers (v1.45) ===")
+imprimir("")
+
+# ─── 1. Ancho y alineación ───
+imprimir("1) ancho + alineación")
+imprimir(f"  '{42:5}'      (numérico default = derecha)")
+imprimir(f"  '{'hi':5}'      (cadena default = izquierda)")
+imprimir(f"  '{42:<5}'     (izq explícita)")
+imprimir(f"  '{42:>5}'     (der explícita)")
+imprimir(f"  '{42:^7}'     (centrado)")
+imprimir("")
+
+# ─── 2. Relleno custom ───
+imprimir("2) relleno custom")
+imprimir(f"  '{'hola':-^12}'   (rellena con '-')")
+imprimir(f"  '{42:*>8}'        (rellena con '*')")
+imprimir("")
+
+# ─── 3. Zero-padding ───
+imprimir("3) zero-padding (prefijo `0`)")
+imprimir(f"  '{42:05d}'")
+imprimir(f"  '{42:08b}'  (binario)")
+imprimir(f"  '{255:08x}'  (hex)")
+imprimir("")
+
+# ─── 4. Decimales con precisión ───
+imprimir("4) decimales con precisión")
+imprimir(f"  PI    = {3.14159265:.2f}")
+imprimir(f"  PI    = {3.14159265:.6f}")
+imprimir(f"  large = {1234567.89:.2f}")
+imprimir(f"  exp   = {1234.5:.2e}")
+imprimir("")
+
+# ─── 5. Tabla alineada — el caso que justifica esta release ───
+imprimir("5) tabla alineada solo con f-strings")
+imprimir(f"  {'Producto':<12}{'Cant':>6}{'Precio':>10}{'Total':>12}")
+imprimir(f"  {'-':-<12}{'-':->6}{'-':->10}{'-':->12}")
+
+productos = [
+    ("Manzanas",  10,   0.45),
+    ("Pan",        3,   1.20),
+    ("Leche",      2,   1.85),
+    ("Aguacates",  5,   2.95),
+]
+total_global = 0.0
+para p en productos:
+    nombre, cant, precio = p
+    subtotal = cant * precio
+    total_global = total_global + subtotal
+    imprimir(f"  {nombre:<12}{cant:>6d}{precio:>10.2f}{subtotal:>12.2f}")
+fin para
+imprimir(f"  {'-':-<12}{'-':->6}{'-':->10}{'-':->12}")
+imprimir(f"  {'Total':<12}{'':>6}{'':>10}{total_global:>12.2f}")
+imprimir("")
+
+# ─── 6. Bignum entero ───
+imprimir("6) format `d` funciona con bignum")
+imprimir(f"  100! = {1267650600228229401496703205376:d}")
+imprimir("")
+
+# ─── 7. Slicing y dict NO se confunden con spec ───
+imprimir("7) `:` de slicing/dict NO inicia un spec")
+xs = [10, 20, 30, 40, 50]
+imprimir(f"  xs[1:3] = {xs[1:3]}")
+d = {"k": 1, "v": 2}
+imprimir(f"  dict = { {1: 'a', 2: 'b'} }")
+imprimir("")
+
+# ─── 8. Errores atrapables ───
+imprimir("8) errores atrapables")
+intentar:
+    _ = f"{3.14:d}"     # 'd' exige entero
+atrapar ErrorDeTipo como e:
+    imprimir(f"  '{3.14}:d' → {e}")
+fin intentar
+
+intentar:
+    _ = f"{42:z}"       # tipo no soportado
+atrapar ErrorDeValor como e:
+    imprimir(f"  '{42}:z' → {e}")
+fin intentar
+
+imprimir("")
+imprimir("=== fin ejemplo 62 ===")

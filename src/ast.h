@@ -244,12 +244,26 @@ struct Expr {
  * texto (alocado en arena, ya procesado: `{{` se ha colapsado a `{`,
  * `}}` a `}`, escapes `\n` resueltos).
  *
- * Para parte expresión `expr` es no-NULL y los demás campos se ignoran.
+ * Para parte expresión `expr` es no-NULL.
+ * v1.45: `spec`/`spec_longitud` (opcionales, NULL/0 si no hay spec)
+ * contienen el especificador de formato tras `:` y antes de `}`.
+ * Sintaxis tipo Python:
+ *   [relleno][alineación][ancho][.precisión][tipo]
+ *   - relleno:    cualquier char (default espacio); precede a alineación.
+ *   - alineación: < (izq), > (der), ^ (centro).
+ *   - ancho:      dígitos.
+ *   - precisión:  .N (para `f`/`e`/`s`).
+ *   - tipo:       d (entero), f (decimal), e (científica), x/X (hex),
+ *                  b (binario), s (cadena explícita).
+ * El parser captura el lexema crudo del spec — el runtime lo
+ * interpreta con `formatear_valor_con_spec`.
  */
 struct ParteFCadena {
     const char *literal;
     int longitud;
     Expr *expr;
+    const char *spec;          /* v1.45: NULL si no hay `:fmt_spec` */
+    int spec_longitud;
 };
 
 /* ──────────────────────────────────────────────────────────────────

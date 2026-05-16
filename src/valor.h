@@ -793,6 +793,21 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad);
 Valor valor_a_cadena_alocada(const Valor *v);
 
 /*
+ * v1.45: aplica un format spec estilo Python a un valor y devuelve la
+ * cadena resultante. `spec`/`spec_len` apuntan a una cadena cruda con
+ * la sintaxis `[fill][align][width][.precision][type]`. Si el spec es
+ * vacío equivale a `valor_a_cadena_alocada`.
+ *
+ * En caso de error (tipo incompatible con el spec, spec inválido,
+ * memoria), devuelve VAL_NULO y escribe el mensaje (terminado en \0)
+ * en `err_buffer` si no es NULL. El llamador debe revisar el tipo del
+ * resultado.
+ */
+Valor valor_formatear_con_spec(const Valor *v, const char *spec,
+                                 int spec_len,
+                                 char *err_buffer, int err_cap);
+
+/*
  * Devuelve el nombre del tipo en castellano (para `tipo()` built-in
  * y mensajes de error). Cadena estática, no liberar.
  *   "entero", "decimal", "cadena", "booleano", "nulo", "funcion", "rango"

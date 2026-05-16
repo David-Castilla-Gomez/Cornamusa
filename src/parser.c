@@ -336,6 +336,8 @@ static Expr *parsear_f_cadena(Parser *p) {
             pl.literal = lit;                                             \
             pl.longitud = buf_len;                                        \
             pl.expr = NULL;                                               \
+            pl.spec = NULL;                                               \
+            pl.spec_longitud = 0;                                         \
             EMPUJAR_PARTE(pl);                                            \
             buf_len = 0;                                                  \
         }                                                                 \
@@ -354,6 +356,9 @@ static Expr *parsear_f_cadena(Parser *p) {
             i++; /* skip '{' */
             int inicio_expr = i;
             int profundidad = 1;
+            int prof_corch = 0;   /* v1.45: para no confundir `:` de slicing */
+            int prof_paren = 0;   /* v1.45: para no confundir `:` de lambda */
+            int spec_inicio = -1; /* v1.45: offset del `:` del fmt spec, -1 si no hay */
             /* Trackeo de cadenas internas para que `}` dentro de una
                cadena (ej. `f"{ \"}\" }"`) no se confunda con el cierre
                de la interpolación. v1.1.1. */
@@ -379,6 +384,18 @@ static Expr *parsear_f_cadena(Parser *p) {
                     profundidad--;
                     if (profundidad == 0) break;
                 }
+                else if (d == '[') prof_corch++;
+                else if (d == ']') { if (prof_corch > 0) prof_corch--; }
+                else if (d == '(') prof_paren++;
+                else if (d == ')') { if (prof_paren > 0) prof_paren--; }
+                else if (d == ':' && spec_inicio < 0
+                         && profundidad == 1
+                         && prof_corch == 0
+                         && prof_paren == 0) {
+                    /* v1.45: primer `:` de top-level dentro de la
+                       interpolación — marca el inicio del fmt spec. */
+                    spec_inicio = i;
+                }
                 i++;
             }
             if (profundidad != 0) {
@@ -386,7 +403,18 @@ static Expr *parsear_f_cadena(Parser *p) {
                     "f-cadena: `{` sin cerrar antes del fin de la cadena");
                 goto fallo;
             }
-            int len_expr = i - inicio_expr;
+            /* v1.45: si encontramos un spec, la expresión va hasta el
+               `:`; el spec va de tras del `:` hasta el `}`. */
+            int spec_off = -1;
+            int spec_len = 0;
+            int len_expr;
+            if (spec_inicio >= 0) {
+                len_expr = spec_inicio - inicio_expr;
+                spec_off = spec_inicio + 1;
+                spec_len = i - spec_off;
+            } else {
+                len_expr = i - inicio_expr;
+            }
             i++; /* skip '}' */
             if (len_expr == 0) {
                 error_en(p, &t,
@@ -419,6 +447,21 @@ static Expr *parsear_f_cadena(Parser *p) {
             pe.literal = NULL;
             pe.longitud = 0;
             pe.expr = sub;
+            /* v1.45: copiar spec a arena (puntero al cuerpo original
+               podría invalidarse si la fuente desaparece). */
+            pe.spec = NULL;
+            pe.spec_longitud = 0;
+            if (spec_off >= 0 && spec_len > 0) {
+                char *spec_copia = (char *)arena_alocar(p->arena,
+                    (size_t)spec_len + 1);
+                if (!spec_copia) { goto fallo_oom; }
+                memcpy(spec_copia, cuerpo + spec_off, (size_t)spec_len);
+                spec_copia[spec_len] = '\0';
+                pe.spec = spec_copia;
+                pe.spec_longitud = spec_len;
+            } else if (spec_off >= 0 && spec_len == 0) {
+                /* Spec vacío `f"{x:}"` — equivalente a sin spec. */
+            }
             EMPUJAR_PARTE(pe);
             continue;
         }

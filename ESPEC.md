@@ -1,8 +1,8 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 1.44.0
+**Versión del documento:** 1.45.0
 **Estado:** Estable.
-**Última revisión:** 2026-05-16 — actualizada a v1.44 (expresión ternaria `A si C sino B` y slicing assignment `xs[i:j:k] = nuevo`).
+**Última revisión:** 2026-05-16 — actualizada a v1.45 (f-string format specifiers `{expr:[fill][align][width][.prec][type]}`).
 
 Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
 

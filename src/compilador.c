@@ -1334,10 +1334,34 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 const ParteFCadena *p = &partes[i];
                 if (p->expr) {
                     if (!compilador_compilar_expr(c, p->expr)) return false;
-                    chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
-                    /* v1.2: validar que el resultado de OP_FORMATO_F
-                     * (posiblemente venido de `__cadena__`) sea cadena. */
-                    chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                    if (p->spec && p->spec_longitud > 0) {
+                        /* v1.45: con format spec. Almacenamos el spec
+                           como constante cadena y emitimos
+                           OP_FORMATO_F_SPEC [u8 spec_idx]. El runtime
+                           ya garantiza VAL_CADENA tras procesar el
+                           spec, así que no necesitamos OP_ASEGURAR_CADENA. */
+                        Valor spec_v = valor_cadena_duplicar(p->spec,
+                            p->spec_longitud);
+                        if (spec_v.tipo == VAL_NULO) {
+                            error_compilacion(c, e->linea, e->columna,
+                                "memoria insuficiente al compilar f-cadena con spec");
+                            return false;
+                        }
+                        int spec_idx = chunk_agregar_constante(
+                            c->actual->chunk, spec_v);
+                        if (spec_idx < 0 || spec_idx > 255) {
+                            error_compilacion(c, e->linea, e->columna,
+                                "demasiadas constantes para v0.6 (operando byte)");
+                            return false;
+                        }
+                        chunk_emitir_byte2(c->actual->chunk,
+                            OP_FORMATO_F_SPEC, (uint8_t)spec_idx, e->linea);
+                    } else {
+                        chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
+                        /* v1.2: validar que el resultado de OP_FORMATO_F
+                         * (posiblemente venido de `__cadena__`) sea cadena. */
+                        chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                    }
                 } else {
                     Valor v = valor_cadena_desde_escapes(p->literal, p->longitud);
                     if (v.tipo == VAL_NULO) {

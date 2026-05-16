@@ -2,7 +2,7 @@
 
 > Cheatsheet de sintaxis + tablas de built-ins, stdlib y errores. Para una explicación pedagógica usa el [tutorial](tutorial.md). Para la especificación formal del lenguaje, [ESPEC.md](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md).
 
-**Versión:** 1.44.0
+**Versión:** 1.45.0
 
 ---
 
@@ -477,6 +477,42 @@ f"{1 + 2 * 3}"            # expresión arbitraria
 f"{{literal}}"            # → "{literal}", llaves dobles escapan
 f"capas: {f'in-{x}'}"     # anidación
 ```
+
+### Format specifiers (v1.45)
+
+Tras `:` dentro de `{...}` puedes pasar un especificador de formato estilo Python:
+
+```
+{expr:[relleno][alineación][ancho][.precisión][tipo]}
+```
+
+| Parte | Valores | Notas |
+|---|---|---|
+| relleno | cualquier carácter | requiere alineación explícita |
+| alineación | `<` `>` `^` | izquierda, derecha, centrado |
+| ancho | dígitos | rellena hasta ese ancho |
+| `.precisión` | dígitos | decimales (`f`/`e`); truncado (`s`) |
+| tipo | `d f e x X b s` | entero, decimal, científica, hex, hex mayúsculas, binario, cadena explícita |
+
+Defaults Python-compatibles: numéricos alinean a derecha, cadenas a izquierda. Prefijo `0` antes del ancho implica zero-padding alineado a derecha.
+
+```cornamusa
+f"{42:5d}"           # "   42"
+f"{42:<5d}"          # "42   "
+f"{42:05d}"          # "00042"
+f"{3.14159:.2f}"     # "3.14"
+f"{3.14159:>10.2f}"  # "      3.14"
+f"{1234.5:.2e}"      # "1.23e+03"
+f"{255:x}"           # "ff"
+f"{255:08X}"         # "000000FF"
+f"{5:b}"             # "101"
+f"{'hi':-^10}"       # "----hi----"
+f"{'hola mundo':.4}" # "hola"
+```
+
+El `:` de slicing (`xs[1:3]`) y dict (`{k: v}`) **no** se confunden con el inicio de un spec — el parser solo detecta `:` cuando está en el nivel superior de la interpolación, fuera de `[]`/`()`/`{}` anidados.
+
+Limitación: el spec **no** invoca `__cadena__` — la stringificación dentro del spec es siempre canónica. Si necesitas el dunder, computa `cadena(obj)` primero.
 
 ---
 

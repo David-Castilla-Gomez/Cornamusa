@@ -312,6 +312,29 @@ typedef enum {
     OP_ASIGNAR_REBANADA,
 
     /*
+     * OP_FORMATO_F_SPEC (v1.45): coerce TOS a cadena aplicando el
+     * format spec almacenado en constantes[u8].
+     *
+     * Operando: índice (u8) de la cadena spec en chunk->constantes.
+     *
+     * Sintaxis del spec (subset Python):
+     *   [relleno][alineación][ancho][.precisión][tipo]
+     *
+     *   - relleno      cualquier carácter (default ' '); requiere alineación
+     *   - alineación   `<` izq | `>` der | `^` centro
+     *   - ancho        dígitos (>= 0); rellena hasta ese ancho
+     *   - .precisión   dígitos (.N); para tipos `f`/`e` controla decimales;
+     *                   para `s` trunca la cadena a N caracteres
+     *   - tipo:        `d` entero, `f` decimal, `e` notación científica,
+     *                  `x`/`X` hex sin/con mayúsculas, `b` binario, `s` cadena
+     *
+     * Si el spec es vacío, equivale a OP_FORMATO_F (sin dunder dispatch —
+     * stringificación canónica). Validación de tipos en runtime: ErrorDeValor
+     * si el spec exige un tipo numérico y TOS no es numérico.
+     */
+    OP_FORMATO_F_SPEC,
+
+    /*
      * OP_LONGITUD (v1.3): pop TOS, push longitud (entero).
      *   - VAL_INSTANCIA con `__longitud__`: dispatch al dunder.
      *   - Cadena/lista/dicc/conjunto/tupla/rango: cuenta elementos

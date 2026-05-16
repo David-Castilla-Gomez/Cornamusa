@@ -3777,6 +3777,37 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 break;
             }
 
+            case OP_FORMATO_F_SPEC: {
+                /* v1.45: coerce TOS a cadena aplicando el format spec
+                   guardado en constantes[u8]. La especificación
+                   (sintaxis Python-paritaria) la interpreta
+                   `valor_formatear_con_spec` en valor.c.
+                   No invoca `__cadena__` — la stringificación dentro
+                   del spec es siempre canónica. */
+                uint8_t idx = LEER_BYTE();
+                const Valor *spec_v = &frame->chunk->constantes[idx];
+                if (spec_v->tipo != VAL_CADENA) {
+                    VM_ERROR("ErrorInterno: spec de OP_FORMATO_F_SPEC no es cadena");
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor v = sacar(vm);
+                char errmsg[256];
+                errmsg[0] = '\0';
+                Valor r = valor_formatear_con_spec(&v,
+                    spec_v->como.cadena.texto,
+                    spec_v->como.cadena.longitud,
+                    errmsg, sizeof(errmsg));
+                valor_destruir(&v);
+                if (r.tipo != VAL_CADENA) {
+                    VM_ERROR("%s", errmsg[0] ? errmsg : "ErrorInterno: formato fallo");
+                    valor_destruir(&r);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                empujar(vm, r);
+                break;
+            }
+
             case OP_ASEGURAR_CADENA: {
                 /* Reusado tras OP_FORMATO_F (`__cadena__`) y OP_REPR
                    (`__repr__`) — el mensaje es genérico para ambos. */

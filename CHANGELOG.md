@@ -6,6 +6,79 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.45.0] — 2026-05-16 — F-string format specifiers
+
+Segundo release de sintaxis idiomática (post-modelo de datos). Cierra
+el gap más visible del uso diario de f-cadenas.
+
+### Sintaxis
+
+Tras `:` dentro de `{...}`, un especificador de formato estilo Python:
+
+```
+{expr:[relleno][alineación][ancho][.precisión][tipo]}
+```
+
+- **alineación**: `<` (izquierda), `>` (derecha), `^` (centrado).
+- **relleno**: cualquier carácter, requiere alineación explícita.
+- **ancho**: dígitos; rellena hasta ese ancho si el cuerpo es más corto.
+- **.precisión**: dígitos. Decimales para `f`/`e`; truncado para `s`.
+- **tipo**: `d` entero, `f` decimal, `e` científica, `x`/`X` hex
+  (minúsculas/mayúsculas), `b` binario, `s` cadena explícita.
+
+Defaults Python-compatibles: alineación implícita es `>` (derecha) para
+tipos numéricos y `<` (izquierda) para cadenas. Prefijo `0` antes del
+ancho implica zero-padding alineado a derecha.
+
+```cornamusa
+f"{42:5d}"            # "   42"
+f"{42:05d}"           # "00042"
+f"{3.14159:.2f}"      # "3.14"
+f"{3.14159:>10.2f}"   # "      3.14"
+f"{1234.5:.2e}"       # "1.23e+03"
+f"{255:08X}"          # "000000FF"
+f"{5:b}"              # "101"
+f"{'hi':-^10}"        # "----hi----"
+```
+
+Habilita tablas alineadas con solo f-strings — el caso que justifica
+esta release. El ejemplo `examples/62_fstring_formato.cor` muestra una
+tabla de productos con cantidad/precio/total alineados.
+
+### Implementación
+
+- **Parser**: la búsqueda del `:` que separa la expresión del spec
+  rastrea profundidad de `()`/`[]`/`{}` y cadenas internas. El `:` de
+  slicing (`xs[1:3]`) o de un dict literal (`{1: 2}`) NO se confunde
+  con el inicio de un spec — solo cuenta cuando aparece en el nivel
+  superior de la interpolación.
+- **AST**: `ParteFCadena` añade campos `spec`/`spec_longitud`.
+- **Compilador**: nuevo opcode `OP_FORMATO_F_SPEC [u8 spec_idx]` que
+  recibe el spec como constante cadena. Cuando una interpolación tiene
+  spec, se emite este opcode en lugar del par habitual
+  `OP_FORMATO_F + OP_ASEGURAR_CADENA`.
+- **Runtime**: `valor_formatear_con_spec(valor, spec)` en `valor.c`
+  parsea el spec y formatea. Tipos numéricos usan `mp_radix_size` /
+  `mp_to_radix` para bignum o `snprintf` para decimales. Padding,
+  alineación y zero-fill aplicados al final.
+
+### Tests
+
+- **200/200 tests verde** (16 casos nuevos en `test_bytecode_fstring_spec`
+  + `lex_62` + `bc_run_62_fstring_formato`).
+- Ejemplo `examples/62_fstring_formato.cor` con tabla alineada de
+  productos, bignum como `d`, slicing y dict no confundidos con spec,
+  errores atrapables.
+
+### Limitaciones aceptadas
+
+- El spec **no** invoca `__cadena__`. Es decir, `f"{obj:<10}"` no
+  llama al dunder — usa stringificación canónica. Workaround: el
+  usuario hace `f"{cadena(obj):<10}"` explícito.
+- Sin `__format__` dunder (Python lo tiene). Si surge demanda real,
+  v1.x.1 podría añadirlo — pero el caso de uso principal (alineación
+  y precisión numérica) ya está cubierto.
+
 ## [1.44.0] — 2026-05-16 — Expresión ternaria + slicing assignment
 
 Primer release de **sintaxis idiomática pendiente** (post-modelo de

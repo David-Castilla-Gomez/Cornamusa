@@ -1691,6 +1691,321 @@ void valor_imprimir(const Valor *v, FILE *out) {
     fputs(buffer, out);
 }
 
+/* v1.45: parsea un format spec estilo Python. Devuelve true si OK. */
+typedef struct {
+    char fill;
+    char align;       /* '<', '>', '^', o 0 = default */
+    int  width;
+    int  precision;   /* -1 = sin precisión explícita */
+    char type;        /* 'd','f','e','x','X','b','s', o 0 = implícito */
+    bool cero_padding; /* '0' antes del ancho → relleno con 0 alineado a der */
+} FmtSpec;
+
+static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
+                              char *err, int err_cap) {
+    out->fill = ' ';
+    out->align = 0;
+    out->width = 0;
+    out->precision = -1;
+    out->type = 0;
+    out->cero_padding = false;
+    int i = 0;
+    /* [fill][align] */
+    if (spec_len >= 2
+        && (spec[1] == '<' || spec[1] == '>' || spec[1] == '^')) {
+        out->fill = spec[0];
+        out->align = spec[1];
+        i = 2;
+    } else if (spec_len >= 1
+        && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^')) {
+        out->align = spec[0];
+        i = 1;
+    }
+    /* '0' indica zero-padding (Python: implica `>` y fill='0') */
+    if (i < spec_len && spec[i] == '0' && out->align == 0) {
+        out->cero_padding = true;
+        out->fill = '0';
+        out->align = '>';
+        i++;
+    }
+    /* width */
+    while (i < spec_len && spec[i] >= '0' && spec[i] <= '9') {
+        out->width = out->width * 10 + (spec[i] - '0');
+        i++;
+    }
+    /* .precision */
+    if (i < spec_len && spec[i] == '.') {
+        i++;
+        out->precision = 0;
+        while (i < spec_len && spec[i] >= '0' && spec[i] <= '9') {
+            out->precision = out->precision * 10 + (spec[i] - '0');
+            i++;
+        }
+    }
+    /* type */
+    if (i < spec_len) {
+        char t = spec[i];
+        if (t == 'd' || t == 'f' || t == 'e' || t == 'x' || t == 'X'
+            || t == 'b' || t == 's') {
+            out->type = t;
+            i++;
+        } else {
+            if (err) snprintf(err, (size_t)err_cap,
+                "ErrorDeValor: tipo de formato '%c' no soportado", t);
+            return false;
+        }
+    }
+    if (i != spec_len) {
+        if (err) snprintf(err, (size_t)err_cap,
+            "ErrorDeValor: spec de formato invalido");
+        return false;
+    }
+    return true;
+}
+
+/* Aplica padding/align/fill a `cuerpo` (longitud `cuerpo_len`) según
+   spec. Si el cuerpo ya cabe en `width`, lo devuelve tal cual.
+   Aloca un buffer en heap; el caller libera. Devuelve len escrito. */
+static char *fmt_aplicar_padding(const char *cuerpo, int cuerpo_len,
+                                   const FmtSpec *spec, int *out_len) {
+    if (cuerpo_len >= spec->width) {
+        char *r = (char *)malloc((size_t)cuerpo_len);
+        if (!r) return NULL;
+        memcpy(r, cuerpo, (size_t)cuerpo_len);
+        *out_len = cuerpo_len;
+        return r;
+    }
+    int total = spec->width;
+    char *r = (char *)malloc((size_t)total);
+    if (!r) return NULL;
+    int padding = total - cuerpo_len;
+    char align = spec->align ? spec->align : '<';
+    if (align == '<') {
+        memcpy(r, cuerpo, (size_t)cuerpo_len);
+        memset(r + cuerpo_len, spec->fill, (size_t)padding);
+    } else if (align == '>') {
+        memset(r, spec->fill, (size_t)padding);
+        memcpy(r + padding, cuerpo, (size_t)cuerpo_len);
+    } else {  /* '^' */
+        int pad_izq = padding / 2;
+        int pad_der = padding - pad_izq;
+        memset(r, spec->fill, (size_t)pad_izq);
+        memcpy(r + pad_izq, cuerpo, (size_t)cuerpo_len);
+        memset(r + pad_izq + cuerpo_len, spec->fill, (size_t)pad_der);
+    }
+    *out_len = total;
+    return r;
+}
+
+/* Convierte un valor entero (SMALL o BIG) a cadena en la base dada,
+   con prefijo de signo `-` si es negativo. Aloca buffer; caller libera. */
+static char *fmt_entero_a_str(const Valor *v, int base, bool may,
+                                int *out_len) {
+    /* SMALL path: usa int64. */
+    if (v->tipo == VAL_ENTERO_SMALL) {
+        int64_t n = v->como.entero_small;
+        char buf[80];
+        int len = 0;
+        bool neg = n < 0;
+        uint64_t u;
+        if (neg) u = (uint64_t)(-(n + 1)) + 1; else u = (uint64_t)n;
+        if (u == 0) { buf[len++] = '0'; }
+        while (u > 0) {
+            int d = (int)(u % (uint64_t)base);
+            char c;
+            if (d < 10) c = (char)('0' + d);
+            else c = (char)((may ? 'A' : 'a') + (d - 10));
+            buf[len++] = c;
+            u /= (uint64_t)base;
+        }
+        if (neg) buf[len++] = '-';
+        /* Reverse. */
+        char *out = (char *)malloc((size_t)len);
+        if (!out) return NULL;
+        for (int i = 0; i < len; i++) out[i] = buf[len - 1 - i];
+        *out_len = len;
+        return out;
+    }
+    /* BIG path: libtommath. */
+    if (v->tipo == VAL_ENTERO) {
+        int tam = 0;
+        if (mp_radix_size(v->como.entero, base, &tam) != MP_OKAY) return NULL;
+        char *buf = (char *)malloc((size_t)tam);
+        if (!buf) return NULL;
+        size_t escritos;
+        if (mp_to_radix(v->como.entero, buf, (size_t)tam, &escritos, base)
+            != MP_OKAY) {
+            free(buf);
+            return NULL;
+        }
+        int n = (int)escritos - 1;
+        if (n < 0) n = 0;
+        if (may && base > 10) {
+            for (int i = 0; i < n; i++) {
+                if (buf[i] >= 'a' && buf[i] <= 'z') buf[i] -= 32;
+            }
+        }
+        *out_len = n;
+        return buf;
+    }
+    /* Booleano como entero. */
+    if (v->tipo == VAL_BOOLEANO) {
+        char *out = (char *)malloc(1);
+        if (!out) return NULL;
+        out[0] = v->como.booleano ? '1' : '0';
+        *out_len = 1;
+        return out;
+    }
+    return NULL;
+}
+
+Valor valor_formatear_con_spec(const Valor *v, const char *spec,
+                                 int spec_len,
+                                 char *err_buffer, int err_cap) {
+    FmtSpec fs;
+    if (!fmt_spec_parsear(spec, spec_len, &fs, err_buffer, err_cap)) {
+        return valor_nulo();
+    }
+    char *cuerpo = NULL;
+    int cuerpo_len = 0;
+
+    /* Resolver tipo implícito si no hay explícito. */
+    char type = fs.type;
+    if (type == 0) {
+        if (v->tipo == VAL_DECIMAL) type = 'f';
+        else if (valor_es_entero(v) || v->tipo == VAL_BOOLEANO) type = 'd';
+        else type = 's';
+    }
+
+    /* Producir cuerpo según el tipo. */
+    if (type == 'd') {
+        if (!valor_es_entero(v) && v->tipo != VAL_BOOLEANO) {
+            /* Aceptar VAL_DECIMAL convirtiendo a entero (truncado)? Python
+               rechaza con TypeError; nosotros también para evitar perder
+               información silenciosamente. */
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeTipo: formato 'd' requiere entero, no '%s'",
+                valor_nombre_tipo(v));
+            return valor_nulo();
+        }
+        cuerpo = fmt_entero_a_str(v, 10, false, &cuerpo_len);
+    } else if (type == 'x' || type == 'X') {
+        if (!valor_es_entero(v) && v->tipo != VAL_BOOLEANO) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeTipo: formato '%c' requiere entero, no '%s'",
+                type, valor_nombre_tipo(v));
+            return valor_nulo();
+        }
+        cuerpo = fmt_entero_a_str(v, 16, type == 'X', &cuerpo_len);
+    } else if (type == 'b') {
+        if (!valor_es_entero(v) && v->tipo != VAL_BOOLEANO) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeTipo: formato 'b' requiere entero, no '%s'",
+                valor_nombre_tipo(v));
+            return valor_nulo();
+        }
+        cuerpo = fmt_entero_a_str(v, 2, false, &cuerpo_len);
+    } else if (type == 'f' || type == 'e') {
+        double d;
+        if (v->tipo == VAL_DECIMAL) d = v->como.decimal;
+        else if (v->tipo == VAL_ENTERO_SMALL) d = (double)v->como.entero_small;
+        else if (v->tipo == VAL_ENTERO) {
+            /* mp_int → double, posiblemente con pérdida. */
+            int tam = 0;
+            if (mp_radix_size(v->como.entero, 10, &tam) != MP_OKAY) {
+                if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                    "ErrorInterno: mp_radix_size fallo");
+                return valor_nulo();
+            }
+            char *buf = (char *)malloc((size_t)tam);
+            if (!buf) {
+                if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                    "memoria insuficiente");
+                return valor_nulo();
+            }
+            size_t escritos;
+            mp_to_radix(v->como.entero, buf, (size_t)tam, &escritos, 10);
+            d = strtod(buf, NULL);
+            free(buf);
+        } else if (v->tipo == VAL_BOOLEANO) d = v->como.booleano ? 1.0 : 0.0;
+        else {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeTipo: formato '%c' requiere numero, no '%s'",
+                type, valor_nombre_tipo(v));
+            return valor_nulo();
+        }
+        int prec = (fs.precision >= 0) ? fs.precision : 6;
+        char tmp[128];
+        int n;
+        if (type == 'f') n = snprintf(tmp, sizeof(tmp), "%.*f", prec, d);
+        else             n = snprintf(tmp, sizeof(tmp), "%.*e", prec, d);
+        if (n < 0) n = 0;
+        if (n >= (int)sizeof(tmp)) n = (int)sizeof(tmp) - 1;
+        cuerpo = (char *)malloc((size_t)n);
+        if (!cuerpo) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "memoria insuficiente");
+            return valor_nulo();
+        }
+        memcpy(cuerpo, tmp, (size_t)n);
+        cuerpo_len = n;
+    } else if (type == 's') {
+        /* Coerción canónica a cadena. Sin invocar __cadena__ (no
+           tenemos acceso a la VM aquí). */
+        Valor s = valor_a_cadena_alocada(v);
+        if (s.tipo != VAL_CADENA) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "memoria insuficiente al stringificar");
+            return valor_nulo();
+        }
+        int len = s.como.cadena.longitud;
+        if (fs.precision >= 0 && fs.precision < len) len = fs.precision;
+        cuerpo = (char *)malloc((size_t)len);
+        if (!cuerpo) {
+            valor_destruir(&s);
+            return valor_nulo();
+        }
+        memcpy(cuerpo, s.como.cadena.texto, (size_t)len);
+        cuerpo_len = len;
+        valor_destruir(&s);
+    } else {
+        if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+            "ErrorInterno: tipo de formato no manejado: %c", type);
+        return valor_nulo();
+    }
+    if (!cuerpo) {
+        if (err_buffer && err_buffer[0] == '\0')
+            snprintf(err_buffer, (size_t)err_cap,
+                "memoria insuficiente al formatear");
+        return valor_nulo();
+    }
+
+    /* Default de alineación según el tipo (Python):
+       - numéricos (`d f e x X b`): derecha
+       - cadenas (`s`, sin tipo): izquierda */
+    if (fs.align == 0) {
+        if (type == 'd' || type == 'f' || type == 'e'
+            || type == 'x' || type == 'X' || type == 'b') {
+            fs.align = '>';
+        } else {
+            fs.align = '<';
+        }
+    }
+
+    /* Aplicar padding/align/width. */
+    int final_len = 0;
+    char *final_buf = fmt_aplicar_padding(cuerpo, cuerpo_len, &fs, &final_len);
+    free(cuerpo);
+    if (!final_buf) {
+        if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+            "memoria insuficiente al rellenar");
+        return valor_nulo();
+    }
+    Valor r = valor_cadena_duplicar(final_buf, final_len);
+    free(final_buf);
+    return r;
+}
+
 Valor valor_a_cadena_alocada(const Valor *v) {
     if (v == NULL) return valor_cadena_duplicar("nulo", 4);
 

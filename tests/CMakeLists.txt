@@ -659,6 +659,18 @@ set_tests_properties(bc_run_61_ternaria_slicing PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 61"
 )
 
+# v1.45: f-string format specifiers.
+add_test(
+    NAME bc_run_62_fstring_formato
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/62_fstring_formato.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_62_fstring_formato PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 62"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable
