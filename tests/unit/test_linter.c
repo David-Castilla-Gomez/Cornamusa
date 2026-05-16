@@ -46,6 +46,7 @@ typedef struct {
     int n_shadow;
     int n_unused_loop_var;
     int n_mutable_default;
+    int n_concat_in_loop;
 } Resumen;
 
 static Resumen analizar(const char *fuente) {
@@ -80,6 +81,7 @@ static Resumen analizar(const char *fuente) {
             case LINT_SHADOW:          r.n_shadow++; break;
             case LINT_UNUSED_LOOP_VAR: r.n_unused_loop_var++; break;
             case LINT_MUTABLE_DEFAULT: r.n_mutable_default++; break;
+            case LINT_CONCAT_IN_LOOP:  r.n_concat_in_loop++; break;
         }
     }
     linter_resultado_destruir(&lr);
@@ -448,6 +450,99 @@ int main(void) {
             "g = lambda items=[]: items\n"
             "imprimir(g())\n");
         AFIRMAR(r.n_mutable_default == 1, "lambda_mutable_default");
+    }
+
+    /* ─── CONCAT_IN_LOOP (v1.63) ─── */
+    {
+        /* Caso clasico: cadena += literal cadena dentro de loop. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    s = \"\"\n"
+            "    para i en rango(10):\n"
+            "        s = s + \"x\"\n"
+            "    fin para\n"
+            "    retornar s\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_concat_in_loop == 1, "concat_literal");
+    }
+    {
+        /* Caso aug-assign: x += literal. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    s = \"\"\n"
+            "    para i en rango(10):\n"
+            "        s += \"a\"\n"
+            "    fin para\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_concat_in_loop == 1, "concat_aug_literal");
+    }
+    {
+        /* Contador numerico: NO warning. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    total = 0\n"
+            "    para i en rango(10):\n"
+            "        total = total + i\n"
+            "    fin para\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_concat_in_loop == 0, "no_warning_numerico");
+    }
+    {
+        /* `n += 1`: NO warning (literal numerico). */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    n = 0\n"
+            "    para _ en rango(10):\n"
+            "        n += 1\n"
+            "    fin para\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_concat_in_loop == 0, "no_warning_aug_numerico");
+    }
+    {
+        /* f-cadena: warning. */
+        Resumen r = analizar(
+            "funcion f(xs):\n"
+            "    s = \"\"\n"
+            "    para x en xs:\n"
+            "        s = s + f\"{x}\"\n"
+            "    fin para\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_concat_in_loop == 1, "concat_fcadena");
+    }
+    {
+        /* Concat fuera de loop: NO warning. */
+        Resumen r = analizar(
+            "s = \"hola\"\n"
+            "s = s + \" mundo\"\n");
+        AFIRMAR(r.n_concat_in_loop == 0, "concat_fuera_de_loop");
+    }
+    {
+        /* Mientras: cuenta como loop. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    s = \"\"\n"
+            "    i = 0\n"
+            "    mientras i < 10:\n"
+            "        s = s + \"x\"\n"
+            "        i = i + 1\n"
+            "    fin mientras\n"
+            "    retornar s\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_concat_in_loop == 1, "concat_mientras");
+    }
+    {
+        /* Funcion definida en loop: el cuerpo NO hereda profundidad. */
+        Resumen r = analizar(
+            "funcion outer():\n"
+            "    para i en rango(3):\n"
+            "        funcion inner():\n"
+            "            s = \"\"\n"
+            "            s = s + \"ok\"\n"  /* fuera de loop dentro de inner */
+            "            retornar s\n"
+            "        fin funcion\n"
+            "    fin para\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_concat_in_loop == 0, "funcion_anidada_no_hereda");
     }
 
     /* ─── COMBINADO: codigo limpio NO genera avisos ─── */

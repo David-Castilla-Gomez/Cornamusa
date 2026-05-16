@@ -128,13 +128,17 @@ funcion como_hex(n, prefijo="0x"):
         retornar prefijo + "0"
     fin si
     digitos = "0123456789abcdef"
-    s = ""
+    # v1.63: lista + unir + invertir en lugar de `s = digit + s`
+    # (O(n^2)). Para enteros bignum (cientos de digitos) hace
+    # diferencia medible.
+    partes = []
     valor = n
     mientras valor > 0:
-        s = digitos[valor % 16] + s
+        agregar(partes, digitos[valor % 16])
         valor = valor // 16
     fin mientras
-    retornar prefijo + s
+    invertir(partes)
+    retornar prefijo + cadena_unir(partes, "")
 fin funcion
 
 # Convierte un entero positivo a binario.
@@ -145,17 +149,18 @@ funcion como_binario(n, prefijo="0b"):
     si n == 0:
         retornar prefijo + "0"
     fin si
-    s = ""
+    partes = []
     valor = n
     mientras valor > 0:
         si valor % 2 == 0:
-            s = "0" + s
+            agregar(partes, "0")
         sino:
-            s = "1" + s
+            agregar(partes, "1")
         fin si
         valor = valor // 2
     fin mientras
-    retornar prefijo + s
+    invertir(partes)
+    retornar prefijo + cadena_unir(partes, "")
 fin funcion
 
 # Repite `caracter` `ancho` veces (útil para separadores).

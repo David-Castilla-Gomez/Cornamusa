@@ -82,6 +82,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Stdlib `hashing` (SHA-256 FIPS 180-4 + MD5 RFC 1321, ambos nativos en C) | v1.60 | ✅ |
 | Perf round 2: `cadena_unir` nativo + csv con iterator (33× speedup csv_parse_1000) | v1.61 | ✅ |
 | Perf round 2 cont.: 5 nativas más para `cadenas` tras audit (indice_de, empieza_con, ...) | v1.62 | ✅ |
+| Linter `concat-in-loop` (10ª categoría) — detecta `x = x + cadena` dentro de bucles | v1.63 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

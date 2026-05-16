@@ -6,6 +6,112 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.63.0] — 2026-05-16 — Linter `concat-in-loop`: detección automática del patrón cazado en v1.61-62
+
+Cierra el loop de aprendizaje. Tras dos releases consecutivas (v1.61,
+v1.62) cazando manualmente el patrón `x = x + cadena` dentro de
+bucles —que es O(n²) para acumular cadenas y motivó las 6 nuevas
+nativas en C—, ahora el **linter lo detecta automáticamente**.
+10ª categoría.
+
+### Cómo funciona
+
+Detecta dos formas del patrón:
+
+```cornamusa
+# Forma A: x = x + RHS
+para i en rango(n):
+    s = s + "x"        # warning [concat-in-loop]
+fin para
+
+# Forma B: x += RHS
+mientras cond:
+    s += f"valor_{i}"  # warning [concat-in-loop]
+fin mientras
+```
+
+### Heurística refinada para 0 falsos positivos
+
+El check podría warnear MUCHOS sitios (cualquier `total = total + i`
+sería sospechoso sin más info). Para evitarlo, el linter usa una
+heurística conservadora: **solo emite warning si el RHS es claramente
+string-like** — un literal `"..."`, una f-cadena `f"..."`, o una
+subexpresión `+` binaria que contiene alguno de los anteriores.
+
+Resultado:
+
+- `total = total + i` ✗ no warna (i podría ser cualquier cosa).
+- `total += 1` ✗ no warna (literal numérico).
+- `s = s + "x"` ✓ warna (literal cadena).
+- `s += f"{x}"` ✓ warna (f-cadena).
+- `s = s + ident_otra` ✗ no warna (otra var, podría ser numérica).
+
+Trade-off: pierde algunos casos reales donde la concatenación es de
+strings pero el RHS no es un literal. Lo aceptable: el linter es una
+herramienta de ayuda, no un type checker.
+
+### Aplicación al repo
+
+Tras añadir el check, el repo entero (15 stdlib + 65 examples) tenía
+**2 verdaderos positivos** en `formato.cor`:
+
+- `como_hex(n)`: hacía `s = digitos[valor % 16] + s` en loop. Aunque
+  `digitos[...]` es indexación (no literal), el check NO disparó
+  porque la heurística no inspecciona indexación. Pero las siguientes
+  dos líneas SÍ dispararon.
+- `como_binario(n)`: hacía `s = "0" + s` o `s = "1" + s` en loop —
+  detectado.
+
+Ambos reescritos para usar `agregar(partes, char); invertir(partes);
+cadena_unir(partes, "")`. Para enteros grandes (cientos de dígitos
+bignum) el speedup es significativo aunque no benchmarkeado
+explícitamente.
+
+### Total de checks del linter
+
+10 categorías ya:
+
+| Categoría | Desde | Detección |
+|---|---|---|
+| `unreachable` | v1.49 | Código tras retornar/romper/continuar/lanzar |
+| `redundant-pasar` | v1.49 | `pasar` en bloque con otras sentencias |
+| `eq-nulo` | v1.49 | `== nulo` / `!= nulo` |
+| `unused-import` | v1.49 | Módulo importado pero no usado |
+| `unused-local` | v1.50 | Variable local nunca leída |
+| `unused-param` | v1.50 | Parámetro nunca usado |
+| `shadow` | v1.55 | Local sombrea outer |
+| `unused-loop-var` | v1.55 | `para X` con X no usado |
+| `mutable-default` | v1.55 | Default `=[]`/`={}` literal |
+| **`concat-in-loop`** | **v1.63** | **`x = x + cadena` dentro de bucle** |
+
+### Implementación
+
+- `LINT_CONCAT_IN_LOOP` en `linter.h`.
+- Contador `profundidad_loop` en `Ctx`: incrementa al entrar
+  `SENT_MIENTRAS`/`SENT_PARA` cuerpo, decrementa al salir. Funciones
+  anidadas guardan/restauran el contador (no heredan profundidad,
+  porque la función puede llamarse fuera del loop).
+- Helpers: `es_mismo_ident(a, b)` y `rhs_es_string_like(e)`
+  (recursivo dentro de `EXPR_BINARIO +` y `EXPR_GRUPO`).
+- Detección en `SENT_ASIGNAR` (caso `x = x + ...`) y
+  `SENT_ASIGNAR_AUG` con op `+=`.
+
+### Verificación
+
+- **220/220 tests verde**. `test_linter` extendido a **56 asserts**
+  (vs 48 antes): patrón clásico, f-cadena, fuera de loop, mientras,
+  función anidada (no hereda profundidad), aug con literal y con
+  cadena, contador numérico (no falso positivo), `n += 1` skip.
+- Repo entero pasa el linter limpiamente tras los fixes en `formato`.
+- `formato.como_hex(255)` / `como_binario(10)` ejecutan correctamente.
+
+### Lección del meta-loop
+
+v1.61 cazó 1 caso (`csv.parsear`). v1.62 audit manual cazó 5 más. v1.63
+automatiza la detección — futuro código no introducirá nuevo `O(n²)`
+de este tipo sin warning. **Si encuentras un patrón problemático tres
+veces, escribe el linter para él.**
+
 ## [1.62.0] — 2026-05-16 — Perf round 2 (cont.): 5 nativas más en `cadenas` tras audit
 
 Continuación natural de v1.61. Tras encontrar el O(n²) en

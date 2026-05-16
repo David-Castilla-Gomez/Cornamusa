@@ -33,6 +33,11 @@
  *   - MUTABLE_DEFAULT  : `funcion f(x=[])` o `=={}` o `=set()`. Default mutable
  *                        que se comparte entre llamadas (bug clasico Python).
  *
+ * Anadido en v1.63:
+ *   - CONCAT_IN_LOOP   : `x = x + ...` o `x += ...` dentro de `mientras`/`para`.
+ *                        Patron O(n^2) para cadenas; usar lista + `cadena_unir`.
+ *                        Skip rule: RHS literal numerico (`+= 1`, contadores).
+ *
  * Lo que NO chequea:
  *   - Aridades incorrectas (built-ins ya validan en runtime).
  *   - Tipos (Cornamusa es dinamico — el tipado opcional es trabajo lejano).
@@ -48,6 +53,7 @@ typedef enum {
     LINT_SHADOW,          /* v1.55: local sombrea variable de scope exterior */
     LINT_UNUSED_LOOP_VAR, /* v1.55: `para X en ...:` con X no usado en body */
     LINT_MUTABLE_DEFAULT, /* v1.55: default mutable (lista/dict/conjunto literal) */
+    LINT_CONCAT_IN_LOOP,  /* v1.63: `x = x + ...` o `x += ...` en mientras/para */
 } TipoWarning;
 
 typedef struct {

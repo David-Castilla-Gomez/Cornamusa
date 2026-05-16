@@ -74,6 +74,11 @@ typedef struct {
     int n_imports;
 
     ScopeFunc *scope_actual;   /* NULL en modulo (top-level) */
+
+    /* v1.63: contador de profundidad de loop (mientras/para). >0 si
+     * estamos dentro del cuerpo de algun loop — usado para detectar
+     * patron `x = x + ...` que es O(n^2) para cadenas. */
+    int profundidad_loop;
 } Ctx;
 
 /* ──────────────────────────────────────────────────────────────────
@@ -259,6 +264,43 @@ static void declarar_objetivo_para(Ctx *ctx, Expr *destino) {
     }
 }
 
+/* v1.63: helpers para concat-in-loop check. */
+
+/* True si los dos Expr son ambos EXPR_IDENT con el mismo nombre. */
+static bool es_mismo_ident(Expr *a, Expr *b) {
+    if (!a || !b) return false;
+    if (a->tipo != EXPR_IDENT || b->tipo != EXPR_IDENT) return false;
+    if (a->como.ident.longitud != b->como.ident.longitud) return false;
+    return memcmp(a->como.ident.nombre, b->como.ident.nombre,
+                  (size_t)a->como.ident.longitud) == 0;
+}
+
+/* True si la expresion es literalmente un entero o decimal — usado
+ * para filtrar `i += 1` y similares contadores numericos del
+ * concat-in-loop warning. */
+static bool es_literal_numerico(const Expr *e) {
+    if (!e) return false;
+    return e->tipo == EXPR_LITERAL_ENTERO || e->tipo == EXPR_LITERAL_DECIMAL;
+}
+
+/* True si la expresion contiene una cadena literal o f-cadena en
+ * algun lugar (no recurre dentro de llamadas — solo subexpresiones
+ * binarias `+`). Heuristica para concat-in-loop: solo warneamos
+ * cuando hay evidencia clara de que la concat es de strings.
+ * Asi evitamos falsos positivos en acumuladores numericos como
+ * `total = total + i` donde `i` es un ident entero. */
+static bool rhs_es_string_like(const Expr *e) {
+    if (!e) return false;
+    if (e->tipo == EXPR_LITERAL_CADENA) return true;
+    if (e->tipo == EXPR_LITERAL_F_CADENA) return true;
+    if (e->tipo == EXPR_BINARIO && e->como.binario.op == TT_MAS) {
+        return rhs_es_string_like(e->como.binario.izq)
+            || rhs_es_string_like(e->como.binario.der);
+    }
+    if (e->tipo == EXPR_GRUPO) return rhs_es_string_like(e->como.grupo.interna);
+    return false;
+}
+
 /* v1.55: chequea si un valor default es un literal mutable (lista,
  * dict, conjunto). Estos se evaluan una sola vez al definir la
  * funcion y se comparten entre llamadas — bug clasico. */
@@ -441,7 +483,11 @@ static void visitar_expr(Expr *e, Ctx *ctx) {
             empujar_scope_funcion(ctx, &nuevo,
                                     e->como.lambda.parametros,
                                     e->como.lambda.n_parametros);
+            /* v1.63: igual que SENT_FUNCION, aislar profundidad_loop. */
+            int prof_prev = ctx->profundidad_loop;
+            ctx->profundidad_loop = 0;
             visitar_expr_quizas(e->como.lambda.cuerpo, ctx);
+            ctx->profundidad_loop = prof_prev;
             salir_scope_funcion(ctx, &nuevo);
             break;
         }
@@ -583,6 +629,36 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
                     /* Destinos simples / destructuring: registrar como
                      * locales en el scope actual (si lo hay). */
                     declarar_destino_asignacion(ctx, d);
+
+                    /* v1.63: detectar `x = x + ...` dentro de loop.
+                     * Solo cuando destino es IDENT simple, profundidad
+                     * de loop > 0, RHS es un binario `+`, una operacion
+                     * involucra el mismo ident, Y el "otro" operando
+                     * es string-like (literal/f-cadena, posiblemente
+                     * anidado en `+`). Esa ultima condicion filtra
+                     * acumuladores numericos como `total = total + i`. */
+                    if (ctx->profundidad_loop > 0
+                        && d->tipo == EXPR_IDENT
+                        && s->como.asignar.valor
+                        && s->como.asignar.valor->tipo == EXPR_BINARIO
+                        && s->como.asignar.valor->como.binario.op == TT_MAS) {
+                        Expr *v = s->como.asignar.valor;
+                        Expr *izq = v->como.binario.izq;
+                        Expr *der = v->como.binario.der;
+                        bool izq_es_destino = es_mismo_ident(d, izq);
+                        bool der_es_destino = es_mismo_ident(d, der);
+                        if (izq_es_destino || der_es_destino) {
+                            Expr *otro = izq_es_destino ? der : izq;
+                            if (rhs_es_string_like(otro)) {
+                                emitir(ctx, LINT_CONCAT_IN_LOOP,
+                                        s->linea, s->columna,
+                                        "'%.*s = %.*s + ...' dentro de loop con cadena: "
+                                        "O(n^2); considera lista + cadena_unir",
+                                        d->como.ident.longitud, d->como.ident.nombre,
+                                        d->como.ident.longitud, d->como.ident.nombre);
+                            }
+                        }
+                    }
                 } else {
                     /* Cualquier otro destino — tratamos como expresion. */
                     visitar_expr_quizas(d, ctx);
@@ -595,6 +671,19 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             /* `x += y` lee y escribe x — el destino SI cuenta como lectura. */
             visitar_expr_quizas(s->como.asignar_aug.destino, ctx);
             visitar_expr_quizas(s->como.asignar_aug.valor, ctx);
+            /* v1.63: detectar `x += y` con y string-like dentro de loop. */
+            if (ctx->profundidad_loop > 0
+                && s->como.asignar_aug.op == TT_ASIGNAR_MAS
+                && s->como.asignar_aug.destino
+                && s->como.asignar_aug.destino->tipo == EXPR_IDENT
+                && rhs_es_string_like(s->como.asignar_aug.valor)) {
+                Expr *d = s->como.asignar_aug.destino;
+                emitir(ctx, LINT_CONCAT_IN_LOOP,
+                        s->linea, s->columna,
+                        "'%.*s += ...' dentro de loop con cadena: O(n^2); "
+                        "considera lista + cadena_unir",
+                        d->como.ident.longitud, d->como.ident.nombre);
+            }
             break;
 
         case SENT_PASAR:
@@ -619,7 +708,9 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
 
         case SENT_MIENTRAS:
             visitar_expr_quizas(s->como.mientras.condicion, ctx);
+            ctx->profundidad_loop++;
             visitar_bloque(s->como.mientras.cuerpo, ctx);
+            ctx->profundidad_loop--;
             visitar_bloque(s->como.mientras.sino, ctx);
             break;
 
@@ -628,7 +719,9 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
              * detectar unused-loop-var. */
             visitar_expr_quizas(s->como.para.iterable, ctx);
             declarar_objetivo_para(ctx, s->como.para.objetivo);
+            ctx->profundidad_loop++;
             visitar_bloque(s->como.para.cuerpo, ctx);
+            ctx->profundidad_loop--;
             visitar_bloque(s->como.para.sino, ctx);
             break;
 
@@ -648,7 +741,13 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             empujar_scope_funcion(ctx, &nuevo,
                                     s->como.funcion.parametros,
                                     s->como.funcion.n_parametros);
+            /* v1.63: el cuerpo de la funcion NO hereda profundidad_loop
+             * del scope exterior — una funcion definida en un loop
+             * puede llamarse fuera. Salvar y restaurar. */
+            int prof_prev = ctx->profundidad_loop;
+            ctx->profundidad_loop = 0;
             visitar_bloque(s->como.funcion.cuerpo, ctx);
+            ctx->profundidad_loop = prof_prev;
             salir_scope_funcion(ctx, &nuevo);
             break;
         }
@@ -823,6 +922,7 @@ const char *linter_tipo_nombre(TipoWarning t) {
         case LINT_SHADOW:          return "shadow";
         case LINT_UNUSED_LOOP_VAR: return "unused-loop-var";
         case LINT_MUTABLE_DEFAULT: return "mutable-default";
+        case LINT_CONCAT_IN_LOOP:  return "concat-in-loop";
         default:                   return "warning";
     }
 }
