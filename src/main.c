@@ -31,6 +31,7 @@
 #include "common.h"
 #include "compilador.h"
 #include "entorno.h"
+#include "docs.h"
 #include "errores.h"
 #include "evaluador.h"
 #include "formateador.h"
@@ -81,6 +82,8 @@ static void imprimir_uso(const char *programa) {
         "                             Usa '-' como archivo para leer stdin.\n"
         "  lint <archivo>             Analiza y reporta avisos de estilo.\n"
         "                             Exit 0 sin avisos, 1 con avisos.\n"
+        "  docs [-o salida.md] <arch> Extrae documentacion (firmas + comentarios)\n"
+        "                             y emite Markdown a stdout o al archivo dado.\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -823,6 +826,121 @@ static int subcomando_lint(int argc, char **argv) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Subcomando `docs` (v1.51 - Fase 5 tooling).
+ *
+ * Parsea el archivo y emite Markdown con la documentacion del modulo.
+ * Por defecto a stdout; `-o salida.md` redirige a archivo.
+ *
+ * El "nombre de modulo" se deriva del basename del archivo (sin
+ * extension `.cor`) y se usa como H1.
+ * ────────────────────────────────────────────────────────────────── */
+
+static const char *basename_modulo(const char *ruta, char *out, size_t cap) {
+    const char *p = ruta;
+    const char *base = ruta;
+    for (; *p; p++) {
+        if (*p == '/' || *p == '\\') base = p + 1;
+    }
+    /* Copiar quitando sufijo `.cor` si lo hay. */
+    size_t len = strlen(base);
+    if (len > 4 && strcmp(base + len - 4, ".cor") == 0) len -= 4;
+    if (len >= cap) len = cap - 1;
+    memcpy(out, base, len);
+    out[len] = '\0';
+    return out;
+}
+
+static int subcomando_docs(int argc, char **argv) {
+    const char *archivo = NULL;
+    const char *salida = NULL;
+
+    for (int i = 2; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--ayuda") == 0
+            || strcmp(arg, "--help") == 0) {
+            imprimir_uso(argv[0]);
+            return 0;
+        }
+        if (strcmp(arg, "-o") == 0) {
+            if (i + 1 >= argc) {
+                fprintf(stderr, "docs: -o requiere un nombre de archivo\n");
+                return 64;
+            }
+            salida = argv[++i];
+            continue;
+        }
+        if (arg[0] == '-') {
+            fprintf(stderr, "Opcion no reconocida para docs: %s\n", arg);
+            return 64;
+        }
+        if (archivo) {
+            fprintf(stderr, "docs acepta un solo archivo\n");
+            return 64;
+        }
+        archivo = arg;
+    }
+    if (!archivo) {
+        fprintf(stderr, "docs: se requiere un archivo .cor\n");
+        return 64;
+    }
+
+    FuenteCargada fc = fuente_cargar_archivo(archivo);
+    if (fc.codigo != FUENTE_OK) {
+        fprintf(stderr, "docs: no se pudo cargar '%s': %s\n",
+                archivo, fc.mensaje_error);
+        fuente_destruir(&fc);
+        return 74;
+    }
+
+    Lexer l;
+    lexer_iniciar(&l, fc.fuente, archivo);
+
+    Arena a;
+    arena_iniciar(&a, 16384);
+
+    Parser p;
+    parser_iniciar(&p, &l, &a, fc.fuente, archivo);
+
+    int n = 0;
+    Sent **sents = parser_parsear_programa(&p, &n);
+
+    if (p.tuvo_error) {
+        arena_destruir(&a);
+        fuente_destruir(&fc);
+        fprintf(stderr, "\n%s: fallo de sintaxis (docs omitido).\n", archivo);
+        return 65;
+    }
+
+    char nombre[256];
+    basename_modulo(archivo, nombre, sizeof(nombre));
+
+    DocsResultado r = docs_generar(fc.fuente, nombre, sents, n);
+
+    int rc = 0;
+    if (r.mensaje_error) {
+        fprintf(stderr, "docs: %s\n", r.mensaje_error);
+        rc = 70;
+    } else if (salida) {
+        FILE *f = fopen(salida, "wb");
+        if (!f) {
+            fprintf(stderr, "docs: no se pudo escribir '%s'\n", salida);
+            rc = 73;
+        } else {
+            fwrite(r.markdown, 1, r.longitud, f);
+            fclose(f);
+            fprintf(stderr, "documentacion escrita en: %s\n", salida);
+        }
+    } else {
+        fwrite(r.markdown, 1, r.longitud, stdout);
+    }
+
+    docs_resultado_destruir(&r);
+    arena_destruir(&a);
+    fuente_destruir(&fc);
+    return rc;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Entry point
  * ────────────────────────────────────────────────────────────────── */
 
@@ -835,6 +953,9 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "lint") == 0) {
         return subcomando_lint(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "docs") == 0) {
+        return subcomando_docs(argc, argv);
     }
 
     const char *archivo = NULL;

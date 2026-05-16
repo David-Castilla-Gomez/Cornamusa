@@ -70,6 +70,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Formateador integrado `cornamusa fmt` (`--check`, `--stdout`, idempotente) | v1.48 | ✅ |
 | Linter integrado `cornamusa lint` (codigo inalcanzable, `pasar` redundante, `== nulo`, imports no usados) | v1.49 | ✅ |
 | Scope analysis en el linter (`unused-local`, `unused-param` con respeto a closures/`nolocal`) | v1.50 | ✅ |
+| Generador de documentacion `cornamusa docs` (Markdown desde firmas + comentarios) | v1.51 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

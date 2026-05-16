@@ -869,6 +869,9 @@ cornamusa fmt -                       # lee stdin → escribe stdout
 
 cornamusa lint programa.cor           # avisos de estilo (v1.49)
                                        # exit 0 sin avisos, 1 con avisos
+
+cornamusa docs programa.cor           # Markdown a stdout (v1.51)
+cornamusa docs programa.cor -o doc.md # Markdown a archivo
 ```
 
 Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`.

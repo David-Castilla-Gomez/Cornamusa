@@ -114,6 +114,25 @@ El análisis de scope (v1.50) respeta closures: si una función anidada captura 
 
 Exit 0 sin avisos, 1 si los hay — apto para `pre-commit` y CI.
 
+### ¿Hay generador de documentación?
+
+Sí desde v1.51:
+
+```bash
+./build/cornamusa docs stdlib/matematicas.cor                  # imprime Markdown a stdout
+./build/cornamusa docs stdlib/matematicas.cor -o mat.md        # escribe a archivo
+```
+
+El generador:
+
+- Usa el basename del archivo como título H1 del módulo.
+- El bloque de comentarios `#` al inicio del archivo se trata como **doc del módulo**.
+- Cada `funcion` top-level genera una sección H2 con su firma (incluye `*args`, `**kwargs` y defaults como `=...`).
+- Cada `clase` top-level genera una sección H2; sus métodos aparecen como subsecciones H3.
+- El bloque de comentarios `#` **inmediatamente** anterior a un item (sin línea en blanco intermedia) se asocia como su doc.
+
+Convención Go-style: los comentarios de doc preceden a la declaración, sin línea en blanco. Una línea en blanco corta la asociación — útil para distinguir comentarios "de grupo" de docstrings per-item.
+
 ---
 
 ## Sobre la sintaxis

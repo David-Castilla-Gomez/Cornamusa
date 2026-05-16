@@ -6,6 +6,110 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.51.0] — 2026-05-16 — Generador de docs `cornamusa docs`
+
+Quinta release de la **Fase 5 — Tooling**. Cornamusa ahora trae un
+generador de documentación que produce Markdown desde el AST + los
+comentarios `#` del archivo.
+
+### Lo nuevo
+
+- **Subcomando `cornamusa docs <archivo.cor>`**: imprime Markdown
+  con la API documentada del módulo.
+- **`-o salida.md`**: escribe a archivo en vez de stdout.
+
+### Convención de docstrings
+
+Cornamusa adopta el estilo **Go**: la documentación de una función,
+clase o método son los **comentarios `#` consecutivos inmediatamente
+anteriores a la declaración**, sin línea en blanco intermedia.
+
+```cornamusa
+# Multiplica dos numeros.
+# Devuelve un entero o decimal segun los operandos.
+funcion mul(a, b):
+    retornar a * b
+fin funcion
+```
+
+Una **línea en blanco corta la asociación** — útil para distinguir
+comentarios de grupo de docstrings per-item:
+
+```cornamusa
+# Operaciones aritmeticas         # ← comentario de GRUPO
+
+# Multiplica dos numeros.
+funcion mul(a, b):
+    ...
+fin funcion
+```
+
+### Estructura del Markdown generado
+
+- **H1**: título del módulo (derivado del basename del archivo, sin
+  extensión `.cor`).
+- Bloque de doc del módulo: comentarios `#` al inicio del archivo,
+  hasta la primera línea no-comentario.
+- **H2 `funcion(a, b)`**: cada `funcion` top-level con su firma
+  sintetizada del AST.
+- **H2 clase `Nombre`**: cada `clase` top-level. Si extiende, se
+  indica con `extiende ...`.
+- **H3 `metodo(yo, ...)`**: cada método dentro del cuerpo de una
+  clase.
+
+### Firmas sintetizadas
+
+El AST no preserva la expresión de los defaults, así que se muestran
+como `=...`. `*args` y `**kwargs` se preservan:
+
+```
+## `f(a, b=..., *rest, **kw)`
+```
+
+### Lo que NO hace (scope para v1.52+)
+
+- **Docstrings estilo Python** (primer string literal del cuerpo).
+- **Doc de constantes top-level** (asignaciones a nivel módulo).
+- **Doc de imports / re-exports**.
+- **Reconstrucción de expresiones de defaults** (saldría feo en muchos
+  casos sin un pretty-printer de expresiones).
+- **Enlaces cruzados** entre funciones (`[`foo`](#foo)`).
+- **Salida HTML directa** — por ahora solo Markdown, conversor externo.
+
+### Implementación
+
+Nuevo módulo `src/docs.{c,h}` (~300 líneas). El AST aporta firmas,
+nombres y números de línea; el texto fuente aporta los comentarios.
+Construyo un `IndiceLineas` que mapea cada línea (1-indexed) a su
+offset en el buffer fuente — permite saltar a la línea N y extraer
+contenido sin re-scannear. Para cada item, walk-back recolecta
+comentarios contiguos.
+
+### Verificación
+
+- **206/206 tests verde**. Nuevo `test_docs` con **18 asserts**:
+  H1 con nombre, doc del módulo, firmas con defaults y `*args`/`**kw`,
+  asociación de comentarios, línea en blanco corta, clases con
+  métodos, orden preservado, módulo vacío.
+- **12/12 módulos de stdlib generan docs sin error**. Resultado
+  visualmente correcto para `matematicas`, `formato`, `cadenas`,
+  `fechas`, `azar`, `archivos`, `json`, `regex`, `proceso`, `red`,
+  `sistema`, `coleccion`.
+
+### Limitación conocida
+
+Si el último comentario antes de una función es un comentario de
+**grupo** (sin blank line intermedia), se asocia como doc per-item.
+Ejemplo en `matematicas.cor`:
+```
+# Operaciones simples
+funcion cuadrado(n): ...
+```
+genera `### cuadrado(n)` con doc "Operaciones simples". Solución
+recomendada: insertar línea en blanco entre comentario de grupo y la
+primera función. Esto se podría auto-arreglar en una limpieza pasa
+de stdlib en una release minor posterior.
+
 ## [1.50.0] — 2026-05-16 — Scope analysis en el linter (`unused-local`, `unused-param`)
 
 Cuarta release de la **Fase 5 — Tooling**. El linter ahora hace
