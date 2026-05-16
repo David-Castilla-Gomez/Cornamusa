@@ -20,9 +20,14 @@
  *   - EQ_NULO          : `x == nulo` / `x != nulo` (prefiere `es nulo` / `no es nulo`).
  *   - UNUSED_IMPORT    : importacion no referenciada en el programa.
  *
- * Lo que NO chequea en v1.49 (queda para v1.50+):
- *   - Variables locales no usadas (requiere analisis de scope completo).
- *   - Sombras entre scopes.
+ * Anadido en v1.50 (scope analysis para funciones y lambdas):
+ *   - UNUSED_LOCAL     : variable local asignada en body de funcion nunca leida.
+ *   - UNUSED_PARAM     : parametro de funcion nunca leido.
+ *     Skip rule: `yo`, nombres que empiezan con `_`, `*args`/`**kwargs`.
+ *
+ * Lo que NO chequea (queda para v1.51+):
+ *   - Variables sombra entre scopes (shadowing).
+ *   - Loop var `para X` no usado (idiom: usar `_`).
  *   - Aridades incorrectas (built-ins ya validan en runtime).
  *   - Tipos (Cornamusa es dinamico — el tipado opcional es trabajo lejano).
  */
@@ -32,6 +37,8 @@ typedef enum {
     LINT_REDUNDANT_PASAR,
     LINT_EQ_NULO,
     LINT_UNUSED_IMPORT,
+    LINT_UNUSED_LOCAL,    /* v1.50: variable local de funcion no usada */
+    LINT_UNUSED_PARAM,    /* v1.50: parametro de funcion no usado */
 } TipoWarning;
 
 typedef struct {

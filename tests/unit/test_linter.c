@@ -41,6 +41,8 @@ typedef struct {
     int n_redundant_pasar;
     int n_eq_nulo;
     int n_unused_import;
+    int n_unused_local;
+    int n_unused_param;
 } Resumen;
 
 static Resumen analizar(const char *fuente) {
@@ -70,6 +72,8 @@ static Resumen analizar(const char *fuente) {
             case LINT_REDUNDANT_PASAR: r.n_redundant_pasar++; break;
             case LINT_EQ_NULO:         r.n_eq_nulo++; break;
             case LINT_UNUSED_IMPORT:   r.n_unused_import++; break;
+            case LINT_UNUSED_LOCAL:    r.n_unused_local++; break;
+            case LINT_UNUSED_PARAM:    r.n_unused_param++; break;
         }
     }
     linter_resultado_destruir(&lr);
@@ -198,6 +202,123 @@ int main(void) {
             "desde matematicas importar PI\n"
             "imprimir(PI)\n");
         AFIRMAR(r.n_unused_import == 0, "desde_usado");
+    }
+
+    /* ─── UNUSED_LOCAL (v1.50) ─── */
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    x = 1\n"
+            "    z = 2\n"
+            "    retornar x\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_local == 1, "local_no_usada");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    x = 1\n"
+            "    x = x + 1\n"
+            "    retornar x\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_local == 0, "reasignacion_uso");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    _ignorada = 99\n"
+            "    retornar 1\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_local == 0, "underscore_skip");
+    }
+    {
+        Resumen r = analizar(
+            "funcion par():\n"
+            "    retornar (1, 2)\n"
+            "fin funcion\n"
+            "funcion f():\n"
+            "    a, b = par()\n"
+            "    retornar a\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_local == 1, "destructuring_uno_no_usado");
+    }
+    {
+        /* Variables module-level no se warnean (scope nulo). */
+        Resumen r = analizar("x = 1\nz = 2\n");
+        AFIRMAR(r.n_unused_local == 0, "module_level_no_warn");
+    }
+
+    /* ─── UNUSED_PARAM (v1.50) ─── */
+    {
+        Resumen r = analizar(
+            "funcion f(a, b, c):\n"
+            "    retornar a + c\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_param == 1, "param_no_usado");
+    }
+    {
+        Resumen r = analizar(
+            "funcion m(yo, x):\n"
+            "    retornar x\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_param == 0, "yo_skip");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f(_, x):\n"
+            "    retornar x\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_param == 0, "underscore_param_skip");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f(a, *args, **kw):\n"
+            "    retornar a\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_param == 0, "varargs_skip");
+    }
+    {
+        Resumen r = analizar(
+            "f = lambda x, z: x + 1\n"
+            "imprimir(f(1, 2))\n");
+        AFIRMAR(r.n_unused_param == 1, "lambda_param_no_usado");
+    }
+
+    /* ─── nolocal/global no warnean ─── */
+    {
+        Resumen r = analizar(
+            "funcion contador():\n"
+            "    n = 0\n"
+            "    funcion inc():\n"
+            "        nolocal n\n"
+            "        n = n + 1\n"
+            "        retornar n\n"
+            "    fin funcion\n"
+            "    retornar inc\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_local == 0, "closure_nolocal_marca_outer");
+        AFIRMAR(r.n_unused_param == 0, "closure_sin_unused_param");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    global x\n"
+            "    x = 99\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_local == 0, "global_no_warn");
+    }
+
+    /* ─── Closures capturan: la outer var SE marca usada ─── */
+    {
+        Resumen r = analizar(
+            "funcion outer():\n"
+            "    valor = 42\n"
+            "    funcion inner():\n"
+            "        retornar valor + 1\n"
+            "    fin funcion\n"
+            "    retornar inner\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_local == 0, "closure_lee_outer");
     }
 
     /* ─── COMBINADO: codigo limpio NO genera avisos ─── */

@@ -871,7 +871,7 @@ cornamusa lint programa.cor           # avisos de estilo (v1.49)
                                        # exit 0 sin avisos, 1 con avisos
 ```
 
-Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`.
+Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`.
 
 ---
 

@@ -29,6 +29,41 @@ typedef struct {
 
 #define MAX_IMPORTS 256
 
+/* ──────────────────────────────────────────────────────────────────
+ * v1.50: scope stack para detectar locales/parametros no usados.
+ *
+ * Cada funcion (incluyendo lambdas y metodos) abre un scope. Las
+ * locales se registran por primera asignacion como destino simple
+ * (ident). `nolocal`/`global` marcan el nombre como `es_extern`:
+ * sigue en el scope para no re-declararlo, pero no se warnea unused.
+ *
+ * Una referencia (EXPR_IDENT) marca el primer match subiendo por la
+ * cadena de padres (semantica de closures).
+ * ────────────────────────────────────────────────────────────────── */
+
+typedef enum {
+    DECL_VAR,
+    DECL_PARAM,
+} TipoDecl;
+
+typedef struct {
+    const char *texto;
+    int longitud;
+    TipoDecl tipo;
+    int linea;
+    int columna;
+    bool usado;
+    bool es_extern;   /* declarado nolocal/global: skip warnings */
+} DeclLocal;
+
+#define MAX_DECLS_FUNCION 512
+
+typedef struct ScopeFunc {
+    DeclLocal decls[MAX_DECLS_FUNCION];
+    int n;
+    struct ScopeFunc *padre;
+} ScopeFunc;
+
 typedef struct {
     Warning *avisos;
     int n;
@@ -36,6 +71,8 @@ typedef struct {
 
     ImportEntry imports[MAX_IMPORTS];
     int n_imports;
+
+    ScopeFunc *scope_actual;   /* NULL en modulo (top-level) */
 } Ctx;
 
 /* ──────────────────────────────────────────────────────────────────
@@ -85,6 +122,122 @@ static void marcar_ident_usado(Ctx *ctx, const char *texto, int longitud) {
             && memcmp(e->texto, texto, (size_t)longitud) == 0) {
             e->usado = true;
         }
+    }
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Scope: declarar y resolver referencias.
+ * ────────────────────────────────────────────────────────────────── */
+
+static int scope_buscar(ScopeFunc *s, const char *texto, int longitud) {
+    for (int i = 0; i < s->n; i++) {
+        if (s->decls[i].longitud == longitud
+            && memcmp(s->decls[i].texto, texto, (size_t)longitud) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+static void scope_declarar(ScopeFunc *s, const char *texto, int longitud,
+                            TipoDecl tipo, int linea, int columna,
+                            bool es_extern) {
+    if (!s) return;
+    int existe = scope_buscar(s, texto, longitud);
+    if (existe >= 0) {
+        /* Si ya estaba como variable y ahora viene nolocal/global,
+         * actualizar la marca para no warnear. */
+        if (es_extern) s->decls[existe].es_extern = true;
+        return;
+    }
+    if (s->n >= MAX_DECLS_FUNCION) return;
+    DeclLocal *d = &s->decls[s->n++];
+    d->texto = texto;
+    d->longitud = longitud;
+    d->tipo = tipo;
+    d->linea = linea;
+    d->columna = columna;
+    d->usado = false;
+    d->es_extern = es_extern;
+}
+
+static void marcar_uso_scopes(Ctx *ctx, const char *texto, int longitud) {
+    for (ScopeFunc *s = ctx->scope_actual; s; s = s->padre) {
+        int idx = scope_buscar(s, texto, longitud);
+        if (idx >= 0) {
+            /* Entradas `es_extern` (nolocal/global) son placeholders — el
+             * nombre real vive en el scope padre. Saltamos y seguimos. */
+            if (s->decls[idx].es_extern) continue;
+            s->decls[idx].usado = true;
+            return;
+        }
+    }
+}
+
+/* Recorre la expresion destino de un SENT_ASIGNAR registrando como
+ * locales todos los identificadores simples (incluye destructuring
+ * `a, b = par` y nested `(a, (b, c)) = ...`). Atributos e indices no
+ * son nuevos locales. */
+static void declarar_destino_asignacion(Ctx *ctx, Expr *destino) {
+    if (!ctx->scope_actual || !destino) return;
+    if (destino->tipo == EXPR_IDENT) {
+        scope_declarar(ctx->scope_actual,
+                       destino->como.ident.nombre,
+                       destino->como.ident.longitud,
+                       DECL_VAR, destino->linea, destino->columna, false);
+    } else if (destino->tipo == EXPR_TUPLA || destino->tipo == EXPR_LISTA) {
+        for (int i = 0; i < destino->como.secuencia.n_elementos; i++) {
+            declarar_destino_asignacion(ctx, destino->como.secuencia.elementos[i]);
+        }
+    }
+}
+
+/* True si el nombre debe skip-earse al emitir unused-local/unused-param.
+ * Convenciones: `yo` (self implicit), nombres que empiezan con `_`. */
+static bool nombre_se_omite(const char *texto, int longitud) {
+    if (longitud == 0) return true;
+    if (texto[0] == '_') return true;
+    if (longitud == 2 && memcmp(texto, "yo", 2) == 0) return true;
+    return false;
+}
+
+static void emitir_warnings_scope(Ctx *ctx, ScopeFunc *s);
+
+/* Empuja un nuevo scope sobre `*nuevo`, declara parametros segun
+ * `params[]`, y deja `ctx->scope_actual` apuntando a `*nuevo`. El
+ * llamador debe haber visitado los valores por defecto en el scope
+ * exterior antes de llamar a esto (semantica Python: defaults se
+ * evaluan al definir, no al llamar). */
+static void empujar_scope_funcion(Ctx *ctx, ScopeFunc *nuevo,
+                                    Parametro *params, int n_params) {
+    memset(nuevo, 0, sizeof(*nuevo));
+    nuevo->padre = ctx->scope_actual;
+    ctx->scope_actual = nuevo;
+
+    for (int i = 0; i < n_params; i++) {
+        Parametro *p = &params[i];
+        /* *args / **kwargs no se warnean por convencion. */
+        if (p->es_estrella || p->es_doble_estrella) continue;
+        scope_declarar(nuevo, p->nombre, p->longitud_nombre,
+                       DECL_PARAM, p->linea, p->columna, false);
+    }
+}
+
+static void salir_scope_funcion(Ctx *ctx, ScopeFunc *nuevo) {
+    emitir_warnings_scope(ctx, nuevo);
+    ctx->scope_actual = nuevo->padre;
+}
+
+static void emitir_warnings_scope(Ctx *ctx, ScopeFunc *s) {
+    for (int i = 0; i < s->n; i++) {
+        DeclLocal *d = &s->decls[i];
+        if (d->usado || d->es_extern) continue;
+        if (nombre_se_omite(d->texto, d->longitud)) continue;
+
+        TipoWarning t = (d->tipo == DECL_PARAM) ? LINT_UNUSED_PARAM : LINT_UNUSED_LOCAL;
+        const char *categoria = (d->tipo == DECL_PARAM) ? "parametro" : "variable local";
+        emitir(ctx, t, d->linea, d->columna,
+                "%s '%.*s' no se usa", categoria, d->longitud, d->texto);
     }
 }
 
@@ -142,6 +295,7 @@ static void visitar_expr(Expr *e, Ctx *ctx) {
 
         case EXPR_IDENT:
             marcar_ident_usado(ctx, e->como.ident.nombre, e->como.ident.longitud);
+            marcar_uso_scopes(ctx, e->como.ident.nombre, e->como.ident.longitud);
             break;
 
         case EXPR_BINARIO: {
@@ -188,12 +342,19 @@ static void visitar_expr(Expr *e, Ctx *ctx) {
             visitar_expr_quizas(e->como.grupo.interna, ctx);
             break;
 
-        case EXPR_LAMBDA:
+        case EXPR_LAMBDA: {
+            /* Defaults se evaluan en el scope exterior (no en el lambda). */
             for (int i = 0; i < e->como.lambda.n_parametros; i++) {
                 visitar_expr_quizas(e->como.lambda.parametros[i].valor_defecto, ctx);
             }
+            ScopeFunc nuevo;
+            empujar_scope_funcion(ctx, &nuevo,
+                                    e->como.lambda.parametros,
+                                    e->como.lambda.n_parametros);
             visitar_expr_quizas(e->como.lambda.cuerpo, ctx);
+            salir_scope_funcion(ctx, &nuevo);
             break;
+        }
 
         case EXPR_LISTA:
         case EXPR_CONJUNTO:
@@ -326,9 +487,12 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
                     visitar_expr_quizas(d->como.rebanada.inicio, ctx);
                     visitar_expr_quizas(d->como.rebanada.fin, ctx);
                     visitar_expr_quizas(d->como.rebanada.paso, ctx);
-                } else if (d->tipo == EXPR_TUPLA || d->tipo == EXPR_LISTA) {
-                    /* Destructuring: cada elemento es un destino, no una
-                     * lectura. No visitamos. */
+                } else if (d->tipo == EXPR_IDENT
+                            || d->tipo == EXPR_TUPLA
+                            || d->tipo == EXPR_LISTA) {
+                    /* Destinos simples / destructuring: registrar como
+                     * locales en el scope actual (si lo hay). */
+                    declarar_destino_asignacion(ctx, d);
                 } else {
                     /* Cualquier otro destino — tratamos como expresion. */
                     visitar_expr_quizas(d, ctx);
@@ -380,12 +544,19 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             visitar_bloque(s, ctx);
             break;
 
-        case SENT_FUNCION:
+        case SENT_FUNCION: {
+            /* Defaults se evaluan en el scope exterior. */
             for (int i = 0; i < s->como.funcion.n_parametros; i++) {
                 visitar_expr_quizas(s->como.funcion.parametros[i].valor_defecto, ctx);
             }
+            ScopeFunc nuevo;
+            empujar_scope_funcion(ctx, &nuevo,
+                                    s->como.funcion.parametros,
+                                    s->como.funcion.n_parametros);
             visitar_bloque(s->como.funcion.cuerpo, ctx);
+            salir_scope_funcion(ctx, &nuevo);
             break;
+        }
 
         case SENT_CLASE:
             for (int i = 0; i < s->como.clase.n_superclases; i++) {
@@ -447,6 +618,18 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
 
         case SENT_GLOBAL:
         case SENT_NOLOCAL:
+            /* En el scope actual, marcar estos nombres como externos para
+             * que asignaciones posteriores no se traten como nuevos
+             * locales no usados. */
+            if (ctx->scope_actual) {
+                for (int i = 0; i < s->como.global_o_nolocal.n_nombres; i++) {
+                    Nombre *n = &s->como.global_o_nolocal.nombres[i];
+                    scope_declarar(ctx->scope_actual,
+                                    n->texto, n->longitud,
+                                    DECL_VAR, s->linea, s->columna,
+                                    /*es_extern=*/true);
+                }
+            }
             break;
 
         case SENT_COINCIDIR:
@@ -524,6 +707,8 @@ const char *linter_tipo_nombre(TipoWarning t) {
         case LINT_REDUNDANT_PASAR: return "redundant-pasar";
         case LINT_EQ_NULO:         return "eq-nulo";
         case LINT_UNUSED_IMPORT:   return "unused-import";
+        case LINT_UNUSED_LOCAL:    return "unused-local";
+        case LINT_UNUSED_PARAM:    return "unused-param";
         default:                   return "warning";
     }
 }

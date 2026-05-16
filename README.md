@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.49.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.50.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.49.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de doce módulos útil para scripting real. La **Fase 5 — Tooling** avanza con un **linter integrado**: `cornamusa lint archivo.cor` reporta código inalcanzable, `pasar` redundante, comparaciones `== nulo` (sugiere `es nulo`) e imports no usados — exit 1 si hay avisos, ideal para CI. v1.48 añadió el **formateador `cornamusa fmt`** con reglas conservadoras e idempotentes. v1.47 trajo **edición de línea + history persistente** en el REPL. Modelo de datos completo con todos los dunders fundamentales. 205 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.50.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de doce módulos útil para scripting real. La **Fase 5 — Tooling** sigue avanzando: el linter ahora hace **análisis de scope** y detecta variables locales y parámetros de función no usados, respetando closures (`nolocal`/`global`), destructuring y la convención `_` para descartes. Total de 6 categorías: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`. v1.49 inauguró el linter; v1.48 trajo el formateador `cornamusa fmt`; v1.47 añadió edición de línea + history en el REPL. Modelo de datos completo con todos los dunders fundamentales. 205 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -154,6 +154,7 @@ Hoja de ruta resumida:
 | **v1.47** | **REPL con edición de línea, history navegable y persistencia entre sesiones — abre la Fase 5 (tooling)** | ✅ |
 | **v1.48** | **Formateador integrado `cornamusa fmt` — reindenta, normaliza blancas, modo `--check` para CI** | ✅ |
 | **v1.49** | **Linter integrado `cornamusa lint` — codigo inalcanzable, `pasar` redundante, `== nulo`, imports no usados** | ✅ |
+| **v1.50** | **Scope analysis en el linter — `unused-local` + `unused-param` con respeto a closures, `nolocal`/`global`, destructuring y skip de `_`/`yo`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

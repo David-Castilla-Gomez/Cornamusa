@@ -6,6 +6,89 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.50.0] — 2026-05-16 — Scope analysis en el linter (`unused-local`, `unused-param`)
+
+Cuarta release de la **Fase 5 — Tooling**. El linter ahora hace
+análisis de scope a nivel de función: detecta variables locales y
+parámetros que se declaran pero nunca se leen.
+
+### Lo nuevo
+
+- **`unused-local`**: variable local de función asignada en el cuerpo
+  pero nunca leída posteriormente.
+
+- **`unused-param`**: parámetro de función nunca referenciado dentro
+  del cuerpo.
+
+  **Skip rules** (no warnean):
+  - Nombre empieza con `_` (convención para descartes intencionales).
+  - Nombre es `yo` (self implícito en métodos).
+  - Parámetro `*args` o `**kwargs` (contenedores, a menudo solo
+    reenviados).
+
+### Cómo trata casos delicados
+
+- **Closures con `nolocal` / `global`**: si una función anidada captura
+  una variable del cuerpo enclosing con `nolocal`, la outer se marca
+  como usada por la inner. El `nolocal X` registra X como
+  `es_extern=true` en el scope inner — al resolver una referencia, el
+  algoritmo se salta entradas `es_extern` y sigue hacia padres hasta
+  encontrar el declarador real. Así `n = 0; funcion inc(): nolocal n;
+  n = n + 1` no genera falsos positivos.
+
+- **Destructuring**: `a, b = par` registra `a` y `b` por separado.
+  Cada uno se analiza independientemente.
+
+- **Reasignación**: `x = 1; x = x + 1; retornar x` no warnea porque
+  `x` es leído en `x + 1` y en `retornar x`.
+
+- **Lambdas**: se tratan como funciones. Parámetros no usados generan
+  `unused-param`.
+
+- **Module-level**: las variables top-level NO se warnean — podrían
+  ser API pública y la información de uso no es local.
+
+### Lo que NO chequea (queda para v1.51+)
+
+- **Loop var no usado** (`para X en ...:` cuerpo sin usar X). Idiom
+  recomendado: `para _ en ...`. La detección automática se aplaza
+  porque a veces el loop var sí se usa indirectamente (índice de
+  iteración).
+- **Atrapar / con / pattern bind no usados**: misma razón.
+- **Shadowing**: locales que sombrean variables del scope enclosing.
+- **Funciones anidadas no usadas con sintaxis `funcion`**: declarar
+  `inner` via `funcion inner(): ...` no se registra como local, así
+  que no se warnea si no se referencia. Inconsistente con
+  `inner = lambda: ...` que sí se warnearía. Decisión conservadora
+  para evitar falsos positivos con métodos.
+
+### Implementación
+
+Nuevo concepto en `src/linter.{c,h}`: stack de `ScopeFunc` con
+declaraciones (`DeclLocal[]`). Cada función abierta empuja un scope;
+los parámetros se registran como `DECL_PARAM`, las asignaciones a
+nombres simples como `DECL_VAR`. Una referencia (`EXPR_IDENT`) sube
+por la cadena de padres marcando el primer match no-`es_extern`.
+
+Tamaño total del módulo `linter`: ~550 líneas (vs ~400 antes).
+
+### Verificación
+
+- **205/205 tests verde**. `test_linter` ahora tiene **36 asserts**
+  (vs 22 antes): casos de scope, closures, `nolocal`/`global`,
+  destructuring, lambdas, skip rules.
+- **63 ejemplos + 12 módulos de stdlib**: 0 falsos positivos. Tras
+  arreglar el bug de `es_extern` (closures que escriben a outer via
+  `nolocal` debían marcar la outer como usada), el barrido completo
+  del repo no genera ningún `unused-local` o `unused-param` espurios.
+
+### Limitaciones reconocidas
+
+- Análisis solo a nivel de función. Variables top-level y de clase
+  no se analizan.
+- Lambda con `*args` / `**kwargs` no warnea — consistente con
+  funciones.
+
 ## [1.49.0] — 2026-05-16 — Linter integrado `cornamusa lint`
 
 Tercera release de la **Fase 5 — Tooling**. Cornamusa ahora detecta

@@ -101,12 +101,16 @@ Sí desde v1.49:
 # 2 avisos.
 ```
 
-Categorías chequeadas en v1.49:
+Categorías chequeadas:
 
-- `unreachable` — código tras `retornar`, `romper`, `continuar` o `lanzar` en el mismo bloque.
-- `redundant-pasar` — `pasar` dentro de un bloque que tiene otras sentencias.
-- `eq-nulo` — comparación con `nulo` usando `==`/`!=` (sugiere `es nulo` / `no es nulo`).
-- `unused-import` — módulo importado pero nunca referenciado en el programa.
+- `unreachable` — código tras `retornar`, `romper`, `continuar` o `lanzar` en el mismo bloque (v1.49).
+- `redundant-pasar` — `pasar` dentro de un bloque que tiene otras sentencias (v1.49).
+- `eq-nulo` — comparación con `nulo` usando `==`/`!=` (sugiere `es nulo` / `no es nulo`) (v1.49).
+- `unused-import` — módulo importado pero nunca referenciado en el programa (v1.49).
+- `unused-local` — variable local asignada en cuerpo de función pero nunca leída (v1.50).
+- `unused-param` — parámetro de función nunca usado, exceptuando `yo`, nombres con `_` inicial, `*args` y `**kwargs` (v1.50).
+
+El análisis de scope (v1.50) respeta closures: si una función anidada captura una variable del cuerpo enclosing con `nolocal`, la outer se marca como usada. Lo mismo aplica al destructuring (`a, b = par`): cada nombre se analiza por separado.
 
 Exit 0 sin avisos, 1 si los hay — apto para `pre-commit` y CI.
 
