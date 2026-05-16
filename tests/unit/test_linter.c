@@ -43,6 +43,9 @@ typedef struct {
     int n_unused_import;
     int n_unused_local;
     int n_unused_param;
+    int n_shadow;
+    int n_unused_loop_var;
+    int n_mutable_default;
 } Resumen;
 
 static Resumen analizar(const char *fuente) {
@@ -74,6 +77,9 @@ static Resumen analizar(const char *fuente) {
             case LINT_UNUSED_IMPORT:   r.n_unused_import++; break;
             case LINT_UNUSED_LOCAL:    r.n_unused_local++; break;
             case LINT_UNUSED_PARAM:    r.n_unused_param++; break;
+            case LINT_SHADOW:          r.n_shadow++; break;
+            case LINT_UNUSED_LOOP_VAR: r.n_unused_loop_var++; break;
+            case LINT_MUTABLE_DEFAULT: r.n_mutable_default++; break;
         }
     }
     linter_resultado_destruir(&lr);
@@ -319,6 +325,129 @@ int main(void) {
             "    retornar inner\n"
             "fin funcion\n");
         AFIRMAR(r.n_unused_local == 0, "closure_lee_outer");
+    }
+
+    /* ─── SHADOW (v1.55) ─── */
+    {
+        Resumen r = analizar(
+            "funcion outer():\n"
+            "    x = 1\n"
+            "    funcion inner():\n"
+            "        x = 2\n"
+            "        retornar x\n"
+            "    fin funcion\n"
+            "    retornar inner() + x\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_shadow == 1, "shadow_local");
+    }
+    {
+        Resumen r = analizar(
+            "funcion outer(a):\n"
+            "    funcion inner(a):\n"
+            "        retornar a\n"
+            "    fin funcion\n"
+            "    retornar inner(a)\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_shadow == 1, "shadow_param");
+    }
+    {
+        /* nolocal NO genera shadow. */
+        Resumen r = analizar(
+            "funcion outer():\n"
+            "    n = 0\n"
+            "    funcion inner():\n"
+            "        nolocal n\n"
+            "        n = n + 1\n"
+            "    fin funcion\n"
+            "    inner()\n"
+            "    retornar n\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_shadow == 0, "nolocal_no_shadow");
+    }
+    {
+        /* `_` no genera shadow. */
+        Resumen r = analizar(
+            "funcion outer():\n"
+            "    _ = 1\n"
+            "    funcion inner():\n"
+            "        _ = 2\n"
+            "        retornar 3\n"
+            "    fin funcion\n"
+            "    retornar inner()\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_shadow == 0, "underscore_no_shadow");
+    }
+
+    /* ─── UNUSED_LOOP_VAR (v1.55) ─── */
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    para i en rango(10):\n"
+            "        imprimir(\"ping\")\n"
+            "    fin para\n"
+            "    retornar 0\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_loop_var == 1, "loop_var_no_usado");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    para i en rango(10):\n"
+            "        imprimir(i)\n"
+            "    fin para\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_loop_var == 0, "loop_var_usado");
+    }
+    {
+        /* `_` como loop var no warnea. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    para _ en rango(10):\n"
+            "        imprimir(\"x\")\n"
+            "    fin para\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_loop_var == 0, "loop_underscore");
+    }
+    {
+        /* Loop var usada DESPUES del loop (semantica Python) cuenta. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    para i en rango(10):\n"
+            "        pasar\n"
+            "    fin para\n"
+            "    retornar i\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_unused_loop_var == 0, "loop_usada_post_loop");
+    }
+
+    /* ─── MUTABLE_DEFAULT (v1.55) ─── */
+    {
+        Resumen r = analizar(
+            "funcion f(items=[]):\n"
+            "    retornar items\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_mutable_default == 1, "mutable_lista");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f(cache={}):\n"
+            "    retornar cache\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_mutable_default == 1, "mutable_dict");
+    }
+    {
+        /* Defaults inmutables: no warna. */
+        Resumen r = analizar(
+            "funcion f(n=0, s=\"\", b=verdadero):\n"
+            "    retornar n\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_mutable_default == 0, "default_inmutable_ok");
+    }
+    {
+        Resumen r = analizar(
+            "g = lambda items=[]: items\n"
+            "imprimir(g())\n");
+        AFIRMAR(r.n_mutable_default == 1, "lambda_mutable_default");
     }
 
     /* ─── COMBINADO: codigo limpio NO genera avisos ─── */

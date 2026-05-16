@@ -25,9 +25,15 @@
  *   - UNUSED_PARAM     : parametro de funcion nunca leido.
  *     Skip rule: `yo`, nombres que empiezan con `_`, `*args`/`**kwargs`.
  *
- * Lo que NO chequea (queda para v1.51+):
- *   - Variables sombra entre scopes (shadowing).
- *   - Loop var `para X` no usado (idiom: usar `_`).
+ * Anadido en v1.55:
+ *   - SHADOW           : local sombrea nombre de scope exterior (excluyendo
+ *                        nolocal/global, que son intencionales).
+ *   - UNUSED_LOOP_VAR  : `para X en ...:` cuyo cuerpo no usa X.
+ *                        Skip rule: nombres con `_` inicial.
+ *   - MUTABLE_DEFAULT  : `funcion f(x=[])` o `=={}` o `=set()`. Default mutable
+ *                        que se comparte entre llamadas (bug clasico Python).
+ *
+ * Lo que NO chequea:
  *   - Aridades incorrectas (built-ins ya validan en runtime).
  *   - Tipos (Cornamusa es dinamico — el tipado opcional es trabajo lejano).
  */
@@ -39,6 +45,9 @@ typedef enum {
     LINT_UNUSED_IMPORT,
     LINT_UNUSED_LOCAL,    /* v1.50: variable local de funcion no usada */
     LINT_UNUSED_PARAM,    /* v1.50: parametro de funcion no usado */
+    LINT_SHADOW,          /* v1.55: local sombrea variable de scope exterior */
+    LINT_UNUSED_LOOP_VAR, /* v1.55: `para X en ...:` con X no usado en body */
+    LINT_MUTABLE_DEFAULT, /* v1.55: default mutable (lista/dict/conjunto literal) */
 } TipoWarning;
 
 typedef struct {

@@ -109,6 +109,9 @@ Categorías chequeadas:
 - `unused-import` — módulo importado pero nunca referenciado en el programa (v1.49).
 - `unused-local` — variable local asignada en cuerpo de función pero nunca leída (v1.50).
 - `unused-param` — parámetro de función nunca usado, exceptuando `yo`, nombres con `_` inicial, `*args` y `**kwargs` (v1.50).
+- `shadow` — local que sombrea una variable del scope exterior (v1.55). `nolocal`/`global` no warnean (son intencionales). `_` se omite.
+- `unused-loop-var` — `para X en ...:` donde X no se referencia en el cuerpo ni después (v1.55). Convención: usar `_` para descartes.
+- `mutable-default` — defaults `=[]`, `={}`, `={1,2}` (v1.55). Estos literales se evalúan una sola vez al definir la función y se comparten entre llamadas — bug clásico Python.
 
 El análisis de scope (v1.50) respeta closures: si una función anidada captura una variable del cuerpo enclosing con `nolocal`, la outer se marca como usada. Lo mismo aplica al destructuring (`a, b = par`): cada nombre se analiza por separado.
 

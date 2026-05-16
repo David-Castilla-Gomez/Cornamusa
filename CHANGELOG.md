@@ -6,6 +6,139 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.55.0] — 2026-05-16 — Linter: shadow + loop-var + mutable-default
+
+Novena release de la **Fase 5 — Tooling**. Tres checks nuevos en el
+linter, todos clásicos en suites como pyflakes/pylint y de alta
+utilidad práctica.
+
+### Lo nuevo
+
+#### 1. `shadow`
+
+Detecta cuando un local en una función anidada introduce un nombre
+que **ya existe en algún scope exterior**. Útil para evitar bugs
+sutiles donde el lector cree que un nombre se refiere al outer.
+
+```cornamusa
+funcion outer():
+    x = 1
+    funcion inner():
+        x = 2          # ← shadow: 'x' sombrea variable del scope exterior
+        retornar x
+    fin funcion
+    retornar inner() + x
+fin funcion
+```
+
+**Skip rules**:
+- `nolocal X` / `global X` **no** generan shadow (son intencionales).
+- Nombre `_` (descarte) **no** genera shadow.
+- Nombre `yo` (self implícito) **no** genera shadow.
+
+Se chequea tanto en asignaciones como en parámetros de función
+declarados en scopes anidados.
+
+#### 2. `unused-loop-var`
+
+Detecta `para X en ...:` donde X no se referencia ni en el cuerpo
+del bucle ni después de él. Idiom: usar `_` para descartes.
+
+```cornamusa
+para i en rango(10):       # ← unused-loop-var: 'i' no se usa
+    imprimir("ping")
+fin para
+```
+
+vs.
+
+```cornamusa
+para _ en rango(10):       # ← OK, _ es convención de descarte
+    imprimir("ping")
+fin para
+```
+
+**Tracking**: la variable de bucle se registra en el scope de la
+función con tipo `DECL_LOOP_VAR`. Si se referencia desde dentro del
+cuerpo o desde código posterior (Cornamusa preserva la variable tras
+el bucle, igual que Python), se marca como usada.
+
+#### 3. `mutable-default`
+
+Detecta parámetros con **default mutable**: `=[]`, `={}`, `={1, 2}`.
+Estos literales se evalúan una sola vez al definir la función y se
+comparten entre llamadas — bug clásico de Python:
+
+```cornamusa
+funcion agregar(item, log=[]):       # ← mutable-default
+    log.anadir(item)
+    retornar log
+fin funcion
+
+agregar("a")      # → ["a"]
+agregar("b")      # → ["a", "b"]   sorpresa!
+```
+
+Detecta literales `EXPR_LISTA`, `EXPR_DICCIONARIO`, `EXPR_CONJUNTO`.
+**No** intenta detectar fábricas como `lista()` o `dict()`, que
+también producen objetos mutables — esos requieren resolución de
+referencia y quedan para v1.56+.
+
+Aplica a `funcion` y `lambda`.
+
+### Total de categorías
+
+El linter ahora cubre **9 checks**:
+
+| Categoría | Desde | Qué detecta |
+|---|---|---|
+| `unreachable` | v1.49 | Código tras `retornar`/`romper`/`continuar`/`lanzar` |
+| `redundant-pasar` | v1.49 | `pasar` en bloque con otras sentencias |
+| `eq-nulo` | v1.49 | `== nulo` / `!= nulo` → sugiere `es nulo` |
+| `unused-import` | v1.49 | Módulo importado pero no usado |
+| `unused-local` | v1.50 | Variable local nunca leída |
+| `unused-param` | v1.50 | Parámetro nunca usado (skip `yo`, `_`, varargs) |
+| `shadow` | **v1.55** | Local sombrea variable del scope exterior |
+| `unused-loop-var` | **v1.55** | `para X` con X no usado |
+| `mutable-default` | **v1.55** | Default `=[]`/`={}` literal |
+
+### Implementación
+
+- `src/linter.{c,h}`: añadidas constantes `LINT_SHADOW`,
+  `LINT_UNUSED_LOOP_VAR`, `LINT_MUTABLE_DEFAULT` y `DECL_LOOP_VAR`.
+- Nueva función `verificar_shadow` que walk hacia padres buscando
+  matches no-`es_extern`.
+- Nueva función `verificar_mutable_default` que clasifica defaults
+  por tipo de Expr literal.
+- Nueva función `declarar_objetivo_para` para target de `SENT_PARA`.
+- `scope_declarar` ahora devuelve `bool` (true si fue inserción
+  nueva) — gatilla shadow check solo en nuevos locales.
+- `emitir_warnings_scope` distingue `DECL_LOOP_VAR` para emitir
+  `unused-loop-var` con mensaje específico.
+
+### Verificación
+
+- **208/208 tests verde**. `test_linter` extendido a **48 asserts**
+  (vs 36 antes) cubriendo:
+  - Shadow: local, param, nolocal-no-warn, underscore-no-warn.
+  - Loop-var: no usado, usado en body, `_` skip, usado tras loop.
+  - Mutable: lista, dict, defaults inmutables OK, lambda con
+    mutable default.
+
+### Hallazgos en el repo
+
+Tras el merge, el barrido de los 63 ejemplos + 12 módulos stdlib
+encuentra exactamente:
+
+- `examples/42_defaults.cor:35` → `mutable-default` (legítimo: el
+  ejemplo **demuestra intencionadamente** el footgun, con comentario
+  "CUIDADO: el mismo objeto se reutiliza").
+- `stdlib/cadenas.cor:19` → `unused-loop-var` (legítimo: `para i en
+  rango(n)` donde `i` no se usa, podría ser `_`).
+
+**0 falsos positivos**. Ambos hallazgos son valiosos para limpieza
+opcional en una release minor.
+
 ## [1.54.0] — 2026-05-16 — LSP: goto-definition + formatting
 
 Octava release de la **Fase 5 — Tooling**. El LSP gana dos capacidades

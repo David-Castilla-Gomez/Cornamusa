@@ -44,6 +44,7 @@ typedef struct {
 typedef enum {
     DECL_VAR,
     DECL_PARAM,
+    DECL_LOOP_VAR,    /* v1.55: target de `para X en ...:` */
 } TipoDecl;
 
 typedef struct {
@@ -139,18 +140,21 @@ static int scope_buscar(ScopeFunc *s, const char *texto, int longitud) {
     return -1;
 }
 
-static void scope_declarar(ScopeFunc *s, const char *texto, int longitud,
+/* Devuelve true si se agrego una nueva entrada; false si ya existia.
+ * El llamador usa el retorno para gatillar shadow check solo en nuevos
+ * locales. */
+static bool scope_declarar(ScopeFunc *s, const char *texto, int longitud,
                             TipoDecl tipo, int linea, int columna,
                             bool es_extern) {
-    if (!s) return;
+    if (!s) return false;
     int existe = scope_buscar(s, texto, longitud);
     if (existe >= 0) {
         /* Si ya estaba como variable y ahora viene nolocal/global,
          * actualizar la marca para no warnear. */
         if (es_extern) s->decls[existe].es_extern = true;
-        return;
+        return false;
     }
-    if (s->n >= MAX_DECLS_FUNCION) return;
+    if (s->n >= MAX_DECLS_FUNCION) return false;
     DeclLocal *d = &s->decls[s->n++];
     d->texto = texto;
     d->longitud = longitud;
@@ -159,6 +163,29 @@ static void scope_declarar(ScopeFunc *s, const char *texto, int longitud,
     d->columna = columna;
     d->usado = false;
     d->es_extern = es_extern;
+    return true;
+}
+
+/* v1.55: chequea si el nombre ya esta declarado (como NO es_extern) en
+ * algun scope ancestro. Si si, emite warning de shadow. */
+static void verificar_shadow(Ctx *ctx, ScopeFunc *desde_padre,
+                              const char *texto, int longitud,
+                              int linea, int columna) {
+    if (!desde_padre) return;
+    /* Saltarse nombres convencionales (`_`, `yo`). */
+    if (longitud == 0) return;
+    if (texto[0] == '_') return;
+    if (longitud == 2 && memcmp(texto, "yo", 2) == 0) return;
+
+    for (ScopeFunc *s = desde_padre; s; s = s->padre) {
+        int idx = scope_buscar(s, texto, longitud);
+        if (idx >= 0 && !s->decls[idx].es_extern) {
+            emitir(ctx, LINT_SHADOW, linea, columna,
+                    "'%.*s' sombrea variable del scope exterior",
+                    longitud, texto);
+            return;
+        }
+    }
 }
 
 static void marcar_uso_scopes(Ctx *ctx, const char *texto, int longitud) {
@@ -177,14 +204,22 @@ static void marcar_uso_scopes(Ctx *ctx, const char *texto, int longitud) {
 /* Recorre la expresion destino de un SENT_ASIGNAR registrando como
  * locales todos los identificadores simples (incluye destructuring
  * `a, b = par` y nested `(a, (b, c)) = ...`). Atributos e indices no
- * son nuevos locales. */
+ * son nuevos locales. v1.55: si es nuevo declarador y sombrea outer,
+ * emite warning. */
 static void declarar_destino_asignacion(Ctx *ctx, Expr *destino) {
     if (!ctx->scope_actual || !destino) return;
     if (destino->tipo == EXPR_IDENT) {
-        scope_declarar(ctx->scope_actual,
-                       destino->como.ident.nombre,
-                       destino->como.ident.longitud,
-                       DECL_VAR, destino->linea, destino->columna, false);
+        bool nuevo = scope_declarar(ctx->scope_actual,
+                                      destino->como.ident.nombre,
+                                      destino->como.ident.longitud,
+                                      DECL_VAR, destino->linea, destino->columna,
+                                      false);
+        if (nuevo) {
+            verificar_shadow(ctx, ctx->scope_actual->padre,
+                              destino->como.ident.nombre,
+                              destino->como.ident.longitud,
+                              destino->linea, destino->columna);
+        }
     } else if (destino->tipo == EXPR_TUPLA || destino->tipo == EXPR_LISTA) {
         for (int i = 0; i < destino->como.secuencia.n_elementos; i++) {
             declarar_destino_asignacion(ctx, destino->como.secuencia.elementos[i]);
@@ -199,6 +234,45 @@ static bool nombre_se_omite(const char *texto, int longitud) {
     if (texto[0] == '_') return true;
     if (longitud == 2 && memcmp(texto, "yo", 2) == 0) return true;
     return false;
+}
+
+/* v1.55: registra el objetivo de un `para X en ...:` como DECL_LOOP_VAR.
+ * Soporta destructuring `para a, b en items`. */
+static void declarar_objetivo_para(Ctx *ctx, Expr *destino) {
+    if (!ctx->scope_actual || !destino) return;
+    if (destino->tipo == EXPR_IDENT) {
+        bool nv = scope_declarar(ctx->scope_actual,
+                                   destino->como.ident.nombre,
+                                   destino->como.ident.longitud,
+                                   DECL_LOOP_VAR,
+                                   destino->linea, destino->columna, false);
+        if (nv) {
+            verificar_shadow(ctx, ctx->scope_actual->padre,
+                              destino->como.ident.nombre,
+                              destino->como.ident.longitud,
+                              destino->linea, destino->columna);
+        }
+    } else if (destino->tipo == EXPR_TUPLA || destino->tipo == EXPR_LISTA) {
+        for (int i = 0; i < destino->como.secuencia.n_elementos; i++) {
+            declarar_objetivo_para(ctx, destino->como.secuencia.elementos[i]);
+        }
+    }
+}
+
+/* v1.55: chequea si un valor default es un literal mutable (lista,
+ * dict, conjunto). Estos se evaluan una sola vez al definir la
+ * funcion y se comparten entre llamadas — bug clasico. */
+static void verificar_mutable_default(Ctx *ctx, Parametro *p) {
+    Expr *d = p->valor_defecto;
+    if (!d) return;
+    const char *tipo_str = NULL;
+    if (d->tipo == EXPR_LISTA)       tipo_str = "lista";
+    else if (d->tipo == EXPR_DICCIONARIO) tipo_str = "diccionario";
+    else if (d->tipo == EXPR_CONJUNTO)    tipo_str = "conjunto";
+    if (!tipo_str) return;
+    emitir(ctx, LINT_MUTABLE_DEFAULT, p->linea, p->columna,
+            "parametro '%.*s' tiene default mutable (%s literal); se comparte entre llamadas",
+            p->longitud_nombre, p->nombre, tipo_str);
 }
 
 static void emitir_warnings_scope(Ctx *ctx, ScopeFunc *s);
@@ -218,8 +292,14 @@ static void empujar_scope_funcion(Ctx *ctx, ScopeFunc *nuevo,
         Parametro *p = &params[i];
         /* *args / **kwargs no se warnean por convencion. */
         if (p->es_estrella || p->es_doble_estrella) continue;
-        scope_declarar(nuevo, p->nombre, p->longitud_nombre,
-                       DECL_PARAM, p->linea, p->columna, false);
+        bool nv = scope_declarar(nuevo, p->nombre, p->longitud_nombre,
+                                   DECL_PARAM, p->linea, p->columna, false);
+        /* v1.55: shadow check para parametros vs scope exterior. */
+        if (nv) {
+            verificar_shadow(ctx, nuevo->padre,
+                              p->nombre, p->longitud_nombre,
+                              p->linea, p->columna);
+        }
     }
 }
 
@@ -234,8 +314,15 @@ static void emitir_warnings_scope(Ctx *ctx, ScopeFunc *s) {
         if (d->usado || d->es_extern) continue;
         if (nombre_se_omite(d->texto, d->longitud)) continue;
 
-        TipoWarning t = (d->tipo == DECL_PARAM) ? LINT_UNUSED_PARAM : LINT_UNUSED_LOCAL;
-        const char *categoria = (d->tipo == DECL_PARAM) ? "parametro" : "variable local";
+        TipoWarning t;
+        const char *categoria;
+        if (d->tipo == DECL_PARAM) {
+            t = LINT_UNUSED_PARAM; categoria = "parametro";
+        } else if (d->tipo == DECL_LOOP_VAR) {
+            t = LINT_UNUSED_LOOP_VAR; categoria = "variable de bucle";
+        } else {
+            t = LINT_UNUSED_LOCAL; categoria = "variable local";
+        }
         emitir(ctx, t, d->linea, d->columna,
                 "%s '%.*s' no se usa", categoria, d->longitud, d->texto);
     }
@@ -343,9 +430,12 @@ static void visitar_expr(Expr *e, Ctx *ctx) {
             break;
 
         case EXPR_LAMBDA: {
-            /* Defaults se evaluan en el scope exterior (no en el lambda). */
+            /* Defaults se evaluan en el scope exterior (no en el lambda).
+             * v1.55: chequear defaults mutables. */
             for (int i = 0; i < e->como.lambda.n_parametros; i++) {
-                visitar_expr_quizas(e->como.lambda.parametros[i].valor_defecto, ctx);
+                Parametro *p = &e->como.lambda.parametros[i];
+                verificar_mutable_default(ctx, p);
+                visitar_expr_quizas(p->valor_defecto, ctx);
             }
             ScopeFunc nuevo;
             empujar_scope_funcion(ctx, &nuevo,
@@ -534,8 +624,10 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             break;
 
         case SENT_PARA:
-            /* `objetivo` es destino (no lectura). */
+            /* `objetivo` es destino — registramos como DECL_LOOP_VAR para
+             * detectar unused-loop-var. */
             visitar_expr_quizas(s->como.para.iterable, ctx);
+            declarar_objetivo_para(ctx, s->como.para.objetivo);
             visitar_bloque(s->como.para.cuerpo, ctx);
             visitar_bloque(s->como.para.sino, ctx);
             break;
@@ -545,9 +637,12 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             break;
 
         case SENT_FUNCION: {
-            /* Defaults se evaluan en el scope exterior. */
+            /* Defaults se evaluan en el scope exterior. v1.55: chequear
+             * defaults mutables. */
             for (int i = 0; i < s->como.funcion.n_parametros; i++) {
-                visitar_expr_quizas(s->como.funcion.parametros[i].valor_defecto, ctx);
+                Parametro *p = &s->como.funcion.parametros[i];
+                verificar_mutable_default(ctx, p);
+                visitar_expr_quizas(p->valor_defecto, ctx);
             }
             ScopeFunc nuevo;
             empujar_scope_funcion(ctx, &nuevo,
@@ -709,6 +804,9 @@ const char *linter_tipo_nombre(TipoWarning t) {
         case LINT_UNUSED_IMPORT:   return "unused-import";
         case LINT_UNUSED_LOCAL:    return "unused-local";
         case LINT_UNUSED_PARAM:    return "unused-param";
+        case LINT_SHADOW:          return "shadow";
+        case LINT_UNUSED_LOOP_VAR: return "unused-loop-var";
+        case LINT_MUTABLE_DEFAULT: return "mutable-default";
         default:                   return "warning";
     }
 }

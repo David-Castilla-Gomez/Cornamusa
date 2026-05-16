@@ -74,6 +74,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | LSP server `cornamusa lsp` (JSON-RPC por stdio, diagnostics en tiempo real al editor) | v1.52 | ✅ |
 | LSP polish: parse errors detallados + `textDocument/hover` para funciones y clases | v1.53 | ✅ |
 | LSP: `textDocument/definition` (goto-def) + `textDocument/formatting` (delega al formateador) | v1.54 | ✅ |
+| Linter: `shadow`, `unused-loop-var`, `mutable-default` (9 categorias en total) | v1.55 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 
