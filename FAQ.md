@@ -14,7 +14,7 @@ No es una traducción literal de Python: las palabras clave se eligieron para qu
 
 ### ¿Es un toy language o se puede usar en serio?
 
-Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de doce módulos (`archivos`, `json`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
+Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de trece módulos (`archivos`, `json`, `csv`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
 
 Lo que todavía le falta para producción seria:
 
@@ -244,6 +244,37 @@ Validaciones del compilador:
 - `global X` cuando X ya es `nolocal` → `ErrorDeSintaxis` (solo uno o el otro).
 
 Antes de v1.57 había que usar un contenedor mutable a nivel módulo (`estado = {"contador": 0}; estado["contador"] += 1`) — sigue funcionando, pero `global` es más limpio para estado primitivo.
+
+### ¿Cómo trabajo con archivos CSV?
+
+Desde **v1.58**, el módulo `csv` cubre lectura/escritura RFC 4180-like:
+
+```cornamusa
+importar csv
+
+# Parsear texto a lista de filas:
+filas = csv.parsear("a,b,c\n1,2,3")
+# → [["a", "b", "c"], ["1", "2", "3"]]
+
+# Separador alternativo:
+filas = csv.parsear("a;b;c", ";")
+
+# Lectura/escritura de archivos:
+filas = csv.leer("entrada.csv")
+csv.escribir("salida.csv", [["nombre", "edad"], ["Ana", 30]])
+
+# Round-trip con escape automatico:
+datos = [["queso, manchego", "lo dice \"el experto\""]]
+csv.parsear(csv.serializar(datos))   # devuelve `datos` igual
+```
+
+Soporta:
+- Campos quoted con comas/comillas/saltos de línea internos.
+- Escape de `"` dentro de quoted como `""`.
+- Separadores configurables (`,`, `;`, `\t`, ...).
+- Tanto `\n` como `\r\n` como separador de líneas en parse; escribe siempre con `\n`.
+
+**No** infiere tipos: todos los campos vienen como cadena. Conviértelos tú (`entero(campo)`, `decimal(campo)`).
 
 ### ¿Funciona `borrar d[k]` y `obj.x += 1`?
 

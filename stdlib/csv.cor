@@ -1,0 +1,194 @@
+# Cornamusa stdlib: csv.cor
+#
+# Lectura y escritura de archivos CSV (RFC 4180-like). El parser
+# maneja campos entre comillas, comillas dobles escapadas (`""` ->
+# `"`) y saltos de linea dentro de campos quoted.
+#
+# Uso:
+#   importar csv
+#
+#   # Parsear texto a lista de filas:
+#   filas = csv.parsear("a,b,c\n1,2,3")
+#   # → [["a","b","c"], ["1","2","3"]]
+#
+#   # Parsear con separador alternativo:
+#   filas = csv.parsear("a;b;c\n1;2;3", ";")
+#
+#   # Serializar y leer archivo:
+#   csv.escribir("salida.csv", [["nombre","edad"], ["Ana","30"]])
+#   filas = csv.leer("entrada.csv")
+#
+# Filosofia: parser tolerante con campos sin quotes, estricto con
+# campos quoted (cualquier `"` dentro debe ir escapado como `""`).
+# Soporta tanto `\n` como `\r\n` como separadores de linea — al
+# escribir siempre se usa `\n`.
+#
+# Limitaciones de v1.58:
+#   - Separador debe ser un solo caracter (`,`, `;`, `\t`, ...).
+#   - No infiere tipos: todos los campos vienen como cadena. El
+#     usuario hace la conversion (`entero(campo)`, `decimal(campo)`).
+#   - Sin headers automaticos: la primera fila es una fila mas.
+#     Conviertela tu mismo si quieres dict-style access.
+
+importar archivos
+importar cadenas
+
+# ─── PARSER ─────────────────────────────────────────────────────
+
+# Parsea `texto` a una lista de filas (cada fila es una lista de
+# cadenas). Si `texto` esta vacio devuelve `[]`.
+funcion parsear(texto, sep=","):
+    filas = []
+    campo_actual = ""
+    fila_actual = []
+    # Estados: 0 = campo normal, 1 = dentro de cadena quoted,
+    #          2 = tras quote cerrado (esperando sep/newline o `""`).
+    estado = 0
+
+    n = longitud(texto)
+    i = 0
+    mientras i < n:
+        c = texto[i]
+        si estado == 0:
+            si c == sep:
+                agregar(fila_actual, campo_actual)
+                campo_actual = ""
+            sino si c == "\n":
+                agregar(fila_actual, campo_actual)
+                campo_actual = ""
+                agregar(filas, fila_actual)
+                fila_actual = []
+            sino si c == "\r":
+                pasar
+            sino si c == "\"" y campo_actual == "":
+                estado = 1
+            sino:
+                campo_actual = campo_actual + c
+            fin si
+        sino si estado == 1:
+            si c == "\"":
+                estado = 2
+            sino:
+                campo_actual = campo_actual + c
+            fin si
+        sino:
+            # estado == 2: tras quote cerrado
+            si c == "\"":
+                # `""` dentro de campo quoted → quote literal
+                campo_actual = campo_actual + "\""
+                estado = 1
+            sino si c == sep:
+                agregar(fila_actual, campo_actual)
+                campo_actual = ""
+                estado = 0
+            sino si c == "\n":
+                agregar(fila_actual, campo_actual)
+                campo_actual = ""
+                agregar(filas, fila_actual)
+                fila_actual = []
+                estado = 0
+            sino si c == "\r":
+                pasar
+            sino:
+                # Caracter extra tras quote cerrado — parser tolerante:
+                # lo concatenamos y volvemos a estado normal.
+                campo_actual = campo_actual + c
+                estado = 0
+            fin si
+        fin si
+        i = i + 1
+    fin mientras
+
+    # Flush del ultimo campo/fila si no quedo vacio.
+    si campo_actual != "" o longitud(fila_actual) > 0:
+        agregar(fila_actual, campo_actual)
+        agregar(filas, fila_actual)
+    fin si
+
+    retornar filas
+fin funcion
+
+# Atajo: parsea una sola linea CSV. Util cuando lees linea a linea.
+# Si la linea contiene saltos de linea dentro de campos quoted,
+# usa `parsear()` sobre el texto completo en su lugar.
+funcion parsear_linea(linea, sep=","):
+    filas = parsear(linea, sep)
+    si longitud(filas) == 0:
+        retornar []
+    fin si
+    retornar filas[0]
+fin funcion
+
+# ─── WRITER ─────────────────────────────────────────────────────
+
+# True si el campo necesita ser envuelto en comillas al serializar:
+# contiene el separador, comillas, o un salto de linea.
+funcion _necesita_quote(s, sep):
+    si cadenas.indice_de(s, "\"") >= 0:
+        retornar verdadero
+    fin si
+    si cadenas.indice_de(s, "\n") >= 0:
+        retornar verdadero
+    fin si
+    si cadenas.indice_de(s, "\r") >= 0:
+        retornar verdadero
+    fin si
+    si cadenas.indice_de(s, sep) >= 0:
+        retornar verdadero
+    fin si
+    retornar falso
+fin funcion
+
+# Envuelve `s` en comillas dobles, escapando cada `"` interno como `""`.
+funcion _escapar(s):
+    partes = ["\""]
+    para c en s:
+        si c == "\"":
+            agregar(partes, "\"\"")
+        sino:
+            agregar(partes, c)
+        fin si
+    fin para
+    agregar(partes, "\"")
+    retornar cadenas.unir(partes, "")
+fin funcion
+
+# Serializa una fila (lista de campos) a una linea CSV. Los campos
+# no-cadena se convierten via `cadena()`.
+funcion serializar_linea(campos, sep=","):
+    partes = []
+    para campo en campos:
+        s = cadena(campo)
+        si _necesita_quote(s, sep):
+            agregar(partes, _escapar(s))
+        sino:
+            agregar(partes, s)
+        fin si
+    fin para
+    retornar cadenas.unir(partes, sep)
+fin funcion
+
+# Serializa una lista de filas a una sola cadena CSV. Filas separadas
+# por `\n`. NO se anade `\n` final. Si quieres newline al final del
+# archivo, anadelo tu (`serializar(filas) + "\n"`).
+funcion serializar(filas, sep=","):
+    lineas = []
+    para fila en filas:
+        agregar(lineas, serializar_linea(fila, sep))
+    fin para
+    retornar cadenas.unir(lineas, "\n")
+fin funcion
+
+# ─── HELPERS DE ARCHIVO ─────────────────────────────────────────
+
+# Lee un archivo CSV y devuelve la lista de filas parseadas.
+funcion leer(ruta, sep=","):
+    retornar parsear(archivos.leer(ruta), sep)
+fin funcion
+
+# Escribe la lista de filas como CSV al archivo dado. Sobrescribe
+# si existe. Anade un `\n` final por convenicia (la mayoria de
+# herramientas Unix esperan archivos terminados en newline).
+funcion escribir(ruta, filas, sep=","):
+    archivos.escribir(ruta, serializar(filas, sep) + "\n")
+fin funcion

@@ -46,7 +46,7 @@ ESPEC.md tiene la gramática EBNF, semántica formal y tipos. Las ADRs (`B1` a `
 
 ## Estado del proyecto
 
-Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cercana a Python 3.10+: OOP con herencia y dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers. GC mark-sweep, excepciones con traceback multi-frame, doce módulos de stdlib. Toda la documentación está validada contra el intérprete real.
+Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cercana a Python 3.10+: OOP con herencia y dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers. GC mark-sweep, excepciones con traceback multi-frame, trece módulos de stdlib. Toda la documentación está validada contra el intérprete real.
 
 | Hito | Versión | Estado |
 |---|---|---|
@@ -77,6 +77,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Linter: `shadow`, `unused-loop-var`, `mutable-default` (9 categorias en total) | v1.55 | ✅ |
 | `borrar d[k]` / `borrar obj.attr` + aug-assign sobre atributos (`obj.x += 1`) | v1.56 | ✅ |
 | `global X` implementado en bytecode VM (asignaciones a scope de módulo desde función) | v1.57 | ✅ |
+| Stdlib `csv` (parser/writer RFC 4180-like, helpers de archivo) | v1.58 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

@@ -191,6 +191,18 @@ set_tests_properties(bc_run_13_factorial_jugable PROPERTIES
     PASS_REGULAR_EXPRESSION "100! = 9332621544394415268169923885626670049071596826438162146859296389521759999322991560894146397615651828625369792082722375825118521091686400000000000000000000000"
 )
 
+# v1.58: ejemplo del modulo csv. Round-trip y separadores alternativos.
+add_test(
+    NAME bc_run_66_csv
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/66_csv.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_66_csv PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "queso, manchego"
+)
+
 # v0.6.1: tests bytecode adicionales que ahora pasan gracias a iteradores
 # y aug-assign con destino indice.
 add_test(

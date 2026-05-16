@@ -1,0 +1,54 @@
+# Modulo `csv` (v1.58): parsear y serializar CSV (RFC 4180-like).
+#
+# Demuestra:
+#   - Parseo basico y con campos quoted.
+#   - Escape de comillas internas con `""`.
+#   - Separadores alternativos (`;`, tab).
+#   - Round-trip: serializar luego parsear devuelve los datos.
+#   - Lectura/escritura de archivos.
+
+importar csv
+
+# ─── 1. Parser basico ────────────────────────────────────────────
+texto = "nombre,edad,ciudad\nAna,30,Madrid\nLuis,25,Sevilla"
+filas = csv.parsear(texto)
+imprimir("Filas parseadas:", longitud(filas))
+para fila en filas:
+    imprimir(" ", fila)
+fin para
+
+# ─── 2. Campos con comas o comillas ──────────────────────────────
+truculento = "\"hola, mundo\",valor,\"dice \"\"hi\"\"\""
+imprimir("\nTruculento:", csv.parsear(truculento))
+
+# ─── 3. Saltos de linea dentro de campos quoted ──────────────────
+con_newline = "a,\"linea1\nlinea2\",c"
+imprimir("\nCon \\n interno:", csv.parsear(con_newline))
+
+# ─── 4. Separador alternativo ────────────────────────────────────
+imprimir("\nSeparador `;`:", csv.parsear("a;b;c", ";"))
+
+# ─── 5. Round-trip: serializar luego parsear ─────────────────────
+datos = [
+    ["producto", "precio", "notas"],
+    ["pan", "1.20", "fresco"],
+    ["queso, manchego", "8.50", "lo dice \"el experto\""],
+    ["aceite", "5.00", ""],
+]
+serializado = csv.serializar(datos)
+imprimir("\nCSV serializado:")
+imprimir(serializado)
+
+reparseado = csv.parsear(serializado)
+imprimir("\nReparseado:")
+para f en reparseado:
+    imprimir(" ", f)
+fin para
+
+# ─── 6. Lectura/escritura de archivos ───────────────────────────
+csv.escribir("/tmp/test_csv_demo.csv", datos)
+recuperado = csv.leer("/tmp/test_csv_demo.csv")
+imprimir("\nDesde archivo:")
+para f en recuperado:
+    imprimir(" ", f)
+fin para

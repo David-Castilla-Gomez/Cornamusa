@@ -6,6 +6,102 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.58.0] — 2026-05-16 — Stdlib `csv` (parser/writer RFC 4180-like)
+
+Tras cerrar el lenguaje core en v1.57, vuelta a ampliar la stdlib.
+Nuevo módulo `csv` — el formato más universal para intercambio de
+datos tabulares, lectura de exports de Excel/Google Sheets, logs
+estructurados, y prácticamente cualquier tarea de scripting con
+datos.
+
+**Stdlib pasa de 12 a 13 módulos.**
+
+### API
+
+```cornamusa
+importar csv
+
+# Parser
+filas = csv.parsear(texto)                   # [["a","b"], ["1","2"]]
+filas = csv.parsear(texto, sep=";")           # separador configurable
+fila  = csv.parsear_linea(linea)              # una sola fila
+
+# Writer
+texto = csv.serializar(filas)
+linea = csv.serializar_linea(campos)
+
+# Helpers de archivo
+filas = csv.leer("datos.csv")
+csv.escribir("salida.csv", filas)
+```
+
+### Cobertura del estándar
+
+Sigue RFC 4180 con tolerancia razonable:
+
+- **Campos sin quotes**: leídos literal hasta el separador o newline.
+- **Campos quoted (`"..."`)**: pueden contener separadores, newlines
+  y comillas escapadas (`""` → `"`).
+- **Separador configurable**: `,` por defecto, soporta cualquier
+  single-char (`;`, `\t`, `|`, etc.).
+- **Line endings**: parser acepta tanto `\n` como `\r\n`; writer
+  siempre emite `\n`.
+- **Escape automático al serializar**: si un campo contiene el
+  separador, `"`, `\n`, o `\r`, se wrappea en quotes y los `"` se
+  duplican.
+
+### Limitaciones reconocidas
+
+- **Sin inferencia de tipos**: todos los campos vienen como cadena.
+  Conversión manual (`entero(...)`, `decimal(...)`).
+- **Sin headers automáticos**: la primera fila se trata como cualquier
+  otra. Si quieres dict-style access, conviértelo tú:
+  `cabeceras = filas[0]; resto = filas[1:]`.
+- **Separador debe ser single-char** (consistente con `csv.reader` de
+  Python — multi-char es muy raro en CSVs reales).
+- **Performance**: pure-Cornamusa, no bindings nativos. Para CSVs
+  grandes (decenas de MB) puede ser lento. Los tests sobre archivos
+  típicos (cientos de KB) son rápidos.
+
+### Implementación
+
+Nuevo `stdlib/csv.cor` (~140 líneas Cornamusa). Parser state-machine
+con tres estados (campo normal, dentro de quoted, tras quote cerrado).
+Writer con `_necesita_quote` + `_escapar` helpers.
+
+### Verificación
+
+- **214/214 tests verde**. Nuevo `bc_run_66_csv` ejecuta el ejemplo
+  con `PASS_REGULAR_EXPRESSION` verificando que el round-trip
+  reproduce campos con comas internas.
+- Nuevo `examples/66_csv.cor` cubre los 6 casos de uso principales:
+  parsing básico, quoted con comas, escapes de comillas, separador
+  alternativo, round-trip semánticamente idéntico, ida/vuelta a
+  archivo.
+- `cornamusa lint stdlib/csv.cor` → 0 warnings.
+- `cornamusa fmt --check stdlib/csv.cor` → ya en formato canónico.
+
+### Test interactivo de round-trip
+
+```cornamusa
+importar csv
+
+datos = [
+    ["producto", "precio", "notas"],
+    ["queso, manchego", "8.50", "lo dice \"el experto\""],
+    ["aceite", "5.00", ""],
+]
+
+texto = csv.serializar(datos)
+imprimir(texto)
+# producto,precio,notas
+# "queso, manchego",8.50,"lo dice ""el experto"""
+# aceite,5.00,
+
+reparseado = csv.parsear(texto)
+# reparseado es semánticamente == datos
+```
+
 ## [1.57.0] — 2026-05-16 — `global X` implementado en bytecode VM
 
 Cierra el último gap real del lenguaje core. Con esto, **el cuarteto

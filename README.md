@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.57.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.58.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.57.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de doce módulos útil para scripting real. **`global X` implementado**: dentro de una función, declara que asignaciones a X van al scope del módulo en lugar de crear local. Cierra el último gap real del lenguaje (keyword reservada desde v0.5, parseada desde v1.4, pero rechazada por el compilador hasta hoy). Junto con `nolocal` (v1.4), `borrar` y aug-assign sobre atributos (v1.56), el lenguaje core no tiene piezas pendientes conocidas. 211 tests en verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.58.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una **stdlib de trece módulos** (sumando `csv` en esta release). Nuevo módulo `csv` (RFC 4180-like): parser tolerante con campos quoted, escape de comillas dobles, separadores configurables, newlines dentro de campos quoted. Round-trip verificado, helpers de archivo (`csv.leer` / `csv.escribir`). v1.57 cerró el último gap del lenguaje core (`global`). 214 tests en verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -162,6 +162,7 @@ Hoja de ruta resumida:
 | **v1.55** | **Linter: 3 checks nuevos — `shadow` (variables que sombrean outer), `unused-loop-var`, `mutable-default` (defaults `=[]`/`={}`)** | ✅ |
 | **v1.56** | **Lenguaje core: `borrar d[k]` / `borrar obj.attr` (keyword desde v0.5, ahora implementado) + aug-assign sobre atributos (`obj.x += 1`)** | ✅ |
 | **v1.57** | **`global X` implementado en bytecode VM (keyword desde v0.5, parseada desde v1.4, ejecutable desde hoy)** | ✅ |
+| **v1.58** | **Stdlib `csv` — parser/writer RFC 4180-like (quoted, escapes, separadores configurables, round-trip)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
