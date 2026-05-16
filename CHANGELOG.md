@@ -6,6 +6,118 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.53.0] — 2026-05-16 — LSP polish: parse errors estructurados + hover
+
+Séptima release de la **Fase 5 — Tooling**. Pulido del LSP MVP de
+v1.52 con dos mejoras visibles para el usuario.
+
+### Lo nuevo
+
+#### 1. Parse errors estructurados
+
+El parser ahora puede acumular sus errores como **datos estructurados**
+en lugar de imprimirlos directamente a stderr. El LSP lo aprovecha
+para emitir diagnostics con línea, columna y mensaje **reales** del
+parser (antes era un placeholder genérico "Error de sintaxis").
+
+**Refactor del parser**: añadidos campos `capturar_errores` (bool)
+y `errores_capturados` (`ErroresParser *`) a la struct `Parser`. Si
+el cliente los configura, `error_en` añade a la lista en vez de
+imprimir. Comportamiento por defecto NO cambia — todos los binarios
+existentes (`cornamusa`, `cornamusa --check`, etc.) siguen imprimiendo
+a stderr exactamente igual.
+
+```c
+ErroresParser e = {0};
+parser.capturar_errores = true;
+parser.errores_capturados = &e;
+parser_parsear_programa(&parser, &n);
+/* e.items[0..e.n-1] son los errores. */
+parser_errores_liberar(&e);
+```
+
+#### 2. `textDocument/hover` para top-level symbols
+
+El LSP ahora soporta hover: pasar el cursor sobre el nombre de una
+función o clase top-level dispara un popup con:
+
+- **Firma** sintetizada del AST (parámetros con `*args`, `**kwargs`,
+  defaults como `=...`).
+- **Comentarios `#` precedentes** como documentación (estilo Go,
+  igual que `cornamusa docs`).
+- Para clases: lista de **métodos** con sus firmas.
+
+Ejemplo de respuesta para hover sobre `factorial`:
+
+```markdown
+```cornamusa
+funcion factorial(n)
+```
+
+Calcula el factorial recursivamente.
+```
+
+Ejemplo para hover sobre clase `Punto`:
+
+```markdown
+```cornamusa
+clase Punto
+```
+
+Una clase ejemplo.
+
+**Metodos:**
+- `__iniciar__(yo, a, b)`
+```
+
+**Cómo funciona**:
+1. Recibe `(line, character)` del cliente.
+2. Convierte a offset en el texto del documento.
+3. Extrae la palabra bajo el cursor por scanning de caracteres
+   identificadores (`[a-zA-Z_]` + bytes UTF-8 continuos).
+4. Re-parsea el documento (con captura de errores).
+5. Si parsea OK, busca SENT_FUNCION o SENT_CLASE top-level con ese
+   nombre.
+6. Si lo encuentra, formatea markdown; si no, responde `null`.
+
+Capabilities anunciadas: `hoverProvider: true`.
+
+### Lo que NO incluye (scope para v1.54+)
+
+- **Hover para parámetros, variables locales y atributos** (necesita
+  mapeo posición → AST node).
+- **Hover para métodos en uso** (`obj.metodo()` — necesita
+  resolución de tipos, no trivial en lenguaje dinámico).
+- **`textDocument/definition`** (goto-def) — naturalmente extensible
+  desde el código de hover, pero ya scope para v1.54.
+- **`textDocument/completion`** — bigger lift (analizar scope con
+  imports/built-ins).
+- **Incremental document sync**.
+
+### Implementación
+
+- `src/parser.{h,c}`: añadidos campos `capturar_errores` +
+  `errores_capturados` y función `parser_errores_liberar`. Cambio
+  conservador — el path por defecto (stderr) sigue igual.
+- `src/lsp.c`: `diagnose_doc` ahora usa captura para emitir parse
+  errors detallados. Nueva función `responder_hover` (~120 líneas)
+  con helpers de extracción de palabra (`extraer_palabra`),
+  resolución de offset (`pos_a_offset`), generación de markdown
+  para funciones y clases.
+
+### Verificación
+
+- **208/208 tests verde**. Nuevo `test_parser_errores` con
+  **14 asserts**: programa válido sin errores, error simple
+  capturado con línea/mensaje, múltiples errores, liberación
+  correcta, default sin captura.
+- **Script Python de integración**: verifica hover sobre función
+  (devuelve markdown con firma + doc), sobre clase (devuelve markdown
+  con firma + doc + métodos), sobre carácter no-identificador
+  (devuelve `result: null`).
+- **Round-trip stderr**: el path clásico de errores a stderr sigue
+  funcionando igual; tests de `--check` y `--ast` no se rompen.
+
 ## [1.52.0] — 2026-05-16 — Language Server Protocol MVP (`cornamusa lsp`)
 
 Sexta y última release planeada de la **Fase 5 — Tooling**. Cornamusa

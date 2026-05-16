@@ -43,6 +43,32 @@ typedef struct {
     int linea_apertura;
 } BloqueAbierto;
 
+/*
+ * v1.53: errores estructurados opcionales.
+ *
+ * Por defecto, el parser imprime errores formateados a stderr via
+ * `error_imprimir_token`. Los clientes que necesiten errores como
+ * datos (LSP, tooling externo) pueden activar `capturar_errores`:
+ * tras setlo a true, errores se anaden a `errores_capturados` en
+ * lugar de imprimirse a stderr.
+ *
+ * Los mensajes son malloc'd; el llamador los libera con
+ * `parser_errores_liberar`.
+ */
+typedef struct {
+    int linea;
+    int columna;
+    char *mensaje;          /* malloc'd, NUL-terminada */
+} ErrorParser;
+
+typedef struct {
+    ErrorParser *items;
+    int n;
+    int capacidad;
+} ErroresParser;
+
+void parser_errores_liberar(ErroresParser *e);
+
 typedef struct {
     Lexer *lexer;
     Arena *arena;
@@ -59,6 +85,12 @@ typedef struct {
     /* Stack de bloques abiertos para validar `fin <etiqueta>`. */
     BloqueAbierto pila_bloques[64];
     int profundidad_bloques;
+
+    /* v1.53: si capturar_errores es true, los errores se anaden a
+     * `errores_capturados` en lugar de imprimirse a stderr. El
+     * llamador inicia ambos campos antes de invocar el parser. */
+    bool capturar_errores;
+    ErroresParser *errores_capturados;
 } Parser;
 
 /*

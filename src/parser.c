@@ -107,6 +107,11 @@ void parser_iniciar(Parser *p, Lexer *l, Arena *a,
     /* Pre-cargamos el primer token; previo se queda en cero hasta el
        primer avanzar real, lo que está bien porque nada lo lee antes. */
     p->previo = (Token){0};
+    /* v1.53: por defecto, errores van a stderr. El cliente puede
+     * setear `capturar_errores=true` + `errores_capturados=&buf` antes
+     * de invocar el primer parsing para acumular errores como datos. */
+    p->capturar_errores = false;
+    p->errores_capturados = NULL;
     p->actual = lexer_siguiente(l);
 
     /* Si el primer token es un error, lo reportamos pero seguimos
@@ -158,8 +163,36 @@ static void error_en(Parser *p, const Token *t, const char *mensaje) {
     Token err = *t;
     err.tipo = TT_ERROR;
     err.mensaje = mensaje;
+
+    /* v1.53: si el cliente activo captura, anadimos a su buffer y
+     * NO imprimimos a stderr. Si no, comportamiento clasico. */
+    if (p->capturar_errores && p->errores_capturados) {
+        ErroresParser *es = p->errores_capturados;
+        if (es->n >= es->capacidad) {
+            int nc = es->capacidad ? es->capacidad * 2 : 8;
+            ErrorParser *nv = (ErrorParser *)realloc(es->items,
+                                                       sizeof(ErrorParser) * (size_t)nc);
+            if (nv) { es->items = nv; es->capacidad = nc; }
+            else return;
+        }
+        ErrorParser *ep = &es->items[es->n++];
+        ep->linea = t->linea;
+        ep->columna = t->columna;
+        ep->mensaje = mensaje ? strdup(mensaje) : strdup("error de sintaxis");
+        return;
+    }
+
     /* Si el token ofensor era válido, asumimos longitud >= 1 ya. */
     error_imprimir_token(&err, p->fuente, p->archivo, stderr);
+}
+
+void parser_errores_liberar(ErroresParser *e) {
+    if (!e) return;
+    for (int i = 0; i < e->n; i++) free(e->items[i].mensaje);
+    free(e->items);
+    e->items = NULL;
+    e->n = 0;
+    e->capacidad = 0;
 }
 
 /* ──────────────────────────────────────────────────────────────────

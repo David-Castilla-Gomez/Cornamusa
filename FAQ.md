@@ -149,10 +149,14 @@ El servidor implementa el subset mínimo del [LSP](https://microsoft.github.io/l
 
 Para conectar desde VS Code necesitas un cliente LSP (extensión genérica como [generic-lsp-client](https://marketplace.visualstudio.com/items?itemName=llvm-vs-code-extensions.lldb-dap)) configurado para ejecutar `cornamusa lsp` con `*.cor` como tipo de archivo. Documentación detallada en [docs/editor-setup.md](docs/editor-setup.md) (próxima release).
 
-**Limitaciones del MVP v1.52**:
-- Sin hover, completion, ni goto-definition (v1.53+).
+**Capacidades desde v1.53**:
+- `hoverProvider`: pasar el cursor sobre una función o clase top-level muestra firma + comentarios doc + lista de métodos.
+- Parse errors detallados (línea/col/mensaje del parser tal cual).
+
+**Limitaciones actuales**:
+- Hover solo funciona para símbolos top-level (funciones y clases). Variables, parámetros, atributos y métodos en uso aún no.
+- Sin completion, goto-definition, ni formatting via LSP (queda para v1.54+).
 - Document sync solo en modo completo (no incremental).
-- Errores de sintaxis: se reporta una sola diagnostic en línea 1 con mensaje genérico — los detalles del parse error no se exponen (el parser actualmente imprime errores a stderr y no a una estructura). Mejora prevista para v1.53.
 
 ---
 
