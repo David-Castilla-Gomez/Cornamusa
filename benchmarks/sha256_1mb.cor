@@ -1,0 +1,18 @@
+# Benchmark: SHA-256 sobre 1 MiB de datos.
+# Estresa el procesador de bloques de 64 bytes (16384 iteraciones)
+# y mide overhead nativo. Util como punto de referencia: el
+# algoritmo es puro compute en C, asi que el numero refleja CPU.
+
+importar hashing
+importar cadenas
+
+# 1 MiB = 1024 KiB. Construir cadena de 1 MiB.
+kilo = cadenas.repetir("x", 1024)
+mb = ""
+para _ en rango(1024):
+    mb = mb + kilo
+fin para
+
+hex = hashing.sha256(mb)
+imprimir("digest:", hex)
+imprimir("len input:", longitud(mb))

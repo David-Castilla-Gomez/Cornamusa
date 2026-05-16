@@ -3012,6 +3012,71 @@ static Valor nativa_base64_decodificar(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * cadena_unir (v1.61): nativa O(n) para concatenar lista de cadenas.
+ *
+ * El `cadenas.unir` puro-Cornamusa hace `resultado += sep + parte[i]`
+ * que es O(N^2) por la copia que cadena+cadena obliga. Mediado en el
+ * benchmark csv_parse_1000 (1000 filas, 5 campos): 1000ms en pure
+ * Cornamusa vs ~150ms con esta nativa.
+ *
+ * Acepta:
+ *   - cadena_unir(lista_de_cadenas) → cadena con sep="" (concat).
+ *   - cadena_unir(lista, sep)       → cadena con separador dado.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor nativa_cadena_unir(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args < 1 || n_args > 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_unir(lista, [sep]) requiere 1 o 2 argumentos");
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_unir() requiere una lista");
+    }
+    const char *sep_txt = "";
+    int sep_len = 0;
+    if (n_args == 2) {
+        if (args[1].tipo != VAL_CADENA) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: cadena_unir(_, sep) requiere sep cadena");
+        }
+        sep_txt = args[1].como.cadena.texto;
+        sep_len = args[1].como.cadena.longitud;
+    }
+
+    Lista *l = args[0].como.lista;
+    /* Validar tipos + sumar longitud total en una pasada. */
+    long total = 0;
+    for (int i = 0; i < l->cuenta; i++) {
+        if (l->elementos[i].tipo != VAL_CADENA) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: elemento %d de la lista no es cadena ('%s')",
+                i, valor_nombre_tipo(&l->elementos[i]));
+        }
+        total += l->elementos[i].como.cadena.longitud;
+    }
+    if (l->cuenta > 1) total += (long)sep_len * (l->cuenta - 1);
+
+    char *out = (char *)malloc((size_t)total + 1);
+    if (!out) return error_nativa(err, linea, columna, "memoria insuficiente");
+    long pos = 0;
+    for (int i = 0; i < l->cuenta; i++) {
+        if (i > 0 && sep_len > 0) {
+            memcpy(out + pos, sep_txt, (size_t)sep_len);
+            pos += sep_len;
+        }
+        int ll = l->elementos[i].como.cadena.longitud;
+        memcpy(out + pos, l->elementos[i].como.cadena.texto, (size_t)ll);
+        pos += ll;
+    }
+    out[pos] = '\0';
+    Valor v = valor_cadena_duplicar(out, (int)pos);
+    free(out);
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Hashing (v1.60) — motor en src/hashing.c.
  *
  * Wrappers de SHA-256 y MD5. Ambos toman una cadena (los bytes
@@ -3411,6 +3476,8 @@ static const EntradaNativa NATIVAS[] = {
     /* Hashing (v1.60). */
     {"hash_sha256",         11, nativa_sha256},
     {"hash_md5",             8, nativa_md5},
+    /* Cadenas perf (v1.61): unir O(n). */
+    {"cadena_unir",         11, nativa_cadena_unir},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

@@ -80,6 +80,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Stdlib `csv` (parser/writer RFC 4180-like, helpers de archivo) | v1.58 | ✅ |
 | Stdlib `base64` (codec RFC 4648 en C nativo) | v1.59 | ✅ |
 | Stdlib `hashing` (SHA-256 FIPS 180-4 + MD5 RFC 1321, ambos nativos en C) | v1.60 | ✅ |
+| Perf round 2: `cadena_unir` nativo + csv con iterator (33× speedup csv_parse_1000) | v1.61 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

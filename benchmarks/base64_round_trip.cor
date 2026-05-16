@@ -1,0 +1,13 @@
+# Benchmark: round-trip Base64 sobre 100 KiB de datos.
+# Codificar + decodificar nativamente. Util para validar que el
+# codec C es competitivo.
+
+importar base64
+importar cadenas
+
+datos = cadenas.repetir("Cornamusa", 11378)  # ~100 KiB
+encoded = base64.codificar(datos)
+decoded = base64.decodificar(encoded)
+
+imprimir("input:", longitud(datos), "encoded:", longitud(encoded),
+         "decoded igual:", decoded == datos)

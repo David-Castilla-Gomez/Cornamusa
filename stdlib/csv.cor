@@ -37,53 +37,57 @@ importar cadenas
 
 # Parsea `texto` a una lista de filas (cada fila es una lista de
 # cadenas). Si `texto` esta vacio devuelve `[]`.
+#
+# v1.61: dos optimizaciones criticas para programas reales:
+#   1. Iteracion linear `para c en texto` en vez de `texto[i]` con
+#      indice. La indexacion UTF-8 es O(i) por char (walk desde el
+#      inicio); el iterator es O(1) amortizado. Speedup ~10x.
+#   2. List-buffer + `cadena_unir` por campo (no concat string += c).
+#      Combinado con #1 cae csv_parse_1000 de ~1000ms a ~100ms.
 funcion parsear(texto, sep=","):
     filas = []
-    campo_actual = ""
+    partes_campo = []       # buffer de chars para el campo en curso
     fila_actual = []
     # Estados: 0 = campo normal, 1 = dentro de cadena quoted,
     #          2 = tras quote cerrado (esperando sep/newline o `""`).
     estado = 0
 
-    n = longitud(texto)
-    i = 0
-    mientras i < n:
-        c = texto[i]
+    para c en texto:
         si estado == 0:
             si c == sep:
-                agregar(fila_actual, campo_actual)
-                campo_actual = ""
+                agregar(fila_actual, cadenas.unir(partes_campo, ""))
+                partes_campo = []
             sino si c == "\n":
-                agregar(fila_actual, campo_actual)
-                campo_actual = ""
+                agregar(fila_actual, cadenas.unir(partes_campo, ""))
+                partes_campo = []
                 agregar(filas, fila_actual)
                 fila_actual = []
             sino si c == "\r":
                 pasar
-            sino si c == "\"" y campo_actual == "":
+            sino si c == "\"" y longitud(partes_campo) == 0:
                 estado = 1
             sino:
-                campo_actual = campo_actual + c
+                agregar(partes_campo, c)
             fin si
         sino si estado == 1:
             si c == "\"":
                 estado = 2
             sino:
-                campo_actual = campo_actual + c
+                agregar(partes_campo, c)
             fin si
         sino:
             # estado == 2: tras quote cerrado
             si c == "\"":
                 # `""` dentro de campo quoted → quote literal
-                campo_actual = campo_actual + "\""
+                agregar(partes_campo, "\"")
                 estado = 1
             sino si c == sep:
-                agregar(fila_actual, campo_actual)
-                campo_actual = ""
+                agregar(fila_actual, cadenas.unir(partes_campo, ""))
+                partes_campo = []
                 estado = 0
             sino si c == "\n":
-                agregar(fila_actual, campo_actual)
-                campo_actual = ""
+                agregar(fila_actual, cadenas.unir(partes_campo, ""))
+                partes_campo = []
                 agregar(filas, fila_actual)
                 fila_actual = []
                 estado = 0
@@ -92,16 +96,15 @@ funcion parsear(texto, sep=","):
             sino:
                 # Caracter extra tras quote cerrado — parser tolerante:
                 # lo concatenamos y volvemos a estado normal.
-                campo_actual = campo_actual + c
+                agregar(partes_campo, c)
                 estado = 0
             fin si
         fin si
-        i = i + 1
-    fin mientras
+    fin para
 
     # Flush del ultimo campo/fila si no quedo vacio.
-    si campo_actual != "" o longitud(fila_actual) > 0:
-        agregar(fila_actual, campo_actual)
+    si longitud(partes_campo) > 0 o longitud(fila_actual) > 0:
+        agregar(fila_actual, cadenas.unir(partes_campo, ""))
         agregar(filas, fila_actual)
     fin si
 

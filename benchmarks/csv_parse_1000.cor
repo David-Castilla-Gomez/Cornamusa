@@ -1,0 +1,20 @@
+# Benchmark: parsear un CSV de 1000 filas × 5 columnas.
+# Estresa el state-machine de csv.parsear (pure Cornamusa) +
+# allocacion de listas. Util para evaluar coste de stdlib pure-Cornamusa
+# en programas reales.
+
+importar csv
+importar cadenas
+
+# Construir el CSV en memoria.
+lineas = []
+agregar(lineas, "id,nombre,edad,ciudad,activo")
+para i en rango(1000):
+    fila = cadena(i) + ",persona_" + cadena(i) + ",30,Madrid,verdadero"
+    agregar(lineas, fila)
+fin para
+texto = cadenas.unir(lineas, "\n")
+
+# Parsear.
+filas = csv.parsear(texto)
+imprimir("filas parseadas:", longitud(filas))

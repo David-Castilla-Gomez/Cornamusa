@@ -9,6 +9,70 @@ sub-segundo y tienen varianza notable entre corridas; sirven como
 Equipo de referencia: Windows 11, GCC 13.2 (Strawberry), build Release.
 Cada medición es el mejor tiempo de 3 corridas.
 
+## v1.61.0 — Perf round 2: `cadena_unir` nativo + `csv` con iterator (post-medición)
+
+**Hallazgo cazado midiendo, no asumiendo**: el benchmark nuevo
+`csv_parse_1000` (1000 filas × 5 columnas pure-Cornamusa) tardaba
+**~1 segundo**. Investigación reveló dos bottlenecks acoplados:
+
+1. **`cadenas.unir` era O(n²)**: hacía `resultado = resultado + sep + parte`
+   en un loop, lo que es cuadratico por la copia obligada en cada
+   concatenacion. Fix: nueva nativa `cadena_unir(lista, sep)` en C
+   que pre-calcula longitud total, alloca una vez y copia con `memcpy`.
+   `cadenas.unir` ahora es un wrapper de una línea.
+
+2. **`texto[i]` en cadenas UTF-8 es O(i)**: cada indexación walk-ea
+   desde el inicio del buffer porque los chars Unicode varían en byte
+   width (utf8proc_iterate). El parser CSV hacía `texto[i]` en un
+   while-loop, resultando en **O(n²)** total. Fix: usar `para c en
+   texto` que usa el iterator interno (O(n) linear).
+
+3. **`cadenas.repetir` igual problema**: `resultado += s` en loop.
+   Reescrito con buffer de lista + `cadena_unir`.
+
+### Resultados
+
+| Benchmark              | Antes     | Después   | Δ          |
+|------------------------|-----------|-----------|------------|
+| `bignum_factorial`     | 0.008 s   | 0.007 s   | ~ –       |
+| `dicc_intensivo`       | 0.036 s   | 0.035 s   | ~ –       |
+| `fibonacci_recursivo`  | 0.218 s   | 0.205 s   | ~ –       |
+| `globales_lookup`      | 0.188 s   | 0.190 s   | ~ –       |
+| `oo_dunder_aritmetico` | 0.069 s   | 0.072 s   | ~ –       |
+| `oo_dunder_indice`     | 0.031 s   | 0.034 s   | ~ –       |
+| `oo_intensivo`         | 0.016 s   | 0.014 s   | ~ –       |
+| **`csv_parse_1000`**   | **1036 ms** | **~31 ms** | **−97%** (33× speedup) |
+| `sha256_1mb`           | 165 ms    | 160 ms    | ~ –       |
+| `base64_round_trip`    | 125 ms    | 110 ms    | ~ –       |
+
+(Benchmarks `csv_parse_1000`, `sha256_1mb` y `base64_round_trip` son
+nuevos en v1.61 para cubrir las stdlib añadidas en v1.58-v1.60.)
+
+### Por qué importa
+
+El hallazgo es representativo: **algo de stdlib pure-Cornamusa
+"escondía" un O(n²)** que solo aparece bajo carga real. Sin un
+benchmark específico no se hubiera visto — todos los tests pasan
+porque las suites usan inputs pequeños (~10 filas).
+
+Esto valida el principio "datos antes que feeling": antes de
+optimizar fibonacci/OO (donde ya no hay wins obvios), medir lo nuevo
+y ver dónde duele.
+
+### Lo que NO se optimizó
+
+- **fibonacci/OO/globales_lookup**: ya están a un nivel saludable
+  tras IC + small-int (v0.10-v0.11) y LTO+O3 (v1.40). Mediciones
+  consistentes muestran ~210ms para fib(30), ~180ms para 4M global
+  reads. Cualquier ganancia adicional probablemente requeriría
+  JIT/tracing (post-v2.0).
+- **Designated initializer en `ejecutar_llamar_bc`**: probado y
+  medido, **sin efecto en perf** (LTO+O3 ya genera código
+  equivalente). Mantenido por concisión y robustez ante adición
+  futura de campos al `CallFrame`.
+
+
+
 ## v1.40.0 — `-O3` + LTO
 
 Cambios de build: `-O2` → `-O3` explícito y **LTO** activado

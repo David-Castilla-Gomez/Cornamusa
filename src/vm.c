@@ -965,24 +965,20 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
         return VM_ERROR_RUNTIME;
     }
     CallFrame *nf = &vm->frames[vm->n_frames++];
-    nf->chunk = &fn->chunk;
-    nf->ip = fn->chunk.codigo;
-    nf->base_pila = base_nuevo;
-    nf->closure = cl;
-    nf->es_constructor = false;
-    nf->modulo_en_carga = NULL;
-    nf->globales_pre_modulo = NULL;
-    nf->chunk_modulo = NULL;
+    /* v1.61: designated initializer en una sola asignacion (campos
+     * no listados son zero-init). Mas conciso que 11 stores y los
+     * compiladores modernos lo bajan a stores vectorizadas. */
+    *nf = (CallFrame){
+        .chunk = &fn->chunk,
+        .ip = fn->chunk.codigo,
+        .base_pila = base_nuevo,
+        .closure = cl,
+    };
     if (cl->globales_definicion != NULL
         && cl->globales_definicion != vm->globales) {
         nf->globales_pre_llamada = vm->globales;
         vm->globales = cl->globales_definicion;
-    } else {
-        nf->globales_pre_llamada = NULL;
     }
-    nf->modulo_binding_name = NULL;
-    nf->modulo_binding_len = 0;
-    nf->desde_import = false;
     *frame_inout = nf;
     return VM_OK;
 }

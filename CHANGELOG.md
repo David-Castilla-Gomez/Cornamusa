@@ -6,6 +6,108 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.61.0] — 2026-05-16 — Perf round 2: `cadena_unir` nativo + `csv` con iterator
+
+**Hallazgo cazado midiendo, no asumiendo.** Tras 19 releases sin
+tocar rendimiento, esta release introduce 3 benchmarks nuevos para
+las stdlib recientes (`csv_parse_1000`, `sha256_1mb`,
+`base64_round_trip`) y descubre dos O(n²) escondidos en pure-Cornamusa.
+**`csv_parse_1000` cae de 1036ms → ~31ms (33× speedup).**
+
+### Lo que se midió
+
+Suite ampliada en `benchmarks/`:
+
+- `csv_parse_1000.cor` — parsear CSV de 1000 filas × 5 columnas.
+- `sha256_1mb.cor` — SHA-256 de 1 MiB de input.
+- `base64_round_trip.cor` — codec round-trip sobre 100 KiB.
+
+### Bottlenecks encontrados
+
+#### 1. `cadenas.unir` era O(n²)
+
+El módulo hacía `resultado = resultado + sep + parte` en un loop —
+cuadrático por la copia obligada en cada concatenación.
+
+**Fix**: nueva built-in C `cadena_unir(lista, sep)` que pre-calcula
+longitud total, alloca una sola vez y usa `memcpy`. Lineal en bytes
+de salida. `stdlib/cadenas.cor::unir` ahora es un wrapper de una
+línea que delega a la nativa.
+
+#### 2. `texto[i]` para cadenas UTF-8 es O(i)
+
+Cornamusa preserva la semántica char-Unicode: `s[i]` walk-ea desde
+el inicio del buffer para encontrar el carácter `i`-ésimo, porque
+los chars pueden ocupar 1-4 bytes (utf8proc_iterate). El parser CSV
+hacía `texto[i]` en un while-loop, resultando en **O(n²)** total.
+
+**Fix**: usar `para c en texto` que usa el iterator interno
+(O(1) amortizado por carácter, O(n) total). Cambio idiomático en
+`csv.parsear`.
+
+#### 3. `cadenas.repetir` mismo problema que `unir`
+
+Era `resultado += s` en loop. Reescrito con buffer de lista +
+`cadena_unir`. No medido en benchmark separado, pero cualquier
+código que usaba `cadenas.repetir(s, N)` con N grande se beneficia.
+
+### Resultados
+
+| Benchmark              | Antes     | Después   | Δ          |
+|------------------------|-----------|-----------|------------|
+| **`csv_parse_1000`**   | **1036 ms** | **~31 ms** | **−97% (33×)** |
+| `bignum_factorial`     | 0.008 s   | 0.007 s   | ~ –       |
+| `dicc_intensivo`       | 0.036 s   | 0.035 s   | ~ –       |
+| `fibonacci_recursivo`  | 0.218 s   | 0.205 s   | ~ –       |
+| `globales_lookup`      | 0.188 s   | 0.190 s   | ~ –       |
+| `oo_dunder_aritmetico` | 0.069 s   | 0.072 s   | ~ –       |
+| `oo_dunder_indice`     | 0.031 s   | 0.034 s   | ~ –       |
+| `oo_intensivo`         | 0.016 s   | 0.014 s   | ~ –       |
+| `sha256_1mb`           | 165 ms    | 160 ms    | ~ –       |
+| `base64_round_trip`    | 125 ms    | 110 ms    | ~ –       |
+
+Sin regresiones en los demás benchmarks. El speedup es totalmente
+atribuible al fix de los dos O(n²) en el path caliente del parser
+CSV.
+
+### Implementación
+
+- Nueva nativa `nativa_cadena_unir` en `src/nativos.c` (~50 líneas C):
+  valida tipos en una pasada, suma longitud total, alloca una vez,
+  copia con memcpy. Maneja sep="" (default) y sep custom.
+- `stdlib/cadenas.cor::unir` y `::repetir` reescritas para delegar
+  a `cadena_unir`.
+- `stdlib/csv.cor::parsear` cambia `while i < n: c = texto[i]; i++`
+  a `para c en texto`. Y `campo_actual += c` cambia a buffer de
+  lista + `cadena_unir` al final del campo.
+
+### Lo que NO se optimizó
+
+- **fibonacci/OO/globales_lookup**: ya están a un nivel saludable
+  tras IC + small-int (v0.10-v0.11) y LTO+O3 (v1.40). Mediciones
+  consistentes muestran ~210ms para fib(30), ~180ms para 4M global
+  reads. Cualquier ganancia adicional probablemente requeriría
+  JIT/tracing (post-v2.0).
+- **Designated initializer en `ejecutar_llamar_bc`**: probado y
+  medido, **sin efecto en perf** (LTO+O3 ya genera código
+  equivalente). Cambio mantenido por concisión (1 designated init
+  vs 11 stores explícitos).
+
+### Lección
+
+Cinco releases recientes (`csv`, `base64`, `hashing`, scope analysis,
+otros) pasaban todos los tests verdes con inputs de 5-10 elementos.
+Solo midiendo carga realista (1000 filas) apareció el O(n²). El
+principio "datos antes que feeling" (de la práctica del proyecto)
+aplicó: antes de optimizar fibonacci (donde no hay wins obvios), se
+midió lo nuevo y encontró el agujero.
+
+### Verificación
+
+- **220/220 tests verde**. Sin regresiones.
+- 3 nuevos benchmarks añadidos.
+- `benchmarks/RESULTS.md` actualizado con sección v1.61 detallada.
+
 ## [1.60.0] — 2026-05-16 — Stdlib `hashing` (SHA-256 + MD5 nativos)
 
 Tercera release consecutiva expandiendo la stdlib (`csv` en v1.58,
