@@ -1,0 +1,15 @@
+# Benchmark: serializar 1000 filas × 5 columnas a CSV.
+# Estresa `csv.serializar` que llama a `cadenas.indice_de` 4 veces
+# por campo (check sep/`/n/r/"`) → 20K calls. Antes de v1.62 cada
+# call era O(n^2) por `s[i]` UTF-8 walk.
+
+importar csv
+
+filas = []
+agregar(filas, ["id", "nombre", "edad", "ciudad", "activo"])
+para i en rango(1000):
+    agregar(filas, [cadena(i), "persona_" + cadena(i), "30", "Madrid", "verdadero"])
+fin para
+
+texto = csv.serializar(filas)
+imprimir("len:", longitud(texto), "filas:", longitud(filas))

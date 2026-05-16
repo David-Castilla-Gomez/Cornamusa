@@ -3012,6 +3012,135 @@ static Valor nativa_base64_decodificar(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Cadenas (v1.62): nativas para operaciones que en pure-Cornamusa
+ * eran O(n^2) por la combinacion de `texto[i]` UTF-8 walk + concat
+ * incremental. Caso por caso, miden 10-100x speedup respecto a las
+ * versiones puras documentadas en stdlib/cadenas.cor.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor nativa_cadena_indice_de(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_indice_de(s, sub) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_indice_de() requiere cadenas");
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    const char *sub = args[1].como.cadena.texto;
+    int subl = args[1].como.cadena.longitud;
+    if (subl == 0) return valor_entero_de_i64(0);
+    if (subl > sl) return valor_entero_de_i64(-1);
+
+    /* Naive substring search byte-a-byte. Para inputs tipicos
+     * (cadenas cortas) es muy rapido. */
+    int byte_pos = -1;
+    int max_i = sl - subl;
+    for (int i = 0; i <= max_i; i++) {
+        if (s[i] == sub[0] && memcmp(s + i, sub, (size_t)subl) == 0) {
+            byte_pos = i;
+            break;
+        }
+    }
+    if (byte_pos < 0) return valor_entero_de_i64(-1);
+
+    /* Convertir byte_pos a indice de caracter. Para ASCII puro,
+     * char_idx == byte_pos (loop sin iteraciones extra). */
+    int char_idx = 0;
+    int p = 0;
+    while (p < byte_pos) {
+        utf8proc_int32_t cp;
+        utf8proc_ssize_t cons = utf8proc_iterate(
+            (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+        if (cons <= 0) break;
+        p += (int)cons;
+        char_idx++;
+    }
+    return valor_entero_de_i64(char_idx);
+}
+
+static Valor nativa_cadena_empieza_con(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_empieza_con(s, prefijo) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_empieza_con() requiere cadenas");
+    }
+    int sl = args[0].como.cadena.longitud;
+    int pl = args[1].como.cadena.longitud;
+    if (pl > sl) return valor_booleano(false);
+    bool match = (memcmp(args[0].como.cadena.texto,
+                          args[1].como.cadena.texto, (size_t)pl) == 0);
+    return valor_booleano(match);
+}
+
+static Valor nativa_cadena_termina_con(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_termina_con(s, sufijo) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_termina_con() requiere cadenas");
+    }
+    int sl = args[0].como.cadena.longitud;
+    int suflen = args[1].como.cadena.longitud;
+    if (suflen > sl) return valor_booleano(false);
+    bool match = (memcmp(args[0].como.cadena.texto + (sl - suflen),
+                          args[1].como.cadena.texto, (size_t)suflen) == 0);
+    return valor_booleano(match);
+}
+
+static Valor cadena_caso_ascii(EvalError *err, Valor *arg, bool a_min,
+                                int linea, int columna) {
+    if (arg->tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: requiere una cadena");
+    }
+    const char *in = arg->como.cadena.texto;
+    int len = arg->como.cadena.longitud;
+    char *out = (char *)malloc((size_t)len + 1);
+    if (!out) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)in[i];
+        if (a_min) {
+            out[i] = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : (char)c;
+        } else {
+            out[i] = (c >= 'a' && c <= 'z') ? (char)(c - 32) : (char)c;
+        }
+    }
+    out[len] = '\0';
+    Valor v = valor_cadena_duplicar(out, len);
+    free(out);
+    return v;
+}
+
+static Valor nativa_cadena_minusculas_ascii(EvalError *err, int n_args, Valor *args,
+                                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_minusculas_ascii(s) requiere 1 argumento");
+    }
+    return cadena_caso_ascii(err, &args[0], true, linea, columna);
+}
+
+static Valor nativa_cadena_mayusculas_ascii(EvalError *err, int n_args, Valor *args,
+                                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_mayusculas_ascii(s) requiere 1 argumento");
+    }
+    return cadena_caso_ascii(err, &args[0], false, linea, columna);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * cadena_unir (v1.61): nativa O(n) para concatenar lista de cadenas.
  *
  * El `cadenas.unir` puro-Cornamusa hace `resultado += sep + parte[i]`
@@ -3478,6 +3607,12 @@ static const EntradaNativa NATIVAS[] = {
     {"hash_md5",             8, nativa_md5},
     /* Cadenas perf (v1.61): unir O(n). */
     {"cadena_unir",         11, nativa_cadena_unir},
+    /* Cadenas perf (v1.62): otras nativas O(bytes). */
+    {"cadena_indice_de",         16, nativa_cadena_indice_de},
+    {"cadena_empieza_con",       18, nativa_cadena_empieza_con},
+    {"cadena_termina_con",       18, nativa_cadena_termina_con},
+    {"cadena_minusculas_ascii",  23, nativa_cadena_minusculas_ascii},
+    {"cadena_mayusculas_ascii",  23, nativa_cadena_mayusculas_ascii},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

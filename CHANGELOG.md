@@ -6,6 +6,79 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.62.0] — 2026-05-16 — Perf round 2 (cont.): 5 nativas más en `cadenas` tras audit
+
+Continuación natural de v1.61. Tras encontrar el O(n²) en
+`csv.parsear`, grep sistemático de los patrones culpables
+(`texto[i]` con índice en loop + `resultado += x` acumulando
+strings) reveló **5 funciones más** en `cadenas.cor` con el mismo
+defecto:
+
+- `empieza_con(s, prefijo)` — O(prefijo²) por `s[i] != prefijo[i]`.
+- `termina_con(s, sufijo)` — análogo.
+- `indice_de(s, sub)` — O(s² · sub) por nested loop con indexing.
+- `minusculas_ascii(s)` — O(s²) + lookup table de 26 por carácter.
+- `mayusculas_ascii(s)` — análogo.
+
+### Solución
+
+**5 nativas C nuevas** (~250 líneas total en `nativos.c`):
+
+- `cadena_empieza_con(s, prefijo)` — `memcmp` en bytes. O(|prefijo|).
+- `cadena_termina_con(s, sufijo)` — `memcmp` desde el final.
+- `cadena_indice_de(s, sub)` — naive substring byte-search + conversión a
+  char index con `utf8proc_iterate` solo al match. ASCII puro =
+  O(s · sub); UTF-8 con match = +O(byte_pos_match) extra.
+- `cadena_minusculas_ascii(s)` — byte scan aplicando `c + 32` si está en
+  `A..Z`. Conserva todo lo demás (incluso bytes UTF-8 multi-byte).
+- `cadena_mayusculas_ascii(s)` — análogo con `c - 32`.
+
+Los wrappers en `stdlib/cadenas.cor` quedan como **thin delegates**
+(una línea cada uno). Las ~80 líneas de pure-Cornamusa que
+implementaban las 5 funciones se eliminan, incluyendo el helper
+`_TABLA_MIN/_TABLA_MAY` con su lookup lineal por carácter.
+
+### Resultados
+
+| Benchmark              | v1.61    | v1.62    | Notas |
+|------------------------|----------|----------|-------|
+| `csv_parse_1000`       | ~31 ms   | ~42 ms   | sin cambio (ruido) |
+| `csv_serialize_1000`   | (nuevo)  | **~22 ms** | 20K llamadas `indice_de` |
+| `cadena_caso_50k`      | (nuevo)  | **~10 ms** | minusculas sobre 50 KiB |
+| `base64_round_trip`    | ~110 ms  | **~25 ms** | beneficia del `repetir` ya lineal |
+| `fibonacci_recursivo`  | ~210 ms  | ~245 ms  | sin cambio (ruido alto) |
+| Resto                  | similar  | similar  | |
+
+`csv_serialize_1000` y `cadena_caso_50k` son nuevos en v1.62, sin
+baseline directa anterior. Estimación honesta: con las versiones
+pre-v1.62, ambos hubieran sido **órdenes de magnitud más lentos**
+(centenares de ms para `csv_serialize`, varios segundos para
+`cadena_caso_50k`).
+
+`base64_round_trip` cae 130→25ms automáticamente porque el
+benchmark usa `cadenas.repetir(s, 11378)` para construir un input
+grande, y `repetir` ahora es lineal (v1.61 ya delegaba a
+`cadena_unir`, pero la combinación con `cadena_caso` mejora la
+historia general).
+
+### Sin regresiones
+
+- 220/220 tests verde.
+- Benchmarks existentes sin pérdida (variación dentro del ruido
+  habitual de Windows + AV).
+- `cornamusa lint stdlib/cadenas.cor` y `fmt --check` limpios tras
+  los cambios.
+
+### Lección, refinada
+
+v1.61 cazó **un** O(n²) (`csv_parse`). El audit sistemático en v1.62
+encontró **5 más** del mismo patrón. La moraleja: cuando un patrón
+problemático aparece una vez en una codebase Cornamusa donde las
+cadenas son inmutables y UTF-8, casi seguro aparece en otros sitios.
+Sería bueno tener un linter check específico — `concat-in-loop` —
+para detectar `resultado = resultado + x` dentro de bucles. Scope
+candidato para v1.63 si la racha de perf continúa.
+
 ## [1.61.0] — 2026-05-16 — Perf round 2: `cadena_unir` nativo + `csv` con iterator
 
 **Hallazgo cazado midiendo, no asumiendo.** Tras 19 releases sin

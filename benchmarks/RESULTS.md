@@ -9,6 +9,44 @@ sub-segundo y tienen varianza notable entre corridas; sirven como
 Equipo de referencia: Windows 11, GCC 13.2 (Strawberry), build Release.
 Cada medición es el mejor tiempo de 3 corridas.
 
+## v1.62.0 — Perf round 2 (cont.): audit stdlib y 5 nativas mas de `cadenas`
+
+Continuacion del audit iniciado en v1.61. Tras el hallazgo del O(n^2)
+en csv.parsear, grep sistematico de `texto[i]` y `resultado += x` en
+toda la stdlib revelo el mismo patron en 5 funciones de `cadenas.cor`:
+`empieza_con`, `termina_con`, `indice_de`, `minusculas_ascii`,
+`mayusculas_ascii`. Todas con el doble whammy (UTF-8 indexing O(i) +
+concat O(n)).
+
+### Resultados
+
+Anadidos 2 benchmarks nuevos: `csv_serialize_1000` (que llama a
+`indice_de` 20K veces) y `cadena_caso_50k` (minusculas sobre 50 KiB).
+
+| Benchmark            | Tiempo | Notas |
+|----------------------|--------|-------|
+| `csv_serialize_1000` | ~22 ms  | 20K llamadas a `indice_de` (cada una `O(bytes)` ahora) |
+| `cadena_caso_50k`    | ~10 ms  | 50 KiB minusculas_ascii |
+| `base64_round_trip`  | ~13-35 ms | (era ~130 ms en v1.61 — beneficio de `cadenas.repetir` ya lineal) |
+
+Las 5 nativas (~250 lineas C) reemplazan ~80 lineas de pure-Cornamusa
+que eran O(n^2) o O(n^3). Los wrappers en `stdlib/cadenas.cor` quedan
+como thin delegates.
+
+### Lo que se optimizo (recap)
+
+| Funcion                | Antes (Cornamusa pura) | Despues (nativa C)        |
+|------------------------|------------------------|---------------------------|
+| `empieza_con(s, p)`    | O(p^2) char walk       | O(p) memcmp               |
+| `termina_con(s, suf)`  | O(suf^2)               | O(suf) memcmp             |
+| `indice_de(s, sub)`    | O(s^2 * sub)           | O(s * sub) byte search    |
+| `minusculas_ascii(s)`  | O(s^2) + lookup-table  | O(s) byte transform       |
+| `mayusculas_ascii(s)`  | O(s^2) + lookup-table  | O(s) byte transform       |
+
+Tests no rompen — la semantica se preserva. Para `indice_de` se
+mantiene "indice de caracter" (no byte index) usando `utf8proc` solo
+en el momento de match.
+
 ## v1.61.0 — Perf round 2: `cadena_unir` nativo + `csv` con iterator (post-medición)
 
 **Hallazgo cazado midiendo, no asumiendo**: el benchmark nuevo

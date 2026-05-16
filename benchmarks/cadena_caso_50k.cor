@@ -1,0 +1,12 @@
+# Benchmark: minusculas_ascii sobre 50 KiB de texto.
+# Antes de v1.62 era O(n^2) por `s[i]` UTF-8 walk + concat string + lookup
+# table de 26 entradas por char. Tras delegar a nativa C, es O(n).
+
+importar cadenas
+
+# Construir un texto de ~50 KiB con muchas mayusculas.
+parte = "El RAPIDO ZORRO MARRON salta SOBRE el PERRO PEREZOSO. "
+texto = cadenas.repetir(parte, 1000)   # ~54 KiB
+
+bajo = cadenas.minusculas_ascii(texto)
+imprimir("len bajo:", longitud(bajo))

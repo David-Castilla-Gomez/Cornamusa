@@ -45,62 +45,22 @@ funcion caracter(s, i):
     retornar s[i]
 fin funcion
 
-# Verifica si `s` empieza con `prefijo`.
+# v1.62: las 3 funciones siguientes delegan a nativas O(bytes) con
+# memcmp. Las versiones puras anteriores eran O(n^2) por la
+# combinacion de `s[i]` UTF-8 walk + loop por caracter.
 funcion empieza_con(s, prefijo):
-    np = longitud(prefijo)
-    ns = longitud(s)
-    si np > ns:
-        retornar falso
-    fin si
-    para i en rango(np):
-        si s[i] != prefijo[i]:
-            retornar falso
-        fin si
-    fin para
-    retornar verdadero
+    retornar cadena_empieza_con(s, prefijo)
 fin funcion
 
-# Verifica si `s` termina con `sufijo`.
 funcion termina_con(s, sufijo):
-    nf = longitud(sufijo)
-    ns = longitud(s)
-    si nf > ns:
-        retornar falso
-    fin si
-    base = ns - nf
-    para i en rango(nf):
-        si s[base + i] != sufijo[i]:
-            retornar falso
-        fin si
-    fin para
-    retornar verdadero
+    retornar cadena_termina_con(s, sufijo)
 fin funcion
 
-# Devuelve la posición de la primera ocurrencia de `sub` en `s`, o -1
-# si no aparece. Posiciones son índices de code points (UTF-8).
+# Devuelve el indice (en caracteres UTF-8) de la primera ocurrencia
+# de `sub` en `s`, o -1. La nativa cuenta caracteres con utf8proc
+# solo si se encuentra la coincidencia.
 funcion indice_de(s, sub):
-    ns = longitud(s)
-    nb = longitud(sub)
-    si nb == 0:
-        retornar 0
-    fin si
-    si nb > ns:
-        retornar -1
-    fin si
-    i = 0
-    mientras i <= ns - nb:
-        coincide = verdadero
-        para j en rango(nb):
-            si s[i + j] != sub[j]:
-                coincide = falso
-            fin si
-        fin para
-        si coincide:
-            retornar i
-        fin si
-        i = i + 1
-    fin mientras
-    retornar -1
+    retornar cadena_indice_de(s, sub)
 fin funcion
 
 # Verdadero si `s` contiene `sub`.
@@ -154,60 +114,16 @@ funcion reemplazar(s, viejo, nuevo):
     retornar unir(partes, nuevo)
 fin funcion
 
-# Convierte ASCII A-Z a a-z. Caracteres no-ASCII se preservan.
+# v1.62: delegan a nativas que escanean byte-a-byte aplicando el
+# offset ±32 directamente. La version pura era ~100x mas lenta
+# (loop sobre chars + lookup en tabla de 26 entradas por char +
+# concat O(n^2)).
 funcion minusculas_ascii(s):
-    resultado = ""
-    n = longitud(s)
-    para i en rango(n):
-        c = s[i]
-        # Comparación de cadenas (1-char). 'A' = 65, 'Z' = 90.
-        si c >= "A" y c <= "Z":
-            # Construir cadena con código (offset +32).
-            # Workaround sin built-in chr/ord: lookup table.
-            resultado = resultado + _ascii_a_min(c)
-        sino:
-            resultado = resultado + c
-        fin si
-    fin para
-    retornar resultado
+    retornar cadena_minusculas_ascii(s)
 fin funcion
 
-# Convierte ASCII a-z a A-Z. Caracteres no-ASCII se preservan.
 funcion mayusculas_ascii(s):
-    resultado = ""
-    n = longitud(s)
-    para i en rango(n):
-        c = s[i]
-        si c >= "a" y c <= "z":
-            resultado = resultado + _ascii_a_may(c)
-        sino:
-            resultado = resultado + c
-        fin si
-    fin para
-    retornar resultado
-fin funcion
-
-# Helpers internos: traducen char a char con offset ±32.
-# Sin built-in `chr/ord`, usamos tabla.
-_TABLA_MIN = "abcdefghijklmnopqrstuvwxyz"
-_TABLA_MAY = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-
-funcion _ascii_a_min(c):
-    para i en rango(26):
-        si c == _TABLA_MAY[i]:
-            retornar _TABLA_MIN[i]
-        fin si
-    fin para
-    retornar c
-fin funcion
-
-funcion _ascii_a_may(c):
-    para i en rango(26):
-        si c == _TABLA_MIN[i]:
-            retornar _TABLA_MAY[i]
-        fin si
-    fin para
-    retornar c
+    retornar cadena_mayusculas_ascii(s)
 fin funcion
 
 # Quita espacios en blanco (ASCII: espacio, tab, \n, \r) del inicio

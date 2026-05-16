@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.61.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.62.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.61.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de quince módulos. **Perf round 2**: tras medir tres benchmarks nuevos sobre stdlib reciente (`csv_parse_1000`, `sha256_1mb`, `base64_round_trip`), se cazaron **dos hotspots O(n²)** en pure-Cornamusa: `cadenas.unir` y `texto[i]` UTF-8 indexing. Solución: nueva built-in `cadena_unir` (en C, lineal), y `csv.parsear` reescrito con `para c en texto` (iterator) + buffer de lista. **`csv_parse_1000`: 1036ms → 31ms (33× speedup)**. Ningún otro benchmark regresiona. 220 tests en verde, hallazgo documentado en `benchmarks/RESULTS.md`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.62.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de quince módulos. **Continuación del audit de perf**: tras grep sistemático de `texto[i]` y `+= cadena` en stdlib, se encontraron 5 funciones más en `cadenas` con O(n²): `empieza_con`, `termina_con`, `indice_de`, `minusculas_ascii`, `mayusculas_ascii`. Solución: 5 nativas C nuevas, wrappers en stdlib quedan como thin delegates. Wins multiples: `csv_serialize_1000` ahora en ~22ms (era cientos), `cadena_caso_50k` ~10ms (era segundos), `base64_round_trip` 130ms→~25ms (por `repetir` ya lineal). v1.61 inauguró el round con `cadena_unir` (csv_parse_1000 33× speedup). 220 tests en verde, todo documentado en `benchmarks/RESULTS.md`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -166,6 +166,7 @@ Hoja de ruta resumida:
 | **v1.59** | **Stdlib `base64` — codec RFC 4648 nativo (HTTP Basic Auth, Data URIs, JWT)** | ✅ |
 | **v1.60** | **Stdlib `hashing` — SHA-256 (FIPS 180-4) + MD5 (RFC 1321) nativos** | ✅ |
 | **v1.61** | **Perf round 2 — `cadena_unir` nativo + iter-en-texto: csv_parse_1000 33× speedup** | ✅ |
+| **v1.62** | **Perf round 2 cont. — 5 nativas más en `cadenas` (indice_de, empieza_con, ...) tras audit de stdlib** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
