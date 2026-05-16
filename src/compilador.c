@@ -657,10 +657,57 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             bool tiene_spread = (e->como.llamada.args_spread != NULL);
             bool tiene_kwargs = (e->como.llamada.kwarg_keys != NULL);
             bool tiene_dspread = (e->como.llamada.args_doble_spread != NULL);
+            /* v1.46: si combinamos `*args` con kwargs/`**dict`, emitimos
+               OP_LLAMAR_SPREAD_KW_DICT que construye una lista (args
+               posicionales) y un dict (kwargs) y los pasa juntos. */
             if (tiene_spread && (tiene_kwargs || tiene_dspread)) {
-                error_compilacion(c, e->linea, e->columna,
-                    "no se puede combinar `*args` con keyword args / **dict en la misma llamada (v1.25)");
-                return false;
+                if (!compilador_compilar_expr(c, callee)) return false;
+                /* Construir lista de posicionales (incluye `*spread`). */
+                chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA, 0, e->linea);
+                for (int i = 0; i < n_args; i++) {
+                    bool es_kw = (e->como.llamada.kwarg_keys
+                                  && e->como.llamada.kwarg_keys[i] != NULL);
+                    bool es_dsp = (e->como.llamada.args_doble_spread
+                                   && e->como.llamada.args_doble_spread[i]);
+                    bool es_sp = (e->como.llamada.args_spread
+                                  && e->como.llamada.args_spread[i]);
+                    if (es_kw || es_dsp) continue;
+                    if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                    if (es_sp) {
+                        chunk_emitir_byte(c->actual->chunk, OP_LISTA_EXTENDER, e->linea);
+                    } else {
+                        chunk_emitir_byte(c->actual->chunk, OP_LISTA_AGREGAR, e->linea);
+                    }
+                }
+                /* Construir dict de kwargs (incluye `**dspread`). */
+                chunk_emitir_byte2(c->actual->chunk, OP_BUILD_DICC, 0, e->linea);
+                for (int i = 0; i < n_args; i++) {
+                    bool es_kw = (e->como.llamada.kwarg_keys
+                                  && e->como.llamada.kwarg_keys[i] != NULL);
+                    bool es_dsp = (e->como.llamada.args_doble_spread
+                                   && e->como.llamada.args_doble_spread[i]);
+                    if (!es_kw && !es_dsp) continue;
+                    if (es_kw) {
+                        const char *k = e->como.llamada.kwarg_keys[i];
+                        int klen = e->como.llamada.kwarg_lens[i];
+                        Valor v_clave = valor_cadena_duplicar(k, klen);
+                        int idx_const = chunk_agregar_constante(c->actual->chunk, v_clave);
+                        if (idx_const < 0 || idx_const > 255) {
+                            error_compilacion(c, e->linea, e->columna,
+                                "demasiadas constantes");
+                            return false;
+                        }
+                        chunk_emitir_byte2(c->actual->chunk, OP_CONST,
+                                            (uint8_t)idx_const, e->linea);
+                        if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                        chunk_emitir_byte(c->actual->chunk, OP_DICC_AGREGAR_PAR, e->linea);
+                    } else {  /* **dspread */
+                        if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                        chunk_emitir_byte(c->actual->chunk, OP_DICC_EXTENDER, e->linea);
+                    }
+                }
+                chunk_emitir_byte(c->actual->chunk, OP_LLAMAR_SPREAD_KW_DICT, e->linea);
+                return true;
             }
             if (tiene_spread) {
                 if (!compilador_compilar_expr(c, callee)) return false;

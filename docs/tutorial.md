@@ -364,13 +364,13 @@ imprimir(api("api.dev", **config))  # ≡ api("api.dev", puerto=443)
 Esto hace trivial escribir *wrappers* genéricos (funciones que envuelven a otras):
 
 ```cornamusa
-funcion con_log(f, *args):
+funcion con_log(f, *args, **kw):
     imprimir("-> llamando con", longitud(args), "argumentos")
-    retornar f(*args)
+    retornar f(*args, **kw)
 fin funcion
 ```
 
-> Limitación actual: no se puede combinar `*args` y `**kwargs` en la **misma** llamada (`f(*args, **kw)`). Reenvía uno u otro, o pasa los kwargs explícitos.
+Desde v1.46 puedes combinar `*args`, kwargs explícitos y `**dict` en la misma llamada — el patrón clásico del wrapper genérico funciona sin restricciones.
 
 ### Lambda
 

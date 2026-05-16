@@ -2,7 +2,7 @@
 
 > Cheatsheet de sintaxis + tablas de built-ins, stdlib y errores. Para una explicación pedagógica usa el [tutorial](tutorial.md). Para la especificación formal del lenguaje, [ESPEC.md](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md).
 
-**Versión:** 1.45.0
+**Versión:** 1.46.0
 
 ---
 
@@ -326,7 +326,7 @@ api("h", **{"puerto": 443})       # ≡ api("h", puerto=443)
 api("h", **{"puerto": 443}, tls=verdadero)   # **spread + kwarg explícito
 ```
 
-> No se puede combinar `*args` con `**dict`/kwargs en la **misma** llamada.
+> Desde v1.46 se pueden combinar `*args`, kwargs explícitos y `**dict` en la misma llamada: `f(*xs, c=10, **opts)`. Habilita wrappers genéricos `f(*args, **kw)`.
 
 ### Lambda
 
@@ -656,6 +656,19 @@ fin con
 ```
 
 Equivale a `_ctx = expr; nombre = _ctx.__entrar__(); intentar: cuerpo finalmente: _ctx.__salir__()`.
+
+### Multi-recurso (v1.46)
+
+Varios recursos separados por coma. Entra en orden A→B→C; libera en orden inverso C→B→A (LIFO), incluso si el cuerpo lanza.
+
+```cornamusa
+con abrir_conexion("db") como conn, abrir_archivo("log") como log:
+    conn.consultar("SELECT * FROM ...")
+    log.escribir("ok")
+fin con
+```
+
+Equivale a `con A: con B: con C: ... fin con fin con fin con` anidados.
 
 > Limitación: `__salir__` se invoca sin argumentos (no recibe la excepción).
 

@@ -1,8 +1,8 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 1.45.0
+**Versión del documento:** 1.46.0
 **Estado:** Estable.
-**Última revisión:** 2026-05-16 — actualizada a v1.45 (f-string format specifiers `{expr:[fill][align][width][.prec][type]}`).
+**Última revisión:** 2026-05-16 — actualizada a v1.46 (multi-recurso `con A, B:` + combinar `*args` con `**kwargs` en la misma llamada; cierre de la Fase 4).
 
 Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
 
@@ -591,8 +591,10 @@ sent_clase     ← decoradores? "clase" IDENT
                 "fin" "clase"
 
 # ───── Context managers ─────
-sent_con       ← "con" expr ("como" IDENT)? ":" cuerpo
+# v1.46: lista de recursos separados por coma — se anidan al desazucarar.
+sent_con       ← "con" recurso_con ("," recurso_con)* ":" cuerpo
                 "fin" "con"
+recurso_con    ← expr ("como" IDENT)?
 
 # ───── Pattern matching ─────
 sent_coincidir ← "coincidir" expr ":" LF
@@ -675,8 +677,8 @@ postfijo       ← "(" args? ")"
                 / "." IDENT
 
 # Argumentos de llamada: posicionales, *spread, keyword, **spread.
-# Restricción: no se puede combinar `*` con keyword/`**` en una misma
-# llamada (se rechaza en compilación).
+# v1.46: las cuatro formas se pueden mezclar libremente en una misma
+# llamada (`f(1, *xs, c=10, **opts)`).
 args           ← arg ("," arg)*
 arg            ← "**" expr            # **dict spread
                 / "*" expr            # *iterable spread
@@ -930,7 +932,7 @@ El lado izquierdo de `=` puede ser un patrón de nombres en lugar de un único o
 - **`*args`**: `funcion f(*resto):` recoge los posicionales sobrantes en una tupla.
 - **`**kwargs`**: `funcion f(**kw):` recoge los keyword args no declarados en un diccionario.
 - **Keyword en la llamada**: `f(x=1, y=2)` — pasa argumentos por nombre, en cualquier orden.
-- **Spread en la llamada**: `f(*iterable)` expande posicionales; `f(**dict)` expande keyword args. No se puede combinar `*` con `**`/keyword en la misma llamada.
+- **Spread en la llamada**: `f(*iterable)` expande posicionales; `f(**dict)` expande keyword args. Desde v1.46 se combinan libremente (`f(1, *xs, c=10, **opts)`) — habilita wrappers genéricos `f(*args, **kw)`.
 
 ---
 

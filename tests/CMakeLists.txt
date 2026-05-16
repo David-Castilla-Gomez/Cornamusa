@@ -671,6 +671,18 @@ set_tests_properties(bc_run_62_fstring_formato PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 62"
 )
 
+# v1.46: multi-recurso `con` + combinar *args con **kwargs.
+add_test(
+    NAME bc_run_63_con_multi_spread
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/63_con_multi_spread.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_63_con_multi_spread PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 63"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

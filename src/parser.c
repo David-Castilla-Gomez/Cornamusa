@@ -2291,48 +2291,28 @@ static Sent *parsear_intentar(Parser *p) {
  *     al dunder. Los context managers que necesitan ver la excepción
  *     deberán esperar a v1.14+ junto con la firma extendida
  *     `__salir__(yo, tipo_exc, valor_exc, traceback)`.
- *   - Sin lista de contextos: `con A, B:` no soportado en este
- *     release. Encadenar manualmente con `con A: con B:`.
+ *
+ * v1.46: multi-recurso `con a, b:` (anidado al desazucarar).
  */
-static Sent *parsear_con(Parser *p) {
-    int linea = p->actual.linea;
-    int col = p->actual.columna;
-    avanzar(p); /* 'con' */
 
-    Expr *contexto = parser_parsear_expr(p);
-    if (contexto == NULL) return NULL;
-
-    const char *alias_texto = NULL;
-    int alias_len = 0;
-    if (consumir_si(p, TT_COMO)) {
-        if (!check(p, TT_IDENT)) {
-            error_en(p, &p->actual,
-                "se esperaba un nombre tras 'como' en 'con'");
-            return NULL;
-        }
-        alias_texto = p->actual.inicio;
-        alias_len = p->actual.longitud;
-        avanzar(p);
-    }
-
-    if (!consumir(p, TT_DOS_PUNTOS,
-            "se esperaba ':' tras la cabecera de 'con'")) {
-        return NULL;
-    }
-
-    if (!empujar_bloque(p, BLOQUE_CON, linea)) return NULL;
-
-    Sent *cuerpo = parsear_cuerpo_bloque(p);
-    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
-
-    salir_bloque(p);
-
-    if (!consumir_fin(p, BLOQUE_CON, linea)) return NULL;
-
-    /* Construir el nombre interno único `__cm_<linea>_<col>`. */
+/* v1.46: construye el bloque desugarado para UN solo recurso `con`,
+   con un body ya prefabricado. Reusado para cada nivel del anidamiento
+   cuando hay multi-recurso. */
+static Sent *desugar_un_con(Parser *p, Expr *contexto,
+                              const char *alias_texto, int alias_len,
+                              Sent *cuerpo, int linea, int col,
+                              int sufijo) {
+    /* Nombre interno único `__cm_<linea>_<col>` (sufijo > 0 para
+       multi-recurso, para que cada nivel tenga su propio nombre). */
     char nombre_buf[64];
-    int n_nombre = snprintf(nombre_buf, sizeof(nombre_buf),
+    int n_nombre;
+    if (sufijo == 0) {
+        n_nombre = snprintf(nombre_buf, sizeof(nombre_buf),
                              "__cm_%d_%d", linea, col);
+    } else {
+        n_nombre = snprintf(nombre_buf, sizeof(nombre_buf),
+                             "__cm_%d_%d_%d", linea, col, sufijo);
+    }
     if (n_nombre <= 0 || n_nombre >= (int)sizeof(nombre_buf)) {
         error_en(p, &p->actual,
             "no se pudo generar nombre interno para 'con'");
@@ -2388,6 +2368,75 @@ static Sent *parsear_con(Parser *p) {
     bloque_arr[1] = s_entrar;
     bloque_arr[2] = s_intentar;
     return sent_bloque(p->arena, bloque_arr, 3, linea, col);
+}
+
+typedef struct {
+    Expr *contexto;
+    const char *alias_texto;
+    int alias_len;
+} RecursoCon;
+
+static Sent *parsear_con(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'con' */
+
+    /* v1.46: parsear lista de recursos separados por coma.
+       `con A, B como b, C:` produce hasta 3 niveles anidados. */
+    RecursoCon recursos[16];
+    int n_recursos = 0;
+
+    do {
+        if (n_recursos >= 16) {
+            error_en(p, &p->actual,
+                "demasiados recursos en `con` (máximo 16)");
+            return NULL;
+        }
+        Expr *contexto = parser_parsear_expr(p);
+        if (contexto == NULL) return NULL;
+        const char *alias_texto = NULL;
+        int alias_len = 0;
+        if (consumir_si(p, TT_COMO)) {
+            if (!check(p, TT_IDENT)) {
+                error_en(p, &p->actual,
+                    "se esperaba un nombre tras 'como' en 'con'");
+                return NULL;
+            }
+            alias_texto = p->actual.inicio;
+            alias_len = p->actual.longitud;
+            avanzar(p);
+        }
+        recursos[n_recursos].contexto = contexto;
+        recursos[n_recursos].alias_texto = alias_texto;
+        recursos[n_recursos].alias_len = alias_len;
+        n_recursos++;
+    } while (consumir_si(p, TT_COMA));
+
+    if (!consumir(p, TT_DOS_PUNTOS,
+            "se esperaba ':' tras la cabecera de 'con'")) {
+        return NULL;
+    }
+
+    if (!empujar_bloque(p, BLOQUE_CON, linea)) return NULL;
+
+    Sent *cuerpo = parsear_cuerpo_bloque(p);
+    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
+
+    salir_bloque(p);
+
+    if (!consumir_fin(p, BLOQUE_CON, linea)) return NULL;
+
+    /* Anidar desde dentro hacia fuera: el último recurso envuelve el
+       cuerpo del usuario; cada anterior envuelve el resultado. */
+    Sent *envuelto = cuerpo;
+    for (int i = n_recursos - 1; i >= 0; i--) {
+        envuelto = desugar_un_con(p,
+            recursos[i].contexto,
+            recursos[i].alias_texto, recursos[i].alias_len,
+            envuelto, linea, col, i);
+        if (envuelto == NULL) return NULL;
+    }
+    return envuelto;
 }
 
 /*

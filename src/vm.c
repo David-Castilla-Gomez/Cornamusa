@@ -4871,6 +4871,76 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 }
                 break;
             }
+
+            case OP_LLAMAR_SPREAD_KW_DICT: {
+                /* v1.46: stack [..., callee, args_list, kwargs_dict].
+                   Expandimos lista a posicionales (n_pos en runtime),
+                   convertimos dict a pares (clave, valor) en stack,
+                   y delegamos a `ejecutar_llamar_kw`. */
+                Valor dict_v = *(--vm->tope);
+                Valor lista_v = *(--vm->tope);
+                if (dict_v.tipo != VAL_DICCIONARIO) {
+                    valor_destruir(&dict_v); valor_destruir(&lista_v);
+                    VM_ERROR("ErrorInterno: OP_LLAMAR_SPREAD_KW_DICT sin dict");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (lista_v.tipo != VAL_LISTA) {
+                    valor_destruir(&dict_v); valor_destruir(&lista_v);
+                    VM_ERROR("ErrorInterno: OP_LLAMAR_SPREAD_KW_DICT sin lista");
+                    return VM_ERROR_RUNTIME;
+                }
+                Lista *la = lista_v.como.lista;
+                Diccionario *dk = dict_v.como.dicc;
+                if (la->cuenta > 255) {
+                    valor_destruir(&dict_v); valor_destruir(&lista_v);
+                    VM_ERROR("ErrorDeValor: spread produce >255 argumentos posicionales");
+                    return VM_ERROR_RUNTIME;
+                }
+                if (dk->cuenta > 255) {
+                    valor_destruir(&dict_v); valor_destruir(&lista_v);
+                    VM_ERROR("demasiados kwargs tras **dict (max 255)");
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Validar claves cadena ANTES de mutar el stack. */
+                for (int oi = 0; oi < dk->cuenta; oi++) {
+                    int slot_idx = dk->orden_insercion[oi];
+                    EntradaDicc *e2 = &dk->entradas[slot_idx];
+                    if (!e2->ocupada) continue;
+                    if (e2->clave.tipo != VAL_CADENA) {
+                        const char *tname = valor_nombre_tipo(&e2->clave);
+                        VM_ERROR(
+                            "ErrorDeTipo: clave de **dict debe ser cadena (no '%s')",
+                            tname);
+                        valor_destruir(&dict_v); valor_destruir(&lista_v);
+                        RAISE_OR_DIE();
+                        goto raise_atrapado;
+                    }
+                }
+                /* Push posicionales (clones desde la lista). */
+                uint8_t n_pos = (uint8_t)la->cuenta;
+                for (int i = 0; i < la->cuenta; i++) {
+                    empujar(vm, valor_clonar(&la->elementos[i]));
+                }
+                valor_destruir(&lista_v);
+                /* Push pares (clave, valor) del dict. */
+                int n_kw = 0;
+                for (int oi = 0; oi < dk->cuenta; oi++) {
+                    int slot_idx = dk->orden_insercion[oi];
+                    EntradaDicc *e2 = &dk->entradas[slot_idx];
+                    if (!e2->ocupada) continue;
+                    empujar(vm, valor_clonar(&e2->clave));
+                    empujar(vm, valor_clonar(&e2->valor));
+                    n_kw++;
+                }
+                valor_destruir(&dict_v);
+                Valor *base_nuevo = vm->tope - n_pos - 2 * n_kw - 1;
+                if (ejecutar_llamar_kw(vm, &frame, base_nuevo,
+                                         n_pos, (uint8_t)n_kw) != VM_OK) {
+                    RAISE_OR_DIE();
+                    break;
+                }
+                break;
+            }
 #if 0
             /* legacy: bloque grande de OP_LLAMAR_KW antiguo (sustituido por
                ejecutar_llamar_kw helper en v1.25). Conservado bajo #if 0

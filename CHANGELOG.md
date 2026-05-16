@@ -6,6 +6,90 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.46.0] — 2026-05-16 — Multi-recurso `con` + combinar `*args`/`**kwargs` (cierre Fase 4)
+
+Último release de la Fase 4 (sintaxis idiomática post-modelo de
+datos). Cierra dos limitaciones documentadas explícitamente en el
+intérprete.
+
+### Multi-recurso `con A, B:`
+
+Varios context managers separados por coma se anidan automáticamente.
+Entran en orden A→B→C; salen en orden inverso C→B→A (LIFO), incluso
+si el cuerpo lanza.
+
+```cornamusa
+con abrir_conexion("db") como conn, abrir_archivo("log") como log:
+    conn.consultar("...")
+    log.escribir("ok")
+fin con
+```
+
+Equivale exactamente a `con A: con B: con C: ... fin con fin con fin con`
+anidados — el parser desazucara así. No hay opcode nuevo; el bytecode
+es el mismo que tres `con` consecutivos. Cada nivel tiene su propio
+nombre interno único (`__cm_<linea>_<col>_<sufijo>`).
+
+Hasta 16 recursos por bloque (límite arbitrario; documentado).
+
+### Combinar `*args` y `**kwargs` en la misma llamada
+
+Antes el compilador rechazaba explícitamente `f(*args, **kw)` con
+"no se puede combinar `*args` con keyword args / **dict en la misma
+llamada". v1.46 lo levanta. Habilita el **patrón clásico del wrapper
+genérico**:
+
+```cornamusa
+funcion log_y_llamar(f, *args, **kw):
+    imprimir("llamando con", args, kw)
+    retornar f(*args, **kw)
+fin funcion
+```
+
+Las cuatro formas (posicional simple, `*spread`, kwarg explícito,
+`**dspread`) se mezclan libremente:
+
+```cornamusa
+destino(*[1], 2, c=3, **{"d": 4})    # válido
+```
+
+**Implementación**: nuevo opcode `OP_LLAMAR_SPREAD_KW_DICT`. El
+compilador, cuando detecta la mezcla, construye:
+1. Una **lista** runtime con todos los posicionales (incluido `*spread`),
+   igual que `OP_LLAMAR_SPREAD`.
+2. Un **dict** runtime con todos los kwargs (incluido `**dspread`),
+   igual que `OP_LLAMAR_KW_DICT`.
+3. Emite `OP_LLAMAR_SPREAD_KW_DICT` que toma `[callee, lista, dict]`,
+   expande la lista a `n_pos` posicionales (dinámico en runtime),
+   convierte el dict en pares (clave, valor), y delega a
+   `ejecutar_llamar_kw` — el mismo helper que usan OP_LLAMAR_KW y
+   OP_LLAMAR_KW_DICT.
+
+Sin opcodes auxiliares ni nuevo path en `ejecutar_llamar_kw`: solo
+una manera distinta de ALIMENTAR ese helper.
+
+### Tests
+
+- **203/203 tests verde** (9 nuevos en `test_bytecode_con_multi_spread`
+  + `lex_63` + `bc_run_63_con_multi_spread`).
+- Ejemplo `examples/63_con_multi_spread.cor`: tres recursos, liberación
+  ante excepción, wrapper genérico, configuración compuesta vía dos
+  `**dict` mergeados.
+
+### Estado
+
+**Fase 4 completa.** El plan original cubría:
+- v1.41 `__repr__` + `__booleano__`
+- v1.42 `__hash__` + `__igual__`
+- v1.43 `__siguiente__`
+- v1.44 ternaria + slicing assignment
+- v1.45 f-string format specifiers
+- v1.46 multi-recurso `con` + combinar spread
+
+Todos cumplidos. El modelo de datos y la sintaxis idiomática quedan
+al nivel de Python 3.10+ (módulo de las features explícitamente
+aplazadas a v2.x: async/await, threading).
+
 ## [1.45.0] — 2026-05-16 — F-string format specifiers
 
 Segundo release de sintaxis idiomática (post-modelo de datos). Cierra

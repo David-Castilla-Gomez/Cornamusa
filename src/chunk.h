@@ -335,6 +335,22 @@ typedef enum {
     OP_FORMATO_F_SPEC,
 
     /*
+     * OP_LLAMAR_SPREAD_KW_DICT (v1.46): llamada que combina `*args` y
+     * keyword args / `**dict` en la misma invocación.
+     *
+     * Stack: [..., callee, args_list, kwargs_dict]
+     *   - args_list      lista construida con OP_BUILD_LISTA + OP_LISTA_*
+     *                     (mismo formato que OP_LLAMAR_SPREAD).
+     *   - kwargs_dict    dict construido con OP_BUILD_DICC + OP_DICC_*
+     *                     (mismo formato que OP_LLAMAR_KW_DICT).
+     *
+     * Sin operandos. Expande la lista a posicionales en el stack,
+     * extrae los pares (clave, valor) del dict, y despacha a
+     * `ejecutar_llamar_kw` con `n_pos` calculado en runtime.
+     */
+    OP_LLAMAR_SPREAD_KW_DICT,
+
+    /*
      * OP_LONGITUD (v1.3): pop TOS, push longitud (entero).
      *   - VAL_INSTANCIA con `__longitud__`: dispatch al dunder.
      *   - Cadena/lista/dicc/conjunto/tupla/rango: cuenta elementos

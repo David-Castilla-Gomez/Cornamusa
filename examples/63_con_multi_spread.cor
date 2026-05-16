@@ -1,0 +1,89 @@
+# Ejemplo 63 — Multi-recurso `con` y combinar `*args` + `**kwargs` (v1.46)
+#
+# v1.46 cierra dos limitaciones documentadas:
+#
+#   1. `con a, b:` — varios recursos en un solo bloque, anidados al
+#      desazucarar. Entra en orden A→B; al salir libera en orden
+#      inverso B→A (LIFO), incluso si el cuerpo lanza una excepción.
+#
+#   2. `f(*args, **kw)` — combinar spread posicional y kwargs/`**dict`
+#      en la misma llamada. Antes daba `no se puede combinar...`;
+#      ahora funciona y habilita el patrón clásico del wrapper genérico.
+
+imprimir("=== `con` multi-recurso y `*args`+`**kwargs` (v1.46) ===")
+imprimir("")
+
+# ─── Caso 1: `con A, B, C:` — orden LIFO ───
+imprimir("1) tres recursos en un solo `con`")
+clase R:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+    fin funcion
+    funcion __entrar__(yo):
+        imprimir(f"  entra {yo.nombre}")
+        retornar yo
+    fin funcion
+    funcion __salir__(yo):
+        imprimir(f"  sale  {yo.nombre}")
+    fin funcion
+fin clase
+
+con R("A"), R("B") como b, R("C"):
+    imprimir(f"  dentro, b={b.nombre}")
+fin con
+imprimir("")
+
+# ─── Caso 2: liberación garantizada en excepción ───
+imprimir("2) el `__salir__` se ejecuta aunque el cuerpo lance")
+intentar:
+    con R("primero"), R("segundo"):
+        imprimir("  trabajando...")
+        lanzar ErrorDeValor("explota")
+    fin con
+atrapar ErrorDeValor como e:
+    imprimir(f"  atrapado: {e}")
+fin intentar
+imprimir("")
+
+# ─── Caso 3: wrapper genérico — el patrón que justifica combinar ───
+imprimir("3) wrapper genérico con `*args` + `**kwargs`")
+funcion log_y_llamar(f, *args, **kw):
+    imprimir(f"  -> llamando con args={args}, kw={kw}")
+    retornar f(*args, **kw)
+fin funcion
+
+funcion api(host, puerto=80, tls=falso):
+    esquema = "https" si tls sino "http"
+    retornar esquema + "://" + host + ":" + cadena(puerto)
+fin funcion
+
+res = log_y_llamar(api, "prod.dev", puerto=443, tls=verdadero)
+imprimir(f"  resultado: {res}")
+imprimir("")
+
+# ─── Caso 4: spread + kwarg explícito + `**dict` ───
+imprimir("4) combinaciones varias")
+funcion destino(a, b, c=0, d=0):
+    retornar f"a={a} b={b} c={c} d={d}"
+fin funcion
+
+imprimir("  " + destino(*[1, 2], c=10))
+imprimir("  " + destino(*[1, 2], **{"c": 7, "d": 8}))
+imprimir("  " + destino(*[1], 2, c=3, **{"d": 4}))
+imprimir("")
+
+# ─── Caso 5: merge de configs vía wrapper ───
+imprimir("5) configuración compuesta")
+defaults = {"puerto": 80, "tls": falso}
+overrides = {"tls": verdadero}
+
+funcion call_with(f, *args, **kw):
+    retornar f(*args, **kw)
+fin funcion
+
+# `**defaults, **overrides` mergea (overrides gana).
+res2 = call_with(api, "api.dev", **defaults, **overrides)
+imprimir(f"  con defaults+overrides: {res2}")
+
+imprimir("")
+imprimir("=== fin ejemplo 63 ===")
