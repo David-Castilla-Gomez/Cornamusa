@@ -66,6 +66,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Ternaria + slicing assignment | v1.44 | ✅ |
 | F-string format specifiers | v1.45 | ✅ |
 | Multi-recurso `con` + combinar `*args`/`**kwargs` (cierre Fase 4) | v1.46 | ✅ |
+| REPL con history y line editing (abre Fase 5: tooling) | v1.47 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

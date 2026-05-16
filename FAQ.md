@@ -75,6 +75,8 @@ Sí. Compilación con MSVC y MinGW probada. Sin embargo, algunas optimizaciones 
 
 Pulsa Ctrl-D (Ctrl-Z en Windows) o escribe `salir` para terminar. El REPL acumula líneas hasta que cierras un bloque (con `fin <etiqueta>`); una línea vacía ejecuta el bloque.
 
+Desde v1.47 el REPL tiene **edición de línea** (cursores ←/→, Home/End, Backspace, Delete) y **navegación de historial** con ↑/↓. El historial se guarda en `~/.cornamusa_historial` (`%USERPROFILE%\.cornamusa_historial` en Windows) y persiste entre sesiones.
+
 ---
 
 ## Sobre la sintaxis

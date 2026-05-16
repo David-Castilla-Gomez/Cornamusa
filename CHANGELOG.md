@@ -6,6 +6,66 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.47.0] — 2026-05-16 — REPL con line editing e historial (abre Fase 5: tooling)
+
+Primer release de la **Fase 5 — Tooling**. La prioridad nº1 declarada
+de David (tooling) finalmente arranca. El REPL pasa de `fgets` plano
+a un editor de línea interactivo con historial persistente — el QoL
+más visible del día a día.
+
+### Lo nuevo
+
+- **Edición de línea**: cursores ←/→, Home/End (también Ctrl-A/E),
+  Backspace, Delete. Insertar/borrar a mitad de línea funciona.
+- **Historial navegable** con ↑/↓. La línea-en-progreso se preserva
+  cuando navegas hacia atrás y vuelves al final.
+- **Persistencia entre sesiones**: el historial se guarda en
+  `~/.cornamusa_historial` (`%USERPROFILE%\.cornamusa_historial` en
+  Windows) al salir, y se carga al arrancar. Tope: 1000 entradas más
+  recientes.
+- **Ctrl-C** cancela la línea actual sin salir del REPL.
+- **Ctrl-D** (POSIX) / **Ctrl-Z** (Windows) con buffer vacío termina
+  el REPL; con buffer no vacío borra a la derecha del cursor.
+
+### Implementación
+
+Nuevo módulo `src/repl_line.{c,h}` con detección de plataforma:
+- **POSIX**: `termios` raw mode + parseo de secuencias escape ANSI
+  (`\x1b[A` para ↑, etc.).
+- **Windows**: `_getch()` para teclas char-por-char +
+  `SetConsoleMode(ENABLE_VIRTUAL_TERMINAL_PROCESSING)` para que ANSI
+  funcione en el output. Codepage temporal a UTF-8 para que tildes y
+  ñ se rendericen correctamente.
+
+Sin dependencias externas (no se vendoró ni linenoise ni readline) —
+solo 400 líneas de C cross-platform. El `main.c` quedó casi idéntico:
+sustituye el `fgets`+`stdin` por una llamada a `repl_leer_linea` y
+maneja el resultado como antes.
+
+**Fallback automático**: si `stdin` no es un TTY (script piped,
+archivo, CI), `repl_leer_linea` cae a `fgets` y omite el line editor.
+Las suites de tests por pipe siguen funcionando sin cambios.
+
+### Tests
+
+- **203/203 tests verde** (sin cambios — el line editor requiere TTY
+  para probarse interactivamente, y el path no-TTY ya estaba cubierto
+  por las suites existentes).
+- Smoke test manual: aritmética simple, bloques multilínea, history
+  con ↑↓, edición a mitad de línea — todo OK en consola de Windows 11.
+
+### Limitaciones aceptadas
+
+- **Sin tab completion**: requeriría introspección de scope. Puede
+  llegar en v1.47.1 si surge demanda.
+- **Sin reverse search (Ctrl-R)**: power user nice-to-have, aplazado.
+- **Sin syntax highlighting** en el line editor.
+- **Edición en una sola línea**: si el comando es más largo que el
+  ancho del terminal, el repintado puede saltar líneas — el line
+  editor no rastrea wrap. En la práctica los comandos del REPL son
+  cortos; las funciones multi-línea van por el modo continuación
+  (prompt `... `) donde cada línea se edita independientemente.
+
 ## [1.46.0] — 2026-05-16 — Multi-recurso `con` + combinar `*args`/`**kwargs` (cierre Fase 4)
 
 Último release de la Fase 4 (sintaxis idiomática post-modelo de

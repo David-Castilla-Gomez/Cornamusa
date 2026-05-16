@@ -859,7 +859,7 @@ cornamusa --tokens programa.cor       # vuelca tokens del lexer (debug)
 cornamusa --ast programa.cor          # vuelca el AST en S-expression (debug)
 cornamusa -v / --version              # versión
 cornamusa -h / --ayuda                # ayuda
-cornamusa                             # REPL interactivo
+cornamusa                             # REPL interactivo (history en ~/.cornamusa_historial)
 cornamusa --bytecode prog.cor a b c   # pasa "a", "b", "c" a sistema.argv
 ```
 

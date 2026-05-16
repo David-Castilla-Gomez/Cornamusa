@@ -37,6 +37,7 @@
 #include "lexer.h"
 #include "nativos.h"
 #include "parser.h"
+#include "repl_line.h"
 #include "valor.h"
 #include "vm.h"
 
@@ -326,19 +327,23 @@ static int correr_repl(void) {
     Arena arena_repl;
     arena_iniciar(&arena_repl, 65536);
 
+    /* v1.47: historial persistente + edición de línea con
+       `repl_leer_linea`. El historial se carga al iniciar (si hay
+       `.cornamusa_historial`) y se guarda al salir. */
+    ReplHistorial *historial = repl_historial_nuevo();
+    if (historial) repl_historial_cargar(historial);
+
     char buffer[BUFFER_REPL_MAX] = "";
-    char linea[LINEA_MAX];
     int profundidad = 0;
     const char *prompt = ">>> ";
 
     for (;;) {
-        fputs(prompt, stdout);
-        fflush(stdout);
-
-        if (fgets(linea, sizeof(linea), stdin) == NULL) {
-            putchar('\n');
+        char *linea_din = repl_leer_linea(prompt, historial);
+        if (linea_din == NULL) {
+            /* EOF (Ctrl-D POSIX / Ctrl-Z Windows con buffer vacío). */
             break;
         }
+        const char *linea = linea_din;
 
         /* `salir` solo en el primer nivel y con buffer vacío. */
         if (profundidad == 0 && buffer[0] == '\0') {
@@ -346,15 +351,18 @@ static int correr_repl(void) {
             while (*p == ' ' || *p == '\t') p++;
             if (strncmp(p, "salir", 5) == 0) {
                 const char *resto = p + 5;
-                while (*resto == ' ' || *resto == '\t' || *resto == '\n'
-                       || *resto == '\r') resto++;
-                if (*resto == '\0') break;
+                while (*resto == ' ' || *resto == '\t') resto++;
+                if (*resto == '\0') {
+                    free(linea_din);
+                    break;
+                }
             }
         }
 
-        bool vacia = (linea[0] == '\n' || linea[0] == '\r' || linea[0] == '\0');
+        bool vacia = (linea[0] == '\0');
 
         if (vacia && buffer[0] != '\0') {
+            /* Línea vacía cierra un bloque multilínea en curso. */
             char *fuente_persistente = strdup(buffer);
             if (fuente_persistente) {
                 ejecutar_fuente(fuente_persistente, "<repl>",
@@ -363,30 +371,52 @@ static int correr_repl(void) {
             buffer[0] = '\0';
             profundidad = 0;
             prompt = ">>> ";
+            free(linea_din);
             continue;
         }
         if (vacia) {
+            free(linea_din);
             continue;
         }
 
+        /* Agregar al historial. Si estamos en multilínea, agregamos
+           cada línea por separado (igual que readline). */
+        if (historial) repl_historial_agregar(historial, linea);
+
+        /* Acumular al buffer (con \n entre líneas en multilínea). */
         size_t blen = strlen(buffer);
         size_t llen = strlen(linea);
-        if (blen + llen + 1 < sizeof(buffer)) {
-            memcpy(buffer + blen, linea, llen + 1);
+        size_t necesario = blen + llen + 2;  /* +1 \n +1 \0 */
+        if (necesario < sizeof(buffer)) {
+            if (blen > 0) buffer[blen++] = '\n';
+            memcpy(buffer + blen, linea, llen);
+            buffer[blen + llen] = '\n';
+            buffer[blen + llen + 1] = '\0';
         } else {
             fprintf(stderr,
                 "Buffer del REPL lleno; descartando entrada acumulada.\n");
             buffer[0] = '\0';
             profundidad = 0;
             prompt = ">>> ";
+            free(linea_din);
             continue;
         }
 
-        if (linea_cierra_bloque(linea)) {
-            if (profundidad > 0) profundidad--;
-        }
-        if (linea_abre_bloque(linea)) {
-            profundidad++;
+        /* Línea para detectar apertura/cierre de bloque (necesitamos
+           el `\n` al final para que linea_*_bloque las acepte como
+           antes). Reutilizamos un buffer local. */
+        char linea_con_nl[LINEA_MAX];
+        size_t ll = strlen(linea);
+        if (ll + 2 < sizeof(linea_con_nl)) {
+            memcpy(linea_con_nl, linea, ll);
+            linea_con_nl[ll] = '\n';
+            linea_con_nl[ll + 1] = '\0';
+            if (linea_cierra_bloque(linea_con_nl)) {
+                if (profundidad > 0) profundidad--;
+            }
+            if (linea_abre_bloque(linea_con_nl)) {
+                profundidad++;
+            }
         }
 
         if (profundidad == 0) {
@@ -400,8 +430,13 @@ static int correr_repl(void) {
         } else {
             prompt = "... ";
         }
+        free(linea_din);
     }
 
+    if (historial) {
+        repl_historial_guardar(historial);
+        repl_historial_liberar(historial);
+    }
     entorno_destruir(&globales);
     arena_destruir(&arena_repl);
     return 0;
