@@ -16,6 +16,7 @@
 
 typedef enum {
     PREC_NULA = 0,
+    PREC_TERNARIA,     /* v1.44: `<si_si> si <cond> sino <si_no>` — la más baja */
     PREC_O,            /* `o` */
     PREC_Y,            /* `y` */
     PREC_NO,           /* `no` (unario) */
@@ -170,7 +171,12 @@ Expr *parser_parsear_expr(Parser *p) {
 }
 
 static Expr *parsear_expresion(Parser *p) {
-    return parsear_precedencia(p, PREC_O);
+    /* v1.44: PREC_TERNARIA es el nivel más bajo, así que parsear con
+       ese piso incluye la expresión ternaria como infix opcional. Los
+       sitios que NO quieren consumir `si` como ternario (en
+       particular la cabeza de iter en comprehensions) llaman a
+       `parsear_precedencia(p, PREC_O)` directamente. */
+    return parsear_precedencia(p, PREC_TERNARIA);
 }
 
 /*
@@ -194,10 +200,15 @@ static Expr *parsear_precedencia(Parser *p, Precedencia min_prec) {
            Si el token infix está en una línea DISTINTA al token previo
            Y el infix es `[`, `(` o `.`, no lo aplicamos — probablemente
            inicia una nueva sentencia. Sin esto, `lista = [1, 2]` seguido
-           de `[x, y] = lista` se parsearía como `lista = [1, 2][x, y]`. */
+           de `[x, y] = lista` se parsearía como `lista = [1, 2][x, y]`.
+           v1.44: extendemos la heurística a `si` por la misma razón —
+           la ternaria `A si C sino B` debe vivir en una sola línea;
+           un `si` que abre línea es siempre el comienzo de una
+           sentencia `si`. */
         if (p->actual.linea != p->previo.linea
             && (p->actual.tipo == TT_CORCH_IZQ
-                || p->actual.tipo == TT_PARENT_IZQ)) {
+                || p->actual.tipo == TT_PARENT_IZQ
+                || p->actual.tipo == TT_SI)) {
             break;
         }
         izq = r->infijo(p, izq);
@@ -595,7 +606,11 @@ static bool parsear_comprehension_cola(Parser *p,
     *nombre_var_out = t.inicio;
     *longitud_var_out = t.longitud;
     if (!consumir(p, TT_EN, "se esperaba 'en' tras la variable")) return false;
-    Expr *it = parsear_expresion(p);
+    /* v1.44: para que `[expr para v en iter si guarda]` siga parseando
+       el `si` como inicio de la GUARDA y no como ternario sobre iter,
+       parseamos iter con PREC_O (excluye ternaria). La guarda en
+       cambio sí puede ser ternaria. */
+    Expr *it = parsear_precedencia(p, PREC_O);
     if (it == NULL) return false;
     *iterable_out = it;
     *guarda_out = NULL;
@@ -924,6 +939,31 @@ static Expr *parsear_potencia(Parser *p, Expr *izq) {
     return expr_binario(p->arena, izq, t.tipo, der, t.linea, t.columna);
 }
 
+/*
+ * v1.44: expresión ternaria `<si_si> si <cond> sino <si_no>`. Estilo
+ * Python `<si_si> if <cond> else <si_no>`. Cuando llegamos aquí ya
+ * tenemos `si_si` (la expresión a la izquierda), el token actual es
+ * `si`. Leemos la condición sin recursión a la ternaria (cond no
+ * puede ser otra ternaria directa — usar paréntesis si hace falta),
+ * consumimos `sino`, y parseamos `si_no` con PREC_TERNARIA para
+ * asociatividad derecha — `a si b sino c si d sino e` es
+ * `a si b sino (c si d sino e)`.
+ */
+static Expr *parsear_ternaria(Parser *p, Expr *si_si) {
+    Token t_si = p->actual;
+    avanzar(p);   /* consume `si` */
+    /* La condición usa PREC_O para que no incluya un `sino` siguiente
+       como si fuese otro ternario anidado. */
+    Expr *cond = parsear_precedencia(p, PREC_O);
+    if (cond == NULL) return NULL;
+    if (!consumir(p, TT_SINO, "se esperaba 'sino' tras la condición del ternario")) {
+        return NULL;
+    }
+    Expr *si_no = parsear_precedencia(p, PREC_TERNARIA);
+    if (si_no == NULL) return NULL;
+    return expr_ternaria(p->arena, si_si, cond, si_no, t_si.linea, t_si.columna);
+}
+
 static Expr *parsear_logica(Parser *p, Expr *izq) {
     Token t = p->actual;
     bool es_y = (t.tipo == TT_Y);
@@ -1146,6 +1186,11 @@ static void inicializar_reglas(void) {
     reglas[TT_Y]           = (ReglaParseo){ NULL, parsear_logica, PREC_Y };
     reglas[TT_O]           = (ReglaParseo){ NULL, parsear_logica, PREC_O };
     reglas[TT_NO]          = (ReglaParseo){ parsear_no, parsear_no_compuesto, PREC_COMPARAR };
+
+    /* v1.44: `si` como infix de ternaria. Como prefix sigue siendo
+       inválido a nivel de expresión — las sentencias `si` se parsean
+       desde `parsear_sentencia`. */
+    reglas[TT_SI]          = (ReglaParseo){ NULL, parsear_ternaria, PREC_TERNARIA };
 
     /* Identidad y pertenencia (operadores en palabra). */
     reglas[TT_ES]          = (ReglaParseo){ NULL, parsear_es, PREC_COMPARAR };

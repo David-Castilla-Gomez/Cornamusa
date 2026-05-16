@@ -300,6 +300,18 @@ typedef enum {
     OP_REPR,
 
     /*
+     * OP_ASIGNAR_REBANADA (v1.44): `xs[i:j:k] = iterable` sobre listas.
+     * Stack: [..., lista, inicio, fin, paso, iterable]
+     *   - paso=1 admite que iterable tenga longitud != (fin-inicio):
+     *     la lista crece o encoge.
+     *   - paso!=1: iterable debe tener exactamente la misma longitud
+     *     que la rebanada — sustitución 1-a-1.
+     * Tras ejecución pop los 5 operandos y empuja `nulo` (resultado
+     * de la asignación, que el llamador descarta).
+     */
+    OP_ASIGNAR_REBANADA,
+
+    /*
      * OP_LONGITUD (v1.3): pop TOS, push longitud (entero).
      *   - VAL_INSTANCIA con `__longitud__`: dispatch al dunder.
      *   - Cadena/lista/dicc/conjunto/tupla/rango: cuenta elementos

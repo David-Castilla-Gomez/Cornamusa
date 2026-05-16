@@ -786,6 +786,25 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return true;
         }
 
+        case EXPR_TERNARIA: {
+            /* v1.44: `si_si si cond sino si_no`. Desugar a salto
+               condicional. OP_SALTAR_SI_FALSO hace peek de cond, así
+               que la rama tomada hace OP_DESCARTAR para soltar cond
+               y empuja su propio valor. Stack neto: -1 (cond) + 1 (rama). */
+            if (!compilador_compilar_expr(c, e->como.ternaria.cond)) return false;
+            int salto_falso = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
+            /* Rama verdadera: descartar cond y evaluar si_si. */
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+            if (!compilador_compilar_expr(c, e->como.ternaria.si_si)) return false;
+            int salto_fin = emitir_salto(c, OP_SALTAR, e->linea);
+            /* Rama falsa. */
+            parchear_salto(c, salto_falso, e->linea);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+            if (!compilador_compilar_expr(c, e->como.ternaria.si_no)) return false;
+            parchear_salto(c, salto_fin, e->linea);
+            return true;
+        }
+
         case EXPR_LOGICA: {
             /*
              * Cortocircuito al estilo clox cap. 23.
@@ -1590,6 +1609,31 @@ static bool compilar_asignar(Compilador *c, const Sent *s) {
         if (!compilador_compilar_expr(c, destino->como.indice.indice)) return false;
         if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
         chunk_emitir_byte(c->actual->chunk, OP_ASIGNAR_INDICE, s->linea);
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        return true;
+    }
+
+    /* v1.44: asignación por rebanada: `lista[i:j:k] = iterable`. */
+    if (destino->tipo == EXPR_REBANADA) {
+        if (!compilador_compilar_expr(c, destino->como.rebanada.objeto)) return false;
+        /* inicio/fin/paso: nulo si no presentes (mismo convenio que OP_REBANADA). */
+        if (destino->como.rebanada.inicio) {
+            if (!compilador_compilar_expr(c, destino->como.rebanada.inicio)) return false;
+        } else {
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
+        }
+        if (destino->como.rebanada.fin) {
+            if (!compilador_compilar_expr(c, destino->como.rebanada.fin)) return false;
+        } else {
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
+        }
+        if (destino->como.rebanada.paso) {
+            if (!compilador_compilar_expr(c, destino->como.rebanada.paso)) return false;
+        } else {
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
+        }
+        if (!compilador_compilar_expr(c, s->como.asignar.valor)) return false;
+        chunk_emitir_byte(c->actual->chunk, OP_ASIGNAR_REBANADA, s->linea);
         chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
         return true;
     }

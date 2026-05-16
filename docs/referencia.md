@@ -2,7 +2,7 @@
 
 > Cheatsheet de sintaxis + tablas de built-ins, stdlib y errores. Para una explicación pedagógica usa el [tutorial](tutorial.md). Para la especificación formal del lenguaje, [ESPEC.md](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md).
 
-**Versión:** 1.40.0
+**Versión:** 1.44.0
 
 ---
 
@@ -69,6 +69,16 @@ One-liner: si tras `:` viene una sola sentencia en la misma línea, no requiere 
 si x > 0: imprimir(x)
 para i en rango(3): imprimir(i)
 ```
+
+### Expresión ternaria (v1.44)
+
+Condicional inline al estilo Python `a if c else b`:
+
+```cornamusa
+signo = "pos" si n > 0 sino ("cero" si n == 0 sino "neg")
+```
+
+Precedencia más baja que cualquier operador. Asociativa derecha. Vive en **una sola línea**: un `si` que abre línea es siempre el inicio de una sentencia `si`, no una ternaria.
 
 ---
 
@@ -359,6 +369,7 @@ xs[1:3]            # [2, 3] (slice)
 xs[::-1]           # [3, 2, 1] (invertida)
 longitud(xs)       # 3
 xs[0] = 10         # mutación
+xs[1:2] = [9, 9]   # slicing assignment (v1.44) — crece/encoge
 agregar(xs, 99)    # añadir al final
 quitar(xs, 0)      # quitar por índice (devuelve el valor)
 insertar(xs, 0, 7) # insertar en posición

@@ -3342,6 +3342,196 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 break;
             }
 
+            case OP_ASIGNAR_REBANADA: {
+                /* v1.44: `lista[i:j:k] = iterable`.
+                   Stack: [..., lista, inicio, fin, paso, iterable]. */
+                Valor val_v    = sacar(vm);
+                Valor paso_v   = sacar(vm);
+                Valor fin_v    = sacar(vm);
+                Valor inicio_v = sacar(vm);
+                Valor obj      = sacar(vm);
+
+                if (obj.tipo != VAL_LISTA) {
+                    VM_ERROR("ErrorDeTipo: asignacion por rebanada solo en listas, no '%s'",
+                             valor_nombre_tipo(&obj));
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    valor_destruir(&val_v);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                /* Materializar `iterable` en una lista temporal de
+                   nuevos elementos. Soportamos lista/tupla/conjunto. */
+                int n_nuevos = 0;
+                Valor *nuevos = NULL;
+                if (val_v.tipo == VAL_LISTA) {
+                    n_nuevos = val_v.como.lista->cuenta;
+                    nuevos = val_v.como.lista->elementos;
+                } else if (val_v.tipo == VAL_TUPLA) {
+                    n_nuevos = val_v.como.tupla->cuenta;
+                    nuevos = val_v.como.tupla->elementos;
+                } else {
+                    VM_ERROR("ErrorDeTipo: valor de asignacion por rebanada debe ser lista o tupla, no '%s'",
+                             valor_nombre_tipo(&val_v));
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    valor_destruir(&val_v);
+                    RAISE_OR_DIE();
+                    break;
+                }
+
+                /* paso (default 1). */
+                long paso = 1;
+                if (paso_v.tipo != VAL_NULO) {
+                    if (!valor_es_entero(&paso_v) && paso_v.tipo != VAL_BOOLEANO) {
+                        VM_ERROR("ErrorDeTipo: paso de rebanada debe ser entero");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        valor_destruir(&val_v);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    if (paso_v.tipo == VAL_BOOLEANO) {
+                        paso = paso_v.como.booleano ? 1 : 0;
+                    } else {
+                        int64_t i64;
+                        (void)valor_entero_a_i64(&paso_v, &i64);
+                        paso = (long)i64;
+                    }
+                    if (paso == 0) {
+                        VM_ERROR("ErrorDeValor: el paso de una rebanada no puede ser 0");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        valor_destruir(&val_v);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                }
+
+                Lista *l = obj.como.lista;
+                long total = l->cuenta;
+                long inicio;
+                if (inicio_v.tipo == VAL_NULO) {
+                    inicio = (paso > 0) ? 0 : total - 1;
+                } else if (valor_es_entero(&inicio_v) || inicio_v.tipo == VAL_BOOLEANO) {
+                    if (inicio_v.tipo == VAL_BOOLEANO) inicio = inicio_v.como.booleano ? 1 : 0;
+                    else { int64_t i64; (void)valor_entero_a_i64(&inicio_v, &i64); inicio = (long)i64; }
+                    if (inicio < 0) inicio += total;
+                } else {
+                    VM_ERROR("ErrorDeTipo: inicio de rebanada debe ser entero");
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    valor_destruir(&val_v);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                long fin;
+                if (fin_v.tipo == VAL_NULO) {
+                    fin = (paso > 0) ? total : -1;
+                } else if (valor_es_entero(&fin_v) || fin_v.tipo == VAL_BOOLEANO) {
+                    if (fin_v.tipo == VAL_BOOLEANO) fin = fin_v.como.booleano ? 1 : 0;
+                    else { int64_t i64; (void)valor_entero_a_i64(&fin_v, &i64); fin = (long)i64; }
+                    if (fin < 0) fin += total;
+                } else {
+                    VM_ERROR("ErrorDeTipo: fin de rebanada debe ser entero");
+                    valor_destruir(&obj); valor_destruir(&inicio_v);
+                    valor_destruir(&fin_v); valor_destruir(&paso_v);
+                    valor_destruir(&val_v);
+                    RAISE_OR_DIE();
+                    break;
+                }
+
+                /* Clamp silencioso (semántica Python). */
+                if (paso > 0) {
+                    if (inicio < 0) inicio = 0;
+                    if (inicio > total) inicio = total;
+                    if (fin < 0) fin = 0;
+                    if (fin > total) fin = total;
+                } else {
+                    if (inicio < 0) inicio = -1;
+                    if (inicio >= total) inicio = total - 1;
+                    if (fin < -1) fin = -1;
+                    if (fin >= total) fin = total - 1;
+                }
+
+                if (paso == 1) {
+                    /* Caso simple: reemplazo del rango contiguo
+                       [inicio, fin) por los `n_nuevos` elementos.
+                       La lista puede crecer o encoger. */
+                    long n_borrar = (fin > inicio) ? fin - inicio : 0;
+                    long delta = (long)n_nuevos - n_borrar;
+                    /* Asegurar capacidad si la lista crece. */
+                    if (delta > 0) {
+                        int necesario = (int)(l->cuenta + delta);
+                        if (necesario > l->capacidad) {
+                            int nueva_cap = l->capacidad ? l->capacidad : 4;
+                            while (nueva_cap < necesario) nueva_cap *= 2;
+                            Valor *nuevo = (Valor *)realloc(l->elementos,
+                                sizeof(Valor) * (size_t)nueva_cap);
+                            if (!nuevo) {
+                                VM_ERROR("memoria insuficiente al asignar rebanada");
+                                valor_destruir(&obj); valor_destruir(&inicio_v);
+                                valor_destruir(&fin_v); valor_destruir(&paso_v);
+                                valor_destruir(&val_v);
+                                return VM_ERROR_RUNTIME;
+                            }
+                            l->elementos = nuevo;
+                            l->capacidad = nueva_cap;
+                        }
+                    }
+                    /* Destruir elementos del rango antiguo. */
+                    for (long i = inicio; i < inicio + n_borrar; i++) {
+                        valor_destruir(&l->elementos[i]);
+                    }
+                    /* Desplazar la cola si delta != 0. */
+                    if (delta != 0) {
+                        long n_cola = total - (inicio + n_borrar);
+                        memmove(&l->elementos[inicio + n_nuevos],
+                                &l->elementos[inicio + n_borrar],
+                                (size_t)n_cola * sizeof(Valor));
+                    }
+                    /* Copiar nuevos elementos clonados al hueco. */
+                    for (long i = 0; i < n_nuevos; i++) {
+                        l->elementos[inicio + i] = valor_clonar(&nuevos[i]);
+                    }
+                    l->cuenta = (int)(l->cuenta + delta);
+                } else {
+                    /* paso != 1: tamaños deben coincidir exactamente. */
+                    long n_slot;
+                    if (paso > 0) {
+                        n_slot = (fin > inicio) ? (fin - inicio + paso - 1) / paso : 0;
+                    } else {
+                        n_slot = (inicio > fin) ? (inicio - fin - paso - 1) / (-paso) : 0;
+                    }
+                    if (n_nuevos != n_slot) {
+                        VM_ERROR("ErrorDeValor: rebanada con paso requiere mismo tamaño (esperado %ld, recibido %d)",
+                                 n_slot, n_nuevos);
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        valor_destruir(&val_v);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    long idx_n = 0;
+                    if (paso > 0) {
+                        for (long i = inicio; i < fin; i += paso, idx_n++) {
+                            valor_destruir(&l->elementos[i]);
+                            l->elementos[i] = valor_clonar(&nuevos[idx_n]);
+                        }
+                    } else {
+                        for (long i = inicio; i > fin; i += paso, idx_n++) {
+                            valor_destruir(&l->elementos[i]);
+                            l->elementos[i] = valor_clonar(&nuevos[idx_n]);
+                        }
+                    }
+                }
+                valor_destruir(&obj); valor_destruir(&inicio_v);
+                valor_destruir(&fin_v); valor_destruir(&paso_v);
+                valor_destruir(&val_v);
+                empujar(vm, valor_nulo());
+                break;
+            }
+
             /* ─── Iteradores ─── */
             case OP_ITER_INICIAR: {
                 /* v1.12: si TOS es VAL_INSTANCIA con `__iterar__`,

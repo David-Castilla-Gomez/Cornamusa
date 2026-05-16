@@ -647,6 +647,18 @@ set_tests_properties(bc_run_60_iteradores_lazy PROPERTIES
     PASS_REGULAR_EXPRESSION "fin ejemplo 60"
 )
 
+# v1.44: expresión ternaria + slicing assignment.
+add_test(
+    NAME bc_run_61_ternaria_slicing
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/61_ternaria_slicing.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_61_ternaria_slicing PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "fin ejemplo 61"
+)
+
 # v1.1: leer() interactivo + conversores. Stdin redirigido vía script.
 add_test(
     NAME bc_run_26_leer_jugable

@@ -87,6 +87,17 @@ Expr *expr_logica(Arena *a, Expr *izq, bool es_y, Expr *der, int linea, int col)
     return e;
 }
 
+Expr *expr_ternaria(Arena *a, Expr *si_si, Expr *cond, Expr *si_no,
+                      int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_TERNARIA, linea, col);
+    if (e) {
+        e->como.ternaria.cond = cond;
+        e->como.ternaria.si_si = si_si;
+        e->como.ternaria.si_no = si_no;
+    }
+    return e;
+}
+
 Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, int col) {
     Expr *e = nuevo_expr(a, EXPR_LLAMADA, linea, col);
     if (e) {
@@ -476,6 +487,15 @@ static void expr_a_buffer(const Expr *e, EscrituraBuffer *eb) {
             wb_escribir(eb, "(super \"");
             wb_escribir_lexema(eb, e->como.super.nombre, e->como.super.longitud);
             wb_escribir(eb, "\")");
+            break;
+        case EXPR_TERNARIA:
+            wb_escribir(eb, "(ternaria ");
+            expr_a_buffer(e->como.ternaria.cond, eb);
+            wb_escribir(eb, " ");
+            expr_a_buffer(e->como.ternaria.si_si, eb);
+            wb_escribir(eb, " ");
+            expr_a_buffer(e->como.ternaria.si_no, eb);
+            wb_escribir(eb, ")");
             break;
     }
 }

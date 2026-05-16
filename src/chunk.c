@@ -94,6 +94,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_FORMATO_F:       return "OP_FORMATO_F";
         case OP_ASEGURAR_CADENA: return "OP_ASEGURAR_CADENA";
         case OP_REPR:            return "OP_REPR";
+        case OP_ASIGNAR_REBANADA: return "OP_ASIGNAR_REBANADA";
         case OP_LONGITUD:        return "OP_LONGITUD";
         case OP_ES_TUPLA:        return "OP_ES_TUPLA";
         case OP_ES_LISTA:        return "OP_ES_LISTA";

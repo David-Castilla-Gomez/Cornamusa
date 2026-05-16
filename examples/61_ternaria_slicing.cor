@@ -1,0 +1,107 @@
+# Ejemplo 61 — Expresión ternaria y slicing assignment (v1.44)
+#
+# Dos huecos sintácticos que se notan a diario:
+#
+#   - Ternaria `<si_si> si <cond> sino <si_no>` — expresión condicional
+#     inline al estilo Python `a if c else b`. Precedencia más baja que
+#     cualquier operador. Asociativa derecha. Vive en UNA línea — un
+#     `si` que abre línea es una sentencia, no una ternaria.
+#
+#   - Slicing assignment `xs[i:j:k] = iterable` — sustituir un rango
+#     de la lista con nuevos elementos. Con `paso == 1` la lista crece
+#     o encoge según el tamaño del iterable. Con `paso != 1`, los
+#     tamaños deben coincidir exactamente.
+
+imprimir("=== ternaria y slicing assignment (v1.44) ===")
+imprimir("")
+
+# ─── Caso 1: ternaria básica ───
+imprimir("1) ternaria como expresión inline")
+x = 7
+signo = "positivo" si x > 0 sino ("cero" si x == 0 sino "negativo")
+imprimir(f"  signo de {x} = {signo}")
+
+# Sin paréntesis funciona igual (asociativa derecha).
+n = -3
+signo2 = "positivo" si n > 0 sino "cero" si n == 0 sino "negativo"
+imprimir(f"  signo de {n} = {signo2}")
+imprimir("")
+
+# ─── Caso 2: en defaults y argumentos ───
+funcion conectar(host, puerto, tls):
+    esquema = "https" si tls sino "http"
+    retornar esquema + "://" + host + ":" + cadena(puerto)
+fin funcion
+
+imprimir("2) ternaria en cuerpo de función")
+imprimir("  " + conectar("api.dev", 443, verdadero))
+imprimir("  " + conectar("local",   8080, falso))
+imprimir("")
+
+# ─── Caso 3: dentro de comprehensions ───
+imprimir("3) ternaria en comprehensions")
+vals = [-3, -1, 0, 2, 5]
+absolutos = [v si v >= 0 sino -v para v en vals]
+imprimir(f"  abs({vals}) = {absolutos}")
+clasif = ["neg" si v < 0 sino ("cero" si v == 0 sino "pos") para v en vals]
+imprimir(f"  clasif = {clasif}")
+imprimir("")
+
+# ─── Caso 4: slicing assignment — reemplazo simple ───
+imprimir("4) slicing assignment — reemplazo del mismo tamaño")
+xs = [1, 2, 3, 4, 5]
+xs[1:4] = [99, 99, 99]
+imprimir(f"  [1,2,3,4,5][1:4] = [99,99,99] → {xs}")
+imprimir("")
+
+# ─── Caso 5: crecer y encoger ───
+imprimir("5) la lista crece o encoge con paso=1")
+ys = [1, 2, 3]
+ys[1:2] = [10, 20, 30, 40]      # crece: 3 → 6 elementos
+imprimir(f"  crecer: {ys}")
+
+zs = [1, 2, 3, 4, 5]
+zs[1:4] = [99]                   # encoge: 5 → 3 elementos
+imprimir(f"  encoger: {zs}")
+
+ws = [1, 2, 3, 4, 5]
+ws[1:4] = []                     # borrar: 5 → 2 elementos
+imprimir(f"  borrar: {ws}")
+imprimir("")
+
+# ─── Caso 6: límites omitidos ───
+imprimir("6) inicio/fin omitidos")
+a1 = [1, 2, 3, 4, 5]
+a1[:2] = [100]
+imprimir(f"  [:2] = [100] → {a1}")
+
+b1 = [1, 2, 3, 4, 5]
+b1[3:] = [100, 200, 300]
+imprimir(f"  [3:] = [100, 200, 300] → {b1}")
+imprimir("")
+
+# ─── Caso 7: paso != 1 ───
+imprimir("7) paso != 1: tamaños deben coincidir exactamente")
+c1 = [1, 2, 3, 4, 5, 6]
+c1[::2] = [10, 30, 50]
+imprimir(f"  [::2] = [10, 30, 50] → {c1}")
+
+intentar:
+    d1 = [1, 2, 3, 4]
+    d1[::2] = [99, 99, 99]      # 2 slots ≠ 3 nuevos
+atrapar ErrorDeValor como err:
+    imprimir(f"  con tamaño diferente → {err}")
+fin intentar
+imprimir("")
+
+# ─── Caso 8: cadenas son inmutables ───
+imprimir("8) cadenas son inmutables — slicing assignment falla")
+intentar:
+    s = "hola"
+    s[1:3] = "X"
+atrapar ErrorDeTipo como err:
+    imprimir(f"  cadena rechazada → {err}")
+fin intentar
+
+imprimir("")
+imprimir("=== fin ejemplo 61 ===")

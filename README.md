@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.43.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.44.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.43.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ (pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers) y una stdlib de doce módulos útil para scripting real. Modelo de datos completo: dunders de coerción (`__cadena__`, `__repr__`, `__booleano__`), de hashing (`__hash__` + `__igual__`) y de **iteración lazy stateful** (`__siguiente__` + `ErrorDeIteracion`). 199 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.44.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ (pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers, **expresión ternaria** `A si C sino B`, **slicing assignment** `xs[i:j] = ...`) y una stdlib de doce módulos útil para scripting real. Modelo de datos completo con todos los dunders fundamentales (`__cadena__`, `__repr__`, `__booleano__`, `__hash__`+`__igual__`, `__siguiente__`+`ErrorDeIteracion`). 197 tests en verde, toda la documentación validada contra el intérprete. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -148,6 +148,7 @@ Hoja de ruta resumida:
 | **v1.41** | **Dunders de coerción `__repr__` y `__booleano__` — instancias controlan su representación inspeccionable y su verdadez** | ✅ |
 | **v1.42** | **`__hash__` + `__igual__` — instancias hashables por valor (dict/conjunto), sub-VM síncrono para despacho desde `valor.c`** | ✅ |
 | **v1.43** | **`__siguiente__` — iteradores lazy stateful; `ErrorDeIteracion` como señal de fin** | ✅ |
+| **v1.44** | **Expresión ternaria `A si C sino B` + slicing assignment `xs[i:j] = ...`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

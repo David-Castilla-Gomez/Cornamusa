@@ -84,6 +84,11 @@ typedef enum {
 
     /* `super.metodo` — solo dentro de un método de una subclase. */
     EXPR_SUPER,
+
+    /* v1.44: expresión condicional ternaria — `valor_si si cond sino valor_no`.
+       Estilo Python: `a if c else b`. Precedencia muy baja, por encima de
+       `lambda`. Se desugara a un salto condicional en el compilador. */
+    EXPR_TERNARIA,
 } TipoExpr;
 
 struct Expr {
@@ -207,6 +212,13 @@ struct Expr {
             int longitud;
         } super;
 
+        /* v1.44: ternaria `si_si si cond sino si_no`. Estilo Python. */
+        struct {
+            Expr *cond;
+            Expr *si_si;        /* valor cuando cond es verdadero */
+            Expr *si_no;        /* valor cuando cond es falso */
+        } ternaria;
+
         /*
          * F-cadena descompuesta en partes (v1.1).
          *
@@ -262,6 +274,7 @@ Expr *expr_ident(Arena *a, const char *nombre, int len, int linea, int col);
 Expr *expr_binario(Arena *a, Expr *izq, TipoToken op, Expr *der, int linea, int col);
 Expr *expr_unario(Arena *a, TipoToken op, Expr *operando, int linea, int col);
 Expr *expr_logica(Arena *a, Expr *izq, bool es_y, Expr *der, int linea, int col);
+Expr *expr_ternaria(Arena *a, Expr *si_si, Expr *cond, Expr *si_no, int linea, int col);
 Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, int col);
 Expr *expr_atributo(Arena *a, Expr *objeto, const char *nombre, int len, int linea, int col);
 Expr *expr_grupo(Arena *a, Expr *interna, int linea, int col);

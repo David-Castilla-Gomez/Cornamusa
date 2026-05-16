@@ -6,6 +6,75 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.44.0] — 2026-05-16 — Expresión ternaria + slicing assignment
+
+Primer release de **sintaxis idiomática pendiente** (post-modelo de
+datos). Dos huecos pequeños que se notan a diario.
+
+### Expresión ternaria `A si C sino B`
+
+Condicional inline al estilo Python `a if c else b`. Vive en una sola
+línea, precedencia más baja que cualquier operador, asociativa
+derecha.
+
+```cornamusa
+signo = "pos" si n > 0 sino ("cero" si n == 0 sino "neg")
+absolutos = [v si v >= 0 sino -v para v en vals]   # dentro de comprehensions
+imprimir(mas(1 si verdadero sino 99, 2))           # en args de llamada
+```
+
+**Implementación**: nuevo nivel `PREC_TERNARIA` por debajo de `PREC_O`
+en el Pratt parser. `parsear_expresion` ahora parsea con piso
+`PREC_TERNARIA` para incluir la ternaria como infijo de `si`. La
+heurística "fin de sentencia" se extiende a `TT_SI`: un `si` que
+abre línea distinta NO se consume como infijo — sigue siendo el inicio
+de una sentencia `si`. La cabeza de iter en comprehensions
+(`[expr para v en iter si guarda]`) parsea iter con `PREC_O`
+directamente para que el `si` de la guarda no se mal-parsee como
+ternaria sobre iter.
+
+Nuevo `EXPR_TERNARIA` en el AST; el compilador desugara a
+`OP_SALTAR_SI_FALSO` + `OP_DESCARTAR` + rama_si + `OP_SALTAR` +
+`OP_DESCARTAR` + rama_no — mismo esqueleto que la sentencia `si`.
+
+### Slicing assignment `xs[i:j:k] = nuevo`
+
+Sustituir un rango de una lista con nuevos elementos. Con `paso == 1`
+la lista crece o encoge para acomodar el nuevo tamaño. Con `paso != 1`,
+los tamaños deben coincidir exactamente.
+
+```cornamusa
+xs = [1, 2, 3, 4, 5]
+xs[1:4] = [99]              # [1, 99, 5]    (encoge)
+xs[1:1] = [10, 20, 30]      # inserta sin borrar
+xs[::2] = [10, 30]          # sustitución 1-a-1 con paso=2
+xs[2:4] = []                # borrar slice
+```
+
+**Implementación**: nuevo opcode `OP_ASIGNAR_REBANADA`. El compilador
+detecta `EXPR_REBANADA` como destino de asignación, emite la pila
+`[lista, inicio, fin, paso, iterable]` y `OP_ASIGNAR_REBANADA`. El
+runtime resuelve `nulo` como default para los tres índices (semántica
+Python: `[:]`, `[:n]`, `[n:]`), aplica el clamp silencioso, hace
+`memmove` para el desplazamiento si el tamaño cambia, y libera/copia
+elementos según haga falta.
+
+Limitaciones:
+- Solo listas. Cadenas son inmutables — usar concatenación.
+- El iterable de la asignación debe ser lista o tupla. Generadores
+  no soportados (habría que materializar; queda como patch si surge
+  demanda).
+
+### Tests
+
+- **197/197 tests verde** (16 casos nuevos dentro de
+  `test_bytecode_ternaria_slicing` + `lex_61` + `bc_run_61_ternaria_slicing`).
+- Ejemplo `examples/61_ternaria_slicing.cor` con ternaria simple,
+  anidada (asociativa derecha), en comprehensions, en args de
+  llamada; slicing assignment con tamaño igual, crecer, encoger,
+  borrar, paso != 1, paso != 1 con error, desde tupla, sobre cadena
+  (error).
+
 ## [1.43.0] — 2026-05-15 — Iteradores lazy con `__siguiente__`
 
 Tercer release de la **Fase 4 — modelo de datos**. Cierra el protocolo
