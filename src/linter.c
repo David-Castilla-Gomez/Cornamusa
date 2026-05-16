@@ -79,7 +79,138 @@ typedef struct {
      * estamos dentro del cuerpo de algun loop — usado para detectar
      * patron `x = x + ...` que es O(n^2) para cadenas. */
     int profundidad_loop;
+
+    /* v1.64: tabla de directivas `# noqa: ...` parseadas del fuente.
+     * `noqa_lineas[i] != 0` significa que la linea i+1 tiene una
+     * directiva activa. `noqa_mask[i]` es bitmap de categorias
+     * silenciadas (bit n = LINT_xxx con valor n). Si bit 31 esta
+     * set, silencia TODAS las categorias (bare `# noqa`). */
+    unsigned *noqa_mask;
+    int noqa_n_lineas;
 } Ctx;
+
+#define NOQA_SILENCE_ALL 0x80000000u
+
+/* ──────────────────────────────────────────────────────────────────
+ * Soporte para `# noqa: ...` (v1.64).
+ *
+ * Parsea el fuente linea a linea buscando comentarios `# noqa[: cat, ...]`
+ * y construye una tabla `linea -> bitmask de categorias silenciadas`.
+ * Bit 31 (NOQA_SILENCE_ALL) significa silencia todas.
+ *
+ * La detencion del `#` respeta cadenas simples — un `#` dentro de
+ * "..." no inicia comentario. No reconoce triple-quoted strings
+ * multi-linea (limitacion aceptable para v1.64).
+ * ────────────────────────────────────────────────────────────────── */
+
+static unsigned categoria_a_bit(const char *texto, int longitud) {
+    /* Comparacion case-insensitive simple. Match contra
+     * linter_tipo_nombre() values. */
+    struct { const char *nombre; int len; TipoWarning tipo; } TABLA[] = {
+        {"unreachable",     11, LINT_UNREACHABLE},
+        {"redundant-pasar", 15, LINT_REDUNDANT_PASAR},
+        {"eq-nulo",          7, LINT_EQ_NULO},
+        {"unused-import",   13, LINT_UNUSED_IMPORT},
+        {"unused-local",    12, LINT_UNUSED_LOCAL},
+        {"unused-param",    12, LINT_UNUSED_PARAM},
+        {"shadow",           6, LINT_SHADOW},
+        {"unused-loop-var", 15, LINT_UNUSED_LOOP_VAR},
+        {"mutable-default", 15, LINT_MUTABLE_DEFAULT},
+        {"concat-in-loop",  14, LINT_CONCAT_IN_LOOP},
+    };
+    for (size_t i = 0; i < sizeof(TABLA) / sizeof(TABLA[0]); i++) {
+        if (longitud == TABLA[i].len
+            && memcmp(texto, TABLA[i].nombre, (size_t)longitud) == 0) {
+            return 1u << (unsigned)TABLA[i].tipo;
+        }
+    }
+    return 0;  /* Categoria desconocida — se ignora silenciosamente. */
+}
+
+static void parsear_noqa(const char *fuente, Ctx *ctx) {
+    /* Contar lineas para dimensionar el array. */
+    int n_lineas = 1;
+    for (const char *p = fuente; *p; p++) {
+        if (*p == '\n') n_lineas++;
+    }
+    ctx->noqa_n_lineas = n_lineas;
+    ctx->noqa_mask = (unsigned *)calloc((size_t)(n_lineas + 1), sizeof(unsigned));
+    if (!ctx->noqa_mask) { ctx->noqa_n_lineas = 0; return; }
+
+    int linea = 1;
+    int i = 0;
+    while (fuente[i]) {
+        /* Buscar `#` no dentro de string, hasta '\n'. */
+        bool en_string = false;
+        char delim = 0;
+        int hash_pos = -1;
+        int j = i;
+        while (fuente[j] && fuente[j] != '\n') {
+            char c = fuente[j];
+            if (en_string) {
+                if (c == '\\' && fuente[j + 1]) { j += 2; continue; }
+                if (c == delim) en_string = false;
+            } else if (c == '"' || c == '\'') {
+                en_string = true;
+                delim = c;
+            } else if (c == '#') {
+                hash_pos = j;
+                break;
+            }
+            j++;
+        }
+
+        if (hash_pos >= 0) {
+            /* Tras `#`, saltar whitespace, buscar "noqa". */
+            int k = hash_pos + 1;
+            while (fuente[k] == ' ' || fuente[k] == '\t') k++;
+            if (memcmp(fuente + k, "noqa", 4) == 0
+                && (fuente[k + 4] == '\0' || fuente[k + 4] == ':'
+                    || fuente[k + 4] == ' ' || fuente[k + 4] == '\t'
+                    || fuente[k + 4] == '\n' || fuente[k + 4] == '\r')) {
+                k += 4;
+                /* Opcional `: cat1, cat2`. Si no hay ':', silencia todas. */
+                while (fuente[k] == ' ' || fuente[k] == '\t') k++;
+                if (fuente[k] != ':') {
+                    /* Bare noqa: silencia todas las categorias. */
+                    if (linea <= ctx->noqa_n_lineas) {
+                        ctx->noqa_mask[linea] = NOQA_SILENCE_ALL;
+                    }
+                } else {
+                    k++;  /* skip ':' */
+                    /* Parsear categorias separadas por comas. */
+                    while (fuente[k] && fuente[k] != '\n') {
+                        while (fuente[k] == ' ' || fuente[k] == '\t'
+                                || fuente[k] == ',') k++;
+                        int ini_cat = k;
+                        while (fuente[k] && fuente[k] != '\n'
+                                && fuente[k] != ',' && fuente[k] != ' '
+                                && fuente[k] != '\t') k++;
+                        int cat_len = k - ini_cat;
+                        if (cat_len > 0 && linea <= ctx->noqa_n_lineas) {
+                            ctx->noqa_mask[linea] |=
+                                categoria_a_bit(fuente + ini_cat, cat_len);
+                        }
+                    }
+                }
+            }
+        }
+
+        /* Avanzar al siguiente \n. */
+        while (fuente[j] && fuente[j] != '\n') j++;
+        if (fuente[j] == '\n') j++;
+        linea++;
+        i = j;
+    }
+}
+
+static bool noqa_silencia(const Ctx *ctx, int linea, TipoWarning tipo) {
+    if (!ctx->noqa_mask || linea < 1 || linea > ctx->noqa_n_lineas) return false;
+    unsigned m = ctx->noqa_mask[linea];
+    if (m & NOQA_SILENCE_ALL) return true;
+    if (m & (1u << (unsigned)tipo)) return true;
+    return false;
+}
 
 /* ──────────────────────────────────────────────────────────────────
  * Helpers de Warning.
@@ -87,6 +218,8 @@ typedef struct {
 
 static void emitir(Ctx *ctx, TipoWarning tipo, int linea, int columna,
                     const char *fmt, ...) {
+    /* v1.64: consultar tabla noqa antes de añadir. */
+    if (noqa_silencia(ctx, linea, tipo)) return;
     if (ctx->n >= ctx->capacidad) {
         int nuevo = ctx->capacidad ? ctx->capacidad * 2 : 16;
         Warning *nv = (Warning *)realloc(ctx->avisos, sizeof(Warning) * (size_t)nuevo);
@@ -868,9 +1001,12 @@ static int comparar_warning(const void *a, const void *b) {
     return wa->columna - wb->columna;
 }
 
-LinterResultado linter_analizar(Sent **sents, int n) {
+LinterResultado linter_analizar(Sent **sents, int n, const char *fuente) {
     Ctx ctx;
     memset(&ctx, 0, sizeof(ctx));
+
+    /* v1.64: parsear directivas `# noqa` si tenemos el fuente. */
+    if (fuente) parsear_noqa(fuente, &ctx);
 
     for (int i = 0; i < n; i++) {
         visitar_sent_quizas(sents[i], &ctx);
@@ -892,6 +1028,8 @@ LinterResultado linter_analizar(Sent **sents, int n) {
     if (ctx.n > 1) {
         qsort(ctx.avisos, (size_t)ctx.n, sizeof(Warning), comparar_warning);
     }
+
+    free(ctx.noqa_mask);
 
     LinterResultado r;
     r.avisos = ctx.avisos;

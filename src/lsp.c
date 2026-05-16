@@ -252,7 +252,7 @@ static void diagnose_doc(const char *uri, const char *text) {
         return;
     }
 
-    LinterResultado r = linter_analizar(sents, n);
+    LinterResultado r = linter_analizar(sents, n, text);
     emitir_publishDiagnostics(uri, r.avisos, r.n, NULL, 0);
     linter_resultado_destruir(&r);
     parser_errores_liberar(&perrs);

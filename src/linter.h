@@ -38,6 +38,12 @@
  *                        Patron O(n^2) para cadenas; usar lista + `cadena_unir`.
  *                        Skip rule: RHS literal numerico (`+= 1`, contadores).
  *
+ * Supresion selectiva (v1.64): `# noqa: <categoria>` al final de
+ * cualquier linea silencia el warning de esa categoria en esa linea.
+ * Multiples categorias: `# noqa: cat1, cat2`. Bare `# noqa` silencia
+ * todas las categorias. Util para casos didacticos que ilustran
+ * intencionalmente un anti-patron.
+ *
  * Lo que NO chequea:
  *   - Aridades incorrectas (built-ins ya validan en runtime).
  *   - Tipos (Cornamusa es dinamico — el tipado opcional es trabajo lejano).
@@ -69,7 +75,12 @@ typedef struct {
     int capacidad;
 } LinterResultado;
 
-LinterResultado linter_analizar(Sent **sents, int n);
+/*
+ * `fuente` (opcional, NULL para no consultar noqa) habilita la
+ * directiva `# noqa: <categoria>` a final de linea para silenciar
+ * warnings selectivamente. Si NULL, todos los warnings se emiten.
+ */
+LinterResultado linter_analizar(Sent **sents, int n, const char *fuente);
 
 void linter_resultado_destruir(LinterResultado *r);
 

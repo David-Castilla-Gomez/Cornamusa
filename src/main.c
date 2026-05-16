@@ -813,7 +813,7 @@ static int subcomando_lint(int argc, char **argv) {
         return 65;
     }
 
-    LinterResultado r = linter_analizar(sents, n);
+    LinterResultado r = linter_analizar(sents, n, fc.fuente);
 
     int rc = 0;
     if (r.n > 0) {

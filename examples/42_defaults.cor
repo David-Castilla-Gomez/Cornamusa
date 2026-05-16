@@ -31,8 +31,10 @@ imprimir(calcular(5, 100))      # 105
 imprimir("---")
 
 # ─── 3. Lista mutable como default: comportamiento Python-like ──
-# CUIDADO: el mismo objeto se reutiliza entre llamadas.
-funcion agregar_log(item, log=[]):
+# CUIDADO: el mismo objeto se reutiliza entre llamadas. Este es
+# precisamente el ejemplo del foot-gun, asi que silenciamos el
+# linter aqui:
+funcion agregar_log(item, log=[]):  # noqa: mutable-default
     agregar(log, item)
     retornar log
 fin funcion

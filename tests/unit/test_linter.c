@@ -68,7 +68,7 @@ static Resumen analizar(const char *fuente) {
         return r;
     }
 
-    LinterResultado lr = linter_analizar(sents, n);
+    LinterResultado lr = linter_analizar(sents, n, fuente);
     r.n_warnings = lr.n;
     for (int i = 0; i < lr.n; i++) {
         switch (lr.avisos[i].tipo) {
@@ -543,6 +543,51 @@ int main(void) {
             "    fin para\n"
             "fin funcion\n");
         AFIRMAR(r.n_concat_in_loop == 0, "funcion_anidada_no_hereda");
+    }
+
+    /* ─── # noqa: directive (v1.64) ─── */
+    {
+        /* noqa con categoria especifica silencia ese aviso. */
+        Resumen r = analizar(
+            "importar fechas    # noqa: unused-import\n"
+            "imprimir(\"hola\")\n");
+        AFIRMAR(r.n_unused_import == 0, "noqa_categoria");
+    }
+    {
+        /* bare noqa silencia TODOS los avisos en esa linea. */
+        Resumen r = analizar(
+            "funcion f(a, b):    # noqa\n"
+            "    retornar a\n"
+            "fin funcion\n"
+            "imprimir(f(1, 2))\n");
+        AFIRMAR(r.n_unused_param == 0, "noqa_bare");
+    }
+    {
+        /* noqa solo aplica a SU linea, no a las siguientes. */
+        Resumen r = analizar(
+            "funcion f(a, b):    # noqa: unused-param\n"
+            "    retornar a\n"
+            "fin funcion\n"
+            "funcion g(x, z):\n"  /* esta SI debe warnear */
+            "    retornar x\n"
+            "fin funcion\n"
+            "imprimir(f(1, 2))\n"
+            "imprimir(g(1, 2))\n");
+        AFIRMAR(r.n_unused_param == 1, "noqa_solo_su_linea");
+    }
+    {
+        /* multiples categorias en una directiva. */
+        Resumen r = analizar(
+            "importar fechas    # noqa: unused-import, unused-param\n"
+            "imprimir(\"hola\")\n");
+        AFIRMAR(r.n_unused_import == 0, "noqa_multi_cat_1");
+    }
+    {
+        /* Categoria inexistente: se ignora silenciosamente. */
+        Resumen r = analizar(
+            "importar fechas    # noqa: categoria_que_no_existe\n"
+            "imprimir(\"hola\")\n");
+        AFIRMAR(r.n_unused_import == 1, "noqa_cat_desconocida");
     }
 
     /* ─── COMBINADO: codigo limpio NO genera avisos ─── */

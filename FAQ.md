@@ -114,6 +114,25 @@ Categorías chequeadas:
 - `mutable-default` — defaults `=[]`, `={}`, `={1,2}` (v1.55). Estos literales se evalúan una sola vez al definir la función y se comparten entre llamadas — bug clásico Python.
 - `concat-in-loop` — `x = x + ...` o `x += ...` dentro de `mientras`/`para` cuando RHS es claramente cadena (literal o f-cadena) (v1.63). Detecta el patrón O(n²) que motivó las optimizaciones de v1.61-v1.62. Sugiere usar lista + `cadena_unir`. Heurística conservadora: skip si RHS no es claramente string-like, para evitar falsos positivos en acumuladores numéricos.
 
+**Supresión selectiva (v1.64)**: cualquier warning puede silenciarse en su línea con `# noqa: <categoria>`:
+
+```cornamusa
+importar fechas              # noqa: unused-import     ← silencia ese warning
+funcion f(x=[]):             # noqa: mutable-default    ← caso didáctico
+    retornar x
+fin funcion
+
+# Multiples categorias separadas por coma:
+funcion g(a, b):             # noqa: unused-param, shadow
+    retornar 1
+fin funcion
+
+# Bare noqa silencia TODAS las categorías:
+codigo_legado()              # noqa
+```
+
+Útil para casos didácticos (como `examples/42_defaults.cor` que demuestra el footgun de `mutable-default` intencionalmente), código generado, o trade-offs deliberados.
+
 El análisis de scope (v1.50) respeta closures: si una función anidada captura una variable del cuerpo enclosing con `nolocal`, la outer se marca como usada. Lo mismo aplica al destructuring (`a, b = par`): cada nombre se analiza por separado.
 
 Exit 0 sin avisos, 1 si los hay — apto para `pre-commit` y CI.

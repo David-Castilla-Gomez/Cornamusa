@@ -6,6 +6,84 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.64.0] — 2026-05-16 — Linter: directiva `# noqa: <categoria>` para supresión selectiva
+
+Cierra una limitación práctica del linter. Hasta v1.63, cualquier
+warning del linter dispara siempre. Pero algunos casos legítimos
+incluyen anti-patrones intencionalmente (código didáctico, código
+generado, trade-offs deliberados). Por ejemplo, `examples/42_defaults.cor`
+**demuestra** el footgun `mutable-default` de Python con comentario
+explicativo — el warning ahí es correcto técnicamente pero ruido en
+contexto.
+
+### Sintaxis
+
+```cornamusa
+# Silencia una categoría específica:
+importar fechas      # noqa: unused-import
+funcion f(x=[]):     # noqa: mutable-default
+    retornar x
+fin funcion
+
+# Múltiples categorías separadas por coma:
+funcion g(a, b):     # noqa: unused-param, shadow
+    retornar 1
+fin funcion
+
+# Bare noqa silencia TODOS los warnings en esa línea:
+codigo_legado()      # noqa
+```
+
+### Reglas
+
+- La directiva aplica **a la línea donde aparece**, no a líneas
+  posteriores ni anteriores.
+- `# noqa: cat` requiere el nombre exacto de la categoría (como lo
+  reporta `linter_tipo_nombre`): `unreachable`, `redundant-pasar`,
+  `eq-nulo`, `unused-import`, `unused-local`, `unused-param`,
+  `shadow`, `unused-loop-var`, `mutable-default`, `concat-in-loop`.
+- Categorías desconocidas se ignoran silenciosamente (forward-compat
+  con releases que añadan checks nuevos).
+- Whitespace alrededor de `noqa` y entre `:` y las categorías es
+  flexible: `# noqa: cat1,cat2` o `# noqa:cat1, cat2` ambos válidos.
+
+### Implementación
+
+- `parsear_noqa(fuente, ctx)` pre-escanea el texto línea a línea,
+  detecta `#` no-en-string, busca `noqa` después, parsea categorías.
+- Tabla `ctx->noqa_mask[linea]` con bitmap por categoría.
+  `NOQA_SILENCE_ALL` (bit 31) marca bare-noqa.
+- `noqa_silencia(ctx, linea, tipo)` consulta antes de añadir warning
+  a la lista de resultados.
+- API: `linter_analizar(sents, n, fuente)` ahora acepta `fuente`
+  (NULL = sin noqa, retrocompatible para tests que no necesitan).
+
+### Aplicación al repo
+
+- `examples/42_defaults.cor`: añadido `# noqa: mutable-default` al
+  parámetro `log=[]`. El ejemplo sigue demostrando el footgun, pero
+  ahora pasa lint limpio.
+- **Repo entero: 0 warnings en lint** ahora (vs 1 en v1.63).
+
+### Verificación
+
+- **220/220 tests verde**. `test_linter` extendido a **61 asserts**
+  (vs 56 antes): noqa con categoría específica, bare, múltiples
+  categorías, "solo aplica a su línea", categoría desconocida
+  ignorada.
+
+### Limitaciones
+
+- **No soporta noqa multi-línea** (`#` en línea anterior aplica solo
+  a la línea anterior, no a la siguiente). Suficiente para los casos
+  típicos.
+- **No reconoce triple-quoted strings**: un `#` dentro de
+  `"""..."""` multi-línea podría falsa-positivo como noqa. Caso edge
+  raro.
+- **Categoría inexistente no warna**: si tipeas `# noqa: unsed-local`
+  (typo), no se silencia el warning Y no hay aviso del typo. Trade-off
+  por forward-compat.
+
 ## [1.63.0] — 2026-05-16 — Linter `concat-in-loop`: detección automática del patrón cazado en v1.61-62
 
 Cierra el loop de aprendizaje. Tras dos releases consecutivas (v1.61,
