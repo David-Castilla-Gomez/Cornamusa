@@ -1,0 +1,54 @@
+# Modulo `base64` (v1.59): codificar/decodificar Base64 RFC 4648.
+#
+# Demuestra:
+#   - Codificacion basica.
+#   - Round-trip identidad.
+#   - Caso de uso: HTTP Basic Auth.
+#   - Caso de uso: data URI.
+#   - Manejo de errores en decodificacion.
+
+importar base64
+
+# ─── 1. Round-trip basico ────────────────────────────────────────
+mensaje = "Cornamusa habla castellano"
+codificado = base64.codificar(mensaje)
+imprimir("Original  :", mensaje)
+imprimir("Base64    :", codificado)
+imprimir("Decoded   :", base64.decodificar(codificado))
+
+# ─── 2. Padding: longitudes 0, 1, 2 mod 3 ────────────────────────
+para s en ["", "a", "ab", "abc", "abcd", "abcde"]:
+    codificado = base64.codificar(s)
+    imprimir(f"{s} → {codificado} (long={longitud(codificado)})")
+fin para
+
+# ─── 3. HTTP Basic Auth (RFC 7617) ───────────────────────────────
+usuario = "ada"
+contrasena = "p4ssw0rd!"
+credenciales = usuario + ":" + contrasena
+auth_header = "Authorization: Basic " + base64.codificar(credenciales)
+imprimir("\nHTTP header:")
+imprimir(auth_header)
+
+# ─── 4. Data URI ─────────────────────────────────────────────────
+# Imagina un PNG de 1×1 transparente embebido como data URI:
+contenido_simulado = "PNG\x89...datos binarios..."
+data_uri = "data:image/png;base64," + base64.codificar(contenido_simulado)
+imprimir("\nData URI (truncado):", data_uri)
+
+# ─── 5. Tolerancia a whitespace en decode (MIME-style) ──────────
+mime_b64 = "U29ueSBwYW5lbCB5IHN1IGFsbWE=\n  "
+imprimir("\nMIME-style:", base64.decodificar(mime_b64))
+
+# ─── 6. Errores atrapables ───────────────────────────────────────
+intentar:
+    base64.decodificar("ABC@D")
+atrapar Excepcion como e:
+    imprimir("\nError esperado:", e)
+fin intentar
+
+intentar:
+    base64.decodificar("solo_3_caracteres_y_uno_mas")
+atrapar Excepcion como e:
+    imprimir("Error esperado:", e)
+fin intentar

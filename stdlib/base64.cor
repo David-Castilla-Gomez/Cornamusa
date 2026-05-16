@@ -1,0 +1,46 @@
+# Cornamusa stdlib: base64.cor
+#
+# Codificacion y decodificacion Base64 (RFC 4648). Wrapper sobre los
+# built-ins nativos `base64_codificar` y `base64_decodificar`.
+#
+# Filosofia: base64 es un formato de intercambio universal para
+# representar bytes como texto ASCII. Util para:
+#   - Authorization headers (HTTP Basic Auth).
+#   - Data URIs (`data:image/png;base64,...`).
+#   - Tokens en JSON/JWT.
+#   - Embeber binarios en archivos de texto.
+#
+# Uso:
+#   importar base64
+#
+#   # Codificar texto:
+#   b64 = base64.codificar("Cornamusa es un lenguaje")
+#   # → "Q29ybmFtdXNhIGVzIHVuIGxlbmd1YWpl"
+#
+#   # Decodificar:
+#   texto = base64.decodificar("SG9sYSBtdW5kbw==")
+#   # → "Hola mundo"
+#
+#   # HTTP Basic Auth (RFC 7617):
+#   importar red
+#   credenciales = "usuario:contraseña"
+#   header = "Authorization: Basic " + base64.codificar(credenciales) + "\r\n"
+#
+# Cobertura RFC 4648:
+#   - Alfabeto estandar: A-Z a-z 0-9 + / con padding `=`.
+#   - Decodificador tolerante a whitespace (espacios, `\n`, `\r`, `\t`)
+#     dentro de la entrada — util para entrada con line-wrap MIME-style.
+#   - Errores atrapables: ErrorDeValor si la entrada contiene caracteres
+#     fuera del alfabeto o tiene longitud o padding invalidos.
+#
+# Lo que NO incluye (v1.59):
+#   - Variante URL-safe (RFC 4648 §5, usa `-` y `_` en lugar de `+` y `/`).
+#     Scope para v1.60+.
+
+funcion codificar(cadena):
+    retornar base64_codificar(cadena)
+fin funcion
+
+funcion decodificar(cadena):
+    retornar base64_decodificar(cadena)
+fin funcion

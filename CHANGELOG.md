@@ -6,6 +6,87 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.59.0] — 2026-05-16 — Stdlib `base64` (RFC 4648 codec nativo)
+
+Continúa la expansión de stdlib tras `csv` en v1.58. Nuevo módulo
+`base64` con implementación nativa en C — rápido incluso para inputs
+grandes. Casos de uso típicos: HTTP Basic Auth, Data URIs, JSON Web
+Tokens, embeber binarios en archivos de texto.
+
+**Stdlib pasa de 13 a 14 módulos.**
+
+### API
+
+```cornamusa
+importar base64
+
+base64.codificar(cadena)    → cadena base64
+base64.decodificar(cadena)  → cadena original
+```
+
+Implementación nativa en C expone `base64_codificar` y
+`base64_decodificar` como built-ins; `stdlib/base64.cor` es un
+wrapper delgado (≈4 líneas).
+
+### Cobertura RFC 4648
+
+- Alfabeto estándar `A-Z a-z 0-9 + /` con padding `=`.
+- Validados los 7 test vectors de §10 (`""`, `"f"`, `"fo"`, `"foo"`,
+  `"foob"`, `"fooba"`, `"foobar"`).
+- Decodificador tolerante a whitespace (espacios, `\n`, `\r`, `\t`)
+  para soportar entrada MIME-style con line-wrap.
+- Errores atrapables (`ErrorDeValor`):
+  - Carácter fuera del alfabeto.
+  - Padding `=` en mitad de la cadena.
+  - Longitud no múltiplo de 4 (tras filtrar whitespace y padding).
+  - Resto de 1 carácter (no es codificación válida).
+
+### Casos de uso demostrados
+
+```cornamusa
+# HTTP Basic Auth (RFC 7617):
+creds = "usuario:contraseña"
+header = "Authorization: Basic " + base64.codificar(creds)
+
+# Data URI:
+data_uri = "data:image/png;base64," + base64.codificar(bytes_png)
+
+# Round-trip identidad:
+base64.decodificar(base64.codificar(s)) == s
+```
+
+### Implementación
+
+Nuevas natives en `src/nativos.c`:
+- `base64_codificar(s)` — ~50 líneas C, procesa 3 bytes → 4 chars con
+  table lookup en alfabeto constante.
+- `base64_decodificar(s)` — ~80 líneas C, filtra whitespace, valida
+  padding, lookup inverso vía función.
+
+Trabaja sobre los bytes UTF-8 subyacentes de las cadenas Cornamusa,
+así que cualquier dato representable como cadena (incluyendo binario
+si el caller puede construirlo) funciona.
+
+Nuevo `stdlib/base64.cor`: wrapper con docs (~4 líneas funcionales).
+
+### Lo que NO incluye (scope para v1.60+)
+
+- **Variante URL-safe** (RFC 4648 §5): usa `-` y `_` en lugar de `+`
+  y `/`. Sin padding por convención. Útil para JWTs.
+
+### Verificación
+
+- **217/217 tests verde**.
+- Nuevo `test_base64` con **18 asserts**:
+  - 7 test vectors de RFC 4648 §10 (codificación).
+  - 7 vectores inversos (decodificación).
+  - Tolerancia a whitespace (2 casos).
+  - Round-trip HTTP Basic Auth (2 casos).
+- Nuevo `bc_run_67_base64` integration test.
+- Nuevo `examples/67_base64.cor` cubre 6 casos de uso.
+- `cornamusa lint stdlib/base64.cor` → 0 warnings.
+- `cornamusa fmt --check stdlib/base64.cor` → ya canónico.
+
 ## [1.58.0] — 2026-05-16 — Stdlib `csv` (parser/writer RFC 4180-like)
 
 Tras cerrar el lenguaje core en v1.57, vuelta a ampliar la stdlib.

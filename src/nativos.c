@@ -2846,6 +2846,172 @@ static Valor nativa_red_http_obtener(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Base64 (v1.59) — RFC 4648.
+ *
+ * Implementacion C de codificacion/decodificacion base64 estandar
+ * (alfabeto A-Z a-z 0-9 + / con padding `=`). Variante URL-safe
+ * (- _ sin padding) queda para v1.60+.
+ *
+ * Las funciones operan sobre las cadenas Cornamusa como secuencia
+ * de bytes (la representacion UTF-8 subyacente). Esto permite
+ * codificar tanto ASCII como datos binarios siempre que el caller
+ * pueda representarlos como cadena valida (los bytes 0x00 se
+ * permiten gracias a que las cadenas Cornamusa son length-prefixed).
+ * ────────────────────────────────────────────────────────────────── */
+
+static const char B64_ALFABETO[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+static Valor nativa_base64_codificar(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: base64_codificar(cadena) requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: base64_codificar() requiere una cadena");
+    }
+    const unsigned char *in = (const unsigned char *)args[0].como.cadena.texto;
+    int n = args[0].como.cadena.longitud;
+
+    /* Output size: 4 chars por cada 3 bytes, redondeado hacia arriba. */
+    int out_n = 4 * ((n + 2) / 3);
+    char *out = (char *)malloc((size_t)out_n + 1);
+    if (!out) return error_nativa(err, linea, columna, "memoria insuficiente");
+
+    int i, j;
+    for (i = 0, j = 0; i + 3 <= n; i += 3, j += 4) {
+        unsigned x = ((unsigned)in[i] << 16)
+                    | ((unsigned)in[i + 1] << 8)
+                    | (unsigned)in[i + 2];
+        out[j]     = B64_ALFABETO[(x >> 18) & 0x3F];
+        out[j + 1] = B64_ALFABETO[(x >> 12) & 0x3F];
+        out[j + 2] = B64_ALFABETO[(x >> 6)  & 0x3F];
+        out[j + 3] = B64_ALFABETO[x         & 0x3F];
+    }
+    /* Resto: 1 o 2 bytes con padding `=`. */
+    if (i < n) {
+        int rest = n - i;
+        unsigned x = (unsigned)in[i] << 16;
+        if (rest == 2) x |= (unsigned)in[i + 1] << 8;
+        out[j]     = B64_ALFABETO[(x >> 18) & 0x3F];
+        out[j + 1] = B64_ALFABETO[(x >> 12) & 0x3F];
+        out[j + 2] = (rest == 2) ? B64_ALFABETO[(x >> 6) & 0x3F] : '=';
+        out[j + 3] = '=';
+        j += 4;
+    }
+    out[j] = '\0';
+
+    Valor v = valor_cadena_duplicar(out, j);
+    free(out);
+    return v;
+}
+
+/* Lookup inverso: char base64 → valor 0-63, o -1 si invalido. */
+static int b64_decode_char(unsigned char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A';
+    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
+    if (c >= '0' && c <= '9') return c - '0' + 52;
+    if (c == '+') return 62;
+    if (c == '/') return 63;
+    return -1;
+}
+
+static Valor nativa_base64_decodificar(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: base64_decodificar(cadena) requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: base64_decodificar() requiere una cadena");
+    }
+    const unsigned char *in = (const unsigned char *)args[0].como.cadena.texto;
+    int n = args[0].como.cadena.longitud;
+
+    /* Filtrar whitespace, contar caracteres validos. Permitimos `\n` y
+     * espacios para tolerar entradas formateadas (MIME-style). */
+    unsigned char *limpio = (unsigned char *)malloc((size_t)n + 1);
+    if (!limpio) return error_nativa(err, linea, columna, "memoria insuficiente");
+    int m = 0;
+    int padding = 0;
+    for (int k = 0; k < n; k++) {
+        unsigned char c = in[k];
+        if (c == ' ' || c == '\n' || c == '\r' || c == '\t') continue;
+        if (c == '=') { padding++; continue; }
+        if (padding > 0) {
+            /* Padding interno: solo se permite al final. */
+            free(limpio);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: base64 invalido (padding '=' en mitad de la cadena)");
+        }
+        if (b64_decode_char(c) < 0) {
+            free(limpio);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: caracter '%c' no es base64 valido", c);
+        }
+        limpio[m++] = c;
+    }
+    /* Padding debe ser 0, 1 o 2. */
+    if (padding > 2) {
+        free(limpio);
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: base64 invalido (demasiado padding)");
+    }
+    /* Tras filtrar, m + padding debe ser multiplo de 4. */
+    if (((m + padding) % 4) != 0) {
+        free(limpio);
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: longitud de base64 no es multiplo de 4");
+    }
+
+    int out_cap = (m / 4) * 3 + 3;
+    char *out = (char *)malloc((size_t)out_cap);
+    if (!out) { free(limpio); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+    int out_n = 0;
+
+    int i = 0;
+    while (i + 4 <= m) {
+        unsigned x = ((unsigned)b64_decode_char(limpio[i])     << 18)
+                    | ((unsigned)b64_decode_char(limpio[i + 1]) << 12)
+                    | ((unsigned)b64_decode_char(limpio[i + 2]) << 6)
+                    | (unsigned)b64_decode_char(limpio[i + 3]);
+        out[out_n++] = (char)((x >> 16) & 0xFF);
+        out[out_n++] = (char)((x >> 8)  & 0xFF);
+        out[out_n++] = (char)(x         & 0xFF);
+        i += 4;
+    }
+    /* Bloque parcial con padding (m % 4 == 2 o 3 implica padding 2 o 1). */
+    int restantes = m - i;
+    if (restantes == 2) {
+        /* 2 chars base64 → 1 byte. */
+        unsigned x = ((unsigned)b64_decode_char(limpio[i])     << 18)
+                    | ((unsigned)b64_decode_char(limpio[i + 1]) << 12);
+        out[out_n++] = (char)((x >> 16) & 0xFF);
+    } else if (restantes == 3) {
+        /* 3 chars base64 → 2 bytes. */
+        unsigned x = ((unsigned)b64_decode_char(limpio[i])     << 18)
+                    | ((unsigned)b64_decode_char(limpio[i + 1]) << 12)
+                    | ((unsigned)b64_decode_char(limpio[i + 2]) << 6);
+        out[out_n++] = (char)((x >> 16) & 0xFF);
+        out[out_n++] = (char)((x >> 8)  & 0xFF);
+    } else if (restantes == 1) {
+        free(out); free(limpio);
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: base64 invalido (resto de 1 char incompleto)");
+    }
+    free(limpio);
+
+    Valor v = valor_cadena_duplicar(out, out_n);
+    free(out);
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Regex (v1.28) — motor en src/regex.c. El módulo `regex.cor` envuelve.
  * ────────────────────────────────────────────────────────────────── */
 
@@ -3195,6 +3361,9 @@ static const EntradaNativa NATIVAS[] = {
     {"regex_reemplazar",    16, nativa_regex_reemplazar},
     /* Red (v1.29). */
     {"red_http_obtener",    16, nativa_red_http_obtener},
+    /* Base64 (v1.59). */
+    {"base64_codificar",    16, nativa_base64_codificar},
+    {"base64_decodificar",  18, nativa_base64_decodificar},
 };
 
 #define N_NATIVAS (int)(sizeof(NATIVAS) / sizeof(NATIVAS[0]))

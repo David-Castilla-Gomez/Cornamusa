@@ -203,6 +203,18 @@ set_tests_properties(bc_run_66_csv PROPERTIES
     PASS_REGULAR_EXPRESSION "queso, manchego"
 )
 
+# v1.59: ejemplo del modulo base64. Round-trip y HTTP Basic Auth.
+add_test(
+    NAME bc_run_67_base64
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/67_base64.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_67_base64 PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Q29ybmFtdXNhIGhhYmxhIGNhc3RlbGxhbm8="
+)
+
 # v0.6.1: tests bytecode adicionales que ahora pasan gracias a iteradores
 # y aug-assign con destino indice.
 add_test(

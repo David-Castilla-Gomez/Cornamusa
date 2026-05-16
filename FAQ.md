@@ -14,7 +14,7 @@ No es una traducción literal de Python: las palabras clave se eligieron para qu
 
 ### ¿Es un toy language o se puede usar en serio?
 
-Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de trece módulos (`archivos`, `json`, `csv`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
+Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de catorce módulos (`archivos`, `json`, `csv`, `base64`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
 
 Lo que todavía le falta para producción seria:
 
@@ -275,6 +275,36 @@ Soporta:
 - Tanto `\n` como `\r\n` como separador de líneas en parse; escribe siempre con `\n`.
 
 **No** infiere tipos: todos los campos vienen como cadena. Conviértelos tú (`entero(campo)`, `decimal(campo)`).
+
+### ¿Cómo codifico/decodifico Base64?
+
+Desde **v1.59** con el módulo `base64`:
+
+```cornamusa
+importar base64
+
+# Codificar (RFC 4648 estándar):
+encoded = base64.codificar("Cornamusa")
+# → "Q29ybmFtdXNh"
+
+# Decodificar:
+texto = base64.decodificar("SG9sYSBtdW5kbw==")
+# → "Hola mundo"
+
+# HTTP Basic Auth típico:
+creds = "usuario:contraseña"
+header = "Authorization: Basic " + base64.codificar(creds)
+```
+
+Cobertura:
+- Alfabeto estándar `A-Z a-z 0-9 + /` con padding `=`.
+- Round-trip verificado con los 7 test vectors de RFC 4648 §10.
+- Decodificador tolerante a whitespace (espacios, `\n`, `\r`, `\t`) — útil para input MIME-style con line-wrap.
+- Errores atrapables: `ErrorDeValor` si la entrada tiene caracteres fuera del alfabeto, padding inválido, o longitud no múltiplo de 4.
+
+Variante URL-safe (`-` y `_` en lugar de `+` y `/`) queda para v1.60+.
+
+Implementación nativa en C — rápida incluso para inputs grandes.
 
 ### ¿Funciona `borrar d[k]` y `obj.x += 1`?
 
