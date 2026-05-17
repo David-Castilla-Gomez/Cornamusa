@@ -3033,7 +3033,13 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         valor_a_repr(&key, buf, sizeof(buf));
                         VM_ERROR("ErrorDeClave: %s", buf);
                         valor_destruir(&key); valor_destruir(&obj);
-                        return VM_ERROR_RUNTIME;
+                        /* v1.74 (auditoria): antes hacia `return
+                         * VM_ERROR_RUNTIME` directo, asi que un
+                         * `atrapar Excepcion` sobre `d[clave_ausente]`
+                         * NO atrapaba. Era un olvido de v1.10 (RAISE_OR_DIE
+                         * se aplico al resto de errores pero a este no). */
+                        RAISE_OR_DIE();
+                        break;
                     }
                 } else if (obj.tipo == VAL_CADENA) {
                     /* v0.9.1: indexación UTF-8 sobre cadenas.

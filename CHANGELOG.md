@@ -6,6 +6,121 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.74.0] — 2026-05-17 — Auditoría: tests-gap cerrados + fix de `ErrorDeClave` atrapable
+
+Release de auditoría tras revisión completa del proyecto. No añade
+features nuevas — cierra los huecos de cobertura detectados y arregla
+un bug latente descubierto en el camino.
+
+### Fix: `d[clave_ausente]` ahora es atrapable
+
+`OP_INDICE` sobre diccionario con clave ausente hacía
+`return VM_ERROR_RUNTIME` directo en lugar de `RAISE_OR_DIE()`. El
+resultado: `atrapar ErrorDeClave` (y `atrapar Excepcion`) no
+capturaban el error — el programa terminaba con traza fatal aunque
+hubiera un handler activo.
+
+```cornamusa
+d = {"a": 1}
+intentar:
+    x = d["xyz"]      # antes: fatal. Ahora: atrapable.
+atrapar Excepcion como e:
+    imprimir("ok:", e)
+fin intentar
+```
+
+Olvido de v1.10 cuando `RAISE_OR_DIE` se introdujo para hacer
+atrapables `ErrorDeTipo`/`ErrorDeIndice`/etc. — este sitio se quedó
+sin migrar. Los demás sitios con `ErrorDeClave` (en `borrar d[k]`,
+`borrar conj.x`) ya estaban bien.
+
+### Tests añadidos: seguridad JWT (mitigaciones declaradas)
+
+`test_bytecode_jwt.c` ahora verifica explícitamente las mitigaciones
+de seguridad anunciadas en docs:
+
+- **`alg=none` rechazado** (RFC 7519 §6.1 attack): atacante construye
+  token con `{"alg":"none"}` y firma vacía. Cornamusa siempre intenta
+  HMAC-SHA-256, así que `"" ≠ HMAC(clave, mensaje)` y rechaza.
+- **`alg=RS256` rechazado** sin clave: atacante no puede forjar firma
+  HMAC válida, el chequeo falla primero.
+- **alg confusion (HS256 ↔ HS512)**: insider con la clave firma con
+  HS256 pero pone `alg=HS512` en el header. La firma cuadra pero
+  Cornamusa rechaza por `alg ≠ HS256`.
+- **Sin claim `alg`**: header malformado lanza `ErrorDeClave` ahora
+  atrapable (ver fix anterior).
+
+Estas mitigaciones se mencionaban repetidamente en docs (CHANGELOG,
+FAQ, stdlib/jwt.cor) pero NO había tests que las verificaran —
+regresión silenciosa hubiera sido posible.
+
+### Tests añadidos: `csv` (v1.58)
+
+Nuevo `test_bytecode_csv_stdlib.c` con 17 asserts cubriendo el RFC
+4180-like del parser:
+
+- Parseo básico, separadores alternativos (`;`, `\t`).
+- Campos quoted con `,` y `\n` internos.
+- Escape `""` para comilla literal.
+- Cadena vacía → lista vacía.
+- Trailing `\n` no produce fila espuria.
+- `\r\n` como separador de línea.
+- Round-trip `parsear` → `serializar` → `parsear`.
+- `serializar` quotea automáticamente campos con `,` o `"`.
+
+Antes solo había cobertura indirecta vía `bc_run_66_csv` (regex de
+output, no asserts estructurales).
+
+### Tests añadidos: nativas de cadenas (v1.61-v1.62)
+
+Nuevo `test_bytecode_cadenas_nativas.c` con 17 asserts cubriendo las
+6 nativas perf-optimizadas:
+
+- `cadena_unir`: vacía, un elemento, separador vacío, UTF-8 multibyte.
+- `cadena_indice_de`: inicio, final, no presente, sub vacía.
+- `cadena_empieza_con` / `cadena_termina_con`: prefijo/sufijo
+  vacíos, prefijo más largo que cadena.
+- `cadena_minusculas_ascii` / `cadena_mayusculas_ascii`: ASCII se
+  convierte, non-ASCII (`é`, `ñ`) queda intacto, round-trip
+  de ASCII puro.
+
+### Bonus: alineación de documentación con realidad
+
+(Cambios ya pusheados en commit anterior `5514800`.)
+
+- README/introducción/tutorial: "doce módulos" → "diecisiete".
+- README/referencia/tutorial: "57 ejemplos" → "72".
+- `docs/referencia.md` §16 (stdlib) reescrita con los 5 módulos
+  faltantes (csv, base64, hashing, jwt, tiempo) y sus APIs.
+- `docs/referencia.md` §19: claims falsos sobre `borrar`/`global`/
+  decoradores eliminados (sí están implementados; movidos a tabla
+  "Implementados").
+- FAQ: tooling pendiente actualizado; `8 → 9` tests diferenciales;
+  roadmap stale ampliado con v1.41-v1.74.
+
+### También en commit `5514800` (auditoría):
+
+- **Decoradores `@nombre` en tree-walking** ahora lanzan error claro
+  pidiendo `--bytecode` (antes: silent-ignore).
+- **Decoradores sobre métodos de clase** ahora lanzan error de
+  compilación claro (antes: silent-ignore; limitación declarada en
+  v1.72 pero no enforced).
+- **`tiempo.dormir(NaN/inf)`** lanza `ErrorDeValor` (antes: UB).
+- **`nanosleep` loop infinito** si `errno ≠ EINTR` arreglado.
+- **`test_profiler.c`** ya no asume Profiler inicializado.
+
+### Estado
+
+232 tests verde (de 230 antes de v1.74). 41 asserts nuevos.
+
+### ESPEC.md sigue atrasado
+
+ESPEC.md está desactualizado 28 versiones (sigue mencionando v1.46).
+Es un documento formal grande, requiere una release dedicada de
+actualización mayor — sin recursos para esta release.
+
+---
+
 ## [1.73.0] — 2026-05-17 — Stdlib `tiempo` (reloj, sleep, cronómetro)
 
 Nuevo módulo (17º de la stdlib) que complementa `fechas`:

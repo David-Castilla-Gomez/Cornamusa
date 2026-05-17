@@ -252,6 +252,105 @@ int main(void) {
         AFIRMAR(strstr(out, "firma-rechazada") != NULL, "validar_firma_mala");
     }
 
+    /* ─── v1.74: tests de seguridad (mitigaciones declaradas) ─── */
+
+    /* SEC-1: ataque alg=none (RFC 7519 §6.1).
+     * Atacante construye un token con {"alg":"none"} y firma vacia,
+     * esperando que el verificador acepte sin chequear. Cornamusa debe
+     * rechazar: la implementacion SIEMPRE intenta verificar HMAC-SHA-256
+     * con la clave, y "" != HMAC(clave, mensaje). */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "importar base64\n"
+            "importar json\n"
+            "h = base64.codificar_url(json.serializar({\"alg\": \"none\", \"typ\": \"JWT\"}))\n"
+            "p = base64.codificar_url(json.serializar({\"sub\": \"admin\"}))\n"
+            "token = h + \".\" + p + \".\"\n"
+            "intentar:\n"
+            "    jwt.decodificar(token, \"clave\")\n"
+            "    imprimir(\"BUG-acepto-alg-none\")\n"
+            "atrapar ErrorDeValor como e:\n"
+            "    imprimir(\"rechazado-alg-none\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "rechazado-alg-none") != NULL, "alg_none_rechazado");
+        AFIRMAR(strstr(out, "BUG-acepto-alg-none") == NULL, "alg_none_no_aceptado");
+    }
+
+    /* SEC-2: alg=RS256 con firma cualquiera (atacante sin clave).
+     * Sin la clave HMAC el atacante no puede forjar firma valida bajo
+     * HS256, asi que sea cual sea el alg declarado, el chequeo HMAC
+     * falla primero. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "importar base64\n"
+            "importar json\n"
+            "h = base64.codificar_url(json.serializar({\"alg\": \"RS256\", \"typ\": \"JWT\"}))\n"
+            "p = base64.codificar_url(json.serializar({\"sub\": \"admin\"}))\n"
+            "token = h + \".\" + p + \".firmaaleatoria\"\n"
+            "intentar:\n"
+            "    jwt.decodificar(token, \"clave\")\n"
+            "    imprimir(\"BUG-acepto-RS256\")\n"
+            "atrapar ErrorDeValor como e:\n"
+            "    imprimir(\"rechazado-rs256\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "rechazado-rs256") != NULL, "rs256_sin_clave_rechazado");
+    }
+
+    /* SEC-3: alg confusion HS256/HS512. Atacante CONOCE la clave (o un
+     * insider). Firma correctamente con HS256 pero declara alg=HS512 en
+     * el header. La firma es bit-a-bit valida, pero Cornamusa debe
+     * rechazar el header. Mitigation declarada en stdlib/jwt.cor:
+     * "Solo soporta alg = HS256". */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "importar base64\n"
+            "importar json\n"
+            "importar hashing\n"
+            "CLAVE = \"k\"\n"
+            "h = base64.codificar_url(json.serializar({\"alg\": \"HS512\", \"typ\": \"JWT\"}))\n"
+            "p = base64.codificar_url(json.serializar({\"sub\": \"x\"}))\n"
+            "msg = h + \".\" + p\n"
+            "firma = base64.codificar_url(hashing.hmac_sha256_bytes(CLAVE, msg))\n"
+            "token = msg + \".\" + firma\n"
+            "intentar:\n"
+            "    jwt.decodificar(token, CLAVE)\n"
+            "    imprimir(\"BUG-acepto-HS512-header\")\n"
+            "atrapar ErrorDeValor como e:\n"
+            "    imprimir(\"rechazado-alg-confusion\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "rechazado-alg-confusion") != NULL, "alg_confusion_rechazado");
+    }
+
+    /* SEC-4: header valido pero alg ausente. El verificador NO debe
+     * aceptar headers malformados. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "importar base64\n"
+            "importar json\n"
+            "importar hashing\n"
+            "CLAVE = \"k\"\n"
+            "h = base64.codificar_url(json.serializar({\"typ\": \"JWT\"}))\n"
+            "p = base64.codificar_url(json.serializar({\"sub\": \"x\"}))\n"
+            "msg = h + \".\" + p\n"
+            "firma = base64.codificar_url(hashing.hmac_sha256_bytes(CLAVE, msg))\n"
+            "token = msg + \".\" + firma\n"
+            "intentar:\n"
+            "    jwt.decodificar(token, CLAVE)\n"
+            "    imprimir(\"BUG-acepto-sin-alg\")\n"
+            "atrapar Excepcion como e:\n"
+            "    imprimir(\"rechazado-sin-alg\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "rechazado-sin-alg") != NULL, "sin_alg_rechazado");
+    }
+
     if (fallos == 0) {
         printf("jwt: %d asserts, todos verde\n", casos);
         return 0;

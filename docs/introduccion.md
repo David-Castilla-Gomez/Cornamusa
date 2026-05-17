@@ -93,6 +93,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Profiler determinista `cornamusa prof` (tabla por función: llamadas/total/self/per-call) | v1.71 | ✅ |
 | Decoradores `@nombre` (stacking, factories `@retry(3)`, funciones anidadas) | v1.72 | ✅ |
 | Stdlib `tiempo` — `monotonic()`, `dormir(s)`, `Cronometro`, `epoch_ms()` (17º módulo) | v1.73 | ✅ |
+| Auditoría: tests JWT seguridad, csv unit tests, fix `d[k]` atrapable | v1.74 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 
