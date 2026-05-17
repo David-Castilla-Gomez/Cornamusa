@@ -194,6 +194,24 @@ int main(void) {
         AFIRMAR(rc == -2, "at_sin_funcion_es_error_sintaxis");
     }
 
+    /* Test 6b (v1.73-auditoria): decorador sobre metodo de clase emite
+     * error claro (no silent-ignore). La limitacion esta declarada en
+     * CHANGELOG v1.72 — comprobamos que el error llega al usuario. */
+    {
+        char out[1024];
+        int rc = ejecutar_capturando(
+            "funcion dec(f):\n"
+            "    retornar f\n"
+            "fin funcion\n"
+            "clase Foo:\n"
+            "    @dec\n"
+            "    funcion bar(yo):\n"
+            "        retornar 1\n"
+            "    fin funcion\n"
+            "fin clase\n", out, sizeof(out));
+        AFIRMAR(rc != 0, "decorador_metodo_es_error");
+    }
+
     /* Test 6: decorador dentro de funcion anidada (local). */
     {
         char out[1024];

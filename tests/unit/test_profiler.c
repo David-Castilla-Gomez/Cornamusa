@@ -35,8 +35,11 @@ static int casos = 0;
         }                                                                       \
     } while (0)
 
-/* Ejecuta `fuente` con profiler opcional. Devuelve VM_OK / error. */
+/* Ejecuta `fuente` con profiler opcional. Devuelve VM_OK / error.
+ * Si out_prof != NULL siempre lo deja en estado inicializado (incluso
+ * en errores tempranos) — el caller llama profiler_destruir() libremente. */
 static ResultadoVM ejecutar(const char *fuente, bool activar_prof, Profiler *out_prof) {
+    if (out_prof) profiler_iniciar(out_prof);
     Lexer l; lexer_iniciar(&l, fuente, "<test>");
     Arena a; arena_iniciar(&a, 8192);
     Parser p; parser_iniciar(&p, &l, &a, fuente, "<test>");

@@ -4123,6 +4123,16 @@ static bool compilar_clase(Compilador *c, const Sent *s) {
                 "el cuerpo de una clase solo admite metodos ('funcion ...') o 'pasar' en v0.7.0");
             return false;
         }
+        /* v1.72: los decoradores `@x` sobre metodos no estan soportados
+         * (declarado como limitacion en CHANGELOG v1.72). Sin este check
+         * el parser los aceptaria y compilar_clase los descartaria
+         * silenciosamente — el usuario veria su clase ejecutar sin que
+         * los decoradores hayan tenido efecto. Mejor error explicito. */
+        if (body->como.funcion.n_decoradores > 0) {
+            error_compilacion(c, body->linea, body->columna,
+                "decoradores '@...' en metodos de clase aun no soportados");
+            return false;
+        }
         /* Emitir la closure del método. La clase sigue en el stack
            debajo. Tras OP_CLOSURE el stack es [..., clase, closure]. */
         if (!emitir_closure_de_funcion(c, body)) return false;

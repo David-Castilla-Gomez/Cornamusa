@@ -915,7 +915,7 @@ imprimir(mat.PI)
 
 ### La biblioteca estándar
 
-Cornamusa trae **doce módulos** listos para usar. Un vistazo rápido:
+Cornamusa trae **diecisiete módulos** listos para usar. Un vistazo rápido:
 
 ```cornamusa
 importar matematicas
@@ -1031,7 +1031,7 @@ Mayor venta: gaita
 ## 17. Próximos pasos
 
 - Consulta la **[referencia rápida](referencia.md)** para tener toda la sintaxis y la stdlib a mano.
-- Explora los **[57 ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)** del repositorio: hay uno por cada característica del lenguaje.
+- Explora los **[72 ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)** del repositorio: hay uno por cada característica del lenguaje.
 - Lee la **[especificación formal](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md)** si quieres el detalle preciso de la gramática y la semántica.
 - Si encuentras un bug o algo confuso, [abre un issue en GitHub](https://github.com/David-Castilla-Gomez/Cornamusa/issues).
 

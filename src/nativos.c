@@ -2681,6 +2681,7 @@ static Valor nativa_tiempo_formato(EvalError *err, int n_args, Valor *args,
 #  endif
 #  include <windows.h>
 #else
+#  include <errno.h>
 #  include <time.h>
 #endif
 
@@ -2743,6 +2744,12 @@ static Valor nativa_tiempo_dormir(EvalError *err, int n_args, Valor *args,
         return error_nativa(err, linea, columna,
             "ErrorDeTipo: tiempo_dormir() requiere segundos numericos");
     }
+    /* Rechazar NaN / inf antes de castear a tipos enteros (cast de NaN
+     * a DWORD/time_t es undefined behavior). */
+    if (s != s || s > 1e15 || s < -1e15) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: tiempo_dormir() segundos invalidos (NaN, inf, o fuera de rango)");
+    }
     if (s <= 0.0) return valor_nulo();
 #ifdef _WIN32
     /* Sleep toma milisegundos. Para s muy grande clamp a UINT32_MAX-1. */
@@ -2754,9 +2761,11 @@ static Valor nativa_tiempo_dormir(EvalError *err, int n_args, Valor *args,
     ts.tv_sec = (time_t)s;
     ts.tv_nsec = (long)((s - (double)ts.tv_sec) * 1e9);
     if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
-    /* Reintentar si interrumpido por signal. */
+    /* Reintentar si interrumpido por signal (EINTR). Otros errores
+     * (EINVAL, EFAULT) NO entran al loop — evitamos busy-spin si
+     * nanosleep falla por argumentos invalidos. */
     while (nanosleep(&ts, &ts) == -1) {
-        /* loop hasta completar */
+        if (errno != EINTR) break;
     }
 #endif
     return valor_nulo();

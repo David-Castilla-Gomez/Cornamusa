@@ -55,7 +55,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Inline caching + small-int tagging | v0.10–v0.11 | ✅ |
 | Dunders, `nolocal`, context managers | v1.2–v1.13 | ✅ |
 | Pattern matching (`coincidir`) | v1.15–v1.16 | ✅ |
-| Stdlib amplia (12 módulos) | v1.8–v1.29 | ✅ |
+| Stdlib amplia (alcanza 17 módulos) | v1.8–v1.73 | ✅ |
 | Destructuring, `*args`/`**kwargs`, spread | v1.21–v1.25 | ✅ |
 | Comprehensions y generadores | v1.30–v1.34 | ✅ |
 | Errores con sugerencias + traceback | v1.35–v1.38 | ✅ |

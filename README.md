@@ -51,7 +51,7 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **F-cadenas con interpolación real**: `f"hola {nombre}, {edad + 10}"` evalúa cada `{expr}`.
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
 
-**Biblioteca estándar** — doce módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `fechas`, `azar`, `proceso`, `regex`, `red`, `sistema`.
+**Biblioteca estándar** — diecisiete módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `csv`, `fechas`, `tiempo`, `azar`, `proceso`, `regex`, `red`, `sistema`, `base64`, `hashing`, `jwt`.
 
 **Implementación:**
 
@@ -204,7 +204,7 @@ cmake --build build -j
 
 ## Ejemplos
 
-**57 programas** en [`examples/`](examples/), uno por feature y numerados por orden de aparición. Una selección:
+**72 programas** en [`examples/`](examples/), uno por feature y numerados por orden de aparición. Una selección:
 
 **Fundamentos** — [`01_hola_mundo`](examples/01_hola_mundo.cor) · [`02_fizzbuzz`](examples/02_fizzbuzz.cor) · [`05_listas`](examples/05_listas.cor) · [`06_diccionarios`](examples/06_diccionarios.cor) · [`07_clases_herencia`](examples/07_clases_herencia.cor) · [`08_excepciones`](examples/08_excepciones.cor) · [`10_quicksort`](examples/10_quicksort.cor)
 

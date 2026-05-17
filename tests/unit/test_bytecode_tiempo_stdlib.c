@@ -183,6 +183,25 @@ int main(void) {
         AFIRMAR(strstr(out, "verdadero") != NULL, "cronometros_independientes");
     }
 
+    /* Test 9 (v1.73-auditoria): dormir(NaN) lanza ErrorDeValor, no UB.
+     * Generamos NaN con 0/0 — pero eso lanza ErrorAritmetico antes.
+     * Probamos con inf usando 1/0 (tambien error). El path mas
+     * accesible para NaN seria un nativo futuro tipo matematicas.NaN;
+     * por ahora verificamos que valores muy grandes son rechazados. */
+    {
+        char out[256];
+        int rc = ejecutar_capturando(
+            "importar tiempo\n"
+            "intentar:\n"
+            "    tiempo.dormir(1e20)\n"
+            "    imprimir(\"sin-error\")\n"
+            "atrapar ErrorDeValor como e:\n"
+            "    imprimir(\"rechazado\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(rc == 0, "dormir_inf_no_crashea");
+        AFIRMAR(strstr(out, "rechazado") != NULL, "dormir_inf_rechazado");
+    }
+
     if (fallos == 0) {
         printf("tiempo_stdlib: %d asserts, todos verde\n", casos);
         return 0;

@@ -797,7 +797,7 @@ Se pueden usar directamente, pero la práctica recomendada es importar el módul
 
 ## 16. Biblioteca estándar (`stdlib/`)
 
-Doce módulos. Se importan con `importar <nombre>`.
+Diecisiete módulos. Se importan con `importar <nombre>`.
 
 ### `matematicas`
 
@@ -809,7 +809,7 @@ Doce módulos. Se importan con `importar <nombre>`.
 
 ### `funcionales`
 
-`mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `enumerar_desde(xs,inicio)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `suma_desde(xs,inicial)`, `minimo(xs)`, `maximo(xs)`.
+`mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `minimo(xs)`, `maximo(xs)`. (Existen también `enumerar_desde`/`suma_desde` deprecados — usa los con `inicial=`.)
 
 ### `formato`
 
@@ -823,9 +823,23 @@ Doce módulos. Se importan con `importar <nombre>`.
 
 `parsear(texto)`, `serializar(valor)`, `serializar_indentado(valor,indent)`.
 
+### `csv` (v1.58)
+
+`parsear(texto, sep=",")` → lista de listas, `serializar(filas, sep=",")` → cadena, `leer(ruta, sep=",")` y `escribir(ruta, filas, sep=",")` para archivos. RFC 4180-like: campos entre `"` admiten `,` y `\n` internos; `""` escapa `"`.
+
 ### `fechas`
 
 `ahora()`, `componentes(ts)`, `construir(año,mes,dia,hora=0,minuto=0,segundo=0)`, `formato(ts,spec)`, `iso8601(ts)`, `legible(ts)`, `solo_fecha(ts)`, `solo_hora(ts)`, `sumar_dias(ts,n)`, `sumar_horas(ts,n)`, `diferencia_seg(a,b)`, `diferencia_dias(a,b)`, `es_bisiesto(año)`, `dias_en_mes(año,mes)`, `nombre_dia(d)`, `nombre_mes(m)`. Constantes: `SEGUNDO`, `MINUTO`, `HORA`, `DIA`, `SEMANA`.
+
+### `tiempo` (v1.73)
+
+Reloj, sleep, cronómetro (complementa `fechas`):
+
+- `epoch_segundos()` → entero, segundos Unix epoch.
+- `epoch_ms()` → entero, milisegundos Unix epoch.
+- `monotonic()` → decimal, segundos desde punto arbitrario (correcto para medir duraciones).
+- `dormir(s)` → bloquea `s` segundos (acepta decimal, `s <= 0` retorna inmediato, NaN/inf lanzan `ErrorDeValor`).
+- `cronometro()` → instancia con `.leer()` (segundos transcurridos) y `.reiniciar()`.
 
 ### `azar`
 
@@ -842,6 +856,26 @@ Doce módulos. Se importan con `importar <nombre>`.
 ### `red`
 
 `obtener(url,cabeceras_extra=nulo,timeout=10)` → dict `{codigo, cabeceras, cuerpo}`, `descargar_cuerpo(url)`, `parsear_cabeceras(cab_raw)`. Solo HTTP/1.1 plano (sin TLS).
+
+### `base64` (v1.59 + v1.66 URL-safe)
+
+`codificar(s)` → cadena RFC 4648 estándar (`+/=`), `decodificar(s)` → cadena (tolerante: acepta `-_` y entrada sin padding), `codificar_url(s)` → variante URL-safe (`-_` sin `=`, RFC 4648 §5).
+
+### `hashing` (v1.60 + v1.65 HMAC)
+
+`sha256(s)` / `md5(s)` → digest hex en minúsculas (FIPS 180-4 / RFC 1321). `hmac_sha256(clave, mensaje)` / `hmac_md5(...)` → MAC hex (RFC 2104/4231). `hmac_sha256_bytes(...)` → 32 bytes raw (usado por `jwt`). MD5 está roto criptográficamente; sigue siendo útil en HMAC y para integridad casual.
+
+### `jwt` (v1.67 + v1.70)
+
+JSON Web Tokens HS256 (RFC 7519) sobre `json` + `base64` + `hashing`:
+
+- `codificar(payload, clave)` → cadena `header.payload.firma`.
+- `decodificar(token, clave)` → diccionario (valida firma; lanza `ErrorDeValor` si firma inválida, header malformado, o `alg` ≠ `HS256`).
+- `verificar(token, clave)` → booleano sin lanzar.
+- `expirado(payload, ahora)` → booleano (true si `exp <= ahora`; sin claim `exp` retorna `falso`).
+- `decodificar_y_validar(token, clave, ahora)` → diccionario o `ErrorDeValor` por firma, `exp <= ahora`, o `nbf > ahora`.
+
+`alg=none` está rechazado por diseño (mitigación contra algorithm confusion). RS256/ES256 (clave pública) no soportados.
 
 ### `sistema`
 
@@ -924,17 +958,23 @@ Recursión infinita. El límite de frames es ≈ 1024.
 
 ## 19. Reservas para el futuro
 
-Sintaxis aceptada (parcialmente) por el parser pero **no implementada** en el runtime:
+Sintaxis aceptada por el parser pero **no implementada todavía** en el runtime:
 
 | Característica | Estado |
 |---|---|
-| `borrar` (`del` de Python) | keyword reservada; usar `quitar(...)` mientras tanto |
-| `global` (escritura a global desde función) | keyword reservada; sin implementar en la VM |
 | `asincrono` / `esperar` (async/await) | keywords reservadas; v2.x |
-| Anotaciones de tipo (`p: tipo`) | el parser las acepta; el runtime las ignora |
-| Decoradores (`@deco`) | soporte parcial en el parser |
-| Dunders `__hash__`, `__repr__`, `__booleano__`, `__siguiente__` | ya se invocan (v1.41-v1.43). No quedan dunders reservados sin implementar en el data model. |
+| Anotaciones de tipo (`p: tipo`, `funcion f() -> T`) | el parser las acepta; el runtime las ignora (sin type-checker) |
 | Prefijos de cadena `r"..."` (raw), `b"..."` (bytes) | reservados |
+| Decoradores sobre clases o sobre métodos | el parser rechaza `@x` antes de `clase`, y el compilador lanza error claro si aparecen sobre métodos de clase |
+
+Implementadas en versiones recientes (ya no son "reservas"):
+
+| Característica | Versión |
+|---|---|
+| `borrar d[k]` / `borrar obj.attr` | v1.56 |
+| `global X` ejecutable en bytecode | v1.57 |
+| Decoradores `@nombre` sobre funciones (stacking + factories) | v1.72 |
+| Dunders `__hash__`, `__repr__`, `__booleano__`, `__siguiente__`, `__igual__` | v1.41-v1.43 |
 
 ---
 
@@ -943,5 +983,5 @@ Sintaxis aceptada (parcialmente) por el parser pero **no implementada** en el ru
 - **[Tutorial paso a paso](tutorial.md)** — para aprender desde cero.
 - **[Especificación formal](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md)** — sintaxis EBNF y semántica.
 - **[Decisiones arquitectónicas](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/decisiones)** — el razonamiento detrás de las elecciones de diseño.
-- **[Ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)** — 57 programas, uno por feature.
+- **[Ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)** — 72 programas, uno por feature.
 - **[Issues y discusión](https://github.com/David-Castilla-Gomez/Cornamusa/issues)** — bugs, ideas, preguntas.

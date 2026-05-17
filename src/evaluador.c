@@ -1938,6 +1938,16 @@ void evaluador_ejecutar_sent(Evaluador *ev, const Sent *s) {
              * del AST + el entorno actual de definición. Sin closures
              * (decisión B2): el entorno_definicion se usará en el
              * scope chain pero no captura variables locales. */
+            /* v1.72: decoradores. El motor tree-walking esta congelado
+             * en v0.5 (ADR B2) — clases/importar/intentar/etc. ya emiten
+             * error claro. Decoradores siguen la misma politica para
+             * evitar silent-ignore (donde el usuario veria su funcion
+             * ejecutar SIN el decorador aplicado). */
+            if (s->como.funcion.n_decoradores > 0) {
+                sent_set_error(ev, s,
+                    "decoradores '@...' requieren --bytecode (motor tree-walking congelado en v0.5)");
+                return;
+            }
             Valor fn = valor_funcion(s, ev->entorno_actual);
             if (!entorno_definir(ev->entorno_actual,
                                   s->como.funcion.nombre,

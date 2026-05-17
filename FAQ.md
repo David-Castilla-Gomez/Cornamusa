@@ -21,7 +21,7 @@ Lo que todavía le falta para producción seria:
 - Threads / async (planeado para v2.x).
 - HTTPS/TLS en el cliente de red (solo HTTP/1.1 plano por ahora).
 - Ecosistema de bibliotecas de terceros y gestor de paquetes.
-- Tooling: depurador, formateador, language server.
+- Tooling: depurador interactivo. (Formateador `fmt`, linter, generador de docs, LSP y profiler ya están — ver detalle más abajo.)
 
 ### ¿Por qué se llama Cornamusa?
 
@@ -474,7 +474,7 @@ En absoluto, `fibonacci_recursivo(30)` corre en ~220ms — comparable o mejor qu
 
 ### ¿Por qué hay dos motores (tree-walking y bytecode)?
 
-Decisión [B2](decisiones/B2-tree-walking-vs-bytecode.md). El intérprete tree-walking se introdujo en v0.4 como primer release jugable. La VM bytecode llegó en v0.6 como motor de producción. Ambos comparten el AST y producen los mismos resultados (validado por 8 tests diferenciales).
+Decisión [B2](decisiones/B2-tree-walking-vs-bytecode.md). El intérprete tree-walking se introdujo en v0.4 como primer release jugable y quedó congelado en features de v0.5 (clases, imports, intentar, decoradores, etc. lanzan error claro pidiendo `--bytecode`). La VM bytecode llegó en v0.6 como motor de producción. Ambos comparten el AST y producen los mismos resultados en el subconjunto soportado (validado por 9 tests diferenciales).
 
 El tree-walking se mantiene **congelado** desde v0.5 como red de seguridad: si alguna optimización del bytecode rompe semántica, la divergencia con tree-walking lo revela. Para programas reales, usa siempre `--bytecode`.
 
@@ -530,7 +530,11 @@ Sí, en hitos:
 | v1.2-v1.16 — Dunders, `nolocal`, context managers, pattern matching | ✅ |
 | v1.21-v1.34 — Destructuring, `*args`/`**kwargs`, comprehensions, generadores | ✅ |
 | v1.35-v1.40 — Sugerencias de error, traceback, `--check`, `-O3`+LTO | ✅ |
-| Próximo | Tooling (formateador, depurador, LSP) |
+| v1.41-v1.46 — Dunders de coerción/hash/iter, ternaria, slicing assign, f-string specs | ✅ |
+| v1.47-v1.55 — REPL line-editing, `fmt`, `lint` (12 categorías), `docs`, LSP | ✅ |
+| v1.56-v1.66 — `borrar`/`global` en VM, stdlibs `csv`/`base64`/`hashing`/HMAC, base64-url | ✅ |
+| v1.67-v1.73 — Stdlib `jwt`, `tiempo`; profiler `cornamusa prof`; decoradores `@nombre` | ✅ |
+| Próximo | Depurador interactivo · coverage (`cornamusa cov`) · más linter checks |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing |
 
 Detalle de qué entra en cada release en [CHANGELOG.md](CHANGELOG.md).
