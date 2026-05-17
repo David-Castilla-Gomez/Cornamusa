@@ -809,7 +809,7 @@ Diecisiete módulos. Se importan con `importar <nombre>`.
 
 ### `funcionales`
 
-`mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `minimo(xs)`, `maximo(xs)`.
+`mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `minimo(xs)`, `maximo(xs)`, `agrupar_por(xs,f)`, `tomar(n,xs)`, `saltar(n,xs)`, `combinar(xs,ys)`, `aplanar(xs)`, `unicos(xs)`.
 
 ### `formato`
 

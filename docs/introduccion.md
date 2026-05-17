@@ -112,6 +112,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | `@estaticometodo` — métodos sin `yo` implícito + soporte `Clase.metodo` | v1.84 | ✅ |
 | `@clasemetodo` — método recibe `cls`, polimórfico en herencia | v1.85 | ✅ |
 | `tiene_atributo` / `obtener_atributo` / `asignar_atributo` — atributos dinámicos | v1.86 | ✅ |
+| `funcionales` extendido: `agrupar_por`/`tomar`/`saltar`/`combinar`/`aplanar`/`unicos` | v1.87 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

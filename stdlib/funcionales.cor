@@ -140,3 +140,105 @@ funcion maximo(xs):
     fin si
     retornar actual
 fin funcion
+
+# ─── Helpers de coleccion (v1.87) ─────────────────────────────────
+
+# Agrupa los elementos de `xs` por la clave que devuelve `f(x)`.
+# Devuelve un diccionario `{clave: lista_de_elementos}`. El orden
+# de las claves es el orden de primera aparicion (Python 3.7+).
+#
+# Ejemplo:
+#   agrupar_por([1, 2, 3, 4, 5], lambda x: x % 2)
+#   → {1: [1, 3, 5], 0: [2, 4]}
+funcion agrupar_por(xs, f):
+    grupos = {}
+    para x en xs:
+        k = f(x)
+        si k en grupos:
+            agregar(grupos[k], x)
+        sino:
+            grupos[k] = [x]
+        fin si
+    fin para
+    retornar grupos
+fin funcion
+
+# Devuelve los primeros `n` elementos de `xs` como lista. Si `xs`
+# tiene menos de `n`, devuelve todos los disponibles (no lanza).
+# Funciona con cualquier iterable incluyendo generadores infinitos.
+funcion tomar(n, xs):
+    resultado = []
+    si n <= 0:
+        retornar resultado
+    fin si
+    contador = 0
+    para x en xs:
+        agregar(resultado, x)
+        contador = contador + 1
+        si contador >= n:
+            romper
+        fin si
+    fin para
+    retornar resultado
+fin funcion
+
+# Devuelve `xs` sin los primeros `n` elementos. Si `n` >= longitud,
+# devuelve lista vacia. Funciona con cualquier iterable.
+funcion saltar(n, xs):
+    resultado = []
+    contador = 0
+    para x en xs:
+        si contador < n:
+            contador = contador + 1
+            continuar
+        fin si
+        agregar(resultado, x)
+    fin para
+    retornar resultado
+fin funcion
+
+# Combina (zip) dos iterables en una lista de pares. Se detiene
+# cuando el mas corto se agota.
+#
+# Ejemplo:
+#   combinar(["a", "b", "c"], [1, 2, 3])
+#   → [("a", 1), ("b", 2), ("c", 3)]
+funcion combinar(xs, ys):
+    # Convertir a listas para poder indexar (la solucion mas simple).
+    xs_lista = lista(xs)
+    ys_lista = lista(ys)
+    n = minimo([longitud(xs_lista), longitud(ys_lista)])
+    resultado = []
+    para i en rango(n):
+        agregar(resultado, (xs_lista[i], ys_lista[i]))
+    fin para
+    retornar resultado
+fin funcion
+
+# Aplana un nivel: `[[1,2],[3,4]]` → `[1,2,3,4]`. Solo un nivel —
+# para multiples niveles, llamala varias veces o escribe una
+# version recursiva tu mismo.
+funcion aplanar(xs):
+    resultado = []
+    para sublista en xs:
+        para x en sublista:
+            agregar(resultado, x)
+        fin para
+    fin para
+    retornar resultado
+fin funcion
+
+# Elementos unicos preservando el orden de primera aparicion.
+# Equivalente a `lista(conjunto(xs))` pero garantiza el orden.
+funcion unicos(xs):
+    vistos = conjunto()
+    resultado = []
+    para x en xs:
+        si x en vistos:
+            continuar
+        fin si
+        agregar(vistos, x)
+        agregar(resultado, x)
+    fin para
+    retornar resultado
+fin funcion

@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.86.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.87.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.86.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Tres built-ins para atributos dinámicos**: `tiene_atributo(obj, nombre)` → booleano, `obtener_atributo(obj, nombre, defecto=nulo)` → valor o defecto, `asignar_atributo(obj, nombre, valor)` → muta. Análogos a `hasattr`/`getattr`/`setattr` de Python. Soporta instancias (atributos propios + métodos heredados), clases (métodos) y módulos. `obtener_atributo` envuelve métodos en `MetodoLigado` automáticamente para que la llamada inyecte `yo`. Útil para serializadores genéricos, frameworks de validación y programación dinámica sobre datos de estructura desconocida. 245 tests verde con 14 asserts nuevos. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.87.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **`funcionales` extendido con 6 helpers**: `agrupar_por(xs, f)` clasifica en dict por la clave que devuelve la función, `tomar(n, xs)` y `saltar(n, xs)` funcionan con cualquier iterable (incluyendo generadores infinitos — `tomar(10, naturales())` es seguro), `combinar(xs, ys)` empareja en pares estilo zip (se para con el más corto), `aplanar(xss)` colapsa un nivel, `unicos(xs)` deduplica preservando orden de primera aparición. Patrones muy comunes que ahora son one-liners. 246 tests verde con 18 asserts nuevos en `test_bytecode_funcionales_v87`. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -191,6 +191,7 @@ Hoja de ruta resumida:
 | **v1.84** | **`@estaticometodo` — métodos sin `yo` implícito, soporte `Clase.metodo`** | ✅ |
 | **v1.85** | **`@clasemetodo` — método recibe `cls`, constructores alternativos polimórficos** | ✅ |
 | **v1.86** | **`tiene_atributo` / `obtener_atributo` / `asignar_atributo` — atributos dinámicos** | ✅ |
+| **v1.87** | **`funcionales` extendido: `agrupar_por`, `tomar`, `saltar`, `combinar`, `aplanar`, `unicos`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

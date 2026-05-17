@@ -1,0 +1,73 @@
+# funcionales extendido (v1.87): agrupar_por, tomar, saltar,
+# combinar, aplanar, unicos.
+
+importar funcionales
+
+# ─── agrupar_por: clasificacion ─────────────────────────────────
+empleados = [
+    {"nombre": "Ana",   "depto": "Ventas"},
+    {"nombre": "Bea",   "depto": "RRHH"},
+    {"nombre": "Carla", "depto": "Ventas"},
+    {"nombre": "Dario", "depto": "RRHH"},
+    {"nombre": "Eva",   "depto": "TI"},
+]
+
+por_depto = funcionales.agrupar_por(empleados, lambda e: e["depto"])
+imprimir("Empleados por departamento:")
+para depto en claves(por_depto):
+    nombres = funcionales.mapear(lambda e: e["nombre"], por_depto[depto])
+    importar cadenas
+    imprimir(f"  {depto}: {cadenas.unir(nombres, ', ')}")
+fin para
+
+# ─── tomar + generador infinito ─────────────────────────────────
+# Generador infinito de naturales:
+funcion naturales():
+    n = 0
+    mientras verdadero:
+        producir n
+        n = n + 1
+    fin mientras
+fin funcion
+
+# Sin tomar, esto seria un bucle infinito. Con tomar(10) es seguro.
+primeros_10 = funcionales.tomar(10, naturales())
+imprimir(f"\nPrimeros 10 naturales: {primeros_10}")
+
+# ─── saltar + tomar: paginacion simple ──────────────────────────
+todos = funcionales.mapear(lambda x: x * x, rango(1, 21))  # cuadrados 1..20
+pagina_tam = 5
+para pag en rango(4):
+    inicio = pag * pagina_tam
+    pagina = funcionales.tomar(pagina_tam, funcionales.saltar(inicio, todos))
+    imprimir(f"  pagina {pag + 1}: {pagina}")
+fin para
+
+# ─── combinar: emparejar dos listas ─────────────────────────────
+nombres = ["Ana", "Bea", "Carla"]
+edades  = [30, 25, 40]
+parejas = funcionales.combinar(nombres, edades)
+imprimir(f"\nParejas: {parejas}")
+
+# ─── aplanar: lista de listas → lista plana ─────────────────────
+matriz = [[1, 2, 3], [4, 5, 6], [7, 8, 9]]
+plana = funcionales.aplanar(matriz)
+imprimir(f"\naplanar(matriz 3x3): {plana}")
+
+# ─── unicos: deduplica preservando orden ────────────────────────
+historico = ["python", "go", "python", "rust", "go", "cornamusa", "rust"]
+visitados = funcionales.unicos(historico)
+imprimir(f"\nLenguajes visitados (orden de primera vez): {visitados}")
+
+# ─── Composicion: agrupar + ordenar ─────────────────────────────
+# Calificaciones: agrupamos por nota y vemos cuantos hay en cada nota.
+notas = [7, 8, 6, 9, 7, 8, 8, 5, 7, 9, 6, 7]
+por_nota = funcionales.agrupar_por(notas, lambda n: n)
+imprimir(f"\nDistribucion de notas:")
+ordenadas = lista(claves(por_nota))
+ordenar(ordenadas)
+para nota en ordenadas:
+    cuenta = longitud(por_nota[nota])
+    barra = "█" * cuenta
+    imprimir(f"  {nota}: {barra} ({cuenta})")
+fin para

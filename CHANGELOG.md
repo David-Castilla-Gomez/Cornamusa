@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.87.0] — 2026-05-17 — `funcionales` extendido: agrupar, tomar, saltar, combinar, aplanar, unicos
+
+Seis helpers nuevos en `stdlib/funcionales.cor` para patrones muy
+comunes de procesamiento de colecciones. Todos en pure-Cornamusa,
+todos iteran sobre cualquier iterable (incluyendo generadores).
+
+| Función | Comportamiento |
+|---|---|
+| `agrupar_por(xs, f)` | dict `{clave: lista}` donde `clave = f(x)` |
+| `tomar(n, xs)` | primeros `n` (o menos si se agota); funciona con generadores infinitos |
+| `saltar(n, xs)` | todos menos los primeros `n` |
+| `combinar(xs, ys)` | lista de pares; se para con el iterable más corto |
+| `aplanar(xss)` | `[[1,2],[3,4]]` → `[1,2,3,4]` (un nivel) |
+| `unicos(xs)` | deduplica preservando orden de primera aparición |
+
+### Ejemplos
+
+```cornamusa
+importar funcionales
+
+# Clasificar por departamento:
+empleados = [{"n": "Ana", "d": "Ventas"}, {"n": "Bea", "d": "RRHH"}, ...]
+por_dept = funcionales.agrupar_por(empleados, lambda e: e["d"])
+
+# Generador infinito + tomar (idiom clásico):
+funcion naturales():
+    n = 0
+    mientras verdadero:
+        producir n
+        n = n + 1
+    fin mientras
+fin funcion
+primeros_10 = funcionales.tomar(10, naturales())
+
+# Paginación trivial:
+pagina = funcionales.tomar(5, funcionales.saltar(pag * 5, items))
+
+# Zip clásico:
+funcionales.combinar(["Ana", "Bea"], [30, 25])
+# → [("Ana", 30), ("Bea", 25)]
+
+# Flatten un nivel:
+funcionales.aplanar([[1, 2], [3, 4], [5]])   # [1, 2, 3, 4, 5]
+
+# Dedup preservando orden:
+funcionales.unicos([3, 1, 4, 1, 5, 9, 2, 6, 5, 3])
+# → [3, 1, 4, 5, 9, 2, 6]
+```
+
+### Implementación
+
+Pure-Cornamusa, sin nativas C nuevas. Cada función itera con `para`
+y construye la salida con `agregar`/`{...}`. Para `combinar` se
+materializa una `lista(xs)` y `lista(ys)` previa para poder indexar
+(sin esto haría falta paralelizar iteradores, no soportado por la
+sintaxis `para` actual).
+
+### Tests
+
+18 asserts en `test_bytecode_funcionales_v87.c`:
+
+- `agrupar_por` con pares/impares y con clave-string (primera letra).
+- `tomar` normal, más que disponibles, `n=0`, `n<0` (ambos → `[]`),
+  con generador (`rango(1000)` solo lee 5).
+- `saltar` normal, más que disponibles (→ `[]`), `n=0` (todo).
+- `combinar` con longitudes distintas (corta con el corto), con
+  iterable vacío.
+- `aplanar` con sublistas, `[]`, `[[]]`.
+- `unicos` preserva orden, todos iguales (→ `[1]`).
+- Composición: `agrupar_por` + iterar grupos.
+
+### Archivos
+
+- `stdlib/funcionales.cor` — 6 funciones nuevas (~80 líneas).
+- `tests/unit/test_bytecode_funcionales_v87.c` — 18 asserts.
+- `examples/80_funcionales_extendido.cor` — 7 patrones (clasificar
+  empleados, generador infinito + tomar, paginación, zip, aplanar
+  matriz, dedup historico, histograma con barras).
+- `docs/referencia.md` §16: lista de `funcionales` actualizada.
+
+### Estado
+
+246 tests verde, lint y fmt limpios.
+
+---
+
 ## [1.86.0] — 2026-05-17 — Atributos dinámicos: `tiene_atributo`/`obtener_atributo`/`asignar_atributo`
 
 Tres built-ins análogos a `hasattr` / `getattr` / `setattr` de Python.
