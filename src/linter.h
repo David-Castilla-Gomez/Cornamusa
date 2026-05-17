@@ -38,6 +38,11 @@
  *                        Patron O(n^2) para cadenas; usar lista + `cadena_unir`.
  *                        Skip rule: RHS literal numerico (`+= 1`, contadores).
  *
+ * Anadido en v1.68:
+ *   - SAME_COMPARISON  : `x == x`, `x < x`, etc. siempre true/false. Suele
+ *                        ser typo: el programador queria `x == y`. Solo
+ *                        ambos lados EXPR_IDENT identicos (no calls).
+ *
  * Supresion selectiva (v1.64): `# noqa: <categoria>` al final de
  * cualquier linea silencia el warning de esa categoria en esa linea.
  * Multiples categorias: `# noqa: cat1, cat2`. Bare `# noqa` silencia
@@ -60,6 +65,7 @@ typedef enum {
     LINT_UNUSED_LOOP_VAR, /* v1.55: `para X en ...:` con X no usado en body */
     LINT_MUTABLE_DEFAULT, /* v1.55: default mutable (lista/dict/conjunto literal) */
     LINT_CONCAT_IN_LOOP,  /* v1.63: `x = x + ...` o `x += ...` en mientras/para */
+    LINT_SAME_COMPARISON, /* v1.68: `x == x` / `x < x` / etc. — siempre true/false */
 } TipoWarning;
 
 typedef struct {

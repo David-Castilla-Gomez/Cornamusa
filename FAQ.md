@@ -113,6 +113,7 @@ Categorías chequeadas:
 - `unused-loop-var` — `para X en ...:` donde X no se referencia en el cuerpo ni después (v1.55). Convención: usar `_` para descartes.
 - `mutable-default` — defaults `=[]`, `={}`, `={1,2}` (v1.55). Estos literales se evalúan una sola vez al definir la función y se comparten entre llamadas — bug clásico Python.
 - `concat-in-loop` — `x = x + ...` o `x += ...` dentro de `mientras`/`para` cuando RHS es claramente cadena (literal o f-cadena) (v1.63). Detecta el patrón O(n²) que motivó las optimizaciones de v1.61-v1.62. Sugiere usar lista + `cadena_unir`. Heurística conservadora: skip si RHS no es claramente string-like, para evitar falsos positivos en acumuladores numéricos.
+- `same-comparison` — `x == x`, `x != x`, `x < x`, etc. con el mismo identificador en ambos lados (v1.68). Siempre verdadero o siempre falso; generalmente un typo del programador queriendo otra variable. Skip rule: llamadas a funciones (`g() == g()`) no warnean por posibles side-effects. Si lo quieres deliberadamente (demo de un dunder, NaN check), suprime con `# noqa: same-comparison`.
 
 **Supresión selectiva (v1.64)**: cualquier warning puede silenciarse en su línea con `# noqa: <categoria>`:
 

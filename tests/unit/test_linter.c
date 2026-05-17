@@ -47,6 +47,7 @@ typedef struct {
     int n_unused_loop_var;
     int n_mutable_default;
     int n_concat_in_loop;
+    int n_same_comparison;
 } Resumen;
 
 static Resumen analizar(const char *fuente) {
@@ -82,6 +83,7 @@ static Resumen analizar(const char *fuente) {
             case LINT_UNUSED_LOOP_VAR: r.n_unused_loop_var++; break;
             case LINT_MUTABLE_DEFAULT: r.n_mutable_default++; break;
             case LINT_CONCAT_IN_LOOP:  r.n_concat_in_loop++; break;
+            case LINT_SAME_COMPARISON: r.n_same_comparison++; break;
         }
     }
     linter_resultado_destruir(&lr);
@@ -543,6 +545,47 @@ int main(void) {
             "    fin para\n"
             "fin funcion\n");
         AFIRMAR(r.n_concat_in_loop == 0, "funcion_anidada_no_hereda");
+    }
+
+    /* ─── SAME_COMPARISON (v1.68) ─── */
+    {
+        /* `==` siempre verdadero. */
+        Resumen r = analizar("imprimir(verdadero si fecha == fecha sino falso)\n");
+        AFIRMAR(r.n_same_comparison == 1, "same_eq");
+    }
+    {
+        /* `<` siempre falso. */
+        Resumen r = analizar("imprimir(n < n)\n");
+        AFIRMAR(r.n_same_comparison == 1, "same_lt");
+    }
+    {
+        /* Operadores soportados: !=, <=, >, >=. */
+        Resumen r = analizar(
+            "imprimir(a != a)\n"
+            "imprimir(b <= b)\n"
+            "imprimir(c > c)\n"
+            "imprimir(d >= d)\n");
+        AFIRMAR(r.n_same_comparison == 4, "same_todos_ops");
+    }
+    {
+        /* Literal en RHS: no warna. */
+        Resumen r = analizar("imprimir(n == 0)\n");
+        AFIRMAR(r.n_same_comparison == 0, "literal_rhs_skip");
+    }
+    {
+        /* Calls: no warna (side-effects). */
+        Resumen r = analizar("imprimir(g() == g())\n");
+        AFIRMAR(r.n_same_comparison == 0, "calls_skip");
+    }
+    {
+        /* Idents distintos: no warna. */
+        Resumen r = analizar("imprimir(a == b)\n");
+        AFIRMAR(r.n_same_comparison == 0, "distintos_skip");
+    }
+    {
+        /* Suprimible con `# noqa: same-comparison`. */
+        Resumen r = analizar("imprimir(x == x)  # noqa: same-comparison\n");
+        AFIRMAR(r.n_same_comparison == 0, "noqa_same");
     }
 
     /* ─── # noqa: directive (v1.64) ─── */

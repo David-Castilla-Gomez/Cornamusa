@@ -57,6 +57,12 @@ funcion hmac_sha256(clave, mensaje):
     retornar hash_hmac_sha256(clave, mensaje)
 fin funcion
 
+# v1.67: variante que devuelve los 32 bytes raw (no hex). Usada por
+# JWT donde la firma se codifica en base64-url y no en hex.
+funcion hmac_sha256_bytes(clave, mensaje):
+    retornar hash_hmac_sha256_bytes(clave, mensaje)
+fin funcion
+
 funcion hmac_md5(clave, mensaje):
     retornar hash_hmac_md5(clave, mensaje)
 fin funcion

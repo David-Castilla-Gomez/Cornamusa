@@ -53,7 +53,7 @@ funcion codificar(payload, clave):
     cab_b64 = base64.codificar_url(json.serializar(cabecera))
     pay_b64 = base64.codificar_url(json.serializar(payload))
     mensaje_a_firmar = cab_b64 + "." + pay_b64
-    firma_bytes = hash_hmac_sha256_bytes(clave, mensaje_a_firmar)
+    firma_bytes = hashing.hmac_sha256_bytes(clave, mensaje_a_firmar)
     firma_b64 = base64.codificar_url(firma_bytes)
     retornar mensaje_a_firmar + "." + firma_b64
 fin funcion
@@ -74,7 +74,7 @@ funcion decodificar(token, clave):
     # Verificar firma ANTES de parsear cualquier JSON. La firma
     # protege todo: si invalida, no confiamos ni en el header.
     mensaje = cab_b64 + "." + pay_b64
-    esperado_bytes = hash_hmac_sha256_bytes(clave, mensaje)
+    esperado_bytes = hashing.hmac_sha256_bytes(clave, mensaje)
     esperado_b64 = base64.codificar_url(esperado_bytes)
     si esperado_b64 != firma_b64:
         lanzar ErrorDeValor("jwt: firma invalida (clave incorrecta o token alterado)")

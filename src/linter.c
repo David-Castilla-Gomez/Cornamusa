@@ -117,6 +117,7 @@ static unsigned categoria_a_bit(const char *texto, int longitud) {
         {"unused-loop-var", 15, LINT_UNUSED_LOOP_VAR},
         {"mutable-default", 15, LINT_MUTABLE_DEFAULT},
         {"concat-in-loop",  14, LINT_CONCAT_IN_LOOP},
+        {"same-comparison", 15, LINT_SAME_COMPARISON},
     };
     for (size_t i = 0; i < sizeof(TABLA) / sizeof(TABLA[0]); i++) {
         if (longitud == TABLA[i].len
@@ -561,22 +562,50 @@ static void visitar_expr(Expr *e, Ctx *ctx) {
             break;
 
         case EXPR_BINARIO: {
+            TipoToken op = e->como.binario.op;
+            Expr *iz = e->como.binario.izq;
+            Expr *de = e->como.binario.der;
+
             /* Check 3: `x == nulo` / `x != nulo` */
-            if (es_eq_o_neq(e->como.binario.op)) {
-                Expr *iz = e->como.binario.izq;
-                Expr *de = e->como.binario.der;
+            if (es_eq_o_neq(op)) {
                 bool iz_nulo = iz && iz->tipo == EXPR_LITERAL_NULO;
                 bool de_nulo = de && de->tipo == EXPR_LITERAL_NULO;
                 if (iz_nulo || de_nulo) {
-                    const char *op_txt = (e->como.binario.op == TT_IGUAL) ? "==" : "!=";
-                    const char *sug = (e->como.binario.op == TT_IGUAL) ? "es nulo" : "no es nulo";
+                    const char *op_txt = (op == TT_IGUAL) ? "==" : "!=";
+                    const char *sug = (op == TT_IGUAL) ? "es nulo" : "no es nulo";
                     emitir(ctx, LINT_EQ_NULO, e->linea, e->columna,
                             "comparacion con nulo via '%s' — prefiere '%s'",
                             op_txt, sug);
                 }
             }
-            visitar_expr_quizas(e->como.binario.izq, ctx);
-            visitar_expr_quizas(e->como.binario.der, ctx);
+
+            /* v1.68: same-comparison `x OP x` siempre true/false.
+             * Solo cuando ambos lados son EXPR_IDENT identicos —
+             * evitamos falsos positivos con calls (que pueden tener
+             * efectos secundarios) y literales (que ya son evidentes). */
+            bool es_comparacion = (op == TT_IGUAL || op == TT_DISTINTO
+                                    || op == TT_MENOR || op == TT_MENOR_IGUAL
+                                    || op == TT_MAYOR || op == TT_MAYOR_IGUAL);
+            if (es_comparacion && es_mismo_ident(iz, de)) {
+                const char *op_txt = "??";
+                const char *valor = "??";
+                switch (op) {
+                    case TT_IGUAL:        op_txt = "=="; valor = "verdadero"; break;
+                    case TT_DISTINTO:     op_txt = "!="; valor = "falso";     break;
+                    case TT_MENOR:        op_txt = "<";  valor = "falso";     break;
+                    case TT_MENOR_IGUAL:  op_txt = "<="; valor = "verdadero"; break;
+                    case TT_MAYOR:        op_txt = ">";  valor = "falso";     break;
+                    case TT_MAYOR_IGUAL:  op_txt = ">="; valor = "verdadero"; break;
+                    default: break;
+                }
+                emitir(ctx, LINT_SAME_COMPARISON, e->linea, e->columna,
+                        "'%.*s %s %.*s' siempre es %s — probable typo",
+                        iz->como.ident.longitud, iz->como.ident.nombre, op_txt,
+                        iz->como.ident.longitud, iz->como.ident.nombre, valor);
+            }
+
+            visitar_expr_quizas(iz, ctx);
+            visitar_expr_quizas(de, ctx);
             break;
         }
 
@@ -1061,6 +1090,7 @@ const char *linter_tipo_nombre(TipoWarning t) {
         case LINT_UNUSED_LOOP_VAR: return "unused-loop-var";
         case LINT_MUTABLE_DEFAULT: return "mutable-default";
         case LINT_CONCAT_IN_LOOP:  return "concat-in-loop";
+        case LINT_SAME_COMPARISON: return "same-comparison";
         default:                   return "warning";
     }
 }

@@ -56,7 +56,7 @@ imprimir("w =", w)
 imprimir("v + w =", v + w)      # → v + w = <4, 6>
 imprimir("v - w =", v - w)
 imprimir("v * 5 =", v * 5)
-imprimir("v == v? ", v == v)
+imprimir("v == v? ", v == v)   # noqa: same-comparison (es el demo del dunder __igual__)
 imprimir("v == w?", v == w)
 imprimir("|v|^2 =", v.modulo_cuadrado())
 

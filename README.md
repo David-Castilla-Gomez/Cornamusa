@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.67.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.68.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.67.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una **stdlib de dieciséis módulos** (sumando `jwt`). Nuevo módulo `jwt` (RFC 7519, alg=HS256): `jwt.codificar(payload, clave)` firma un diccionario y devuelve un JWT compacto; `jwt.decodificar(token, clave)` verifica firma y devuelve el payload (lanza `ErrorDeValor` si inválido); `jwt.verificar(token, clave)` versión booleana sin lanzar. **Implementación 100% pure-Cornamusa de ~80 líneas** sobre `json` + `base64.codificar_url` + `hashing.hmac_sha256_bytes`. Demuestra que las stdlib previas (v1.58-v1.66) forman una suite coherente. 224 tests verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.68.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de dieciséis módulos. **Linter gana `same-comparison`** (11ª categoría): detecta `x == x` / `x < x` / `x != x` etc. — siempre verdadero o siempre falso, generalmente un typo del programador queriendo otra variable. Solo dispara con ambos lados idénticos como `EXPR_IDENT` (skip calls con side-effects). Aplicado al repo encontró 1 caso intencional (demo del dunder `__igual__`) silenciado con `# noqa`. v1.67 trajo `jwt`. 224 tests verde con 68 asserts en `test_linter`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -172,6 +172,7 @@ Hoja de ruta resumida:
 | **v1.65** | **HMAC-SHA-256 + HMAC-MD5 (RFC 2104/4231) — autenticación de mensajes con clave secreta** | ✅ |
 | **v1.66** | **base64 URL-safe (RFC 4648 §5) — `-_` sin padding, prerequisito para JWT** | ✅ |
 | **v1.67** | **stdlib `jwt` (RFC 7519 HS256) — codificar/decodificar/verificar, pure-Cornamusa sobre json+base64+hashing** | ✅ |
+| **v1.68** | **Linter `same-comparison` — detecta `x == x` / `x < x` (typos clasicos), 11ª categoría** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

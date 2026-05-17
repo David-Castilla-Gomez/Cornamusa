@@ -6,6 +6,97 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.68.0] — 2026-05-17 — Linter: `same-comparison` (11ª categoría)
+
+Nuevo check del linter que detecta `x == x`, `x < x`, `x != x` y
+similares — comparaciones entre el mismo identificador, casi siempre
+typos del programador queriendo comparar contra OTRA variable.
+
+### Ejemplo del bug típico
+
+```cornamusa
+funcion solapamiento(inicio_a, fin_a, inicio_b, fin_b):
+    si inicio_a < fin_a:           # OK
+        si inicio_b < inicio_b:    # ← typo: queria `fin_b`
+            retornar verdadero
+        fin si
+    fin si
+    retornar falso
+fin funcion
+```
+
+El warning sale en tiempo de lint, antes de que el bug llegue a runtime.
+
+### Cobertura
+
+Detecta 6 operadores de comparación:
+
+| Patrón | Siempre... |
+|---|---|
+| `x == x` | verdadero |
+| `x != x` | falso |
+| `x < x` | falso |
+| `x <= x` | verdadero |
+| `x > x` | falso |
+| `x >= x` | verdadero |
+
+### Heurística (skip rules)
+
+Solo dispara cuando **ambos lados son `EXPR_IDENT` con el mismo
+nombre**. Otros casos no warnean:
+
+- `g() == g()` — calls pueden tener efectos secundarios.
+- `obj.x == obj.x` — atributos pueden ser propiedades con side-effects.
+- `x == 0` — literal en RHS, no es typo.
+- `x == y` — idents distintos, comparación legítima.
+
+Para casos donde el patrón es intencional (demo del dunder
+`__igual__`, NaN check `decimal != decimal`), usa `# noqa: same-comparison`.
+
+### Aplicación al repo
+
+1 caso encontrado en `examples/28_dunders_jugable.cor:59` — `v == v`
+para demostrar que el dunder `__igual__` devuelve `verdadero` al
+comparar un Vector2D consigo mismo. Caso didáctico legítimo,
+silenciado con `# noqa`.
+
+Bonus: detectado también un `unused-import: hashing` en
+`stdlib/jwt.cor` (delegaba directamente al native `hash_hmac_sha256_bytes`
+en vez de via `hashing.X`). Arreglado añadiendo el wrapper
+`hashing.hmac_sha256_bytes` y haciendo el import productivo.
+
+### Implementación
+
+- `LINT_SAME_COMPARISON` en `linter.h`.
+- Helper reutilizado: `es_mismo_ident(izq, der)` de v1.55.
+- Detección dentro del case `EXPR_BINARIO` del visitor, junto al
+  check de `eq-nulo` (ambos sobre operadores de comparación).
+- Mensaje claro: `'fecha_inicio == fecha_inicio' siempre es verdadero — probable typo`.
+- ~30 líneas C añadidas.
+
+### Total del linter: 11 categorías
+
+| Categoría | Desde | Detección |
+|---|---|---|
+| `unreachable` | v1.49 | Código tras retornar/romper |
+| `redundant-pasar` | v1.49 | `pasar` en bloque no vacío |
+| `eq-nulo` | v1.49 | `== nulo` → `es nulo` |
+| `unused-import` | v1.49 | Módulo importado pero no usado |
+| `unused-local` | v1.50 | Variable local nunca leída |
+| `unused-param` | v1.50 | Parámetro nunca usado |
+| `shadow` | v1.55 | Local sombrea outer |
+| `unused-loop-var` | v1.55 | `para X` con X no usado |
+| `mutable-default` | v1.55 | Default `=[]`/`={}` literal |
+| `concat-in-loop` | v1.63 | `x = x + cadena` en loop |
+| **`same-comparison`** | **v1.68** | **`x OP x` (typo)** |
+
+### Verificación
+
+- **224/224 tests verde**. `test_linter` extendido a **68 asserts**
+  (vs 61): los 6 operadores, literal en RHS skip, calls skip,
+  idents distintos skip, suppresión con `# noqa`.
+- Repo entero pasa `cornamusa lint` sin warnings tras los 2 fixes.
+
 ## [1.67.0] — 2026-05-17 — Stdlib `jwt` (RFC 7519 HS256) — la suite coherente
 
 Cierra el arco de stdlib criptográfica iniciado en v1.58 (csv) →
