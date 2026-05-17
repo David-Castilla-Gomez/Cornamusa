@@ -119,6 +119,8 @@ static unsigned categoria_a_bit(const char *texto, int longitud) {
         {"concat-in-loop",  14, LINT_CONCAT_IN_LOOP},
         {"same-comparison", 15, LINT_SAME_COMPARISON},
         {"empty-except",    12, LINT_EMPTY_EXCEPT},
+        {"redundant-bool-compare", 22, LINT_REDUNDANT_BOOL_COMPARE},
+        {"useless-return",  14, LINT_USELESS_RETURN},
     };
     for (size_t i = 0; i < sizeof(TABLA) / sizeof(TABLA[0]); i++) {
         if (longitud == TABLA[i].len
@@ -580,6 +582,32 @@ static void visitar_expr(Expr *e, Ctx *ctx) {
                 }
             }
 
+            /* v1.81: `x == verdadero`, `x == falso`, `x != verdadero`,
+             * `x != falso`. Redundantes: el booleano puede usarse
+             * directamente o negado con `no x`. Se ignora si AMBOS
+             * lados son booleanos (`verdadero == falso` es comparacion
+             * de constantes, otro tipo de problema). */
+            if (es_eq_o_neq(op)) {
+                bool iz_bool = iz && iz->tipo == EXPR_LITERAL_BOOLEANO;
+                bool de_bool = de && de->tipo == EXPR_LITERAL_BOOLEANO;
+                if ((iz_bool || de_bool) && !(iz_bool && de_bool)) {
+                    bool valor_bool = iz_bool ? iz->como.booleano.valor
+                                                 : de->como.booleano.valor;
+                    const char *op_txt = (op == TT_IGUAL) ? "==" : "!=";
+                    const char *sug = NULL;
+                    if ((op == TT_IGUAL && valor_bool)
+                        || (op == TT_DISTINTO && !valor_bool)) {
+                        sug = "usa la expresion directamente";
+                    } else {
+                        sug = "usa 'no expresion'";
+                    }
+                    emitir(ctx, LINT_REDUNDANT_BOOL_COMPARE,
+                            e->linea, e->columna,
+                            "comparacion con %s via '%s' es redundante — %s",
+                            valor_bool ? "verdadero" : "falso", op_txt, sug);
+                }
+            }
+
             /* v1.68: same-comparison `x OP x` siempre true/false.
              * Solo cuando ambos lados son EXPR_IDENT identicos —
              * evitamos falsos positivos con calls (que pueden tener
@@ -912,6 +940,47 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             visitar_bloque(s->como.funcion.cuerpo, ctx);
             ctx->profundidad_loop = prof_prev;
             salir_scope_funcion(ctx, &nuevo);
+
+            /* v1.81: useless-return. Si la ULTIMA sentencia del cuerpo
+             * es `retornar` (sin valor) o `retornar nulo`, sobra:
+             * Cornamusa retorna nulo por defecto al caer al final.
+             *
+             * EXCLUSION importante: el patron "find returns nil" es
+             * legitimo. Cuando la penultima sentencia es un bucle o
+             * un `si` (que puede retornar antes), el `retornar nulo`
+             * final actua como el "caso default" — quitarlo cambia
+             * la lectura del codigo. Solo emitimos warning cuando la
+             * penultima es algo "lineal" (asignacion, expr, imprimir). */
+            Sent *cuerpo = s->como.funcion.cuerpo;
+            if (cuerpo && cuerpo->tipo == SENT_BLOQUE
+                && cuerpo->como.bloque.n_sentencias > 0) {
+                int nn = cuerpo->como.bloque.n_sentencias;
+                Sent *ultima = cuerpo->como.bloque.sentencias[nn - 1];
+                if (ultima && ultima->tipo == SENT_RETORNAR) {
+                    Expr *v = ultima->como.retornar.valor;
+                    bool inutil = (v == NULL)
+                                  || (v->tipo == EXPR_LITERAL_NULO);
+                    /* Excluir patron find-returns-nil: si la penultima
+                     * es control de flujo que puede retornar, dejar
+                     * pasar. */
+                    bool penultima_es_control = false;
+                    if (nn >= 2) {
+                        TipoSent pt = cuerpo->como.bloque.sentencias[nn - 2]->tipo;
+                        penultima_es_control = (pt == SENT_PARA
+                                                || pt == SENT_MIENTRAS
+                                                || pt == SENT_SI
+                                                || pt == SENT_INTENTAR
+                                                || pt == SENT_COINCIDIR);
+                    }
+                    if (inutil && !penultima_es_control) {
+                        emitir(ctx, LINT_USELESS_RETURN,
+                                ultima->linea, ultima->columna,
+                                "'retornar%s' al final es redundante — "
+                                "Cornamusa retorna nulo por defecto",
+                                v == NULL ? "" : " nulo");
+                    }
+                }
+            }
             break;
         }
 
@@ -1117,6 +1186,8 @@ const char *linter_tipo_nombre(TipoWarning t) {
         case LINT_CONCAT_IN_LOOP:  return "concat-in-loop";
         case LINT_SAME_COMPARISON: return "same-comparison";
         case LINT_EMPTY_EXCEPT:    return "empty-except";
+        case LINT_REDUNDANT_BOOL_COMPARE: return "redundant-bool-compare";
+        case LINT_USELESS_RETURN:  return "useless-return";
         default:                   return "warning";
     }
 }

@@ -42,8 +42,11 @@ imprimir(recargado)
 # 5. Verificar que la traducción es transparente.
 imprimir("---")
 imprimir("Comparaciones tras round-trip:")
-imprimir("estable es verdadero?", recargado["estable"] == verdadero)
-imprimir("deprecado es falso?", recargado["deprecado"] == falso)
+# Aqui usamos `== verdadero` / `== falso` deliberadamente: estamos
+# comprobando que el round-trip JSON preservo los tipos booleanos
+# exactos. En codigo normal, `recargado["estable"]` solo bastaria.
+imprimir("estable es verdadero?", recargado["estable"] == verdadero)  # noqa: redundant-bool-compare
+imprimir("deprecado es falso?", recargado["deprecado"] == falso)  # noqa: redundant-bool-compare
 imprimir("config_extra es nulo?", recargado["config_extra"] es nulo)
 imprimir(f"autor: {recargado['metadatos']['autor']}")
 imprimir(f"anio: {recargado['metadatos']['anio']}")

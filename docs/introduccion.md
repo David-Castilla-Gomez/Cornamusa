@@ -100,6 +100,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | `@propiedad` — getters invocados al acceder al atributo | v1.78 | ✅ |
 | Tutorial expandido a curso (~35 ejercicios + soluciones validadas) | v1.79 | ✅ |
 | Limpieza stdlib (dead code eliminado, params renombrados) | v1.80 | ✅ |
+| Linter: `redundant-bool-compare` + `useless-return` (14 categorías) | v1.81 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

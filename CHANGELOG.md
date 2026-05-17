@@ -6,6 +6,121 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.81.0] — 2026-05-17 — Linter: `redundant-bool-compare` + `useless-return` (14 categorías)
+
+Dos checks nuevos al linter, ambos pequeños pero útiles. Total: 14
+categorías.
+
+### `redundant-bool-compare`
+
+Detecta comparaciones redundantes con literales booleanos:
+
+```cornamusa
+si activo == verdadero:       # ← warning
+    ...
+fin si
+# Mejor: si activo:
+
+si flag == falso:             # ← warning
+    ...
+fin si
+# Mejor: si no flag:
+
+si x != verdadero:            # ← warning
+    ...
+fin si
+# Mejor: si no x:
+
+si x != falso:                # ← warning (poco común pero válido)
+    ...
+fin si
+# Mejor: si x:
+```
+
+**Caso deliberado**: a veces SÍ quieres `== verdadero` para verificar
+estrictamente el tipo (e.g., tras un round-trip JSON donde un valor
+podría haber llegado como `"verdadero"` cadena vs `verdadero` bool).
+Suprime con `# noqa: redundant-bool-compare`.
+
+**Excepción del check**: `verdadero == falso` (ambos literales) NO
+dispara — es comparación constante, otro tipo de problema.
+
+### `useless-return`
+
+Detecta `retornar` o `retornar nulo` al final del cuerpo de una
+función:
+
+```cornamusa
+funcion log(msg):
+    imprimir(msg)
+    retornar nulo        # ← warning: Cornamusa retorna nulo por defecto
+fin funcion
+
+funcion side_effect():
+    imprimir("hola")
+    retornar             # ← warning: idem
+fin funcion
+```
+
+**Refinamiento importante**: el patrón "find-returns-nil" tras un
+bucle o condicional NO dispara, porque comunica intención
+(`buscar(xs, k)` que devuelve `nulo` si no encuentra):
+
+```cornamusa
+funcion buscar(xs, k):
+    para x en xs:
+        si x == k:
+            retornar x
+        fin si
+    fin para
+    retornar nulo        # ← NO dispara: tras `para`, comunica intención
+fin funcion
+```
+
+El check excluye casos donde la penúltima sentencia es: `para`,
+`mientras`, `si`, `intentar` o `coincidir`. Tras una sentencia
+"lineal" (asignación, expr, imprimir), sí dispara.
+
+### Auditoría del propio repo
+
+Los nuevos checks pillaron 3 verdaderos positivos:
+
+- `examples/32_json_archivos.cor:45-46`: 2× `== verdadero/falso` en
+  verificación deliberada de round-trip JSON. Suprimidos con `# noqa`
+  + comentario explicando por qué se quedan.
+- `examples/25_biblioteca_oop.cor:108`: 1× `retornar nulo` tras un
+  `para`. Era el caso find-returns-nil que motivó el refinamiento
+  del check — sin él, el ejemplo limpio habría disparado falso
+  positivo. Tras el refinamiento, no dispara.
+
+Tras esto, **0/97 ficheros con warnings** en lint + 0 drift en fmt.
+
+### Tests
+
+11 asserts nuevos en `test_linter.c` (total: 84 asserts cubriendo
+las 14 categorías):
+
+- `redundant-bool-compare`: `== verdadero`, `== falso`, `!= verdadero`,
+  `verdadero == falso` (no dispara), comparación con cadena (no
+  dispara), `# noqa` lo suprime.
+- `useless-return`: `retornar nulo`, `retornar` sin valor, con valor
+  no nulo (no dispara), patrón find-returns-nil tras `para` (no
+  dispara), tras `si` (no dispara).
+
+### Archivos
+
+- `src/linter.{c,h}` — 2 nuevos `LINT_*`, helpers `categoria_a_bit`
+  + `linter_tipo_nombre`, lógica de detección en `visitar_expr` (para
+  bool-compare) y `case SENT_FUNCION` (para useless-return).
+- `tests/unit/test_linter.c` — 11 asserts.
+- `examples/32_json_archivos.cor` — 2 `# noqa` con comentario.
+
+### Estado
+
+239 tests verde, repo limpio.
+
+---
+
 ## [1.80.0] — 2026-05-17 — Limpieza de stdlib (dead code + params renombrados)
 
 Release de mantenimiento tras 4 releases consecutivas de features

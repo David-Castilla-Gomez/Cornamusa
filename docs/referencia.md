@@ -924,7 +924,7 @@ cornamusa depurar prog.cor            # depurador interactivo (v1.76)
                                        #   l listar, q salir, ? ayuda
 ```
 
-Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`, `shadow`, `unused-loop-var`, `mutable-default`, `concat-in-loop`, `same-comparison`, `empty-except`.
+Categorias del linter (14 totales): `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`, `shadow`, `unused-loop-var`, `mutable-default`, `concat-in-loop`, `same-comparison`, `empty-except`, `redundant-bool-compare`, `useless-return`.
 
 ---
 

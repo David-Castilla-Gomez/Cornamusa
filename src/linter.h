@@ -73,6 +73,8 @@ typedef enum {
     LINT_CONCAT_IN_LOOP,  /* v1.63: `x = x + ...` o `x += ...` en mientras/para */
     LINT_SAME_COMPARISON, /* v1.68: `x == x` / `x < x` / etc. — siempre true/false */
     LINT_EMPTY_EXCEPT,    /* v1.69: `atrapar X: pasar` o body vacio — silencia error */
+    LINT_REDUNDANT_BOOL_COMPARE, /* v1.81: `x == verdadero` (debe ser `x`) y similares */
+    LINT_USELESS_RETURN,  /* v1.81: `retornar` o `retornar nulo` al final de funcion */
 } TipoWarning;
 
 typedef struct {

@@ -531,7 +531,7 @@ Sí, en hitos:
 | v1.21-v1.34 — Destructuring, `*args`/`**kwargs`, comprehensions, generadores | ✅ |
 | v1.35-v1.40 — Sugerencias de error, traceback, `--check`, `-O3`+LTO | ✅ |
 | v1.41-v1.46 — Dunders de coerción/hash/iter, ternaria, slicing assign, f-string specs | ✅ |
-| v1.47-v1.55 — REPL line-editing, `fmt`, `lint` (12 categorías), `docs`, LSP | ✅ |
+| v1.47-v1.55 — REPL line-editing, `fmt`, `lint` (eventualmente 14 categorías), `docs`, LSP | ✅ |
 | v1.56-v1.66 — `borrar`/`global` en VM, stdlibs `csv`/`base64`/`hashing`/HMAC, base64-url | ✅ |
 | v1.67-v1.73 — Stdlib `jwt`, `tiempo`; profiler `cornamusa prof`; decoradores `@nombre` | ✅ |
 | Próximo | Decoradores en métodos (`@property`/`@staticmethod`) · material didáctico expandido |

@@ -49,6 +49,8 @@ typedef struct {
     int n_concat_in_loop;
     int n_same_comparison;
     int n_empty_except;
+    int n_redundant_bool_compare;  /* v1.81 */
+    int n_useless_return;          /* v1.81 */
 } Resumen;
 
 static Resumen analizar(const char *fuente) {
@@ -86,6 +88,8 @@ static Resumen analizar(const char *fuente) {
             case LINT_CONCAT_IN_LOOP:  r.n_concat_in_loop++; break;
             case LINT_SAME_COMPARISON: r.n_same_comparison++; break;
             case LINT_EMPTY_EXCEPT:    r.n_empty_except++; break;
+            case LINT_REDUNDANT_BOOL_COMPARE: r.n_redundant_bool_compare++; break;
+            case LINT_USELESS_RETURN:  r.n_useless_return++; break;
         }
     }
     linter_resultado_destruir(&lr);
@@ -697,6 +701,110 @@ int main(void) {
             "importar fechas    # noqa: categoria_que_no_existe\n"
             "imprimir(\"hola\")\n");
         AFIRMAR(r.n_unused_import == 1, "noqa_cat_desconocida");
+    }
+
+    /* ─── REDUNDANT_BOOL_COMPARE (v1.81) ─── */
+    {
+        Resumen r = analizar(
+            "x = leer()\n"
+            "si x == verdadero:\n"
+            "    imprimir(\"a\")\n"
+            "fin si\n");
+        AFIRMAR(r.n_redundant_bool_compare == 1, "rbc_eq_verdadero");
+    }
+    {
+        Resumen r = analizar(
+            "x = leer()\n"
+            "si x == falso:\n"
+            "    imprimir(\"a\")\n"
+            "fin si\n");
+        AFIRMAR(r.n_redundant_bool_compare == 1, "rbc_eq_falso");
+    }
+    {
+        Resumen r = analizar(
+            "x = leer()\n"
+            "si x != verdadero:\n"
+            "    imprimir(\"a\")\n"
+            "fin si\n");
+        AFIRMAR(r.n_redundant_bool_compare == 1, "rbc_neq_verdadero");
+    }
+    {
+        /* Bool == bool (literal vs literal) NO debe disparar — es otro
+         * tipo de problema (constante muerta). */
+        Resumen r = analizar(
+            "si verdadero == falso:\n"
+            "    imprimir(\"a\")\n"
+            "fin si\n");
+        AFIRMAR(r.n_redundant_bool_compare == 0, "rbc_no_lit_vs_lit");
+    }
+    {
+        /* Comparacion normal con string NO debe disparar. */
+        Resumen r = analizar(
+            "x = leer()\n"
+            "si x == \"si\":\n"
+            "    imprimir(\"a\")\n"
+            "fin si\n");
+        AFIRMAR(r.n_redundant_bool_compare == 0, "rbc_no_cadena");
+    }
+    {
+        /* noqa lo suprime. */
+        Resumen r = analizar(
+            "x = leer()\n"
+            "si x == verdadero:    # noqa: redundant-bool-compare\n"
+            "    imprimir(\"a\")\n"
+            "fin si\n");
+        AFIRMAR(r.n_redundant_bool_compare == 0, "rbc_noqa");
+    }
+
+    /* ─── USELESS_RETURN (v1.81) ─── */
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    imprimir(\"a\")\n"
+            "    retornar nulo\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_useless_return == 1, "ur_retornar_nulo");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    imprimir(\"a\")\n"
+            "    retornar\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_useless_return == 1, "ur_retornar_vacio");
+    }
+    {
+        /* Funcion con valor real al final: OK. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    retornar 42\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_useless_return == 0, "ur_con_valor_ok");
+    }
+    {
+        /* Patron find-returns-nil: el `retornar nulo` tras un `para`
+         * NO debe disparar. */
+        Resumen r = analizar(
+            "funcion buscar(xs, k):\n"
+            "    para x en xs:\n"
+            "        si x == k:\n"
+            "            retornar x\n"
+            "        fin si\n"
+            "    fin para\n"
+            "    retornar nulo\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_useless_return == 0, "ur_find_pattern_ok");
+    }
+    {
+        /* Patron tras `si`: tampoco debe disparar. */
+        Resumen r = analizar(
+            "funcion f(x):\n"
+            "    si x:\n"
+            "        retornar 1\n"
+            "    fin si\n"
+            "    retornar nulo\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_useless_return == 0, "ur_tras_si_ok");
     }
 
     /* ─── COMBINADO: codigo limpio NO genera avisos ─── */
