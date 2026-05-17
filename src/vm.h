@@ -4,6 +4,7 @@
 #include <stdbool.h>
 
 #include "chunk.h"
+#include "coverage.h"    /* Coverage tracker (v1.75) */
 #include "evaluador.h"   /* EvalError */
 #include "memoria.h"     /* Memoria (Fase 7 S1) */
 #include "profiler.h"    /* Profiler determinista (v1.71) */
@@ -218,6 +219,11 @@ typedef struct {
        `cornamusa prof` lo activa antes de ejecutar. Cuando inactivo, los
        hooks son no-op (un branch). */
     Profiler profiler;
+
+    /* v1.75: coverage tracker. Inactivo por defecto; el subcomando
+       `cornamusa cov` lo activa antes de ejecutar. Hook al inicio del
+       dispatch (mismo punto que profiler). */
+    CovTracker cov;
 } VM;
 
 /* Inicializa la VM. La pila empieza vacía, sin error. */

@@ -1,0 +1,45 @@
+# Coverage tracker (v1.75).
+#
+# Ejecutar con:  cornamusa cov examples/73_coverage.cor
+# O con detalle: cornamusa cov --uncovered examples/73_coverage.cor
+#
+# El reporte indica que porcentaje de las lineas top-level se
+# ejecutaron. Util para CI o para identificar caminos no probados.
+#
+# Limitacion v1.75: solo cuenta lineas del archivo principal. Cuerpos
+# de funciones/closures viven en chunks separados y no se rastrean
+# todavia.
+
+# ─── Lineas que SI se ejecutan ──────────────────────────────────
+modo = "produccion"
+items = [10, 20, 30, 40]
+
+# ─── Rama dependiente del modo ──────────────────────────────────
+si modo == "produccion":
+    imprimir("Modo produccion")
+sino:
+    # Esta rama no se ejecuta — quedara como uncovered.
+    imprimir("Modo desarrollo")
+fin si
+
+# ─── Bucle con condicional dentro ───────────────────────────────
+total = 0
+para item en items:
+    si item > 25:
+        total = total + item
+    sino:
+        # Para items 10 y 20 sí entramos aqui; para 30 y 40 no.
+        # Pero la linea SI se ejecuta al menos una vez, por tanto
+        # queda como cubierta.
+        total = total + 1
+    fin si
+fin para
+
+imprimir(f"total ponderado: {total}")
+
+# ─── Codigo que nunca se ejecuta ────────────────────────────────
+# La condicion es falsa siempre — la rama interna sera uncovered.
+si modo == "imposible":
+    imprimir("never reached")
+    sistema_no_existente = 42
+fin si

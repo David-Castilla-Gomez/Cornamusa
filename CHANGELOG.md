@@ -6,6 +6,95 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.75.0] — 2026-05-17 — Coverage tracker (`cornamusa cov`)
+
+Nuevo subcomando que ejecuta un script con un tracker de líneas
+ejecutadas y reporta el porcentaje cubierto. Reusa la misma
+arquitectura del profiler (hook al inicio del dispatch loop, cero
+coste cuando inactivo) — registra líneas tocadas en lugar de tiempos.
+
+```bash
+cornamusa cov script.cor
+# (stderr)
+# script.cor: 77.8% (7/9 lineas top-level)
+#   NOTA v1.75: solo cubre el codigo top-level del archivo principal.
+
+cornamusa cov --uncovered script.cor
+# (stderr)
+# script.cor: 77.8% (7/9 lineas top-level)
+#   lineas no cubiertas: 5, 16
+```
+
+### Diseño
+
+- **Hook único** al inicio del dispatch loop: extrae la línea del
+  opcode actual y la marca en un bitset si pertenece al chunk
+  objetivo (el del archivo principal). Cuando inactivo es un branch
+  sobre la bandera `cov.activo` (cero coste real).
+- **Fast path**: el hook tiene short-circuit "si la línea es la
+  misma que la anterior, skip" — la mayoría de iteraciones del
+  dispatch caen aquí (varios opcodes por línea de fuente).
+- **Denominador (líneas ejecutables)**: se calcula recorriendo
+  `chunk->lineas[]` al final, recogiendo las líneas únicas que
+  tienen al menos un byte de bytecode asociado.
+- **Bitset por línea** crece exponencialmente con `realloc`. Soporta
+  archivos arbitrariamente grandes con uso de memoria moderado.
+
+### CLI
+
+```
+cornamusa cov [--uncovered] <archivo.cor> [args...]
+  --uncovered   lista las lineas no cubiertas tras el porcentaje
+```
+
+Los `args...` se pasan al programa via `sistema.argv`.
+
+### Limitaciones declaradas
+
+- **Solo el chunk principal**: cuerpos de funciones/closures compilan
+  en chunks propios (un `FuncionBC.chunk` por función), no en el chunk
+  top-level. Coverage v1.75 **no rastrea esos chunks**. Limitación
+  significativa que afecta a la métrica: un programa entero dentro
+  de `funcion main(): ... fin funcion` reportaría cobertura solo de la
+  línea `main()`. Workaround: dejar el código relevante en top-level
+  o esperar a una versión futura que rastree todos los chunks
+  alcanzables.
+- **No produce report HTML/XML**: salida texto a stderr; integradores
+  pueden parsear el `archivo: N% (X/Y)` línea. Formato JSON queda
+  para si surge demanda.
+- **No distingue "ejecutó parcialmente"**: una línea con varios
+  branches inline (`x si cond sino y`) se marca tocada con que
+  cualquier opcode de esa línea ejecute. Para branch-coverage
+  haría falta un modelo más fino.
+
+### Tests
+
+15 asserts nuevos en `test_coverage.c`:
+
+- Inactivo no genera reporte (`n_ejecutables == 0`).
+- Script lineal: 100% cubierto.
+- Rama no tomada del `si` queda como uncovered (verifica línea
+  exacta en la lista).
+- Bucle: 100% cubierto cuando todas las iteraciones tocan las
+  mismas líneas.
+- Bucle con condicional dentro que nunca es true: rama uncovered.
+- Código tras `romper` en bucle (linter ya marca `unreachable`).
+
+### Archivos
+
+- `src/coverage.{c,h}` — módulo nuevo.
+- `src/vm.{c,h}` — `CovTracker` embebido en `VM`, hook en dispatch.
+- `src/main.c` — subcomando `cov` con `--uncovered`.
+- `tests/unit/test_coverage.c` — 15 asserts.
+- `examples/73_coverage.cor` — demo con coverage parcial intencional.
+
+### Estado
+
+233 tests verde. Repo limpio (lint y fmt sin diferencias). Cierra
+junto con `prof` el grupo de herramientas de runtime introspection.
+
+---
+
 ## [1.74.0] — 2026-05-17 — Auditoría: tests-gap cerrados + fix de `ErrorDeClave` atrapable
 
 Release de auditoría tras revisión completa del proyecto. No añade

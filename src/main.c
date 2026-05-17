@@ -94,6 +94,8 @@ static void imprimir_uso(const char *programa) {
         "                             JSON-RPC). Para integracion con editores.\n"
         "  prof [--top=N] <archivo>   Ejecuta el script con profiler determinista\n"
         "                             y vuelca tabla por funcion (a stderr).\n"
+        "  cov [--uncovered] <archivo> Ejecuta con coverage tracker; reporta %%\n"
+        "                             de lineas top-level cubiertas (a stderr).\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -240,8 +242,10 @@ static int ejecutar_archivo(const char *ruta) {
  * idénticamente al tree-walking. El cliente activa esta ruta con
  * la flag `--bytecode`.
  */
-static int ejecutar_archivo_bc_opciones(const char *ruta, bool con_profiler,
-                                        int top_n_profiler) {
+static int ejecutar_archivo_bc_opciones_cov(const char *ruta, bool con_profiler,
+                                              int top_n_profiler,
+                                              bool con_cov,
+                                              bool cov_uncovered) {
     FuenteCargada fc = fuente_cargar_archivo(ruta);
     if (fc.codigo != FUENTE_OK) {
         fprintf(stderr, "Error al cargar '%s': %s\n", ruta, fc.mensaje_error);
@@ -280,6 +284,7 @@ static int ejecutar_archivo_bc_opciones(const char *ruta, bool con_profiler,
     VM vm;
     vm_iniciar(&vm);
     if (con_profiler) profiler_activar(&vm.profiler);
+    if (con_cov) cov_activar(&vm.cov, &chunk);
     Valor resultado = valor_nulo();
     ResultadoVM rc_vm = vm_ejecutar(&vm, &chunk, &resultado);
 
@@ -297,6 +302,10 @@ static int ejecutar_archivo_bc_opciones(const char *ruta, bool con_profiler,
         profiler_desactivar(&vm.profiler);
         profiler_dump(&vm.profiler, stderr, top_n_profiler);
     }
+    if (con_cov) {
+        cov_desactivar(&vm.cov);
+        cov_dump(&vm.cov, stderr, ruta, cov_uncovered);
+    }
     valor_destruir(&resultado);
     vm_destruir(&vm);
     chunk_destruir(&chunk);
@@ -305,8 +314,14 @@ static int ejecutar_archivo_bc_opciones(const char *ruta, bool con_profiler,
     return rc;
 }
 
+static int ejecutar_archivo_bc_opciones(const char *ruta, bool con_profiler,
+                                          int top_n_profiler) {
+    return ejecutar_archivo_bc_opciones_cov(ruta, con_profiler,
+                                               top_n_profiler, false, false);
+}
+
 static int ejecutar_archivo_bytecode(const char *ruta) {
-    return ejecutar_archivo_bc_opciones(ruta, false, 0);
+    return ejecutar_archivo_bc_opciones_cov(ruta, false, 0, false, false);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -361,6 +376,59 @@ static int subcomando_prof(int argc, char **argv) {
         nativos_set_argv(0, NULL);
     }
     return ejecutar_archivo_bc_opciones(archivo, true, top_n);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Subcomando `cov` (v1.75 - Fase 5 tooling).
+ *
+ * Ejecuta el script con el coverage tracker activado. Reporta a
+ * stderr el porcentaje de lineas top-level cubiertas y opcionalmente
+ * la lista de no cubiertas.
+ *
+ * Uso:
+ *   cornamusa cov script.cor [args...]
+ *   cornamusa cov --uncovered script.cor
+ * ────────────────────────────────────────────────────────────────── */
+
+static int subcomando_cov(int argc, char **argv) {
+    const char *archivo = NULL;
+    bool listar_uncovered = false;
+    int idx_archivo = -1;
+    for (int i = 2; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--ayuda") == 0
+            || strcmp(arg, "--help") == 0) {
+            fprintf(stderr,
+                "uso: %s cov [--uncovered] script.cor [args...]\n"
+                "  Ejecuta el script con coverage tracker.\n"
+                "  --uncovered   lista las lineas no cubiertas tras el porcentaje\n",
+                argv[0]);
+            return 0;
+        }
+        if (strcmp(arg, "--uncovered") == 0
+            || strcmp(arg, "--no-cubiertas") == 0) {
+            listar_uncovered = true;
+            continue;
+        }
+        if (arg[0] == '-' && strcmp(arg, "-") != 0) {
+            fprintf(stderr, "Opcion no reconocida para cov: %s\n", arg);
+            return 64;
+        }
+        archivo = arg;
+        idx_archivo = i;
+        break;
+    }
+    if (!archivo) {
+        fprintf(stderr, "cov: se requiere un archivo .cor\n");
+        return 64;
+    }
+    if (idx_archivo >= 0) {
+        nativos_set_argv(argc - idx_archivo, &argv[idx_archivo]);
+    } else {
+        nativos_set_argv(0, NULL);
+    }
+    return ejecutar_archivo_bc_opciones_cov(archivo, false, 0,
+                                               true, listar_uncovered);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -1033,6 +1101,9 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "prof") == 0) {
         return subcomando_prof(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "cov") == 0) {
+        return subcomando_cov(argc, argv);
     }
     if (argc >= 2 && strcmp(argv[1], "lsp") == 0) {
 #ifdef _WIN32

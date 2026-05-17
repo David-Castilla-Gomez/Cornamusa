@@ -283,6 +283,8 @@ void vm_iniciar(VM *vm) {
     vm->traceback[0] = '\0';
     /* v1.71: profiler determinista (inactivo por defecto). */
     profiler_iniciar(&vm->profiler);
+    /* v1.75: coverage tracker (inactivo por defecto). */
+    cov_iniciar(&vm->cov);
     /*
      * Fase 7: inicializar el GC e instalarlo como memoria global
      * antes de crear el diccionario de globales (que ya pasa por
@@ -386,6 +388,8 @@ void vm_destruir(VM *vm) {
     gc_desinstalar();
     /* v1.71: liberar tablas del profiler (no-op si nunca se activó). */
     profiler_destruir(&vm->profiler);
+    /* v1.75: liberar bitset del coverage tracker (no-op si nunca se activó). */
+    cov_destruir(&vm->cov);
 }
 
 /* Macros locales para el dispatch loop. `frame` es el CallFrame
@@ -2031,6 +2035,15 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
          */
         if (vm->profiler.activo && vm->profiler.n_stack != vm->n_frames) {
             vm_profiler_sync(vm);
+        }
+        /*
+         * v1.75: tick del coverage tracker. Marca la línea del opcode
+         * actual si esta dentro del chunk objetivo. Cuando inactivo es
+         * un solo branch.
+         */
+        if (vm->cov.activo) {
+            int linea_op = frame->chunk->lineas[frame->ip - frame->chunk->codigo];
+            cov_on_linea(&vm->cov, frame->chunk, linea_op);
         }
         /*
          * v0.8.1: trigger del GC en frontera de opcode (deferred).
