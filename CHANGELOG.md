@@ -6,6 +6,104 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.67.0] — 2026-05-17 — Stdlib `jwt` (RFC 7519 HS256) — la suite coherente
+
+Cierra el arco de stdlib criptográfica iniciado en v1.58 (csv) →
+v1.59 (base64) → v1.60 (hashing) → v1.65 (HMAC) → v1.66 (base64 url-safe).
+Todo apuntaba a esto. **Stdlib pasa de 15 a 16 módulos.**
+
+### Lo nuevo
+
+```cornamusa
+importar jwt
+
+# Firmar payload (dict) con clave (cadena):
+token = jwt.codificar({"sub": "42", "exp": 1735689600}, "mi-secreto")
+
+# Verificar y obtener payload (lanza ErrorDeValor si invalido):
+payload = jwt.decodificar(token, "mi-secreto")
+
+# Atajo booleano sin try/except:
+si jwt.verificar(token, "mi-secreto"):
+    # ...
+fin si
+```
+
+### Implementación
+
+**~80 líneas Cornamusa puro** sobre las stdlib previas. Sin nuevo
+algoritmo, sin nueva C:
+
+- `json.serializar` codifica header y payload.
+- `base64.codificar_url` produce las 3 partes URL-safe sin padding.
+- `hashing.hmac_sha256_bytes` (nuevo, v1.67) genera 32 bytes raw
+  para la firma — único añadido en C (~20 líneas extra como
+  refactor de `_hex`).
+
+Formato resultante: `header_b64.payload_b64.signature_b64`. Conforme
+con la spec RFC 7519 — válido para cualquier verificador JWT
+estándar (jwt.io, etc.).
+
+### Garantías de seguridad
+
+- **`alg=none` rechazado**: mitigación estándar contra ataques de
+  algorithm confusion. El header es fijo `{"alg":"HS256","typ":"JWT"}`
+  al codificar, y al decodificar `decodificar()` rechaza headers con
+  `alg` distinto a `HS256`.
+- **Firma se verifica ANTES de parsear JSON** del header o payload —
+  si signature inválida, no confiamos en el contenido.
+- **Comparación de firma es byte-a-byte**: no constant-time. Para
+  v1.67 acceptable (Cornamusa no se usa en contextos donde un timing
+  attack es realista — sería bug para clientes server-side de alto
+  volumen).
+
+### Lo que NO valida automáticamente
+
+`decodificar()` valida solo la **firma**. NO chequea:
+- `exp` (expiración).
+- `nbf` (not-before).
+- `iat` (issued-at).
+- `iss`, `aud` (issuer/audience).
+
+Responsabilidad del código cliente. Ejemplo:
+
+```cornamusa
+payload = jwt.decodificar(token, clave)
+si payload["exp"] < tiempo_actual():
+    lanzar ErrorDeValor("token expirado")
+fin si
+```
+
+### Cambio en infra de tests
+
+Para que los tests unitarios que usan `importar jwt` funcionen,
+todos los tests ahora se ejecutan con `WORKING_DIRECTORY =
+${CMAKE_SOURCE_DIR}` (la raíz del repo), donde `stdlib/` es
+relativo. Cambio inocuo para los tests que no importan stdlib.
+
+### Verificación
+
+- **224/224 tests verde**. Nuevo `test_bytecode_jwt` con **8 asserts**:
+  round-trip, prefijo `eyJ`, `verificar` con clave correcta/mala,
+  token mal formado, decode con clave mala, payload anidado.
+- Nuevo `examples/69_jwt.cor`: ciclo completo login → verificar.
+- Nuevo `bc_run_69_jwt` integration test verifica que un token
+  alterado se rechaza.
+- `cornamusa lint stdlib/jwt.cor` → 0 warnings.
+- `cornamusa fmt --check stdlib/jwt.cor` → canónico.
+
+### Lo que NO incluye (scope para v1.68+)
+
+- **Algoritmos asimétricos**: RS256 (RSA), ES256 (ECDSA). Requieren
+  criptografía de clave pública — biblioteca extra (libtomcrypt o
+  rolling-our-own). Fuera de scope inmediato.
+- **Validación automática de `exp`/`nbf`**: dejado al usuario para
+  no asumir política. Podría añadirse helper `jwt.decodificar_y_validar(token, clave, ahora)`.
+- **`alg=none` opt-in**: ningún caso de uso real lo justifica.
+- **Constant-time signature comparison**: para mitigar timing attacks
+  en contextos servidor de alto volumen. Acceptable como deuda
+  documentada por ahora.
+
 ## [1.66.0] — 2026-05-16 — base64 URL-safe (RFC 4648 §5)
 
 Antes de v1.66, el módulo `base64` solo soportaba el alfabeto

@@ -3325,6 +3325,27 @@ static Valor nativa_hmac_sha256(EvalError *err, int n_args, Valor *args,
     return valor_cadena_duplicar(hex, 64);
 }
 
+/* v1.67: HMAC-SHA-256 que devuelve los 32 bytes raw (no hex) como
+ * cadena Cornamusa. Necesario para JWT que debe codificar la firma
+ * con base64-url; con hex el JWT seria invalido. */
+static Valor nativa_hmac_sha256_bytes(EvalError *err, int n_args, Valor *args,
+                                        int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hmac_sha256_bytes(clave, mensaje) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hmac_sha256_bytes() requiere cadenas");
+    }
+    uint8_t bytes[32];
+    hashing_hmac_sha256_bytes(
+        (const uint8_t *)args[0].como.cadena.texto, (size_t)args[0].como.cadena.longitud,
+        (const uint8_t *)args[1].como.cadena.texto, (size_t)args[1].como.cadena.longitud,
+        bytes);
+    return valor_cadena_duplicar((const char *)bytes, 32);
+}
+
 static Valor nativa_hmac_md5(EvalError *err, int n_args, Valor *args,
                                int linea, int columna) {
     if (n_args != 2) {
@@ -3702,8 +3723,9 @@ static const EntradaNativa NATIVAS[] = {
     /* Hashing (v1.60, v1.65 HMAC). */
     {"hash_sha256",         11, nativa_sha256},
     {"hash_md5",             8, nativa_md5},
-    {"hash_hmac_sha256",    16, nativa_hmac_sha256},
-    {"hash_hmac_md5",       13, nativa_hmac_md5},
+    {"hash_hmac_sha256",         16, nativa_hmac_sha256},
+    {"hash_hmac_sha256_bytes",   22, nativa_hmac_sha256_bytes},
+    {"hash_hmac_md5",            13, nativa_hmac_md5},
     /* Cadenas perf (v1.61): unir O(n). */
     {"cadena_unir",         11, nativa_cadena_unir},
     /* Cadenas perf (v1.62): otras nativas O(bytes). */

@@ -14,7 +14,7 @@ No es una traducción literal de Python: las palabras clave se eligieron para qu
 
 ### ¿Es un toy language o se puede usar en serio?
 
-Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de quince módulos (`archivos`, `json`, `csv`, `base64`, `hashing`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
+Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de dieciséis módulos (`archivos`, `json`, `csv`, `base64`, `hashing`, `jwt`, `regex`, `fechas`, `azar`, `proceso`, `red`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
 
 Lo que todavía le falta para producción seria:
 
@@ -378,6 +378,39 @@ Disponible también `hashing.hmac_md5(clave, mensaje)`. HMAC-MD5 sigue siendo **
 - **SHA-256** sigue considerado seguro para integridad y como parte de protocolos (HMAC, TLS, Bitcoin). **Para hashes de passwords** usa scrypt/argon2 — no provistos por Cornamusa.
 
 Lo que no incluye: SHA-1 (obsoleto), SHA-384/512, SHA-3, hashing incremental.
+
+### ¿Hay soporte de JWT (JSON Web Tokens)?
+
+Sí desde v1.67 con el módulo `jwt`:
+
+```cornamusa
+importar jwt
+
+# Firmar:
+token = jwt.codificar({"sub": "42", "exp": 1735689600}, "mi-secreto")
+# → "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI0MiIs...firma"
+
+# Verificar y leer:
+intentar:
+    payload = jwt.decodificar(token, "mi-secreto")
+    imprimir(payload["sub"])
+atrapar ErrorDeValor como e:
+    imprimir("Token inválido:", e)
+fin intentar
+
+# Atajo booleano sin try/except:
+si jwt.verificar(token, "mi-secreto"):
+    # ...continuar autenticado
+fin si
+```
+
+**Pure-Cornamusa**: el módulo entero son ~80 líneas que combinan `json` + `base64.codificar_url` + `hashing.hmac_sha256_bytes`. Demuestra que las stdlib previas forman una suite coherente.
+
+**Algoritmo soportado**: solo `HS256` (HMAC-SHA-256). RS256/ES256 requieren criptografía de clave pública (no provista por Cornamusa).
+
+**Validación de claims**: `decodificar()` valida solo la firma, NO `exp`/`nbf`/`iat`. La política de expiración es responsabilidad del código cliente (compara `payload["exp"]` con tu reloj).
+
+**`alg=none` (RFC 7519 §6.1)** NO se acepta — mitigación estándar contra ataques de algorithm confusion.
 
 ### ¿Funciona `borrar d[k]` y `obj.x += 1`?
 

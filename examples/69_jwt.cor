@@ -1,0 +1,69 @@
+# Modulo `jwt` (v1.67): JSON Web Tokens con HMAC-SHA-256.
+#
+# Demuestra el ciclo completo de un sistema de autenticacion basico:
+#   - Servidor firma un token con su clave secreta.
+#   - Cliente recibe el token (lo guarda en cookie/header).
+#   - Servidor lo verifica en peticiones posteriores.
+#
+# Construido sobre las piezas:
+#   - json    (v1.9)   serializa el payload.
+#   - base64  (v1.66)  variante URL-safe para cada parte.
+#   - hashing (v1.65)  HMAC-SHA-256 para la firma.
+
+importar jwt
+
+# ─── 1. Login: servidor firma un token ──────────────────────────
+CLAVE_SERVIDOR = "mi-clave-super-secreta-no-compartir"
+
+usuario = {
+    "id": 42,
+    "email": "ada@ejemplo.com",
+    "roles": ["admin", "editor"],
+    "iat": 1735689600,                    # issued at (timestamp)
+    "exp": 1735689600 + 60 * 60 * 24,     # +24h
+}
+
+token = jwt.codificar(usuario, CLAVE_SERVIDOR)
+imprimir("Token emitido:")
+imprimir(token)
+imprimir(f"\nlongitud: {longitud(token)} chars (3 partes . separadas)")
+
+# ─── 2. Cliente envia el token de vuelta ────────────────────────
+# (En un sistema real iria en Authorization: Bearer <token>.)
+peticion_authorization = "Bearer " + token
+imprimir("\nAuthorization header:", peticion_authorization)
+
+# ─── 3. Servidor valida y extrae el payload ─────────────────────
+# Extraer el token del header (saltarse "Bearer ").
+token_recibido = peticion_authorization[7:]
+
+intentar:
+    payload = jwt.decodificar(token_recibido, CLAVE_SERVIDOR)
+    imprimir("\nAutenticado OK:")
+    imprimir("  Usuario id:", payload["id"])
+    imprimir("  Email:", payload["email"])
+    imprimir("  Roles:", payload["roles"])
+atrapar ErrorDeValor como e:
+    imprimir("Token invalido:", e)
+fin intentar
+
+# ─── 4. Atacante intenta alterar el payload ─────────────────────
+# Modifica el segundo segmento (payload) — la firma deja de cuadrar.
+partes = token
+# Token alterado de juguete: cambiar el ultimo char antes de la firma.
+token_alterado = token[:60] + "X" + token[61:]
+
+imprimir(f"\nToken alterado verifica? {jwt.verificar(token_alterado, CLAVE_SERVIDOR)}")
+
+# ─── 5. Servidor con clave distinta no acepta ───────────────────
+# Esto es lo que protege contra otros servicios firmando tokens
+# para nuestro usuario.
+imprimir(f"Con otra clave verifica? {jwt.verificar(token, 'otra-clave-distinta')}")
+
+# ─── 6. Atajo verificar() devuelve booleano (no lanza) ──────────
+# Util en condicionales sin necesitar try/except.
+si jwt.verificar(token, CLAVE_SERVIDOR):
+    imprimir("\nVerificacion booleana: OK")
+sino:
+    imprimir("\nVerificacion booleana: rechazado")
+fin si

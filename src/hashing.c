@@ -302,9 +302,9 @@ static void md5_raw_adapter(const uint8_t *in, size_t len, uint8_t *out) {
     md5_raw(in, len, out);
 }
 
-void hashing_hmac_sha256_hex(const uint8_t *clave, size_t clave_len,
-                              const uint8_t *mensaje, size_t mensaje_len,
-                              char out_hex[65]) {
+void hashing_hmac_sha256_bytes(const uint8_t *clave, size_t clave_len,
+                                 const uint8_t *mensaje, size_t mensaje_len,
+                                 uint8_t out_bytes[32]) {
     uint8_t k_prime[HMAC_BLOCK_SIZE];
     hmac_preparar_clave(clave, clave_len, sha256_raw_adapter, 32, k_prime);
 
@@ -314,7 +314,7 @@ void hashing_hmac_sha256_hex(const uint8_t *clave, size_t clave_len,
 
     /* Buffer concatenado: (K' XOR ipad) || mensaje. */
     uint8_t *buf = (uint8_t *)malloc(HMAC_BLOCK_SIZE + mensaje_len);
-    if (!buf) { out_hex[0] = '\0'; return; }
+    if (!buf) { memset(out_bytes, 0, 32); return; }
     memcpy(buf, k_xor_ipad, HMAC_BLOCK_SIZE);
     if (mensaje_len > 0) memcpy(buf + HMAC_BLOCK_SIZE, mensaje, mensaje_len);
 
@@ -330,9 +330,15 @@ void hashing_hmac_sha256_hex(const uint8_t *clave, size_t clave_len,
     memcpy(outer_buf, k_xor_opad, HMAC_BLOCK_SIZE);
     memcpy(outer_buf + HMAC_BLOCK_SIZE, inner_digest, 32);
 
-    uint8_t final_digest[32];
-    sha256_raw(outer_buf, HMAC_BLOCK_SIZE + 32, final_digest);
-    escribir_hex(final_digest, 32, out_hex);
+    sha256_raw(outer_buf, HMAC_BLOCK_SIZE + 32, out_bytes);
+}
+
+void hashing_hmac_sha256_hex(const uint8_t *clave, size_t clave_len,
+                              const uint8_t *mensaje, size_t mensaje_len,
+                              char out_hex[65]) {
+    uint8_t bytes[32];
+    hashing_hmac_sha256_bytes(clave, clave_len, mensaje, mensaje_len, bytes);
+    escribir_hex(bytes, 32, out_hex);
 }
 
 void hashing_hmac_md5_hex(const uint8_t *clave, size_t clave_len,

@@ -20,7 +20,12 @@ foreach(test_src ${TEST_SOURCES})
     if(WIN32)
         target_link_libraries(${test_name} PRIVATE ws2_32)
     endif()
-    add_test(NAME ${test_name} COMMAND ${test_name})
+    # v1.67: tests que importan stdlib (jwt, etc.) necesitan correr
+    # desde la raiz del repo para que `cargar_modulo_desde_archivo`
+    # encuentre `stdlib/*.cor`. Setear WORKING_DIRECTORY uniformemente
+    # es inocuo para los demas tests.
+    add_test(NAME ${test_name} COMMAND ${test_name}
+             WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
 endforeach()
 
 # ───── v1.39: tests del flag --check ─────
@@ -225,6 +230,18 @@ add_test(
 set_tests_properties(bc_run_68_hashing PROPERTIES
     LABELS "integracion"
     PASS_REGULAR_EXPRESSION "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+)
+
+# v1.67: ejemplo del modulo jwt. Round-trip + rechazo de token alterado.
+add_test(
+    NAME bc_run_69_jwt
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/examples/69_jwt.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(bc_run_69_jwt PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Token alterado verifica\\? falso"
 )
 
 # v0.6.1: tests bytecode adicionales que ahora pasan gracias a iteradores

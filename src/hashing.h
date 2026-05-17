@@ -44,4 +44,12 @@ void hashing_hmac_md5_hex(const uint8_t *clave, size_t clave_len,
                            const uint8_t *mensaje, size_t mensaje_len,
                            char out_hex[33]);
 
+/*
+ * v1.67: HMAC-SHA-256 que devuelve los 32 bytes raw (sin hex). Usado
+ * por JWT y otros protocolos que codifican el digest en base64-url.
+ */
+void hashing_hmac_sha256_bytes(const uint8_t *clave, size_t clave_len,
+                                 const uint8_t *mensaje, size_t mensaje_len,
+                                 uint8_t out_bytes[32]);
+
 #endif /* CORNAMUSA_HASHING_H */

@@ -5,9 +5,9 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CORNAMUSA_VERSION "1.66.0"
+#define CORNAMUSA_VERSION "1.67.0"
 #define CORNAMUSA_VERSION_MAJOR 1
-#define CORNAMUSA_VERSION_MINOR 66
+#define CORNAMUSA_VERSION_MINOR 67
 #define CORNAMUSA_VERSION_PATCH 0
 
 #endif /* CORNAMUSA_COMMON_H */

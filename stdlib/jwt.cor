@@ -1,0 +1,107 @@
+# Cornamusa stdlib: jwt.cor (v1.67)
+#
+# JSON Web Tokens (RFC 7519) con HMAC-SHA-256 (alg = "HS256").
+# Combina los pilares construidos en releases anteriores:
+#   - json    (v1.9)   para serializar header + payload.
+#   - base64  (v1.66)  variante URL-safe sin padding para cada parte.
+#   - hashing (v1.65)  HMAC-SHA-256 para firmar.
+#
+# Filosofia: un JWT es texto plano de la forma:
+#
+#   header_b64 "." payload_b64 "." signature_b64
+#
+# donde header y payload son JSONs codificados en base64-url, y la
+# signature es HMAC-SHA-256("header_b64.payload_b64", clave) tambien
+# codificada en base64-url. Cualquier modificacion de header o
+# payload sin la clave correcta invalida la signature.
+#
+# Uso tipico:
+#   importar jwt
+#
+#   # Firmar:
+#   token = jwt.codificar({"sub": "42", "exp": 1735689600}, "secreto")
+#
+#   # Verificar y leer:
+#   intentar:
+#       payload = jwt.decodificar(token, "secreto")
+#       imprimir(payload["sub"])
+#   atrapar ErrorDeValor como e:
+#       imprimir("token invalido:", e)
+#   fin intentar
+#
+# Limitaciones v1.67:
+#   - Solo soporta alg = "HS256". Algoritmos asimetricos (RS256,
+#     ES256) requieren criptografia de clave publica (no provista
+#     por Cornamusa).
+#   - NO valida `exp`, `nbf`, `iat`, `iss`, `aud` automaticamente —
+#     devuelve el payload y el usuario decide. La validacion es
+#     responsabilidad del codigo cliente.
+#   - alg="none" (RFC 7519 §6.1) NO se acepta — siempre se requiere
+#     firma. Es la mitigacion estandar contra ataques de algorithm
+#     confusion.
+
+importar base64
+importar cadenas
+importar hashing
+importar json
+
+# Firma `payload` (diccionario) con `clave` (cadena) y produce un
+# JWT compacto de la forma `header.payload.signature`. El header
+# es fijo: {"alg": "HS256", "typ": "JWT"}.
+funcion codificar(payload, clave):
+    cabecera = {"alg": "HS256", "typ": "JWT"}
+    cab_b64 = base64.codificar_url(json.serializar(cabecera))
+    pay_b64 = base64.codificar_url(json.serializar(payload))
+    mensaje_a_firmar = cab_b64 + "." + pay_b64
+    firma_bytes = hash_hmac_sha256_bytes(clave, mensaje_a_firmar)
+    firma_b64 = base64.codificar_url(firma_bytes)
+    retornar mensaje_a_firmar + "." + firma_b64
+fin funcion
+
+# Verifica la firma de `token` con `clave` y devuelve el payload
+# (diccionario) si todo es valido. Lanza ErrorDeValor en cualquier
+# inconsistencia: formato roto, signature invalida, header con
+# alg distinto a HS256, JSON malformado, etc.
+funcion decodificar(token, clave):
+    partes = cadenas.separar(token, ".")
+    si longitud(partes) != 3:
+        lanzar ErrorDeValor("jwt: token mal formado (se esperan 3 partes)")
+    fin si
+    cab_b64 = partes[0]
+    pay_b64 = partes[1]
+    firma_b64 = partes[2]
+
+    # Verificar firma ANTES de parsear cualquier JSON. La firma
+    # protege todo: si invalida, no confiamos ni en el header.
+    mensaje = cab_b64 + "." + pay_b64
+    esperado_bytes = hash_hmac_sha256_bytes(clave, mensaje)
+    esperado_b64 = base64.codificar_url(esperado_bytes)
+    si esperado_b64 != firma_b64:
+        lanzar ErrorDeValor("jwt: firma invalida (clave incorrecta o token alterado)")
+    fin si
+
+    # Header debe ser {"alg": "HS256", "typ": "JWT"-ish}.
+    cabecera = json.parsear(base64.decodificar(cab_b64))
+    si tipo(cabecera) != "diccionario":
+        lanzar ErrorDeValor("jwt: header no es un objeto JSON")
+    fin si
+    si cabecera["alg"] != "HS256":
+        lanzar ErrorDeValor("jwt: alg no soportado (solo HS256 en v1.67)")
+    fin si
+
+    # Payload puede ser cualquier JSON valido.
+    payload = json.parsear(base64.decodificar(pay_b64))
+    retornar payload
+fin funcion
+
+# Atajo para casos en los que solo quieres saber si el token es
+# valido (sin necesitar el payload). Devuelve verdadero / falso sin
+# lanzar.
+funcion verificar(token, clave):
+    intentar:
+        decodificar(token, clave)
+        retornar verdadero
+    atrapar Excepcion:
+        retornar falso
+    fin intentar
+fin funcion
