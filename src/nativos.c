@@ -2511,6 +2511,148 @@ static Valor nativa_repr(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Atributos dinamicos (v1.86): tiene_atributo, obtener_atributo,
+ * asignar_atributo. Analogo a `hasattr`/`getattr`/`setattr` de Python.
+ *
+ * Para programacion dinamica: serializadores genericos, frameworks
+ * de validacion, REPL helpers, etc.
+ *
+ * Tipos soportados:
+ *   - VAL_INSTANCIA: atributos propios + metodos heredados de la clase.
+ *   - VAL_CLASE: metodos de la clase.
+ *   - VAL_MODULO: atributos del modulo (lo que se pueda importar).
+ *   - Otros tipos: tiene_atributo() retorna falso silenciosamente;
+ *     obtener_atributo() devuelve el defecto; asignar_atributo() lanza
+ *     ErrorDeTipo.
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Helper: chequea si `obj` tiene el atributo `nombre`. */
+static bool valor_tiene_atributo(const Valor *obj, const Valor *nombre) {
+    switch (obj->tipo) {
+        case VAL_INSTANCIA: {
+            Instancia *i = obj->como.instancia;
+            if (dicc_contiene(i->atributos, nombre)) return true;
+            if (i->clase && dicc_contiene(i->clase->metodos, nombre)) return true;
+            return false;
+        }
+        case VAL_CLASE:
+            return dicc_contiene(obj->como.clase->metodos, nombre);
+        case VAL_MODULO:
+            return dicc_contiene(obj->como.modulo->atributos, nombre);
+        default:
+            return false;
+    }
+}
+
+static Valor nativa_tiene_atributo(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiene_atributo() requiere 2 argumentos (obj, nombre)");
+    }
+    if (args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiene_atributo() requiere cadena como segundo argumento, no '%s'",
+            valor_nombre_tipo(&args[1]));
+    }
+    return valor_booleano(valor_tiene_atributo(&args[0], &args[1]));
+}
+
+/* obtener_atributo(obj, nombre, defecto=nulo) → valor o defecto.
+ * NUNCA lanza ErrorDeAtributo — el defecto cubre el caso ausente. */
+static Valor nativa_obtener_atributo(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args < 2 || n_args > 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: obtener_atributo() requiere 2 o 3 argumentos "
+            "(obj, nombre, defecto=nulo)");
+    }
+    if (args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: obtener_atributo() requiere cadena como segundo argumento, no '%s'",
+            valor_nombre_tipo(&args[1]));
+    }
+    Valor defecto = (n_args == 3) ? valor_clonar(&args[2]) : valor_nulo();
+    const Valor *obj = &args[0];
+    const Valor *nombre = &args[1];
+
+    switch (obj->tipo) {
+        case VAL_INSTANCIA: {
+            Instancia *i = obj->como.instancia;
+            Valor v;
+            if (dicc_obtener(i->atributos, nombre, &v)) {
+                valor_destruir(&defecto);
+                return v;  /* dicc_obtener clona */
+            }
+            if (i->clase && dicc_obtener(i->clase->metodos, nombre, &v)) {
+                valor_destruir(&defecto);
+                /* Para coherencia con `obj.metodo`: si es una closure
+                 * normal, envolver en MetodoLigado para que la
+                 * invocacion inyecte `yo` automaticamente. Las
+                 * propiedades NO se evaluan aqui (eso es lookup, no
+                 * acceso) — solo se devuelven como tales. */
+                if (v.tipo == VAL_FUNCION_BC) {
+                    MetodoLigado *bm = metodo_ligado_nuevo(obj, v.como.closure);
+                    valor_destruir(&v);
+                    if (!bm) {
+                        return error_nativa(err, linea, columna,
+                            "memoria insuficiente al ligar metodo");
+                    }
+                    return valor_metodo_ligado(bm);
+                }
+                return v;
+            }
+            return defecto;
+        }
+        case VAL_CLASE: {
+            Valor v;
+            if (dicc_obtener(obj->como.clase->metodos, nombre, &v)) {
+                valor_destruir(&defecto);
+                return v;
+            }
+            return defecto;
+        }
+        case VAL_MODULO: {
+            Valor v;
+            if (dicc_obtener(obj->como.modulo->atributos, nombre, &v)) {
+                valor_destruir(&defecto);
+                return v;
+            }
+            return defecto;
+        }
+        default:
+            return defecto;
+    }
+}
+
+/* asignar_atributo(obj, nombre, valor) → nulo. Muta la instancia.
+ * Solo soporta VAL_INSTANCIA. */
+static Valor nativa_asignar_atributo(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: asignar_atributo() requiere 3 argumentos (obj, nombre, valor)");
+    }
+    if (args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: asignar_atributo() requiere cadena como segundo argumento, no '%s'",
+            valor_nombre_tipo(&args[1]));
+    }
+    if (args[0].tipo != VAL_INSTANCIA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: asignar_atributo() solo soporta instancias, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Valor clave = valor_clonar(&args[1]);
+    Valor valor = valor_clonar(&args[2]);
+    if (!dicc_asignar(args[0].como.instancia->atributos, clave, valor)) {
+        return error_nativa(err, linea, columna,
+            "memoria insuficiente al asignar atributo");
+    }
+    return valor_nulo();
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Tiempo (v1.19): tiempo_actual, tiempo_descomponer, tiempo_componer,
  * tiempo_formato.
  *
@@ -3903,6 +4045,10 @@ static const EntradaNativa NATIVAS[] = {
     {"subclase_de",     11,  nativa_subclase_de},
     {"id",               2,  nativa_id},
     {"repr",             4,  nativa_repr},
+    /* Atributos dinamicos (v1.86). */
+    {"tiene_atributo",   14, nativa_tiene_atributo},
+    {"obtener_atributo", 16, nativa_obtener_atributo},
+    {"asignar_atributo", 16, nativa_asignar_atributo},
     /* Tiempo (v1.19). */
     {"tiempo_actual",       13, nativa_tiempo_actual},
     {"tiempo_descomponer",  18, nativa_tiempo_descomponer},

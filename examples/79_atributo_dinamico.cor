@@ -1,0 +1,71 @@
+# Atributos dinamicos (v1.86): tiene_atributo / obtener_atributo /
+# asignar_atributo. Analogo a `hasattr` / `getattr` / `setattr` de
+# Python. Util para programacion dinamica: serializadores genericos,
+# frameworks de validacion, REPL helpers, etc.
+
+clase Producto:
+    funcion __iniciar__(yo, nombre, precio):
+        yo.nombre = nombre
+        yo.precio = precio
+    fin funcion
+
+    funcion descripcion(yo):
+        retornar f"{yo.nombre} ({yo.precio}€)"
+    fin funcion
+fin clase
+
+p = Producto("libro", 25)
+
+# ─── 1. Lookup por nombre dinámico ─────────────────────────────
+campos = ["nombre", "precio", "stock", "iva"]
+imprimir("Inspección dinámica:")
+para campo en campos:
+    si tiene_atributo(p, campo):
+        imprimir(f"  ✓ {campo} = {obtener_atributo(p, campo)}")
+    sino:
+        imprimir(f"  ✗ {campo} (no presente)")
+    fin si
+fin para
+
+# ─── 2. Valor por defecto cuando no existe ─────────────────────
+imprimir(f"\nstock = {obtener_atributo(p, 'stock', 0)}")          # 0
+imprimir(f"iva = {obtener_atributo(p, 'iva', 0.21)}")             # 0.21
+
+# ─── 3. Añadir atributos dinámicamente ─────────────────────────
+# Cargar campos desde un dict externo (e.g., parseado de JSON).
+datos_extra = {"stock": 100, "iva": 0.21, "categoria": "media"}
+para clave en claves(datos_extra):
+    asignar_atributo(p, clave, datos_extra[clave])
+fin para
+
+imprimir(f"\nTras cargar datos_extra:")
+para campo en ["nombre", "precio", "stock", "iva", "categoria"]:
+    imprimir(f"  {campo} = {obtener_atributo(p, campo)}")
+fin para
+
+# ─── 4. Serializar instancia genérica ──────────────────────────
+# Función reusable que serializa cualquier instancia a dict.
+funcion a_dict(obj, campos):
+    resultado = {}
+    para campo en campos:
+        si tiene_atributo(obj, campo):
+            resultado[campo] = obtener_atributo(obj, campo)
+        fin si
+    fin para
+    retornar resultado
+fin funcion
+
+vista = a_dict(p, ["nombre", "precio", "stock", "iva", "categoria"])
+imprimir(f"\nSerializado: {vista}")
+
+# ─── 5. Métodos también son atributos ──────────────────────────
+# tiene_atributo encuentra métodos. obtener_atributo devuelve un
+# MetodoLigado que puedes invocar.
+si tiene_atributo(p, "descripcion"):
+    metodo = obtener_atributo(p, "descripcion")
+    imprimir(f"\nLlamando metodo dinamicamente: {metodo()}")
+fin si
+
+# ─── 6. tiene_atributo también funciona sobre la clase ─────────
+imprimir(f"\nProducto tiene descripcion?: {tiene_atributo(Producto, 'descripcion')}")
+imprimir(f"Producto tiene get?: {tiene_atributo(Producto, 'get')}")

@@ -6,6 +6,97 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.86.0] — 2026-05-17 — Atributos dinámicos: `tiene_atributo`/`obtener_atributo`/`asignar_atributo`
+
+Tres built-ins análogos a `hasattr` / `getattr` / `setattr` de Python.
+Útil para programación dinámica: serializadores genéricos, frameworks
+de validación, REPL helpers, procesar datos cuya estructura no se
+conoce en tiempo de compilación.
+
+```cornamusa
+clase Producto:
+    funcion __iniciar__(yo, nombre, precio):
+        yo.nombre = nombre
+        yo.precio = precio
+    fin funcion
+fin clase
+
+p = Producto("libro", 25)
+
+# tiene_atributo: chequeo silencioso
+tiene_atributo(p, "nombre")     # verdadero
+tiene_atributo(p, "stock")      # falso (sin lanzar error)
+
+# obtener_atributo: lookup con valor por defecto
+obtener_atributo(p, "nombre")            # "libro"
+obtener_atributo(p, "stock")             # nulo
+obtener_atributo(p, "stock", 0)          # 0
+
+# asignar_atributo: añadir atributos al vuelo
+asignar_atributo(p, "stock", 100)
+p.stock                                    # 100
+```
+
+### API
+
+| Built-in | Firma | Comportamiento |
+|---|---|---|
+| `tiene_atributo(obj, nombre)` | → bool | `verdadero` si el atributo existe; nunca lanza |
+| `obtener_atributo(obj, nombre, defecto=nulo)` | → valor | El valor si existe, el defecto si no |
+| `asignar_atributo(obj, nombre, valor)` | → nulo | Muta `obj.nombre = valor` (solo instancias) |
+
+`nombre` debe ser una cadena (caracteres del identificador). Si no
+es cadena → `ErrorDeTipo`.
+
+### Tipos soportados
+
+| Tipo | tiene / obtener | asignar |
+|---|---|---|
+| `VAL_INSTANCIA` | atributos propios + métodos heredados de la clase | sí, muta `instancia.atributos` |
+| `VAL_CLASE` | métodos de la clase | **no** (`ErrorDeTipo`) |
+| `VAL_MODULO` | atributos exportados | **no** (`ErrorDeTipo`) |
+| Otros (entero, cadena, lista, ...) | `falso` / `defecto` (silencioso) | `ErrorDeTipo` |
+
+### Detalle importante: métodos via `obtener_atributo`
+
+Cuando `obtener_atributo(instancia, "metodo")` encuentra el atributo
+en `clase.metodos` y es una closure normal, devuelve un `MetodoLigado`
+(no la closure desnuda). Así la invocación `obtener_atributo(p, "saludar")()`
+inyecta `yo` automáticamente, igual que `p.saludar()`.
+
+Para `@estaticometodo`/`@clasemetodo` los wrappers actuales no se
+desempaquetan en `obtener_atributo` — el caller recibe el `VAL_METODO_ESTATICO`/`VAL_METODO_DE_CLASE`
+raw. Limitación menor: el uso típico es `obj.metodo()`, no
+`obtener_atributo(obj, "metodo")()`.
+
+### Tests
+
+14 asserts en `test_bytecode_atributo_dinamico.c`:
+
+- `tiene_atributo` sobre instancia (propio + heredado), clase, módulo.
+- `obtener_atributo` con valor, sin defecto (devuelve `nulo`), con
+  defecto.
+- `asignar_atributo` muta + falla sobre no-instancia.
+- `tiene_atributo` sobre tipos sin atributos (entero, cadena, lista)
+  retorna `falso` silencioso, no lanza.
+- Nombre no-cadena lanza `ErrorDeTipo`.
+- Patrón genérico: iterar lista de nombres, leer dinámicamente los
+  que existen.
+
+### Archivos
+
+- `src/nativos.c` — 3 nuevas nativas + helper `valor_tiene_atributo`.
+- `tests/unit/test_bytecode_atributo_dinamico.c` — 14 asserts.
+- `examples/79_atributo_dinamico.cor` — 6 patrones de uso: inspección
+  dinámica, defecto, cargar datos externos, serializar instancia
+  genérica, invocar método via lookup, atributos vs clase.
+
+### Estado
+
+245 tests verde, lint y fmt limpios.
+
+---
+
 ## [1.85.0] — 2026-05-17 — `@clasemetodo` (cierra el trío OOP de decoradores)
 
 Tras `@propiedad` (v1.78), `@estaticometodo` (v1.84), llega
