@@ -43,10 +43,9 @@ imprimir("---")
 
 # ─── 5. Conversión a lista de pares preserva orden ──────────────
 imprimir("=== Pares ordenados ===")
-ks = claves(config)
-vs = valores(config)
-para i en rango(longitud(ks)):
-    imprimir("  " + ks[i] + " → " + cadena(vs[i]))
+importar funcionales
+para par en funcionales.combinar(claves(config), valores(config)):
+    imprimir("  " + par[0] + " → " + cadena(par[1]))
 fin para
 imprimir("---")
 

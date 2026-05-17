@@ -121,6 +121,8 @@ static unsigned categoria_a_bit(const char *texto, int longitud) {
         {"empty-except",    12, LINT_EMPTY_EXCEPT},
         {"redundant-bool-compare", 22, LINT_REDUNDANT_BOOL_COMPARE},
         {"useless-return",  14, LINT_USELESS_RETURN},
+        {"bool-coerce-conditional", 23, LINT_BOOL_COERCE_CONDITIONAL},
+        {"for-rango-longitud", 18, LINT_FOR_RANGO_LONGITUD},
     };
     for (size_t i = 0; i < sizeof(TABLA) / sizeof(TABLA[0]); i++) {
         if (longitud == TABLA[i].len
@@ -890,12 +892,55 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             visitar_expr_quizas(s->como.producir.valor, ctx);
             break;
 
-        case SENT_SI:
+        case SENT_SI: {
             for (int i = 0; i < s->como.si.n_ramas; i++) {
                 visitar_expr_quizas(s->como.si.ramas[i].condicion, ctx);
                 visitar_bloque(s->como.si.ramas[i].cuerpo, ctx);
             }
+            /* v1.89: bool-coerce-conditional. Detecta el patron
+             *   si C: retornar verdadero sino: retornar falso fin si
+             * (o invertido) que se puede simplificar a `retornar
+             * booleano(C)` o `retornar no C`. Caso clasico en codigo
+             * de principiante. */
+            if (s->como.si.n_ramas == 2) {
+                RamaSi *r1 = &s->como.si.ramas[0];
+                RamaSi *r2 = &s->como.si.ramas[1];
+                /* r1: si C, r2: sino (condicion NULL). */
+                if (r1->condicion != NULL && r2->condicion == NULL
+                    && r1->cuerpo && r1->cuerpo->tipo == SENT_BLOQUE
+                    && r1->cuerpo->como.bloque.n_sentencias == 1
+                    && r2->cuerpo && r2->cuerpo->tipo == SENT_BLOQUE
+                    && r2->cuerpo->como.bloque.n_sentencias == 1) {
+                    Sent *t = r1->cuerpo->como.bloque.sentencias[0];
+                    Sent *f = r2->cuerpo->como.bloque.sentencias[0];
+                    if (t && t->tipo == SENT_RETORNAR
+                        && f && f->tipo == SENT_RETORNAR
+                        && t->como.retornar.valor != NULL
+                        && f->como.retornar.valor != NULL
+                        && t->como.retornar.valor->tipo == EXPR_LITERAL_BOOLEANO
+                        && f->como.retornar.valor->tipo == EXPR_LITERAL_BOOLEANO) {
+                        bool tv = t->como.retornar.valor->como.booleano.valor;
+                        bool fv = f->como.retornar.valor->como.booleano.valor;
+                        /* Solo dispara si las dos ramas retornan booleanos
+                         * distintos (true/false o false/true). Si las dos
+                         * retornan lo mismo, es otro problema (caso
+                         * if-else-equal). */
+                        if (tv != fv) {
+                            const char *sug = tv
+                                ? "usa 'retornar booleano(cond)'"
+                                : "usa 'retornar no cond'";
+                            emitir(ctx, LINT_BOOL_COERCE_CONDITIONAL,
+                                    s->linea, s->columna,
+                                    "patron 'si C: retornar %s sino: retornar %s' es redundante — %s",
+                                    tv ? "verdadero" : "falso",
+                                    fv ? "verdadero" : "falso",
+                                    sug);
+                        }
+                    }
+                }
+            }
             break;
+        }
 
         case SENT_MIENTRAS:
             visitar_expr_quizas(s->como.mientras.condicion, ctx);
@@ -905,7 +950,7 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             visitar_bloque(s->como.mientras.sino, ctx);
             break;
 
-        case SENT_PARA:
+        case SENT_PARA: {
             /* `objetivo` es destino — registramos como DECL_LOOP_VAR para
              * detectar unused-loop-var. */
             visitar_expr_quizas(s->como.para.iterable, ctx);
@@ -914,7 +959,36 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
             visitar_bloque(s->como.para.cuerpo, ctx);
             ctx->profundidad_loop--;
             visitar_bloque(s->como.para.sino, ctx);
+
+            /* v1.89: for-rango-longitud. Detecta `para i en rango(longitud(X)):`.
+             * Sugiere `para x en X:` o `enumerar(X)` si se necesita
+             * indice. Patron clasico de programador C/Java aprendiendo
+             * Python-style. */
+            Expr *iter = s->como.para.iterable;
+            if (iter && iter->tipo == EXPR_LLAMADA) {
+                Expr *callee = iter->como.llamada.callee;
+                if (callee && callee->tipo == EXPR_IDENT
+                    && callee->como.ident.longitud == 5
+                    && memcmp(callee->como.ident.nombre, "rango", 5) == 0
+                    && iter->como.llamada.n_args == 1) {
+                    Expr *arg = iter->como.llamada.args[0];
+                    if (arg && arg->tipo == EXPR_LLAMADA
+                        && arg->como.llamada.callee
+                        && arg->como.llamada.callee->tipo == EXPR_IDENT
+                        && arg->como.llamada.callee->como.ident.longitud == 8
+                        && memcmp(arg->como.llamada.callee->como.ident.nombre,
+                                  "longitud", 8) == 0
+                        && arg->como.llamada.n_args == 1) {
+                        emitir(ctx, LINT_FOR_RANGO_LONGITUD,
+                                s->linea, s->columna,
+                                "'para i en rango(longitud(X)):' es no idiomatico — "
+                                "usa 'para x en X:' si no necesitas indice, "
+                                "o 'para (i, x) en enumerar(X):' si lo necesitas");
+                    }
+                }
+            }
             break;
+        }
 
         case SENT_BLOQUE:
             visitar_bloque(s, ctx);
@@ -1188,6 +1262,8 @@ const char *linter_tipo_nombre(TipoWarning t) {
         case LINT_EMPTY_EXCEPT:    return "empty-except";
         case LINT_REDUNDANT_BOOL_COMPARE: return "redundant-bool-compare";
         case LINT_USELESS_RETURN:  return "useless-return";
+        case LINT_BOOL_COERCE_CONDITIONAL: return "bool-coerce-conditional";
+        case LINT_FOR_RANGO_LONGITUD: return "for-rango-longitud";
         default:                   return "warning";
     }
 }

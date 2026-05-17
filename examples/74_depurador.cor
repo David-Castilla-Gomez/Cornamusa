@@ -31,10 +31,11 @@ descuentos = [0.0, 0.1, 0.0, 0.2, 0.05]
 # Calculo del total con descuentos aplicados (no aparece en el
 # depurador con `p` porque vive en una funcion — esta limitacion
 # esta declarada para v1.76).
+importar funcionales
 total = 0
-para i en rango(longitud(precios)):
-    bruto = precios[i]
-    desc = descuentos[i]
+para par en funcionales.combinar(precios, descuentos):
+    bruto = par[0]
+    desc = par[1]
     neto = bruto * (1 - desc)
     total = total + neto
 fin para

@@ -6,6 +6,106 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.89.0] — 2026-05-17 — Linter: `bool-coerce-conditional` + `for-rango-longitud` (16 categorías)
+
+Dos checks nuevos al linter para patrones clásicos de código nuevo.
+Total: 16 categorías.
+
+### `bool-coerce-conditional`
+
+Detecta el patrón "if/else con dos retornos booleanos":
+
+```cornamusa
+funcion es_mayor(x):
+    si x > 18:
+        retornar verdadero       # ← warning
+    sino:
+        retornar falso
+    fin si
+fin funcion
+```
+
+Simplificable a una sola línea:
+
+```cornamusa
+funcion es_mayor(x):
+    retornar booleano(x > 18)    # o simplemente `retornar x > 18`
+fin funcion
+```
+
+Para el caso invertido (`falso/verdadero`), la sugerencia es `retornar no cond`.
+
+**Detalles del check**:
+- Solo dispara si la estructura es exactamente 2 ramas (`si` + `sino`),
+  cada una con UN único `retornar`, y los valores retornados son
+  **literales booleanos distintos** (true/false o false/true).
+- Si ambas ramas retornan el mismo valor → no dispara (es otro
+  problema: `if-else-equal`, no implementado todavía).
+- Si retornan no-booleanos → no dispara.
+- Tres o más ramas → no dispara.
+
+### `for-rango-longitud`
+
+Detecta `para i en rango(longitud(X)):`, patrón no idiomático
+heredado de C/Java/Pascal:
+
+```cornamusa
+xs = [1, 2, 3, 4, 5]
+para i en rango(longitud(xs)):     # ← warning
+    imprimir(xs[i])
+fin para
+```
+
+Sugiere:
+- Si NO necesitas el índice: `para x en xs:`.
+- Si SÍ lo necesitas: `para par en funcionales.enumerar(xs): ...` (v1.11) o `combinar(...)` para iteración paralela (v1.87).
+
+**Detalles del check**: solo el patrón exacto `rango(longitud(X))`
+dispara. Variantes como `rango(longitud(xs) - 1)`, `rango(1, longitud(xs))`,
+o `rango(longitud(xs) * 2)` no — son legítimas (ventana, salto, etc).
+
+### Auditoría del propio repo
+
+Los nuevos checks pillaron 3 verdaderos positivos del segundo
+(`for-rango-longitud`), ninguno del primero:
+
+- `examples/45_dict_ordenado.cor:48` — iteración paralela claves/valores.
+  Refactorizado a `funcionales.combinar(claves(config), valores(config))`.
+- `examples/74_depurador.cor:35` — iteración paralela precios/descuentos.
+  Refactorizado a `funcionales.combinar(precios, descuentos)`.
+- `examples/16_lista_busqueda.cor:10` — función `encontrar` que necesita
+  el índice. Caso legítimo, pero el ejemplo se ejecuta también en
+  tree-walking (sin `importar`), así que `# noqa: for-rango-longitud`
+  + comentario explicando por qué.
+
+Tras esto: 0/97 ficheros con warnings.
+
+### Tests
+
+9 asserts nuevos en `test_linter.c` (total: **93 asserts** cubriendo
+las 16 categorías):
+
+- `bool-coerce-conditional` con `verdadero/falso`, `falso/verdadero`,
+  ramas iguales (no dispara), no-booleanos (no dispara), tres ramas
+  (no dispara).
+- `for-rango-longitud` con patrón básico, `rango(N)` solo (no dispara),
+  `rango(longitud(xs) - 1)` (arg complejo, no dispara), `# noqa`.
+
+### Archivos
+
+- `src/linter.{c,h}` — 2 nuevos `LINT_*` + logica de detección en
+  `case SENT_SI` y `case SENT_PARA`.
+- `tests/unit/test_linter.c` — 9 asserts nuevos.
+- `examples/16_lista_busqueda.cor`, `45_dict_ordenado.cor`,
+  `74_depurador.cor` — fixes/noqa de hallazgos en auditoría.
+- `docs/referencia.md`, `FAQ.md`: lista actualizada a 16 categorías.
+
+### Estado
+
+249 tests verde, repo limpio (0 warnings).
+
+---
+
 ## [1.88.0] — 2026-05-17 — Stdlib `coleccion`: Pila, Cola, ColaDoble (18º módulo)
 
 Tres clases de estructuras de datos clásicas en un nuevo módulo

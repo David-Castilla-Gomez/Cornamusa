@@ -51,6 +51,8 @@ typedef struct {
     int n_empty_except;
     int n_redundant_bool_compare;  /* v1.81 */
     int n_useless_return;          /* v1.81 */
+    int n_bool_coerce_conditional; /* v1.89 */
+    int n_for_rango_longitud;      /* v1.89 */
 } Resumen;
 
 static Resumen analizar(const char *fuente) {
@@ -90,6 +92,8 @@ static Resumen analizar(const char *fuente) {
             case LINT_EMPTY_EXCEPT:    r.n_empty_except++; break;
             case LINT_REDUNDANT_BOOL_COMPARE: r.n_redundant_bool_compare++; break;
             case LINT_USELESS_RETURN:  r.n_useless_return++; break;
+            case LINT_BOOL_COERCE_CONDITIONAL: r.n_bool_coerce_conditional++; break;
+            case LINT_FOR_RANGO_LONGITUD: r.n_for_rango_longitud++; break;
         }
     }
     linter_resultado_destruir(&lr);
@@ -805,6 +809,105 @@ int main(void) {
             "    retornar nulo\n"
             "fin funcion\n");
         AFIRMAR(r.n_useless_return == 0, "ur_tras_si_ok");
+    }
+
+    /* ─── BOOL_COERCE_CONDITIONAL (v1.89) ─── */
+    {
+        Resumen r = analizar(
+            "funcion f(x):\n"
+            "    si x > 0:\n"
+            "        retornar verdadero\n"
+            "    sino:\n"
+            "        retornar falso\n"
+            "    fin si\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_bool_coerce_conditional == 1, "bcc_verdadero_falso");
+    }
+    {
+        Resumen r = analizar(
+            "funcion f(x):\n"
+            "    si x > 0:\n"
+            "        retornar falso\n"
+            "    sino:\n"
+            "        retornar verdadero\n"
+            "    fin si\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_bool_coerce_conditional == 1, "bcc_falso_verdadero");
+    }
+    {
+        /* Ambas ramas retornan lo mismo → NO es bcc (es otro problema). */
+        Resumen r = analizar(
+            "funcion f(x):\n"
+            "    si x > 0:\n"
+            "        retornar verdadero\n"
+            "    sino:\n"
+            "        retornar verdadero\n"
+            "    fin si\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_bool_coerce_conditional == 0, "bcc_no_dispara_si_iguales");
+    }
+    {
+        /* Si las ramas devuelven NO booleanos, no dispara. */
+        Resumen r = analizar(
+            "funcion f(x):\n"
+            "    si x > 0:\n"
+            "        retornar 1\n"
+            "    sino:\n"
+            "        retornar 0\n"
+            "    fin si\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_bool_coerce_conditional == 0, "bcc_no_dispara_no_bool");
+    }
+    {
+        /* Tres ramas: NO es el patron. */
+        Resumen r = analizar(
+            "funcion f(x):\n"
+            "    si x > 0:\n"
+            "        retornar verdadero\n"
+            "    sino si x < 0:\n"
+            "        retornar verdadero\n"
+            "    sino:\n"
+            "        retornar falso\n"
+            "    fin si\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_bool_coerce_conditional == 0, "bcc_no_tres_ramas");
+    }
+
+    /* ─── FOR_RANGO_LONGITUD (v1.89) ─── */
+    {
+        Resumen r = analizar(
+            "xs = [1, 2, 3]\n"
+            "para i en rango(longitud(xs)):\n"
+            "    imprimir(xs[i])\n"
+            "fin para\n");
+        AFIRMAR(r.n_for_rango_longitud == 1, "frl_basico");
+    }
+    {
+        /* rango(N) sin longitud — NO dispara. */
+        Resumen r = analizar(
+            "para i en rango(10):\n"
+            "    imprimir(i)\n"
+            "fin para\n");
+        AFIRMAR(r.n_for_rango_longitud == 0, "frl_rango_sin_longitud");
+    }
+    {
+        /* rango(longitud(...) - 1) — argumento más complejo, NO dispara
+         * (el patron exacto es rango(longitud(X))). */
+        Resumen r = analizar(
+            "xs = [1, 2, 3]\n"
+            "para i en rango(longitud(xs) - 1):\n"
+            "    imprimir(xs[i])\n"
+            "fin para\n");
+        AFIRMAR(r.n_for_rango_longitud == 0, "frl_arg_complejo");
+    }
+    {
+        /* noqa lo suprime. */
+        Resumen r = analizar(
+            "xs = [1, 2, 3]\n"
+            "para i en rango(longitud(xs)):  # noqa: for-rango-longitud\n"
+            "    imprimir(xs[i])\n"
+            "fin para\n");
+        AFIRMAR(r.n_for_rango_longitud == 0, "frl_noqa");
     }
 
     /* ─── COMBINADO: codigo limpio NO genera avisos ─── */

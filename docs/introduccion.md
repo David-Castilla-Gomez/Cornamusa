@@ -114,6 +114,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | `tiene_atributo` / `obtener_atributo` / `asignar_atributo` — atributos dinámicos | v1.86 | ✅ |
 | `funcionales` extendido: `agrupar_por`/`tomar`/`saltar`/`combinar`/`aplanar`/`unicos` | v1.87 | ✅ |
 | Stdlib `coleccion` con Pila / Cola / ColaDoble (18º módulo) | v1.88 | ✅ |
+| Linter `bool-coerce-conditional` + `for-rango-longitud` (16 categorías) | v1.89 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

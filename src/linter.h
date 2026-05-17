@@ -75,6 +75,8 @@ typedef enum {
     LINT_EMPTY_EXCEPT,    /* v1.69: `atrapar X: pasar` o body vacio — silencia error */
     LINT_REDUNDANT_BOOL_COMPARE, /* v1.81: `x == verdadero` (debe ser `x`) y similares */
     LINT_USELESS_RETURN,  /* v1.81: `retornar` o `retornar nulo` al final de funcion */
+    LINT_BOOL_COERCE_CONDITIONAL, /* v1.89: `si C: retornar verdadero sino: retornar falso fin si` */
+    LINT_FOR_RANGO_LONGITUD, /* v1.89: `para i en rango(longitud(xs))` cuando i no es usado como indice */
 } TipoWarning;
 
 typedef struct {

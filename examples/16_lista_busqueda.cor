@@ -7,7 +7,10 @@
 #   - Funcion auxiliar que devuelve indice de un valor (-1 si no esta).
 
 funcion encontrar(lista, valor):
-    para i en rango(longitud(lista)):
+    # Iteramos por indice porque devolvemos la POSICION, no el valor.
+    # Este ejemplo se corre tambien en tree-walking (que no soporta
+    # importar), por lo que mantenemos el patron clasico aqui.
+    para i en rango(longitud(lista)):  # noqa: for-rango-longitud
         si lista[i] == valor:
             retornar i
         fin si
