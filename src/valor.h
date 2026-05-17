@@ -78,6 +78,7 @@ typedef enum {
     VAL_MODULO,        /* módulo cargado via `importar` (Fase 9) */
     VAL_GENERADOR,     /* v1.31: generador suspendible con frame congelado */
     VAL_PROPIEDAD,     /* v1.78: getter envuelto para `@propiedad` */
+    VAL_METODO_ESTATICO, /* v1.84: closure envuelta para `@estaticometodo` */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -95,6 +96,7 @@ typedef struct Clase Clase;
 typedef struct Instancia Instancia;
 typedef struct MetodoLigado MetodoLigado;
 typedef struct Propiedad Propiedad;
+typedef struct MetodoEstatico MetodoEstatico;
 typedef struct Modulo Modulo;
 typedef struct Generador Generador;
 
@@ -180,6 +182,7 @@ typedef struct Valor {
         Modulo *modulo;     /* refcount; módulo cargado */
         Generador *generador; /* v1.31; refcount; generador suspendible */
         Propiedad *propiedad; /* v1.78; refcount; getter para `@propiedad` */
+        MetodoEstatico *metodo_estatico; /* v1.84; closure sin auto-yo */
     } como;
 } Valor;
 
@@ -589,6 +592,37 @@ void propiedad_retener(Propiedad *p);
 void propiedad_liberar(Propiedad *p);
 
 Valor valor_propiedad(Propiedad *p);
+
+/*
+ * v1.84: MetodoEstatico. Envuelve un Closure que cuando se accede
+ * via `Clase.metodo` o `instancia.metodo` NO se liga al receptor —
+ * se devuelve la closure desnuda. Util para utilities y constructores
+ * alternativos dentro de una clase:
+ *
+ *   clase Color:
+ *       @estaticometodo
+ *       funcion desde_hex(s):
+ *           # parsea "#RRGGBB" sin tener instancia
+ *           ...
+ *       fin funcion
+ *   fin clase
+ *
+ *   c = Color.desde_hex("#FF8800")
+ *
+ * Cuando se accede `Color.desde_hex` la VM desenvuelve y devuelve
+ * la closure pura, sin inyectar `yo`.
+ */
+struct MetodoEstatico {
+    GCObject obj;
+    Closure *closure;
+    int refcount;
+};
+
+MetodoEstatico *metodo_estatico_nuevo(Closure *closure);
+void metodo_estatico_retener(MetodoEstatico *m);
+void metodo_estatico_liberar(MetodoEstatico *m);
+
+Valor valor_metodo_estatico(MetodoEstatico *m);
 
 /*
  * Módulo cargado via `importar` (Fase 9).

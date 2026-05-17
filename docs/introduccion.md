@@ -109,6 +109,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Linter: `redundant-bool-compare` + `useless-return` (14 categorías) | v1.81 | ✅ |
 | Cookbook con 10 recetas validadas (CSV, JWT, hashing, decoradores, ...) | v1.82 | ✅ |
 | ESPEC.md actualizado a v1.82 (alineado tras 30+ versiones) | v1.83 | ✅ |
+| `@estaticometodo` — métodos sin `yo` implícito + soporte `Clase.metodo` | v1.84 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

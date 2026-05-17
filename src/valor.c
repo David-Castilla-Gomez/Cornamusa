@@ -603,6 +603,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_MODULO:
         case VAL_GENERADOR:
         case VAL_PROPIEDAD:
+        case VAL_METODO_ESTATICO:
             return false;
         case VAL_CLASE:
         case VAL_INSTANCIA:
@@ -1464,6 +1465,40 @@ Valor valor_propiedad(Propiedad *p) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * MetodoEstatico (v1.84) — closure sin auto-yo para `@estaticometodo`
+ * ────────────────────────────────────────────────────────────────── */
+
+MetodoEstatico *metodo_estatico_nuevo(Closure *closure) {
+    if (!closure) return NULL;
+    MetodoEstatico *m = (MetodoEstatico *)gc_alocar(sizeof(MetodoEstatico),
+                                                     GC_TIPO_METODO_ESTATICO);
+    if (!m) return NULL;
+    closure_retener(closure);
+    m->closure = closure;
+    m->refcount = 1;
+    return m;
+}
+
+void metodo_estatico_retener(MetodoEstatico *m) { if (m) m->refcount++; }
+
+void metodo_estatico_liberar(MetodoEstatico *m) {
+    if (!m) return;
+    m->refcount--;
+    if (m->refcount > 0) return;
+    closure_liberar(m->closure);
+    gc_desenlazar(&m->obj);
+    free(m);
+}
+
+Valor valor_metodo_estatico(MetodoEstatico *m) {
+    Valor v;
+    v.tipo = VAL_METODO_ESTATICO;
+    v.dueno_cadena = false;
+    v.como.metodo_estatico = m;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Módulo (Fase 9 v0.9.0)
  * ────────────────────────────────────────────────────────────────── */
 
@@ -1599,6 +1634,10 @@ void valor_destruir(Valor *v) {
             propiedad_liberar(v->como.propiedad);
             v->como.propiedad = NULL;
             break;
+        case VAL_METODO_ESTATICO:
+            metodo_estatico_liberar(v->como.metodo_estatico);
+            v->como.metodo_estatico = NULL;
+            break;
         default:
             break;
     }
@@ -1718,6 +1757,9 @@ Valor valor_clonar(const Valor *v) {
         case VAL_PROPIEDAD:
             propiedad_retener(v->como.propiedad);
             return valor_propiedad(v->como.propiedad);
+        case VAL_METODO_ESTATICO:
+            metodo_estatico_retener(v->como.metodo_estatico);
+            return valor_metodo_estatico(v->como.metodo_estatico);
     }
     return valor_nulo();
 }
@@ -2346,6 +2388,17 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             }
             break;
         }
+        case VAL_METODO_ESTATICO: {
+            const MetodoEstatico *m = v->como.metodo_estatico;
+            const FuncionBC *fn = m->closure ? m->closure->plantilla : NULL;
+            if (fn && fn->nombre) {
+                n = snprintf(buffer, (size_t)capacidad, "<estaticometodo %.*s>",
+                    fn->longitud_nombre, fn->nombre);
+            } else {
+                n = snprintf(buffer, (size_t)capacidad, "<estaticometodo>");
+            }
+            break;
+        }
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -2404,6 +2457,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_MODULO:        return "modulo";
         case VAL_GENERADOR:     return "generador";
         case VAL_PROPIEDAD:     return "propiedad";
+        case VAL_METODO_ESTATICO: return "funcion";   /* visible como funcion al usuario */
     }
     return "desconocido";
 }
@@ -2473,6 +2527,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.generador != NULL && !v->como.generador->agotado;
         case VAL_PROPIEDAD:
             return v->como.propiedad != NULL;
+        case VAL_METODO_ESTATICO:
+            return v->como.metodo_estatico != NULL;
     }
     return false;
 }
@@ -2622,6 +2678,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return a->como.generador == b->como.generador;
         case VAL_PROPIEDAD:
             return a->como.propiedad == b->como.propiedad;
+        case VAL_METODO_ESTATICO:
+            return a->como.metodo_estatico == b->como.metodo_estatico;
     }
     return false;
 }

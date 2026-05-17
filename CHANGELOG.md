@@ -6,6 +6,128 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.84.0] — 2026-05-17 — `@estaticometodo` + acceso `Clase.metodo`
+
+Cierra otra reserva del bloque OOP: métodos que NO reciben `yo`
+automáticamente. Combinado con el soporte nuevo para acceder atributos
+de la clase (no solo de la instancia), permite el patrón "constructor
+alternativo":
+
+```cornamusa
+clase Punto:
+    funcion __iniciar__(yo, x, b):
+        yo.x = x
+        yo.b = b
+    fin funcion
+
+    @estaticometodo
+    funcion origen():
+        retornar Punto(0, 0)
+    fin funcion
+
+    @estaticometodo
+    funcion distancia(p1, p2):
+        dx = p1.x - p2.x
+        dy = p1.b - p2.b
+        retornar (dx * dx + dy * dy) ** 0.5
+    fin funcion
+fin clase
+
+p1 = Punto.origen()        # constructor alternativo
+p2 = Punto(3, 4)
+d  = Punto.distancia(p1, p2)   # utility relacionada
+```
+
+### Diseño
+
+Análogo a `@propiedad` (v1.78):
+
+- **Nuevo `TipoValor`** `VAL_METODO_ESTATICO` con tag GC `GC_TIPO_METODO_ESTATICO`.
+  Envuelve un `Closure *closure` con refcount propio.
+- **Nativa `estaticometodo(callable)`** crea el wrapper. El decorador
+  `@estaticometodo funcion duplicar(n):` desugara a
+  `duplicar = estaticometodo(duplicar)`.
+- **`OP_OBTENER_ATRIBUTO` extendido**:
+  - Si la instancia accede a un método que es `VAL_METODO_ESTATICO`,
+    devuelve la closure desnuda (NO crea `MetodoLigado` con `yo`).
+  - **NUEVO**: si `obj` es `VAL_CLASE` (no solo `VAL_INSTANCIA`), el
+    opcode ahora soporta `Clase.metodo`:
+    - Método estático → devuelve closure desnuda.
+    - Método normal → devuelve closure no ligada (caller pasa `yo`
+      manualmente, semántica Python 3).
+    - Propiedad → error claro ("propiedad de instancia, no accesible
+      desde la clase").
+    - Inexistente → `ErrorDeAtributo`.
+
+### Cambio de comportamiento declarado
+
+Hasta v1.83, `Clase.X` lanzaba `ErrorDeTipo: 'clase' no tiene atributos
+accesibles`. Ahora resuelve contra el dict de métodos. **No es
+breaking** porque nada legítimo dependía del error — y ahora habilita
+casos antes imposibles.
+
+### Patrones que desbloquea
+
+```cornamusa
+# 1. Constructor alternativo:
+Punto.origen()
+Color.desde_hex("#FF8800")
+
+# 2. Namespace de utilities:
+clase MathExtra:
+    @estaticometodo
+    funcion clamp(v, lo, hi):
+        si v < lo: retornar lo fin si
+        si v > hi: retornar hi fin si
+        retornar v
+    fin funcion
+fin clase
+MathExtra.clamp(150, 0, 100)   # 100
+
+# 3. Acceso a método normal via clase (advanced):
+fn = Persona.saludar     # closure no ligada
+fn(persona, "hola")       # pasamos receptor explícito
+```
+
+### Limitaciones declaradas (siguen pendientes)
+
+- **`@clasemetodo`** (Python `@classmethod`, recibe la clase como
+  primer arg) — no implementado. Requeriría un VAL_METODO_DE_CLASE
+  análogo + inyección de la clase en la llamada.
+- **`@x.setter`** para `@propiedad` — sigue pendiente. Requiere scope
+  dentro del cuerpo de clase para que `@area.setter` funcione, o
+  sintaxis alternativa.
+
+### Tests
+
+14 asserts nuevos en `test_bytecode_estaticometodo.c`:
+
+- `Clase.metodo_estatico(args)` directamente.
+- `instancia.metodo_estatico(args)` sin inyectar `yo`.
+- Args se pasan normalmente (no shifted).
+- `estaticometodo(no_callable)` lanza `ErrorDeTipo`.
+- Acceso a método no estático via `Clase.X` devuelve closure no ligada.
+- Atributo inexistente de clase lanza `ErrorDeAtributo`.
+- Patrón constructor alternativo (`Punto.origen()`).
+
+### Archivos
+
+- `src/valor.{c,h}`, `src/memoria.{c,h}` — `VAL_METODO_ESTATICO` +
+  `struct MetodoEstatico` + GC integration.
+- `src/nativos.c` — nativa `estaticometodo()` registrada.
+- `src/vm.c` — `OP_OBTENER_ATRIBUTO` extendido con rama VAL_CLASE +
+  detección de VAL_METODO_ESTATICO en lookup de instancia.
+- `tests/unit/test_bytecode_estaticometodo.c` — 14 asserts.
+- `examples/77_estaticometodo.cor` — `Punto` con `origen`,
+  `desde_tupla`, `distancia` (utility) + `MathExtra` (namespace de
+  utilities con `cuadrado` y `clamp`).
+
+### Estado
+
+240 tests verde, repo limpio (0/97 warnings en lint, fmt sin drift).
+
+---
+
 ## [1.83.0] — 2026-05-17 — ESPEC.md alineado a v1.82 (deuda mayor cerrada)
 
 ESPEC.md llevaba 30+ versiones de atraso desde la auditoría de v1.74,

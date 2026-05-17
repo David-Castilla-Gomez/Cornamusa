@@ -4663,6 +4663,56 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     empujar(vm, v);
                     break;
                 }
+                /* v1.84: acceso `Clase.X`. Hasta v1.83 esto daba
+                 * ErrorDeTipo. Ahora soporta consultar el dict de
+                 * metodos de la clase. Util para invocar metodos
+                 * estaticos (@estaticometodo) como `Foo.bar()`.
+                 *
+                 * - Si el metodo es VAL_METODO_ESTATICO: devuelve la
+                 *   closure desnuda (consistente con `instancia.X`).
+                 * - Si es VAL_FUNCION_BC normal: devuelve la closure
+                 *   "no ligada" — el caller debe pasar `yo` como
+                 *   primer arg manualmente (semantica Python 3).
+                 * - Si es VAL_PROPIEDAD: dejarlo pasar a error
+                 *   (las propiedades no tienen sentido sin instancia). */
+                if (obj.tipo == VAL_CLASE) {
+                    Valor mv;
+                    if (dicc_obtener(obj.como.clase->metodos, nombre, &mv)) {
+                        if (mv.tipo == VAL_METODO_ESTATICO) {
+                            Closure *cl = mv.como.metodo_estatico->closure;
+                            closure_retener(cl);
+                            valor_destruir(&mv);
+                            valor_destruir(&obj);
+                            empujar(vm, valor_closure(cl));
+                            break;
+                        }
+                        if (mv.tipo == VAL_FUNCION_BC) {
+                            /* Funcion no ligada: el caller debe pasar
+                             * `yo` explicitamente. */
+                            valor_destruir(&obj);
+                            empujar(vm, mv);
+                            break;
+                        }
+                        /* Propiedad u otra cosa: error claro. */
+                        valor_destruir(&mv);
+                        VM_ERROR("ErrorDeTipo: '%.*s' es propiedad de instancia, "
+                                 "no se puede acceder desde la clase",
+                                 nombre->como.cadena.longitud,
+                                 nombre->como.cadena.texto);
+                        valor_destruir(&obj);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    /* Atributo no presente en la clase. */
+                    VM_ERROR("ErrorDeAtributo: clase '%.*s' no tiene atributo '%.*s'",
+                             obj.como.clase->longitud_nombre,
+                             obj.como.clase->nombre,
+                             nombre->como.cadena.longitud,
+                             nombre->como.cadena.texto);
+                    valor_destruir(&obj);
+                    RAISE_OR_DIE();
+                    break;
+                }
                 if (obj.tipo != VAL_INSTANCIA) {
                     VM_ERROR("ErrorDeTipo: '%s' no tiene atributos accesibles",
                              valor_nombre_tipo(&obj));
@@ -4716,6 +4766,18 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                                                                  "propiedad", 9);
                         closure_liberar(getter);
                         if (rcd != VM_OK) return rcd;
+                        break;
+                    }
+                    /* v1.84: si la entrada es VAL_METODO_ESTATICO,
+                     * devuelve la closure desnuda — NO crea
+                     * MetodoLigado. Esto se aplica tanto a
+                     * `instancia.metodo` como a `Clase.metodo`. */
+                    if (met_v.tipo == VAL_METODO_ESTATICO) {
+                        Closure *cl = met_v.como.metodo_estatico->closure;
+                        closure_retener(cl);
+                        valor_destruir(&met_v);
+                        valor_destruir(&obj);
+                        empujar(vm, valor_closure(cl));
                         break;
                     }
                     if (met_v.tipo != VAL_FUNCION_BC) {

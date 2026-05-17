@@ -290,6 +290,11 @@ void gc_marcar_objeto(GCObject *obj) {
             if (p->getter) gc_marcar_objeto(&p->getter->obj);
             break;
         }
+        case GC_TIPO_METODO_ESTATICO: {
+            const MetodoEstatico *m = (const MetodoEstatico *)obj;
+            if (m->closure) gc_marcar_objeto(&m->closure->obj);
+            break;
+        }
     }
 }
 
@@ -513,6 +518,11 @@ static void gc_liberar_objeto(GCObject *o) {
         case GC_TIPO_PROPIEDAD: {
             /* getter es GCObject — lo maneja su propio liberar via
                refcount. Aqui solo liberamos la struct Propiedad. */
+            free(o);
+            break;
+        }
+        case GC_TIPO_METODO_ESTATICO: {
+            /* closure es GCObject — analogo a Propiedad. */
             free(o);
             break;
         }

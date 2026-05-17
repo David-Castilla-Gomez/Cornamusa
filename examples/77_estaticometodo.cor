@@ -1,0 +1,73 @@
+# @estaticometodo (v1.84): metodos que NO reciben `yo` implicito.
+#
+# Util para:
+# - Constructores alternativos (`Punto.origen()`, `Color.desde_hex(s)`).
+# - Utilities relacionadas con la clase pero sin estado de instancia.
+#
+# Tambien permite acceder al metodo via `Clase.metodo()` directamente
+# (sin necesidad de crear una instancia).
+
+clase Punto:
+    funcion __iniciar__(yo, x, b):
+        yo.x = x
+        yo.b = b
+    fin funcion
+
+    # Constructor alternativo: punto en el origen.
+    @estaticometodo
+    funcion origen():
+        retornar Punto(0, 0)
+    fin funcion
+
+    # Constructor alternativo desde una tupla.
+    @estaticometodo
+    funcion desde_tupla(par):
+        retornar Punto(par[0], par[1])
+    fin funcion
+
+    # Utility relacionada con la clase pero sin estado de instancia:
+    # distancia entre dos puntos cualquiera.
+    @estaticometodo
+    funcion distancia(p1, p2):
+        dx = p1.x - p2.x
+        dy = p1.b - p2.b
+        retornar (dx * dx + dy * dy) ** 0.5
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"({yo.x}, {yo.b})"
+    fin funcion
+fin clase
+
+# Constructores alternativos:
+p1 = Punto.origen()
+p2 = Punto.desde_tupla((3, 4))
+imprimir(f"p1 = {p1}")
+imprimir(f"p2 = {p2}")
+
+# Utility:
+imprimir(f"distancia = {Punto.distancia(p1, p2)}")
+
+# ─── Patron 2: clase con solo metodos estaticos (namespace) ─────
+clase MathExtra:
+    @estaticometodo
+    funcion cuadrado(n):
+        retornar n * n
+    fin funcion
+
+    @estaticometodo
+    funcion clamp(valor, minimo, maximo):
+        si valor < minimo:
+            retornar minimo
+        fin si
+        si valor > maximo:
+            retornar maximo
+        fin si
+        retornar valor
+    fin funcion
+fin clase
+
+imprimir(f"\nMathExtra.cuadrado(7) = {MathExtra.cuadrado(7)}")
+imprimir(f"MathExtra.clamp(150, 0, 100) = {MathExtra.clamp(150, 0, 100)}")
+imprimir(f"MathExtra.clamp(-5, 0, 100) = {MathExtra.clamp(-5, 0, 100)}")
+imprimir(f"MathExtra.clamp(50, 0, 100) = {MathExtra.clamp(50, 0, 100)}")

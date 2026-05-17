@@ -2702,6 +2702,42 @@ static Valor nativa_propiedad(EvalError *err, int n_args, Valor *args,
     return valor_propiedad(p);
 }
 
+/* v1.84: `@estaticometodo` — marca una funcion para que cuando se
+ * acceda via `Clase.X` o `instancia.X`, NO se le ligue el receptor.
+ * El usuario hace:
+ *
+ *   clase Color:
+ *       @estaticometodo
+ *       funcion desde_hex(s):
+ *           ...
+ *       fin funcion
+ *   fin clase
+ *
+ *   c = Color.desde_hex("#FF8800")   # invoca closure desnuda
+ *
+ * desugar a `desde_hex = estaticometodo(desde_hex)`, lo cual produce
+ * un VAL_METODO_ESTATICO que OP_METODO guarda en clase.metodos. Al
+ * acceder, OP_OBTENER_ATRIBUTO devuelve la closure interna sin
+ * envolver en MetodoLigado. */
+static Valor nativa_estaticometodo(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: estaticometodo() requiere 1 argumento (callable)");
+    }
+    if (args[0].tipo != VAL_FUNCION_BC) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: estaticometodo() espera una funcion, recibio '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    MetodoEstatico *m = metodo_estatico_nuevo(args[0].como.closure);
+    if (!m) {
+        return error_nativa(err, linea, columna,
+            "memoria insuficiente al crear estaticometodo");
+    }
+    return valor_metodo_estatico(m);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Tiempo monotónico + sleep + epoch_ms (v1.73).
  * Wrappers del stdlib `tiempo.cor`. `tiempo_actual` (segundos) ya
@@ -3842,6 +3878,8 @@ static const EntradaNativa NATIVAS[] = {
     {"tiempo_dormir",       13, nativa_tiempo_dormir},
     /* @propiedad (v1.78). */
     {"propiedad",            9, nativa_propiedad},
+    /* @estaticometodo (v1.84). */
+    {"estaticometodo",      14, nativa_estaticometodo},
     /* Azar (v1.26). */
     {"azar_decimal",        12, nativa_azar_decimal},
     {"azar_entero",         11, nativa_azar_entero},
