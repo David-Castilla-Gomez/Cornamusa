@@ -56,6 +56,7 @@ typedef enum {
     GC_TIPO_GENERADOR,  /* v1.31 */
     GC_TIPO_PROPIEDAD,  /* v1.78: getter para @propiedad */
     GC_TIPO_METODO_ESTATICO, /* v1.84: closure para @estaticometodo */
+    GC_TIPO_METODO_DE_CLASE, /* v1.85: closure para @clasemetodo */
 } TipoGC;
 
 /*

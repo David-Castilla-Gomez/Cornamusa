@@ -4686,6 +4686,22 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                             empujar(vm, valor_closure(cl));
                             break;
                         }
+                        /* v1.85: VAL_METODO_DE_CLASE liga la clase
+                         * como receptor del MetodoLigado. Cuando se
+                         * invoque, el slot 0 sera la clase (igual
+                         * que `yo` para instancias normales). */
+                        if (mv.tipo == VAL_METODO_DE_CLASE) {
+                            Closure *cl = mv.como.metodo_de_clase->closure;
+                            MetodoLigado *bm = metodo_ligado_nuevo(&obj, cl);
+                            valor_destruir(&mv);
+                            valor_destruir(&obj);
+                            if (!bm) {
+                                VM_ERROR("memoria insuficiente al ligar clasemetodo");
+                                return VM_ERROR_RUNTIME;
+                            }
+                            empujar(vm, valor_metodo_ligado(bm));
+                            break;
+                        }
                         if (mv.tipo == VAL_FUNCION_BC) {
                             /* Funcion no ligada: el caller debe pasar
                              * `yo` explicitamente. */
@@ -4778,6 +4794,27 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         valor_destruir(&met_v);
                         valor_destruir(&obj);
                         empujar(vm, valor_closure(cl));
+                        break;
+                    }
+                    /* v1.85: si la entrada es VAL_METODO_DE_CLASE,
+                     * liga la clase de la instancia como receptor
+                     * (no la instancia misma). Polimorfismo: si
+                     * `obj` es de un Hijo que hereda de Base, el
+                     * receptor sera Hijo (no Base) — clave para
+                     * constructores alternativos polimorficos. */
+                    if (met_v.tipo == VAL_METODO_DE_CLASE) {
+                        Closure *cl = met_v.como.metodo_de_clase->closure;
+                        Valor receptor_clase = valor_clase(obj.como.instancia->clase);
+                        clase_retener(receptor_clase.como.clase);
+                        MetodoLigado *bm = metodo_ligado_nuevo(&receptor_clase, cl);
+                        valor_destruir(&receptor_clase);
+                        valor_destruir(&met_v);
+                        valor_destruir(&obj);
+                        if (!bm) {
+                            VM_ERROR("memoria insuficiente al ligar clasemetodo");
+                            return VM_ERROR_RUNTIME;
+                        }
+                        empujar(vm, valor_metodo_ligado(bm));
                         break;
                     }
                     if (met_v.tipo != VAL_FUNCION_BC) {

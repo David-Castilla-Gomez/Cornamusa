@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.84.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.85.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.84.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **`@estaticometodo` implementado**: marca un método como estático (NO recibe `yo` automático). Útil para constructores alternativos (`Punto.origen()`, `Punto.desde_tupla(par)`) y utilities relacionadas con una clase sin estado de instancia (`MathExtra.clamp(v, min, max)`). Como bonus: `OP_OBTENER_ATRIBUTO` ahora soporta `Clase.metodo` además de `instancia.metodo` — métodos normales acceden como closures no ligadas (caller pasa `yo` explícito, semántica Python 3). 240 tests verde con 14 asserts nuevos en `test_bytecode_estaticometodo`. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.85.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **`@clasemetodo` completa el trío de decoradores OOP** (método normal con `yo`, `@estaticometodo` sin nada, `@clasemetodo` con la clase). El método recibe la clase como primer argumento (`cls`), lo que habilita **constructores alternativos polimórficos**: `Hijo.crear(7)` recibe `cls = Hijo` aunque `crear` esté declarado en la clase base — el constructor de la subclase se invoca correctamente. Implementado con `VAL_METODO_DE_CLASE` + `MetodoLigado` reutilizado (receptor = clase). 242 tests verde con 11 asserts nuevos. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -189,6 +189,7 @@ Hoja de ruta resumida:
 | **v1.82** | **Cookbook con 10 recetas validadas (CSV, JWT, hashing, backoff, memoize, ...)** | ✅ |
 | **v1.83** | **ESPEC.md alineado a v1.82 — stdlib 17 módulos, tooling, decoradores, `@propiedad`** | ✅ |
 | **v1.84** | **`@estaticometodo` — métodos sin `yo` implícito, soporte `Clase.metodo`** | ✅ |
+| **v1.85** | **`@clasemetodo` — método recibe `cls`, constructores alternativos polimórficos** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

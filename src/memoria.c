@@ -295,6 +295,11 @@ void gc_marcar_objeto(GCObject *obj) {
             if (m->closure) gc_marcar_objeto(&m->closure->obj);
             break;
         }
+        case GC_TIPO_METODO_DE_CLASE: {
+            const MetodoDeClase *m = (const MetodoDeClase *)obj;
+            if (m->closure) gc_marcar_objeto(&m->closure->obj);
+            break;
+        }
     }
 }
 
@@ -523,6 +528,10 @@ static void gc_liberar_objeto(GCObject *o) {
         }
         case GC_TIPO_METODO_ESTATICO: {
             /* closure es GCObject — analogo a Propiedad. */
+            free(o);
+            break;
+        }
+        case GC_TIPO_METODO_DE_CLASE: {
             free(o);
             break;
         }

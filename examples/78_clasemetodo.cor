@@ -1,0 +1,87 @@
+# @clasemetodo (v1.85): metodos que reciben la clase como primer arg.
+#
+# Diferencia con @estaticometodo:
+# - @estaticometodo: NO recibe yo ni cls. Funcion plana dentro de clase.
+# - @clasemetodo: recibe la CLASE como primer arg (no la instancia).
+#   Util para constructores alternativos polimorficos: si una subclase
+#   los llama, recibe la subclase como cls, NO la clase base.
+
+# ─── Patron 1: constructor alternativo polimorfico ───────────────
+clase Forma:
+    funcion __iniciar__(yo, lados):
+        yo.lados = lados
+    fin funcion
+
+    @clasemetodo
+    funcion triangulo(cls):
+        # cls() llama al constructor de la clase real, no de Forma.
+        # Si Triangulo hereda y redefine __iniciar__, se respetara.
+        retornar cls(3)
+    fin funcion
+
+    @clasemetodo
+    funcion cuadrado(cls):
+        retornar cls(4)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"<Forma con {yo.lados} lados>"
+    fin funcion
+fin clase
+
+clase FormaColorada extiende Forma:
+    funcion __iniciar__(yo, lados):
+        yo.lados = lados
+        yo.color = "rojo"   # campo extra que Forma no tiene
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"<FormaColorada {yo.color} con {yo.lados} lados>"
+    fin funcion
+fin clase
+
+# Llamar al constructor alternativo desde la base:
+t = Forma.triangulo()
+imprimir(t)                  # <Forma con 3 lados>
+
+# Llamar el MISMO metodo desde la subclase: cls = FormaColorada.
+# El constructor de FormaColorada se invoca, asi que se inicializa
+# tambien el campo `color`.
+tc = FormaColorada.triangulo()
+imprimir(tc)                 # <FormaColorada rojo con 3 lados>
+imprimir(f"color: {tc.color}")
+
+# ─── Patron 2: combinar con @estaticometodo ──────────────────────
+# Los clasemetodos pueden usar metodos estaticos de la misma clase
+# via `cls.helper(...)`. Funciona porque `cls` es la clase, y
+# acceder un metodo estatico de una clase devuelve la closure desnuda.
+
+clase Calculadora:
+    @estaticometodo
+    funcion validar(n):
+        si n < 0:
+            lanzar ErrorDeValor("no puede ser negativo")
+        fin si
+        retornar n
+    fin funcion
+
+    @clasemetodo
+    funcion crear_seguro(cls, n):
+        # Usamos el metodo estatico via cls antes de construir.
+        valor = cls.validar(n)
+        retornar cls(valor)
+    fin funcion
+
+    funcion __iniciar__(yo, valor):
+        yo.valor = valor
+    fin funcion
+fin clase
+
+c = Calculadora.crear_seguro(42)
+imprimir(f"\ncalc.valor = {c.valor}")
+
+intentar:
+    bad = Calculadora.crear_seguro(-5)
+atrapar ErrorDeValor como e:
+    imprimir(f"capturado: {e}")
+fin intentar

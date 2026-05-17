@@ -2738,6 +2738,42 @@ static Valor nativa_estaticometodo(EvalError *err, int n_args, Valor *args,
     return valor_metodo_estatico(m);
 }
 
+/* v1.85: `@clasemetodo` — marca una funcion para que cuando se acceda
+ * via `Clase.X` o `instancia.X`, se liga a la clase como primer arg.
+ * Patron Python `@classmethod`:
+ *
+ *   clase Foo:
+ *       @clasemetodo
+ *       funcion crear(cls, ...):
+ *           retornar cls(...)   # polimorfico: si Bar hereda de Foo,
+ *                                # Bar.crear() crea un Bar.
+ *       fin funcion
+ *   fin clase
+ *
+ * desugar a `crear = clasemetodo(crear)`, produciendo un
+ * VAL_METODO_DE_CLASE que OP_METODO guarda en clase.metodos. Al
+ * acceder, OP_OBTENER_ATRIBUTO crea un MetodoLigado con receptor =
+ * valor_clase(la_clase), de modo que cuando se invoque la closure
+ * recibe la clase como slot 0. */
+static Valor nativa_clasemetodo(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: clasemetodo() requiere 1 argumento (callable)");
+    }
+    if (args[0].tipo != VAL_FUNCION_BC) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: clasemetodo() espera una funcion, recibio '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    MetodoDeClase *m = metodo_de_clase_nuevo(args[0].como.closure);
+    if (!m) {
+        return error_nativa(err, linea, columna,
+            "memoria insuficiente al crear clasemetodo");
+    }
+    return valor_metodo_de_clase(m);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Tiempo monotónico + sleep + epoch_ms (v1.73).
  * Wrappers del stdlib `tiempo.cor`. `tiempo_actual` (segundos) ya
@@ -3880,6 +3916,8 @@ static const EntradaNativa NATIVAS[] = {
     {"propiedad",            9, nativa_propiedad},
     /* @estaticometodo (v1.84). */
     {"estaticometodo",      14, nativa_estaticometodo},
+    /* @clasemetodo (v1.85). */
+    {"clasemetodo",         11, nativa_clasemetodo},
     /* Azar (v1.26). */
     {"azar_decimal",        12, nativa_azar_decimal},
     {"azar_entero",         11, nativa_azar_entero},

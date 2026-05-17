@@ -110,6 +110,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Cookbook con 10 recetas validadas (CSV, JWT, hashing, decoradores, ...) | v1.82 | ✅ |
 | ESPEC.md actualizado a v1.82 (alineado tras 30+ versiones) | v1.83 | ✅ |
 | `@estaticometodo` — métodos sin `yo` implícito + soporte `Clase.metodo` | v1.84 | ✅ |
+| `@clasemetodo` — método recibe `cls`, polimórfico en herencia | v1.85 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

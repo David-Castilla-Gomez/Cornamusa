@@ -6,6 +6,123 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.85.0] — 2026-05-17 — `@clasemetodo` (cierra el trío OOP de decoradores)
+
+Tras `@propiedad` (v1.78), `@estaticometodo` (v1.84), llega
+`@clasemetodo`: el método recibe la clase como primer argumento.
+Habilita **constructores alternativos polimórficos**.
+
+```cornamusa
+clase Forma:
+    funcion __iniciar__(yo, lados):
+        yo.lados = lados
+    fin funcion
+
+    @clasemetodo
+    funcion triangulo(cls):
+        # cls() crea instancia de la clase REAL, no de Forma.
+        retornar cls(3)
+    fin funcion
+fin clase
+
+clase FormaColorada extiende Forma:
+    funcion __iniciar__(yo, lados):
+        yo.lados = lados
+        yo.color = "rojo"
+    fin funcion
+fin clase
+
+t = Forma.triangulo()           # cls = Forma
+tc = FormaColorada.triangulo()  # cls = FormaColorada (polimorfismo)
+# tc tiene yo.color = "rojo" — el constructor de FormaColorada se invocó.
+```
+
+### Diseño
+
+Reutiliza la infraestructura de v1.84 con un giro mínimo:
+
+- **Nuevo `TipoValor`** `VAL_METODO_DE_CLASE` con tag GC
+  `GC_TIPO_METODO_DE_CLASE`. Envuelve un `Closure *closure`.
+- **Nativa `clasemetodo(callable)`** crea el wrapper.
+- **`OP_OBTENER_ATRIBUTO` extendido** (en las dos ramas `VAL_CLASE`
+  e `VAL_INSTANCIA`): cuando encuentra un `VAL_METODO_DE_CLASE` en
+  `clase.metodos`, **crea un `MetodoLigado`** con:
+  - `metodo` = closure interna.
+  - `receptor` = `valor_clase(la_clase)`. Para acceso vía clase, es
+    la clase directamente. Para acceso vía instancia, es
+    `obj.como.instancia->clase` — clave para polimorfismo: si la
+    instancia es de una subclase, el receptor es la subclase.
+
+`MetodoLigado` ya existía y aceptaba cualquier `Valor` como receptor.
+La VM inyecta el receptor en slot 0 al llamar — patrón uniforme con
+métodos normales. Cero opcode nuevo.
+
+### Polimorfismo verificado
+
+Test 3 de la suite construye exactamente este escenario:
+
+```cornamusa
+clase Base:
+    @clasemetodo
+    funcion crear(cls, n):
+        retornar cls(n * 10)
+    fin funcion
+    funcion __iniciar__(yo, v): yo.v = v fin funcion
+fin clase
+
+clase Hijo extiende Base:
+    funcion __iniciar__(yo, v):
+        yo.v = v + 1000   # marker para detectar quién construyó
+    fin funcion
+fin clase
+
+assert(Base.crear(5).v == 50)     # cls = Base → 5*10 = 50
+assert(Hijo.crear(7).v == 1070)   # cls = Hijo → 7*10 + 1000 (constructor del hijo)
+```
+
+### Trío de decoradores OOP completo
+
+| Decorador | Recibe | Uso típico |
+|---|---|---|
+| (ninguno) | `yo` (instancia) | Comportamiento de la instancia |
+| `@propiedad` (v1.78) | `yo` + getter sin paréntesis | Atributos computados |
+| `@estaticometodo` (v1.84) | nada | Utilities, namespace bajo clase |
+| `@clasemetodo` (v1.85) | `cls` (la clase) | Constructores alternativos polimórficos |
+
+Lo único que queda en el bloque OOP de decoradores es `@x.setter`
+para `@propiedad` — sigue pendiente (requiere scope dentro del
+cuerpo de clase).
+
+### Tests
+
+11 asserts nuevos en `test_bytecode_clasemetodo.c`:
+
+- `Clase.cm(args)` directo (cls = la clase).
+- `instancia.cm(args)` (cls = clase de la instancia).
+- Polimorfismo con herencia: `Hijo.cm()` recibe Hijo, no Base.
+- 0 args (solo cls).
+- `clasemetodo(no_callable)` lanza `ErrorDeTipo`.
+- `@clasemetodo` puede usar `@estaticometodo` de la misma clase via
+  `cls.helper(...)` — clase es la clase, tiene los métodos.
+
+### Archivos
+
+- `src/valor.{c,h}`, `src/memoria.{c,h}` — `VAL_METODO_DE_CLASE` +
+  `struct MetodoDeClase` + GC integration. Patrón idéntico a v1.84.
+- `src/nativos.c` — nativa `clasemetodo()` registrada.
+- `src/vm.c` — `OP_OBTENER_ATRIBUTO` añade dos ramas (VAL_CLASE y
+  VAL_INSTANCIA) que crean `MetodoLigado` con receptor = clase.
+- `tests/unit/test_bytecode_clasemetodo.c` — 11 asserts.
+- `examples/78_clasemetodo.cor` — `Forma` + `FormaColorada` con
+  constructor alternativo polimórfico + `Calculadora.crear_seguro`
+  combinando `@clasemetodo` y `@estaticometodo`.
+
+### Estado
+
+242 tests verde, repo limpio.
+
+---
+
 ## [1.84.0] — 2026-05-17 — `@estaticometodo` + acceso `Clase.metodo`
 
 Cierra otra reserva del bloque OOP: métodos que NO reciben `yo`

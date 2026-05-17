@@ -79,6 +79,7 @@ typedef enum {
     VAL_GENERADOR,     /* v1.31: generador suspendible con frame congelado */
     VAL_PROPIEDAD,     /* v1.78: getter envuelto para `@propiedad` */
     VAL_METODO_ESTATICO, /* v1.84: closure envuelta para `@estaticometodo` */
+    VAL_METODO_DE_CLASE, /* v1.85: closure envuelta para `@clasemetodo` */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -97,6 +98,7 @@ typedef struct Instancia Instancia;
 typedef struct MetodoLigado MetodoLigado;
 typedef struct Propiedad Propiedad;
 typedef struct MetodoEstatico MetodoEstatico;
+typedef struct MetodoDeClase MetodoDeClase;
 typedef struct Modulo Modulo;
 typedef struct Generador Generador;
 
@@ -183,6 +185,7 @@ typedef struct Valor {
         Generador *generador; /* v1.31; refcount; generador suspendible */
         Propiedad *propiedad; /* v1.78; refcount; getter para `@propiedad` */
         MetodoEstatico *metodo_estatico; /* v1.84; closure sin auto-yo */
+        MetodoDeClase *metodo_de_clase; /* v1.85; closure con auto-clase */
     } como;
 } Valor;
 
@@ -623,6 +626,36 @@ void metodo_estatico_retener(MetodoEstatico *m);
 void metodo_estatico_liberar(MetodoEstatico *m);
 
 Valor valor_metodo_estatico(MetodoEstatico *m);
+
+/*
+ * v1.85: MetodoDeClase. Envuelve un Closure que cuando se accede
+ * via `Clase.X` o `instancia.X` se "liga" a la clase como primer
+ * argumento. Patron Python `@classmethod`:
+ *
+ *   clase Foo:
+ *       @clasemetodo
+ *       funcion crear(cls, ...):
+ *           retornar cls(...)
+ *       fin funcion
+ *   fin clase
+ *
+ *   Foo.crear(...)         # cls = Foo
+ *   Bar.crear(...)         # si Bar hereda de Foo, cls = Bar (polimorfismo)
+ *
+ * Internamente, OP_OBTENER_ATRIBUTO crea un MetodoLigado con
+ * receptor = valor_clase(la_clase) y metodo = closure interna.
+ */
+struct MetodoDeClase {
+    GCObject obj;
+    Closure *closure;
+    int refcount;
+};
+
+MetodoDeClase *metodo_de_clase_nuevo(Closure *closure);
+void metodo_de_clase_retener(MetodoDeClase *m);
+void metodo_de_clase_liberar(MetodoDeClase *m);
+
+Valor valor_metodo_de_clase(MetodoDeClase *m);
 
 /*
  * Módulo cargado via `importar` (Fase 9).
