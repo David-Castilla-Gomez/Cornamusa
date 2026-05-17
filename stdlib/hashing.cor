@@ -38,12 +38,12 @@
 #   - Hashing incremental (procesar archivo en chunks). El input
 #     es toda la cadena de una vez.
 
-funcion sha256(cadena):
-    retornar hash_sha256(cadena)
+funcion sha256(s):
+    retornar hash_sha256(s)
 fin funcion
 
-funcion md5(cadena):
-    retornar hash_md5(cadena)
+funcion md5(s):
+    retornar hash_md5(s)
 fin funcion
 
 # HMAC (v1.65, RFC 2104 / RFC 4231). Mensaje firmado con clave secreta.

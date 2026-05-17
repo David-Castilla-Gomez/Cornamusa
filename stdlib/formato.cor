@@ -10,21 +10,6 @@
 
 importar cadenas
 
-# Aliases locales para facilitar lectura. v1.18 tenía helpers `_*`
-# duplicados por un bug de re-import; v1.18.1 lo arregló y ahora
-# delegamos en cadenas.* directamente.
-funcion _repetir(s, n):
-    retornar cadenas.repetir(s, n)
-fin funcion
-
-funcion _unir(partes, sep):
-    retornar cadenas.unir(partes, sep)
-fin funcion
-
-funcion _indice_de(s, sub):
-    retornar cadenas.indice_de(s, sub)
-fin funcion
-
 # Rellena `s` con `caracter` a la derecha hasta alcanzar `ancho`.
 funcion rellenar(s, ancho, caracter=" "):
     s_str = cadena(s)
@@ -32,7 +17,7 @@ funcion rellenar(s, ancho, caracter=" "):
     si n >= ancho:
         retornar s_str
     fin si
-    retornar s_str + _repetir(caracter, ancho - n)
+    retornar s_str + cadenas.repetir(caracter, ancho - n)
 fin funcion
 
 # Alinea `s` a la derecha rellenando con `caracter` a la izquierda.
@@ -42,7 +27,7 @@ funcion alinear_derecha(s, ancho, caracter=" "):
     si n >= ancho:
         retornar s_str
     fin si
-    retornar _repetir(caracter, ancho - n) + s_str
+    retornar cadenas.repetir(caracter, ancho - n) + s_str
 fin funcion
 
 # Centra `s` rellenando ambos lados. Si el padding es impar, el extra
@@ -56,7 +41,7 @@ funcion centrar(s, ancho, caracter=" "):
     total = ancho - n
     izq = total // 2
     der = total - izq
-    retornar _repetir(caracter, izq) + s_str + _repetir(caracter, der)
+    retornar cadenas.repetir(caracter, izq) + s_str + cadenas.repetir(caracter, der)
 fin funcion
 
 # Devuelve `n` como cadena con `decimales` cifras decimales fijas.
@@ -66,7 +51,7 @@ funcion con_decimales(n, decimales=2):
     fin si
     r = redondear(n, decimales)
     s = cadena(r)
-    pos = _indice_de(s, ".")
+    pos = cadenas.indice_de(s, ".")
     si decimales == 0:
         si pos < 0:
             retornar s
@@ -74,11 +59,11 @@ funcion con_decimales(n, decimales=2):
         retornar s[:pos]
     fin si
     si pos < 0:
-        retornar s + "." + _repetir("0", decimales)
+        retornar s + "." + cadenas.repetir("0", decimales)
     fin si
     cifras_actuales = longitud(s) - pos - 1
     si cifras_actuales < decimales:
-        retornar s + _repetir("0", decimales - cifras_actuales)
+        retornar s + cadenas.repetir("0", decimales - cifras_actuales)
     fin si
     retornar s
 fin funcion
@@ -93,7 +78,7 @@ funcion numero_con_separador(n, separador="_"):
         s = s[1:]
     fin si
     # Separar parte entera de la fraccional si hay punto.
-    pos = _indice_de(s, ".")
+    pos = cadenas.indice_de(s, ".")
     fraccional = ""
     si pos >= 0:
         fraccional = s[pos:]
@@ -111,7 +96,7 @@ funcion numero_con_separador(n, separador="_"):
     fin mientras
     agregar(grupos, s[:i])
     invertir(grupos)
-    retornar signo + _unir(grupos, separador) + fraccional
+    retornar signo + cadenas.unir(grupos, separador) + fraccional
 fin funcion
 
 # Formatea un decimal como porcentaje. `0.345` → `"34.50%"`.
@@ -122,15 +107,12 @@ fin funcion
 # Convierte un entero positivo a hexadecimal.
 funcion como_hex(n, prefijo="0x"):
     si n < 0:
-        lanzar ErrorDeValor("como_hex requiere n >= 0 en v1.18")
+        lanzar ErrorDeValor("como_hex requiere n >= 0")
     fin si
     si n == 0:
         retornar prefijo + "0"
     fin si
     digitos = "0123456789abcdef"
-    # v1.63: lista + unir + invertir en lugar de `s = digit + s`
-    # (O(n^2)). Para enteros bignum (cientos de digitos) hace
-    # diferencia medible.
     partes = []
     valor = n
     mientras valor > 0:
@@ -144,7 +126,7 @@ fin funcion
 # Convierte un entero positivo a binario.
 funcion como_binario(n, prefijo="0b"):
     si n < 0:
-        lanzar ErrorDeValor("como_binario requiere n >= 0 en v1.18")
+        lanzar ErrorDeValor("como_binario requiere n >= 0")
     fin si
     si n == 0:
         retornar prefijo + "0"
@@ -165,7 +147,7 @@ fin funcion
 
 # Repite `caracter` `ancho` veces (útil para separadores).
 funcion linea(caracter="-", ancho=60):
-    retornar _repetir(caracter, ancho)
+    retornar cadenas.repetir(caracter, ancho)
 fin funcion
 
 # Construye una fila tabular con anchos de columna.
@@ -175,5 +157,5 @@ funcion fila(valores, anchos, separador=" | "):
     para i en rango(n):
         agregar(partes, rellenar(cadena(valores[i]), anchos[i]))
     fin para
-    retornar _unir(partes, separador)
+    retornar cadenas.unir(partes, separador)
 fin funcion

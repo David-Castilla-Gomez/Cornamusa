@@ -6,6 +6,86 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.80.0] — 2026-05-17 — Limpieza de stdlib (dead code + params renombrados)
+
+Release de mantenimiento tras 4 releases consecutivas de features
+(v1.76-v1.79). Cierra la deuda detectada en la auditoría de v1.74 y
+no abordada hasta ahora.
+
+### Dead code eliminado
+
+| Símbolo | Donde | Razón |
+|---|---|---|
+| `funcionales.enumerar_desde(xs, inicio)` | `stdlib/funcionales.cor` | Deprecada desde v1.17 (56 versiones), cero usos en repo. Usa `enumerar(xs, inicio)`. |
+| `funcionales.suma_desde(xs, inicial)` | `stdlib/funcionales.cor` | Deprecada desde v1.17, cero usos. Usa `suma(xs, inicial)`. |
+| `cadenas.caracter(s, i)` | `stdlib/cadenas.cor` | Wrapper trivial de `s[i]` (built-in syntax). Sin usos en stdlib. Una sola referencia en `examples/22_modulos_avanzado.cor` actualizada para usar `s[i]` directamente. |
+| `formato._repetir`, `_unir`, `_indice_de` | `stdlib/formato.cor` | Helpers privados que eran workaround de un bug de re-import en v1.18, ya resuelto en v1.18.1. Reemplazados por llamadas directas a `cadenas.repetir`/`cadenas.unir`/`cadenas.indice_de`. |
+
+Total: ~80 líneas menos en stdlib.
+
+### Param `cadena` renombrado a `s`
+
+En `base64.cor` y `hashing.cor` el parámetro de las funciones se
+llamaba `cadena`, que sombrea el conversor built-in `cadena(x)`
+dentro del cuerpo:
+
+```cornamusa
+# Antes (peligroso si dentro queremos convertir algo):
+funcion sha256(cadena):
+    retornar hash_sha256(cadena)
+fin funcion
+
+# Ahora:
+funcion sha256(s):
+    retornar hash_sha256(s)
+fin funcion
+```
+
+Cambio cosmético, pero la auditoría lo marcó como foot-gun real
+(8 funciones afectadas entre los dos módulos). Sin breaking change
+visible — los argumentos siguen siendo posicionales.
+
+### `cadenas.contar` PRESERVADO
+
+La auditoría lo marcó como dead code (cero usos en repo), pero
+`examples/22_modulos_avanzado.cor` lo importa selectivamente. Más
+importante: NO tiene reemplazo nativo directo, así que quitarlo
+sería regresión real para cualquier usuario externo que cuente
+ocurrencias de substring. Se mantiene.
+
+### Comentarios obsoletos limpiados
+
+- Mensaje de error `como_hex requiere n >= 0 en v1.18` → quitado el
+  `"en v1.18"` (la limitación sigue, pero ya no está pinned a una
+  versión específica).
+- `como_binario` igual.
+- Nota técnica v0.9.x sobre bug del compilador en `cadenas.contar`
+  → quitada (el workaround sigue funcionando pero la causa original
+  está resuelta).
+- Comentario sobre `formato._*` aliases — desaparece junto con los
+  helpers.
+
+### `docs/referencia.md` actualizado
+
+§16 (Biblioteca estándar):
+- `cadenas`: quitado `caracter(s,i)` de la lista; añadida nota
+  "Para `s[i]` usa la indexación built-in".
+- `funcionales`: quitada mención a `enumerar_desde`/`suma_desde`.
+
+### Riesgo de breaking change
+
+**Bajo**. `enumerar_desde`/`suma_desde` estaban marcados deprecados
+desde v1.17 (16 meses si una versión fuera un mes). `cadenas.caracter`
+era wrapper trivial. Los helpers `_*` de `formato` eran privados.
+Pero **sí** rompo compat con cualquier código externo que dependa
+de estas funciones — declarado.
+
+### Tests
+
+239 tests verde sin cambios.
+
+---
+
 ## [1.79.0] — 2026-05-17 — Tutorial expandido a material didáctico completo
 
 Cierra el tercer eje del plan de mejora propuesto tras la autoevaluación

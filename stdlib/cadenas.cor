@@ -39,12 +39,6 @@ funcion unir(partes, sep):
     retornar cadena_unir(partes, sep)
 fin funcion
 
-# Devuelve el carácter (cadena de 1) en la posición indicada.
-# Indices negativos cuentan desde el final.
-funcion caracter(s, i):
-    retornar s[i]
-fin funcion
-
 # v1.62: las 3 funciones siguientes delegan a nativas O(bytes) con
 # memcmp. Las versiones puras anteriores eran O(n^2) por la
 # combinacion de `s[i]` UTF-8 walk + loop por caracter.
@@ -155,14 +149,8 @@ funcion _es_blanco(c):
     retornar c == " " o c == "\t" o c == "\n" o c == "\r"
 fin funcion
 
-# Cuenta las apariciones (no solapadas) de `sub` en `s`.
-#
-# Nota técnica v0.9.1: declaramos `coincide` antes del bucle `mientras`
-# en lugar de dentro de su cuerpo. El bytecode de v0.9.x tiene una
-# limitación con nuevos locales declarados dentro de cuerpos de bucles
-# en función — el slot se desfasa entre iteraciones. La refactorización
-# (declarar antes, reasignar dentro) evita el problema. Llega un fix
-# completo del compilador en una versión posterior.
+# Cuenta las apariciones (no solapadas) de `sub` en `s`. Si `sub` es
+# vacío devuelve 0 por convención.
 funcion contar(s, sub):
     si longitud(sub) == 0:
         retornar 0

@@ -12,7 +12,7 @@
 
 importar matematicas como m
 desde matematicas importar PI, factorial como fact
-desde cadenas importar repetir, empieza_con, contar, caracter
+desde cadenas importar repetir, empieza_con, contar
 
 imprimir("== Alias ==")
 imprimir("m.E =", m.E)
@@ -38,4 +38,4 @@ imprimir("== cadenas.cor ==")
 imprimir("repetir =", repetir("=", 20))
 imprimir("empieza_con('hola.cor', 'hola') =", empieza_con("hola.cor", "hola"))
 imprimir("contar('aaabaa', 'aa') =", contar("aaabaa", "aa"))
-imprimir("caracter('Cornamusa', 4) =", caracter("Cornamusa", 4))
+imprimir("'Cornamusa'[4] =", "Cornamusa"[4])    # 'a' (indexacion built-in)

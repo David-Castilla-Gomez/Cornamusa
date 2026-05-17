@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.79.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.80.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.79.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Tutorial expandido a material didáctico completo**: añadidos ~35 ejercicios distribuidos por las 15 secciones del tutorial (de "tu primer programa" hasta clases, errores y stdlib), más un **anexo de soluciones validadas** contra el intérprete. Cada solución viene con código ejecutable que se ha probado. Suma sobre el nicho real de Cornamusa (pedagogía en castellano) — donde no compite con Python por sintaxis, gana por accesibilidad para hispanohablantes nuevos en programación. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.80.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Release de limpieza** tras 4 releases consecutivas de features: elimina dead code detectado en la auditoría (`enumerar_desde`/`suma_desde` deprecadas desde v1.17, `cadenas.caracter` wrapper trivial sin usos, helpers privados `_repetir`/`_unir`/`_indice_de` en `formato.cor` que eran workarounds de un bug v1.18 ya resuelto). También renombra el parámetro `cadena` a `s` en `base64.cor`/`hashing.cor` para no sombrear el built-in conversor. Reduce ~80 líneas de stdlib y aclara la API. 239 tests verde sin cambios. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -184,6 +184,7 @@ Hoja de ruta resumida:
 | **v1.77** | **Decoradores `@x` sobre métodos de clase (con stacking + factories); opcode `OP_INTERCAMBIAR`** | ✅ |
 | **v1.78** | **`@propiedad` — getters automáticos invocados al acceder al atributo (sin paréntesis)** | ✅ |
 | **v1.79** | **Tutorial expandido a curso con ejercicios — ~35 ejercicios + anexo de soluciones validadas** | ✅ |
+| **v1.80** | **Limpieza stdlib: dead code eliminado, params renombrados, ~80 líneas menos** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

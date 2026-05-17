@@ -38,12 +38,12 @@
 #     URL-safe (RFC 4648 §5, `-_` en lugar de `+/`, sin padding).
 #     Util para JWTs, OAuth, parametros HTTP.
 
-funcion codificar(cadena):
-    retornar base64_codificar(cadena)
+funcion codificar(s):
+    retornar base64_codificar(s)
 fin funcion
 
-funcion decodificar(cadena):
-    retornar base64_decodificar(cadena)
+funcion decodificar(s):
+    retornar base64_decodificar(s)
 fin funcion
 
 # v1.66: variante URL-safe (RFC 4648 §5). Mismo algoritmo pero:
@@ -53,10 +53,10 @@ fin funcion
 # Para decodificar, usa `decodificar(...)` — el decoder es tolerante
 # a ambas variantes (acepta `-_` igual que `+/`, y entrada con o sin
 # padding).
-funcion codificar_url(cadena):
-    retornar base64_codificar_url(cadena)
+funcion codificar_url(s):
+    retornar base64_codificar_url(s)
 fin funcion
 
-funcion decodificar_url(cadena):
-    retornar base64_decodificar(cadena)   # tolerante a ambas variantes
+funcion decodificar_url(s):
+    retornar base64_decodificar(s)   # tolerante a ambas variantes
 fin funcion

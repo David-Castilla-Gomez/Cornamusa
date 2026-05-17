@@ -805,11 +805,11 @@ Diecisiete módulos. Se importan con `importar <nombre>`.
 
 ### `cadenas`
 
-`repetir(s,n)`, `es_vacia(s)`, `unir(partes,sep)`, `caracter(s,i)`, `empieza_con(s,pre)`, `termina_con(s,suf)`, `indice_de(s,sub)`, `contiene(s,sub)`, `separar(s,sep)`, `reemplazar(s,viejo,nuevo)`, `minusculas_ascii(s)`, `mayusculas_ascii(s)`, `recortar(s)`, `recortar_izquierda(s)`, `recortar_derecha(s)`, `contar(s,sub)`.
+`repetir(s,n)`, `es_vacia(s)`, `unir(partes,sep)`, `empieza_con(s,pre)`, `termina_con(s,suf)`, `indice_de(s,sub)`, `contiene(s,sub)`, `separar(s,sep)`, `reemplazar(s,viejo,nuevo)`, `minusculas_ascii(s)`, `mayusculas_ascii(s)`, `recortar(s)`, `recortar_izquierda(s)`, `recortar_derecha(s)`, `contar(s,sub)`. (Para `s[i]` usa la indexación built-in, no función.)
 
 ### `funcionales`
 
-`mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `minimo(xs)`, `maximo(xs)`. (Existen también `enumerar_desde`/`suma_desde` deprecados — usa los con `inicial=`.)
+`mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `minimo(xs)`, `maximo(xs)`.
 
 ### `formato`
 

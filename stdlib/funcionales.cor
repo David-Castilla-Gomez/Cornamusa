@@ -70,12 +70,6 @@ funcion enumerar(xs, inicio=0):
     retornar resultado
 fin funcion
 
-# Alias deprecated v1.17: usa `enumerar(xs, inicio)`. Se mantendrá un
-# tiempo por compatibilidad con código v1.11-v1.16.
-funcion enumerar_desde(xs, inicio):
-    retornar enumerar(xs, inicio)
-fin funcion
-
 # Verdadero si `p(x)` lo es para algún elemento. Cortocircuita.
 funcion cualquiera(p, xs):
     para x en xs:
@@ -110,11 +104,6 @@ funcion suma(xs, inicial=0):
         total = total + x
     fin para
     retornar total
-fin funcion
-
-# Alias deprecated v1.17: usa `suma(xs, inicial)`.
-funcion suma_desde(xs, inicial):
-    retornar suma(xs, inicial)
 fin funcion
 
 # Mínimo y máximo de un iterable no vacío. ErrorDeValor si está vacío.
