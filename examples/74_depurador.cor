@@ -1,0 +1,47 @@
+# Depurador interactivo (v1.76).
+#
+# Ejecutar con:  cornamusa depurar examples/74_depurador.cor
+#
+# Al lanzar pausa en la primera linea con prompt `(dep)`. Comandos:
+#
+#   c  continuar (hasta proximo breakpoint o fin)
+#   s  paso (step into; pausa en la proxima linea)
+#   n  siguiente (step over; no entra en llamadas)
+#   r  retornar (step out)
+#   b N    breakpoint en linea N
+#   bd N   borrar breakpoint en linea N
+#   bs     listar breakpoints
+#   l      listar codigo alrededor
+#   p X    imprimir global X
+#   pila   call stack
+#   q      salir
+#   ?      ayuda
+#
+# Prueba sugerida:
+#   1. Lanzar el script. Pausa en la linea 24 (precios = [...]).
+#   2. `b 31` instala breakpoint en la linea de impresion final.
+#   3. `c` continua hasta el breakpoint.
+#   4. `p total` y `p iva` para inspeccionar.
+#   5. `pila` muestra el call stack.
+#   6. `c` termina.
+
+precios = [10, 25, 7, 42, 18]
+descuentos = [0.0, 0.1, 0.0, 0.2, 0.05]
+
+# Calculo del total con descuentos aplicados (no aparece en el
+# depurador con `p` porque vive en una funcion — esta limitacion
+# esta declarada para v1.76).
+total = 0
+para i en rango(longitud(precios)):
+    bruto = precios[i]
+    desc = descuentos[i]
+    neto = bruto * (1 - desc)
+    total = total + neto
+fin para
+
+iva = total * 0.21
+con_iva = total + iva
+
+imprimir(f"Subtotal: {total:.2f}€")
+imprimir(f"IVA:      {iva:.2f}€")
+imprimir(f"Total:    {con_iva:.2f}€")

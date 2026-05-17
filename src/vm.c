@@ -285,6 +285,8 @@ void vm_iniciar(VM *vm) {
     profiler_iniciar(&vm->profiler);
     /* v1.75: coverage tracker (inactivo por defecto). */
     cov_iniciar(&vm->cov);
+    /* v1.76: debugger interactivo (inactivo por defecto). */
+    depurador_iniciar(&vm->dep);
     /*
      * Fase 7: inicializar el GC e instalarlo como memoria global
      * antes de crear el diccionario de globales (que ya pasa por
@@ -390,6 +392,8 @@ void vm_destruir(VM *vm) {
     profiler_destruir(&vm->profiler);
     /* v1.75: liberar bitset del coverage tracker (no-op si nunca se activó). */
     cov_destruir(&vm->cov);
+    /* v1.76: liberar fuente del debugger (no-op si nunca se activó). */
+    depurador_destruir(&vm->dep);
 }
 
 /* Macros locales para el dispatch loop. `frame` es el CallFrame
@@ -1981,6 +1985,246 @@ static void vm_profiler_sync(VM *vm) {
     }
 }
 
+/*
+ * v1.76: helpers del debugger. El loop interactivo vive aqui (no en
+ * depurador.c) para tener acceso a VM->frames/globales sin dependencia
+ * circular.
+ */
+
+static bool dep_es_breakpoint(const Depurador *d, int linea) {
+    for (int i = 0; i < d->n_breakpoints; i++) {
+        if (d->breakpoints[i] == linea) return true;
+    }
+    return false;
+}
+
+static bool dep_debe_pausar(const Depurador *d, int n_frames, int linea) {
+    if (!d->activo) return false;
+    if (dep_es_breakpoint(d, linea)) return true;
+    switch (d->modo) {
+        case DEP_CORRIENDO: return false;
+        case DEP_PASO:      return true;  /* cualquier cambio de linea */
+        case DEP_SIGUIENTE:
+            /* Pausa solo si estamos en el frame objetivo o mas arriba
+             * (n_frames <= frame_objetivo). */
+            return n_frames <= d->frame_objetivo;
+        case DEP_RETORNAR:
+            /* Pausa cuando volvamos a un frame anterior. */
+            return n_frames < d->frame_objetivo;
+    }
+    return false;
+}
+
+/* Imprime la linea del codigo fuente (1-indexed). */
+static void dep_imprimir_linea(const Depurador *d, int linea, FILE *out) {
+    if (!d->fuente || linea < 1 || linea > d->n_lineas) return;
+    int inicio = d->lineas_offset[linea];
+    /* Encontrar fin de la linea (proximo \n o fin de fuente). */
+    int fin = inicio;
+    while (fin < d->fuente_len && d->fuente[fin] != '\n') fin++;
+    fprintf(out, "%4d  %.*s\n", linea, fin - inicio, &d->fuente[inicio]);
+}
+
+static void dep_listar_contexto(const Depurador *d, int linea_actual, int radio) {
+    int inicio = linea_actual - radio;
+    int fin = linea_actual + radio;
+    if (inicio < 1) inicio = 1;
+    if (fin > d->n_lineas) fin = d->n_lineas;
+    for (int l = inicio; l <= fin; l++) {
+        if (l == linea_actual) fprintf(stdout, "  > ");
+        else                    fprintf(stdout, "    ");
+        dep_imprimir_linea(d, l, stdout);
+    }
+}
+
+static void dep_imprimir_global(VM *vm, const char *nombre) {
+    if (!vm->globales) {
+        fprintf(stdout, "  (no hay globales)\n");
+        return;
+    }
+    Valor clave = valor_cadena_referencia(nombre, (int)strlen(nombre));
+    Valor v;
+    if (!dicc_obtener(vm->globales, &clave, &v)) {
+        fprintf(stdout, "  '%s' no esta definida en globales\n", nombre);
+        return;
+    }
+    char buf[512];
+    valor_a_repr(&v, buf, sizeof(buf));
+    fprintf(stdout, "  %s = %s\n", nombre, buf);
+}
+
+static void dep_mostrar_pila(VM *vm) {
+    fprintf(stdout, "  Pila (mas reciente arriba):\n");
+    for (int i = vm->n_frames - 1; i >= 0; i--) {
+        const CallFrame *f = &vm->frames[i];
+        const char *nombre = "<top-level>";
+        if (f->closure && f->closure->plantilla && f->closure->plantilla->nombre) {
+            nombre = f->closure->plantilla->nombre;
+        } else if (f->modulo_en_carga) {
+            nombre = "<modulo>";
+        }
+        int ip_offset = (int)(f->ip - f->chunk->codigo);
+        if (ip_offset > 0) ip_offset--;
+        int linea = (ip_offset >= 0 && ip_offset < f->chunk->cuenta)
+                        ? f->chunk->lineas[ip_offset] : 0;
+        fprintf(stdout, "    #%d  %s  (linea %d)\n", i, nombre, linea);
+    }
+}
+
+static void dep_imprimir_ayuda(void) {
+    fprintf(stdout,
+        "  Comandos:\n"
+        "    c | continuar      sigue hasta proximo breakpoint\n"
+        "    s | paso           step into (pausa en proxima linea)\n"
+        "    n | siguiente      step over (skip llamadas a funcion)\n"
+        "    r | retornar       step out (continua hasta fin del frame)\n"
+        "    b N | break N      breakpoint en linea N\n"
+        "    bd N | borrar N    borra breakpoint en linea N\n"
+        "    bs | breaks        lista breakpoints\n"
+        "    l | lista          muestra codigo alrededor del IP\n"
+        "    p X | imprimir X   muestra el valor de la global X\n"
+        "    pila               muestra el call stack\n"
+        "    q | salir          aborta el programa\n"
+        "    ? | ayuda          este mensaje\n");
+}
+
+/* Loop interactivo. Lee comandos hasta que el usuario decida continuar.
+ * Devuelve 'true' si continuamos normal, 'false' si pidieron salir. */
+static bool dep_loop_interactivo(VM *vm, int linea_actual) {
+    Depurador *d = &vm->dep;
+    /* Mostrar contexto inicial. */
+    fprintf(stdout, "\n[%s]\n", d->ruta ? d->ruta : "<programa>");
+    dep_listar_contexto(d, linea_actual, 2);
+
+    char buf[256];
+    for (;;) {
+        fprintf(stdout, "(dep) ");
+        fflush(stdout);
+        if (!fgets(buf, sizeof(buf), stdin)) {
+            /* EOF: tratar como continuar. */
+            d->modo = DEP_CORRIENDO;
+            return true;
+        }
+        /* Trim trailing whitespace. */
+        int n = (int)strlen(buf);
+        while (n > 0 && (buf[n-1] == '\n' || buf[n-1] == '\r'
+                          || buf[n-1] == ' ' || buf[n-1] == '\t')) {
+            buf[--n] = '\0';
+        }
+        if (n == 0) {
+            /* Enter sin nada: repite ultimo modo step. */
+            if (d->modo == DEP_CORRIENDO) d->modo = DEP_PASO;
+            return true;
+        }
+
+        /* Tokenizar simple: comando + argumento opcional. */
+        char *espacio = strchr(buf, ' ');
+        const char *arg = NULL;
+        if (espacio) {
+            *espacio = '\0';
+            arg = espacio + 1;
+            while (*arg == ' ') arg++;
+        }
+
+        if (strcmp(buf, "c") == 0 || strcmp(buf, "continuar") == 0) {
+            d->modo = DEP_CORRIENDO;
+            return true;
+        }
+        if (strcmp(buf, "s") == 0 || strcmp(buf, "paso") == 0) {
+            d->modo = DEP_PASO;
+            return true;
+        }
+        if (strcmp(buf, "n") == 0 || strcmp(buf, "siguiente") == 0) {
+            d->modo = DEP_SIGUIENTE;
+            d->frame_objetivo = vm->n_frames;
+            return true;
+        }
+        if (strcmp(buf, "r") == 0 || strcmp(buf, "retornar") == 0) {
+            d->modo = DEP_RETORNAR;
+            d->frame_objetivo = vm->n_frames;
+            return true;
+        }
+        if (strcmp(buf, "q") == 0 || strcmp(buf, "salir") == 0) {
+            return false;
+        }
+        if (strcmp(buf, "?") == 0 || strcmp(buf, "ayuda") == 0
+            || strcmp(buf, "help") == 0) {
+            dep_imprimir_ayuda();
+            continue;
+        }
+        if (strcmp(buf, "l") == 0 || strcmp(buf, "lista") == 0) {
+            dep_listar_contexto(d, linea_actual, 4);
+            continue;
+        }
+        if (strcmp(buf, "pila") == 0 || strcmp(buf, "stack") == 0) {
+            dep_mostrar_pila(vm);
+            continue;
+        }
+        if (strcmp(buf, "bs") == 0 || strcmp(buf, "breaks") == 0) {
+            if (d->n_breakpoints == 0) {
+                fprintf(stdout, "  (sin breakpoints)\n");
+            } else {
+                fprintf(stdout, "  Breakpoints:");
+                for (int i = 0; i < d->n_breakpoints; i++) {
+                    fprintf(stdout, " %d", d->breakpoints[i]);
+                }
+                fprintf(stdout, "\n");
+            }
+            continue;
+        }
+        if (strcmp(buf, "b") == 0 || strcmp(buf, "break") == 0) {
+            if (!arg) { fprintf(stdout, "  uso: b <linea>\n"); continue; }
+            int l = atoi(arg);
+            if (l <= 0) { fprintf(stdout, "  linea invalida\n"); continue; }
+            if (d->n_breakpoints >= DEPURADOR_MAX_BREAKPOINTS) {
+                fprintf(stdout, "  maximo de breakpoints alcanzado (%d)\n",
+                        DEPURADOR_MAX_BREAKPOINTS);
+                continue;
+            }
+            if (!dep_es_breakpoint(d, l)) {
+                d->breakpoints[d->n_breakpoints++] = l;
+            }
+            fprintf(stdout, "  breakpoint en linea %d\n", l);
+            continue;
+        }
+        if (strcmp(buf, "bd") == 0 || strcmp(buf, "borrar") == 0) {
+            if (!arg) { fprintf(stdout, "  uso: bd <linea>\n"); continue; }
+            int l = atoi(arg);
+            bool borrado = false;
+            for (int i = 0; i < d->n_breakpoints; i++) {
+                if (d->breakpoints[i] == l) {
+                    d->breakpoints[i] = d->breakpoints[--d->n_breakpoints];
+                    borrado = true;
+                    break;
+                }
+            }
+            fprintf(stdout, "  %s\n", borrado ? "borrado" : "no habia tal breakpoint");
+            continue;
+        }
+        if (strcmp(buf, "p") == 0 || strcmp(buf, "imprimir") == 0) {
+            if (!arg) { fprintf(stdout, "  uso: p <nombre_global>\n"); continue; }
+            dep_imprimir_global(vm, arg);
+            continue;
+        }
+        fprintf(stdout, "  comando desconocido: '%s' (escribe ? para ayuda)\n", buf);
+    }
+}
+
+/* Tick del debugger. Llamado por el dispatch loop. Devuelve true si
+ * continua, false si el usuario pidio salir (la VM debe abortar). */
+static bool vm_depurador_tick(VM *vm, int linea_actual) {
+    Depurador *d = &vm->dep;
+    if (!d->activo) return true;
+    /* Detectar cambio de linea o de frame. */
+    bool cambio_linea = (linea_actual != d->ultima_linea);
+    bool cambio_frame = (vm->n_frames != d->ultimo_n_frames);
+    if (!cambio_linea && !cambio_frame) return true;
+    d->ultima_linea = linea_actual;
+    d->ultimo_n_frames = vm->n_frames;
+    if (!dep_debe_pausar(d, vm->n_frames, linea_actual)) return true;
+    return dep_loop_interactivo(vm, linea_actual);
+}
+
 /* Dispatch interno; la wrapper pública vm_ejecutar gestiona el flag
    gc_habilitado en cualquier path de salida. */
 static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
@@ -2044,6 +2288,18 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
         if (vm->cov.activo) {
             int linea_op = frame->chunk->lineas[frame->ip - frame->chunk->codigo];
             cov_on_linea(&vm->cov, frame->chunk, linea_op);
+        }
+        /*
+         * v1.76: tick del debugger interactivo. Detecta cambio de
+         * linea/frame y pausa si toca (breakpoint o modo step). Si el
+         * usuario pide 'salir' aborta la VM con error.
+         */
+        if (vm->dep.activo) {
+            int linea_op = frame->chunk->lineas[frame->ip - frame->chunk->codigo];
+            if (!vm_depurador_tick(vm, linea_op)) {
+                VM_ERROR("ejecucion abortada por el usuario (depurador)");
+                return VM_ERROR_RUNTIME;
+            }
         }
         /*
          * v0.8.1: trigger del GC en frontera de opcode (deferred).

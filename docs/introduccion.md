@@ -95,6 +95,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Stdlib `tiempo` — `monotonic()`, `dormir(s)`, `Cronometro`, `epoch_ms()` (17º módulo) | v1.73 | ✅ |
 | Auditoría: tests JWT seguridad, csv unit tests, fix `d[k]` atrapable | v1.74 | ✅ |
 | Coverage tracker `cornamusa cov` (% líneas top-level cubiertas) | v1.75 | ✅ |
+| Debugger interactivo `cornamusa depurar` (breakpoints + step + inspect) | v1.76 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

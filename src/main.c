@@ -96,6 +96,9 @@ static void imprimir_uso(const char *programa) {
         "                             y vuelca tabla por funcion (a stderr).\n"
         "  cov [--uncovered] <archivo> Ejecuta con coverage tracker; reporta %%\n"
         "                             de lineas top-level cubiertas (a stderr).\n"
+        "  depurar <archivo>          Abre el depurador interactivo. Comandos:\n"
+        "                               c/s/n/r control, b/bd/bs breakpoints,\n"
+        "                               p NOMBRE inspect, pila stack, q salir.\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -242,10 +245,11 @@ static int ejecutar_archivo(const char *ruta) {
  * idénticamente al tree-walking. El cliente activa esta ruta con
  * la flag `--bytecode`.
  */
-static int ejecutar_archivo_bc_opciones_cov(const char *ruta, bool con_profiler,
-                                              int top_n_profiler,
-                                              bool con_cov,
-                                              bool cov_uncovered) {
+static int ejecutar_archivo_bc_full(const char *ruta, bool con_profiler,
+                                       int top_n_profiler,
+                                       bool con_cov,
+                                       bool cov_uncovered,
+                                       bool con_depurador) {
     FuenteCargada fc = fuente_cargar_archivo(ruta);
     if (fc.codigo != FUENTE_OK) {
         fprintf(stderr, "Error al cargar '%s': %s\n", ruta, fc.mensaje_error);
@@ -285,6 +289,7 @@ static int ejecutar_archivo_bc_opciones_cov(const char *ruta, bool con_profiler,
     vm_iniciar(&vm);
     if (con_profiler) profiler_activar(&vm.profiler);
     if (con_cov) cov_activar(&vm.cov, &chunk);
+    if (con_depurador) depurador_activar(&vm.dep, fc.fuente, ruta);
     Valor resultado = valor_nulo();
     ResultadoVM rc_vm = vm_ejecutar(&vm, &chunk, &resultado);
 
@@ -306,6 +311,9 @@ static int ejecutar_archivo_bc_opciones_cov(const char *ruta, bool con_profiler,
         cov_desactivar(&vm.cov);
         cov_dump(&vm.cov, stderr, ruta, cov_uncovered);
     }
+    if (con_depurador) {
+        depurador_desactivar(&vm.dep);
+    }
     valor_destruir(&resultado);
     vm_destruir(&vm);
     chunk_destruir(&chunk);
@@ -314,14 +322,22 @@ static int ejecutar_archivo_bc_opciones_cov(const char *ruta, bool con_profiler,
     return rc;
 }
 
+static int ejecutar_archivo_bc_opciones_cov(const char *ruta, bool con_profiler,
+                                              int top_n_profiler,
+                                              bool con_cov,
+                                              bool cov_uncovered) {
+    return ejecutar_archivo_bc_full(ruta, con_profiler, top_n_profiler,
+                                       con_cov, cov_uncovered, false);
+}
+
 static int ejecutar_archivo_bc_opciones(const char *ruta, bool con_profiler,
                                           int top_n_profiler) {
-    return ejecutar_archivo_bc_opciones_cov(ruta, con_profiler,
-                                               top_n_profiler, false, false);
+    return ejecutar_archivo_bc_full(ruta, con_profiler, top_n_profiler,
+                                       false, false, false);
 }
 
 static int ejecutar_archivo_bytecode(const char *ruta) {
-    return ejecutar_archivo_bc_opciones_cov(ruta, false, 0, false, false);
+    return ejecutar_archivo_bc_full(ruta, false, 0, false, false, false);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -429,6 +445,51 @@ static int subcomando_cov(int argc, char **argv) {
     }
     return ejecutar_archivo_bc_opciones_cov(archivo, false, 0,
                                                true, listar_uncovered);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Subcomando `depurar` (v1.76 - Fase 5 tooling).
+ *
+ * Ejecuta el script bajo el debugger interactivo. Pausa en la primera
+ * linea con prompt `(dep)` y acepta comandos: c/s/n/r para control de
+ * ejecucion, b/bd/bs para breakpoints, p para inspeccionar globales,
+ * pila para backtrace, l para listing, q para abortar.
+ * ────────────────────────────────────────────────────────────────── */
+
+static int subcomando_depurar(int argc, char **argv) {
+    const char *archivo = NULL;
+    int idx_archivo = -1;
+    for (int i = 2; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--ayuda") == 0
+            || strcmp(arg, "--help") == 0) {
+            fprintf(stderr,
+                "uso: %s depurar script.cor [args...]\n"
+                "  Ejecuta el script bajo el depurador interactivo.\n"
+                "  Comandos en el prompt: c/s/n/r para control,\n"
+                "    b N para breakpoint, p NOMBRE para imprimir global,\n"
+                "    pila / l / bs / q. Escribe ? para ayuda completa.\n",
+                argv[0]);
+            return 0;
+        }
+        if (arg[0] == '-' && strcmp(arg, "-") != 0) {
+            fprintf(stderr, "Opcion no reconocida para depurar: %s\n", arg);
+            return 64;
+        }
+        archivo = arg;
+        idx_archivo = i;
+        break;
+    }
+    if (!archivo) {
+        fprintf(stderr, "depurar: se requiere un archivo .cor\n");
+        return 64;
+    }
+    if (idx_archivo >= 0) {
+        nativos_set_argv(argc - idx_archivo, &argv[idx_archivo]);
+    } else {
+        nativos_set_argv(0, NULL);
+    }
+    return ejecutar_archivo_bc_full(archivo, false, 0, false, false, true);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -1104,6 +1165,10 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "cov") == 0) {
         return subcomando_cov(argc, argv);
+    }
+    if (argc >= 2 && (strcmp(argv[1], "depurar") == 0
+                      || strcmp(argv[1], "debug") == 0)) {
+        return subcomando_depurar(argc, argv);
     }
     if (argc >= 2 && strcmp(argv[1], "lsp") == 0) {
 #ifdef _WIN32

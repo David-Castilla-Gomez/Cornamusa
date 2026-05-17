@@ -6,6 +6,110 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.76.0] — 2026-05-17 — Debugger interactivo (`cornamusa depurar`)
+
+Nuevo subcomando que ejecuta un script bajo un debugger interactivo
+con prompt `(dep)`. Cierra el último hueco del tooling de Fase 5
+tras `fmt`/`lint`/`docs`/`lsp`/`prof`/`cov`.
+
+```
+$ cornamusa depurar examples/74_depurador.cor
+[examples/74_depurador.cor]
+  >    1  precios = [10, 25, 7, 42, 18]
+       2  descuentos = [0.0, 0.1, 0.0, 0.2, 0.05]
+       3
+(dep) b 31
+  breakpoint en linea 31
+(dep) c
+  ...
+(dep) p total
+  total = 90.2
+(dep) pila
+  Pila (mas reciente arriba):
+    #0  <top-level>  (linea 31)
+(dep) c
+```
+
+### Comandos
+
+| Atajo | Largo        | Acción |
+|-------|--------------|--------|
+| `c`   | `continuar`  | sigue hasta próximo breakpoint o fin |
+| `s`   | `paso`       | step into (pausa en próxima línea, cualquier frame) |
+| `n`   | `siguiente`  | step over (pausa solo en mismo frame o ancestral) |
+| `r`   | `retornar`   | step out (continúa hasta volver del frame actual) |
+| `b N` | `break N`    | breakpoint en línea N |
+| `bd N`| `borrar N`   | borra breakpoint en línea N |
+| `bs`  | `breaks`     | lista breakpoints activos |
+| `l`   | `lista`      | muestra código alrededor del IP |
+| `p X` | `imprimir X` | muestra valor de la global X |
+| `pila`| `stack`      | backtrace de frames |
+| `q`   | `salir`      | aborta el programa |
+| `?`   | `ayuda`      | help |
+
+### Diseño
+
+- **Hook único** en el dispatch loop (mismo punto que profiler/cov).
+  Detecta cambio de línea o de frame y consulta `dep_debe_pausar` para
+  decidir si entrar al loop interactivo.
+- **Modos de step**: estado interno con `frame_objetivo` para distinguir
+  `siguiente` (pausa solo si `n_frames <= objetivo`) y `retornar` (pausa
+  si `n_frames < objetivo`).
+- **Listing**: el debugger guarda una copia de la fuente con offsets
+  de inicio de cada línea precomputados — listing en O(1).
+- **Pausa inicial**: al activar `depurador_activar` entra en modo
+  `DEP_PASO`, así el usuario puede poner breakpoints antes de empezar
+  el programa.
+
+### Limitaciones declaradas
+
+- **Inspección solo de globales** (`p NOMBRE` busca en `vm->globales`).
+  Locales de función no son accesibles por nombre — el chunk no guarda
+  el mapping nombre→slot. Si quieres ver una variable dentro de
+  función, hazla `global` o pásala como argumento que se asigna a
+  global. Para una v1.x futura se puede añadir tabla de debug en el
+  chunk.
+- **`siguiente`/`retornar` operan a nivel de frame**, no de línea
+  física: una expresión multi-línea cuenta como una sola "siguiente
+  línea". Casos extremos son raros porque Cornamusa requiere bloques
+  de varias líneas.
+- **Stdin/stdout del programa** comparten consola con el debugger —
+  los outputs del programa aparecen entremezclados con los prompts
+  `(dep)`. Aceptable para uso CLI pero hace ruido en sesiones largas.
+
+### Tests
+
+25 asserts nuevos en `test_depurador.c` que alimentan comandos por
+stdin redirigido y verifican stdout capturado:
+
+- `continuar` inmediato ejecuta el programa entero.
+- `paso` muestra prompt en cada línea, `p` imprime globales.
+- Breakpoint en línea con bucle pausa en cada iteración.
+- `p` con nombre no definido reporta claramente.
+- `q` aborta antes de ejecutar resto.
+- `?` imprime ayuda completa.
+- `pila` muestra `<top-level>`.
+- `b 2` + `bs` + `bd 2` + `bs` flujo completo.
+- Comando desconocido reporta y sigue sin abortar.
+
+### Archivos
+
+- `src/depurador.{c,h}` — módulo nuevo (header + indexado de líneas).
+- `src/vm.{c,h}` — `Depurador` embebido en `VM`, loop interactivo
+  vive en `vm.c` para acceso a frames/globales.
+- `src/main.c` — subcomando `depurar` (alias `debug`).
+- `tests/unit/test_depurador.c` — 25 asserts.
+- `examples/74_depurador.cor` — script con cálculo de IVA preparado
+  para demo del debugger.
+
+### Estado
+
+235 tests verde. Cierra Fase 5 (tooling) completamente: con `depurar`
+Cornamusa tiene formato + linter (12 categorías) + generador de docs
++ LSP + profiler + coverage + debugger.
+
+---
+
 ## [1.75.0] — 2026-05-17 — Coverage tracker (`cornamusa cov`)
 
 Nuevo subcomando que ejecuta un script con un tracker de líneas

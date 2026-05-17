@@ -5,6 +5,7 @@
 
 #include "chunk.h"
 #include "coverage.h"    /* Coverage tracker (v1.75) */
+#include "depurador.h"   /* Debugger interactivo (v1.76) */
 #include "evaluador.h"   /* EvalError */
 #include "memoria.h"     /* Memoria (Fase 7 S1) */
 #include "profiler.h"    /* Profiler determinista (v1.71) */
@@ -224,6 +225,10 @@ typedef struct {
        `cornamusa cov` lo activa antes de ejecutar. Hook al inicio del
        dispatch (mismo punto que profiler). */
     CovTracker cov;
+
+    /* v1.76: debugger interactivo. Inactivo por defecto; subcomando
+       `cornamusa depurar` lo activa. */
+    Depurador dep;
 } VM;
 
 /* Inicializa la VM. La pila empieza vacía, sin error. */

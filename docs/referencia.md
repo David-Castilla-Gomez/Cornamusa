@@ -909,6 +909,19 @@ cornamusa docs programa.cor -o doc.md # Markdown a archivo
 
 cornamusa lsp                         # Language Server Protocol por stdio (v1.52)
                                        # para integracion editor (VS Code, etc.)
+
+cornamusa prof [--top=N] prog.cor     # profiler determinista (v1.71)
+                                       # tabla por funcion: calls/total/self/per-call
+
+cornamusa cov [--uncovered] prog.cor  # coverage tracker (v1.75)
+                                       # reporta % lineas top-level cubiertas
+
+cornamusa depurar prog.cor            # depurador interactivo (v1.76)
+                                       # comandos en prompt (dep):
+                                       #   c continuar, s paso, n siguiente, r retornar
+                                       #   b N break, bd N borrar, bs listar
+                                       #   p NOMBRE imprimir global, pila stack
+                                       #   l listar, q salir, ? ayuda
 ```
 
 Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`, `shadow`, `unused-loop-var`, `mutable-default`, `concat-in-loop`, `same-comparison`, `empty-except`.
