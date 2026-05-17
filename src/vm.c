@@ -2657,6 +2657,16 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 empujar(vm, valor_clonar(&b));
                 break;
             }
+            case OP_INTERCAMBIAR: {
+                /* v1.77: intercambia los dos elementos del tope.
+                 * Stack: [..., a, b] → [..., b, a]. Sin clonar — solo
+                 * intercambia las structs Valor, propiedad transferida
+                 * intacta. */
+                Valor tmp = vm->tope[-1];
+                vm->tope[-1] = vm->tope[-2];
+                vm->tope[-2] = tmp;
+                break;
+            }
 
             case OP_RETORNAR: {
                 /* Pop el resultado del frame actual. */

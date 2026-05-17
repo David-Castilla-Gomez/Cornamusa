@@ -4123,19 +4123,25 @@ static bool compilar_clase(Compilador *c, const Sent *s) {
                 "el cuerpo de una clase solo admite metodos ('funcion ...') o 'pasar' en v0.7.0");
             return false;
         }
-        /* v1.72: los decoradores `@x` sobre metodos no estan soportados
-         * (declarado como limitacion en CHANGELOG v1.72). Sin este check
-         * el parser los aceptaria y compilar_clase los descartaria
-         * silenciosamente — el usuario veria su clase ejecutar sin que
-         * los decoradores hayan tenido efecto. Mejor error explicito. */
-        if (body->como.funcion.n_decoradores > 0) {
-            error_compilacion(c, body->linea, body->columna,
-                "decoradores '@...' en metodos de clase aun no soportados");
-            return false;
-        }
         /* Emitir la closure del método. La clase sigue en el stack
            debajo. Tras OP_CLOSURE el stack es [..., clase, closure]. */
         if (!emitir_closure_de_funcion(c, body)) return false;
+        /* v1.77: aplicar decoradores en orden inverso al fuente. Cada
+         * decorador recibe la closure actual y debe devolver una
+         * nueva. Patron por iteracion:
+         *   [..., clase, closure]
+         *   compilar(dec)            → [..., clase, closure, dec]
+         *   OP_INTERCAMBIAR          → [..., clase, dec, closure]
+         *   OP_LLAMAR 1              → [..., clase, dec(closure)]
+         * Tras todos los decoradores, OP_METODO toma el resultado
+         * final. */
+        int n_decs = body->como.funcion.n_decoradores;
+        Expr **decs = body->como.funcion.decoradores;
+        for (int j = n_decs - 1; j >= 0; j--) {
+            if (!compilador_compilar_expr(c, decs[j])) return false;
+            chunk_emitir_byte(c->actual->chunk, OP_INTERCAMBIAR, body->linea);
+            chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1, body->linea);
+        }
         /* OP_METODO pops la closure y la guarda en clase.metodos[name];
            la clase queda en el tope del stack. */
         int idx_metodo = chunk_agregar_constante(c->actual->chunk,

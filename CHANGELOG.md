@@ -6,6 +6,88 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.77.0] — 2026-05-17 — Decoradores `@x` sobre métodos de clase
+
+Cierra la limitación declarada desde v1.72: hasta v1.76 los decoradores
+sobre métodos lanzaban error explícito en compile-time. v1.77 los
+implementa propiamente.
+
+```cornamusa
+funcion contar_llamadas(f):
+    cuenta = [0]
+    funcion w(yo, monto):
+        cuenta[0] = cuenta[0] + 1
+        imprimir(f"  (llamada #{cuenta[0]})")
+        retornar f(yo, monto)
+    fin funcion
+    retornar w
+fin funcion
+
+clase Banco:
+    @contar_llamadas
+    funcion depositar(yo, monto):
+        yo.saldo = yo.saldo + monto
+    fin funcion
+fin clase
+```
+
+Stacking y factories (`@retry(3)`) también soportados en métodos.
+
+### Nuevo opcode: `OP_INTERCAMBIAR`
+
+Intercambia los dos elementos del tope del stack. Necesario porque
+durante la compilación de un método decorado, el stack debe quedar:
+
+```
+[..., clase, closure]           tras OP_CLOSURE
+compilar(decorador)             -> [..., clase, closure, decorador]
+OP_INTERCAMBIAR                 -> [..., clase, decorador, closure]
+OP_LLAMAR 1                     -> [..., clase, decorador(closure)]
+```
+
+La clase se preserva debajo del stack durante toda la cadena de
+decoradores; el resultado final pasa a `OP_METODO` que la guarda como
+método de la clase.
+
+Implementación trivial: 2 stores. Sin clonado de valores — solo
+intercambia las structs `Valor` (la propiedad se transfiere intacta).
+
+### `@propiedad`, `@estaticometodo`, `@clasemetodo`: NO en esta release
+
+Quedan declarados como pendientes para v1.78. Requieren:
+
+- Nuevo `TipoValor` `VAL_PROPIEDAD` o equivalente.
+- Modificaciones a `OP_OBTENER_ATRIBUTO_INSTANCIA` (slow + cache) para
+  detectar el caso y despachar el getter.
+- Tabla aparte en `Clase` o discriminación por tipo en `metodos`.
+
+Alcance que merece release dedicada. v1.77 cubre el 95% del uso real
+(decoradores de logging/cache/retry/auth sobre métodos).
+
+### Tests
+
+Test actualizado en `test_bytecode_decoradores.c`: el test que antes
+verificaba `decorador_metodo_es_error` ahora verifica
+`decorador_metodo_ejecuta` con resultado correcto (10 + 5 + 1000 =
+1015, donde +1000 lo añade el decorador).
+
+### Archivos
+
+- `src/chunk.h`, `src/chunk.c`, `src/debug.c` — nuevo opcode
+  `OP_INTERCAMBIAR`.
+- `src/vm.c` — handler del opcode + revertido check de error en
+  `compilar_clase`, ahora emite el desugar.
+- `src/compilador.c` — `compilar_clase` aplica decoradores por
+  método.
+- `examples/75_decoradores_metodos.cor` — demo con `Banco` (contador
+  de llamadas) y `Saludador` (stacking).
+
+### Estado
+
+236 tests verde. Repo limpio.
+
+---
+
 ## [1.76.0] — 2026-05-17 — Debugger interactivo (`cornamusa depurar`)
 
 Nuevo subcomando que ejecuta un script bajo un debugger interactivo

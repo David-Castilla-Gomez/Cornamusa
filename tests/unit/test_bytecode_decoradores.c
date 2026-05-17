@@ -194,22 +194,32 @@ int main(void) {
         AFIRMAR(rc == -2, "at_sin_funcion_es_error_sintaxis");
     }
 
-    /* Test 6b (v1.73-auditoria): decorador sobre metodo de clase emite
-     * error claro (no silent-ignore). La limitacion esta declarada en
-     * CHANGELOG v1.72 — comprobamos que el error llega al usuario. */
+    /* Test 6b (v1.77): decorador sobre metodo de clase ahora SI funciona.
+     * Antes (v1.72-v1.76) lanzaba error explicito; v1.77 implementa el
+     * desugar usando OP_INTERCAMBIAR para preservar la clase debajo. */
     {
         char out[1024];
         int rc = ejecutar_capturando(
-            "funcion dec(f):\n"
-            "    retornar f\n"
-            "fin funcion\n"
-            "clase Foo:\n"
-            "    @dec\n"
-            "    funcion bar(yo):\n"
-            "        retornar 1\n"
+            "funcion log(f):\n"
+            "    funcion w(yo, n):\n"
+            "        retornar f(yo, n) + 1000\n"
             "    fin funcion\n"
-            "fin clase\n", out, sizeof(out));
-        AFIRMAR(rc != 0, "decorador_metodo_es_error");
+            "    retornar w\n"
+            "fin funcion\n"
+            "clase Calc:\n"
+            "    funcion __iniciar__(yo, base):\n"
+            "        yo.base = base\n"
+            "    fin funcion\n"
+            "    @log\n"
+            "    funcion sumar(yo, n):\n"
+            "        retornar yo.base + n\n"
+            "    fin funcion\n"
+            "fin clase\n"
+            "c = Calc(10)\n"
+            "imprimir(c.sumar(5))\n", out, sizeof(out));
+        AFIRMAR(rc == 0, "decorador_metodo_ejecuta");
+        /* 10 + 5 = 15, mas el +1000 del decorador = 1015. */
+        AFIRMAR(strstr(out, "1015") != NULL, "decorador_metodo_resultado");
     }
 
     /* Test 6: decorador dentro de funcion anidada (local). */

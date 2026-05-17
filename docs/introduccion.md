@@ -96,6 +96,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Auditoría: tests JWT seguridad, csv unit tests, fix `d[k]` atrapable | v1.74 | ✅ |
 | Coverage tracker `cornamusa cov` (% líneas top-level cubiertas) | v1.75 | ✅ |
 | Debugger interactivo `cornamusa depurar` (breakpoints + step + inspect) | v1.76 | ✅ |
+| Decoradores `@x` sobre métodos de clase (con stacking) | v1.77 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

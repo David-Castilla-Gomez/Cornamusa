@@ -145,6 +145,7 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
 
         case OP_DESCARTAR:       return instruccion_simple("OP_DESCARTAR", offset, out);
         case OP_DUP_2:           return instruccion_simple("OP_DUP_2", offset, out);
+        case OP_INTERCAMBIAR:    return instruccion_simple("OP_INTERCAMBIAR", offset, out);
 
         case OP_SALTAR:          return instruccion_u16("OP_SALTAR", c, offset, +1, out);
         case OP_SALTAR_SI_FALSO: return instruccion_u16("OP_SALTAR_SI_FALSO", c, offset, +1, out);

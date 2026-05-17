@@ -1,0 +1,90 @@
+# Decoradores sobre metodos de clase (v1.77).
+#
+# Hasta v1.76 los decoradores '@x' funcionaban en funciones top-level
+# pero el compilador lanzaba error si aparecian sobre metodos. v1.77
+# implementa el desugar usando un nuevo opcode OP_INTERCAMBIAR.
+#
+# Patron de compilacion para `@dec funcion m(yo):`:
+#   [..., clase, closure_original]   tras OP_CLOSURE
+#   compilar(dec)                    -> [..., clase, closure, dec]
+#   OP_INTERCAMBIAR                  -> [..., clase, dec, closure]
+#   OP_LLAMAR 1                      -> [..., clase, dec(closure)]
+#   OP_METODO                        -> [..., clase]   (con el metodo guardado)
+
+# ─── Decorador: cuenta llamadas ─────────────────────────────────
+funcion contar_llamadas(f):
+    cuenta = [0]
+    funcion w(yo, monto):
+        cuenta[0] = cuenta[0] + 1
+        imprimir(f"  (llamada #{cuenta[0]})")
+        retornar f(yo, monto)
+    fin funcion
+    retornar w
+fin funcion
+
+# ─── Clase con metodos decorados ────────────────────────────────
+clase Banco:
+    funcion __iniciar__(yo, saldo_inicial):
+        yo.saldo = saldo_inicial
+    fin funcion
+
+    @contar_llamadas
+    funcion depositar(yo, monto):
+        yo.saldo = yo.saldo + monto
+        retornar yo.saldo
+    fin funcion
+
+    @contar_llamadas
+    funcion retirar(yo, monto):
+        si monto > yo.saldo:
+            lanzar ErrorDeValor("saldo insuficiente")
+        fin si
+        yo.saldo = yo.saldo - monto
+        retornar yo.saldo
+    fin funcion
+
+    # Metodo sin decorar — pasa por el camino normal.
+    funcion consultar(yo):
+        retornar yo.saldo
+    fin funcion
+fin clase
+
+cuenta = Banco(100)
+imprimir(f"saldo inicial: {cuenta.consultar()}")
+
+cuenta.depositar(50)
+cuenta.depositar(25)
+cuenta.retirar(40)
+cuenta.depositar(10)
+
+imprimir(f"saldo final: {cuenta.consultar()}")
+
+# ─── Stacking en metodos: dos decoradores en cascada ────────────
+funcion repetir_resultado(f):
+    funcion w(yo, nombre):
+        r = f(yo, nombre)
+        retornar r + " | " + r
+    fin funcion
+    retornar w
+fin funcion
+
+funcion exclamar_resultado(f):
+    funcion w(yo, nombre):
+        retornar f(yo, nombre) + "!"
+    fin funcion
+    retornar w
+fin funcion
+
+clase Saludador:
+    # Orden: el mas cercano se aplica primero. Aqui:
+    #   saludar -> exclamar(saludar) -> repetir(exclamar(saludar))
+    # Para "ana": "hola ana" -> "hola ana!" -> "hola ana! | hola ana!"
+    @repetir_resultado
+    @exclamar_resultado
+    funcion saludar(yo, nombre):
+        retornar "hola " + nombre
+    fin funcion
+fin clase
+
+s = Saludador()
+imprimir(s.saludar("ana"))

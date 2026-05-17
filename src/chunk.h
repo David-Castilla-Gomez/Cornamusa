@@ -107,6 +107,7 @@ typedef enum {
     /* ---- Stack management ---- */
     OP_DESCARTAR,       /* pop sin usar */
     OP_DUP_2,           /* duplica los 2 valores del tope (a, b -> a, b, a, b) */
+    OP_INTERCAMBIAR,    /* v1.77: intercambia top-2 (a, b -> b, a) */
 
     /* ---- Control de flujo (sesión 4) ---- */
     /* Los siguientes opcodes se reservan ahora para que el orden

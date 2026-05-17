@@ -40,6 +40,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_EN:              return "OP_EN";
         case OP_DESCARTAR:       return "OP_DESCARTAR";
         case OP_DUP_2:           return "OP_DUP_2";
+        case OP_INTERCAMBIAR:    return "OP_INTERCAMBIAR";
         case OP_SALTAR:          return "OP_SALTAR";
         case OP_SALTAR_SI_FALSO: return "OP_SALTAR_SI_FALSO";
         case OP_BUCLE:           return "OP_BUCLE";

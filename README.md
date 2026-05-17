@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.76.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.77.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.76.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Nuevo subcomando `cornamusa depurar`**: debugger interactivo con breakpoints, step into/over/out, inspección de globales, backtrace y listing de código fuente alrededor del punto de pausa. Prompt `(dep)` acepta comandos en castellano (`continuar`/`paso`/`siguiente`/`retornar`/`break`/`imprimir`/`pila`) con aliases cortos (`c`/`s`/`n`/`r`/`b`/`p`). Cierra el último hueco del tooling tras `fmt`/`lint`/`docs`/`lsp`/`prof`/`cov`. 235 tests verde con 25 asserts nuevos en `test_depurador`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.77.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Decoradores `@x` ahora funcionan sobre métodos de clase**: hasta v1.76 lanzaban error de compilación claro; v1.77 implementa el desugar usando un nuevo opcode `OP_INTERCAMBIAR` que preserva la clase debajo del stack durante la cadena de decoradores. Stacking y factories también soportados en métodos. `@propiedad` (descriptor para getters automáticos) queda como release dedicada v1.78 — requiere nuevo `TipoValor` y cambios en los opcodes de obtener-atributo. 236 tests verde. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -181,6 +181,7 @@ Hoja de ruta resumida:
 | **v1.74** | **Auditoría: tests seguridad JWT, tests directos csv + nativas cadenas, fix `ErrorDeClave` atrapable** | ✅ |
 | **v1.75** | **Coverage tracker `cornamusa cov` — reporta % de líneas top-level cubiertas, complementa profiler** | ✅ |
 | **v1.76** | **Debugger interactivo `cornamusa depurar` — breakpoints, step, inspect, backtrace; cierra el tooling de Fase 5** | ✅ |
+| **v1.77** | **Decoradores `@x` sobre métodos de clase (con stacking + factories); opcode `OP_INTERCAMBIAR`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
