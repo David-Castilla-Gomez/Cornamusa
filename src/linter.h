@@ -43,6 +43,12 @@
  *                        ser typo: el programador queria `x == y`. Solo
  *                        ambos lados EXPR_IDENT identicos (no calls).
  *
+ * Anadido en v1.69:
+ *   - EMPTY_EXCEPT     : clausula `atrapar` con cuerpo vacio o `pasar` —
+ *                        silencia errores sin tratarlos. Anti-patron
+ *                        clasico ("error swallowing"). Si es deliberado,
+ *                        suprime con `# noqa: empty-except`.
+ *
  * Supresion selectiva (v1.64): `# noqa: <categoria>` al final de
  * cualquier linea silencia el warning de esa categoria en esa linea.
  * Multiples categorias: `# noqa: cat1, cat2`. Bare `# noqa` silencia
@@ -66,6 +72,7 @@ typedef enum {
     LINT_MUTABLE_DEFAULT, /* v1.55: default mutable (lista/dict/conjunto literal) */
     LINT_CONCAT_IN_LOOP,  /* v1.63: `x = x + ...` o `x += ...` en mientras/para */
     LINT_SAME_COMPARISON, /* v1.68: `x == x` / `x < x` / etc. — siempre true/false */
+    LINT_EMPTY_EXCEPT,    /* v1.69: `atrapar X: pasar` o body vacio — silencia error */
 } TipoWarning;
 
 typedef struct {

@@ -118,6 +118,7 @@ static unsigned categoria_a_bit(const char *texto, int longitud) {
         {"mutable-default", 15, LINT_MUTABLE_DEFAULT},
         {"concat-in-loop",  14, LINT_CONCAT_IN_LOOP},
         {"same-comparison", 15, LINT_SAME_COMPARISON},
+        {"empty-except",    12, LINT_EMPTY_EXCEPT},
     };
     for (size_t i = 0; i < sizeof(TABLA) / sizeof(TABLA[0]); i++) {
         if (longitud == TABLA[i].len
@@ -924,8 +925,32 @@ static void visitar_sent(Sent *s, Ctx *ctx) {
         case SENT_INTENTAR:
             visitar_bloque(s->como.intentar.cuerpo, ctx);
             for (int i = 0; i < s->como.intentar.n_atrapadores; i++) {
-                visitar_expr_quizas(s->como.intentar.atrapadores[i].tipo, ctx);
-                visitar_bloque(s->como.intentar.atrapadores[i].cuerpo, ctx);
+                ClausulaAtrapar *a = &s->como.intentar.atrapadores[i];
+                visitar_expr_quizas(a->tipo, ctx);
+
+                /* v1.69: empty-except. Si el cuerpo del atrapador es
+                 * vacio o solo `pasar`, el error queda silenciado sin
+                 * tratamiento. Anti-patron clasico ("error swallowing").
+                 * Si es deliberado, usar `# noqa: empty-except`. */
+                Sent *cuerpo = a->cuerpo;
+                bool body_swallow = false;
+                if (cuerpo && cuerpo->tipo == SENT_BLOQUE) {
+                    int nstmts = cuerpo->como.bloque.n_sentencias;
+                    if (nstmts == 0) {
+                        body_swallow = true;
+                    } else if (nstmts == 1
+                                && cuerpo->como.bloque.sentencias[0]
+                                && cuerpo->como.bloque.sentencias[0]->tipo == SENT_PASAR) {
+                        body_swallow = true;
+                    }
+                }
+                if (body_swallow) {
+                    emitir(ctx, LINT_EMPTY_EXCEPT, a->linea, a->columna,
+                            "'atrapar' con cuerpo vacio o `pasar` — silencia el "
+                            "error sin tratarlo (anti-patron)");
+                }
+
+                visitar_bloque(a->cuerpo, ctx);
             }
             visitar_bloque(s->como.intentar.sino, ctx);
             visitar_bloque(s->como.intentar.finalmente, ctx);
@@ -1091,6 +1116,7 @@ const char *linter_tipo_nombre(TipoWarning t) {
         case LINT_MUTABLE_DEFAULT: return "mutable-default";
         case LINT_CONCAT_IN_LOOP:  return "concat-in-loop";
         case LINT_SAME_COMPARISON: return "same-comparison";
+        case LINT_EMPTY_EXCEPT:    return "empty-except";
         default:                   return "warning";
     }
 }

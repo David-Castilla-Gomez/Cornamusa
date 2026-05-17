@@ -88,6 +88,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | base64 URL-safe (RFC 4648 §5, `-_` sin padding, prerequisito JWT) | v1.66 | ✅ |
 | Stdlib `jwt` (RFC 7519 HS256) pure-Cornamusa sobre json+base64+hashing | v1.67 | ✅ |
 | Linter `same-comparison` (11ª categoría) — detecta `x == x`, `x < x`, typos clásicos | v1.68 | ✅ |
+| Linter `empty-except` (12ª categoría) — `atrapar X: pasar` silencia errores | v1.69 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

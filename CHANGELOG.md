@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.69.0] — 2026-05-17 — Linter: `empty-except` (12ª categoría)
+
+Detecta el anti-patrón clásico de "silenciar errores": una cláusula
+`atrapar X:` con cuerpo vacío o solo `pasar`. Es un error que
+dificulta debugging — el programa sigue ejecutando como si nada
+pero el error real se perdió.
+
+### Ejemplos
+
+```cornamusa
+# Mal: error silenciado.
+intentar:
+    n = entero(entrada)
+atrapar Excepcion:
+    pasar                  # ← warning [empty-except]
+fin intentar
+
+# Mal aunque haya `como e`: sigue sin tratarse.
+intentar:
+    n = entero(entrada)
+atrapar Excepcion como e:
+    pasar                  # ← también warning
+fin intentar
+
+# Bien: cuerpo con código real.
+intentar:
+    n = entero(entrada)
+atrapar Excepcion:
+    n = 0                  # fallback explícito
+fin intentar
+
+# Deliberado: suprime con # noqa.
+intentar:
+    cleanup_best_effort()
+atrapar Excepcion:         # noqa: empty-except
+    pasar
+fin intentar
+```
+
+### Cobertura
+
+Detecta dos formas problemáticas:
+
+| Cuerpo del `atrapar` | Estado |
+|---|---|
+| Vacío (0 sentencias) | warning |
+| Una sola `pasar` | warning |
+| Cualquier otra cosa | OK |
+
+No distingue si hay `como X` o no — ambas variantes son sospechosas
+si el cuerpo no hace nada. Si quieres capturar el error para
+re-loguear más tarde, al menos haz `e_global = e` o algún registro.
+
+### Aplicación al repo
+
+0 verdaderos positivos, 0 falsos positivos. **Los ejemplos y stdlib
+del proyecto nunca cayeron en este anti-patrón** — buena disciplina
+mantenida orgánicamente, ahora protegida automáticamente contra
+introducción futura.
+
+### Total del linter: 12 categorías
+
+Con `empty-except` el linter cubre:
+
+- 4 AST-shape: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`.
+- 4 scope analysis: `unused-local`, `unused-param`, `shadow`, `unused-loop-var`.
+- 2 perf patterns: `mutable-default`, `concat-in-loop`.
+- 2 bug catchers: `same-comparison`, **`empty-except`**.
+
+### Implementación
+
+- `LINT_EMPTY_EXCEPT` en `linter.h`.
+- Detección dentro del case `SENT_INTENTAR` del visitor: para cada
+  `ClausulaAtrapar`, comprueba si el cuerpo (siempre `SENT_BLOQUE`)
+  tiene 0 sentencias o 1 sentencia `SENT_PASAR`.
+- ~25 líneas C añadidas.
+- Suppresión con `# noqa: empty-except` funciona (sale del helper
+  común `noqa_silencia`).
+
+### Verificación
+
+- **224/224 tests verde**. `test_linter` extendido a **73 asserts**
+  (vs 68): cuerpo `pasar`, con `como e`, cuerpo con código (skip),
+  múltiples atrapadores donde uno warna y otro no, `# noqa`.
+- Repo entero pasa `cornamusa lint` sin warnings (0 introducidos).
+
 ## [1.68.0] — 2026-05-17 — Linter: `same-comparison` (11ª categoría)
 
 Nuevo check del linter que detecta `x == x`, `x < x`, `x != x` y

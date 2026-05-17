@@ -48,6 +48,7 @@ typedef struct {
     int n_mutable_default;
     int n_concat_in_loop;
     int n_same_comparison;
+    int n_empty_except;
 } Resumen;
 
 static Resumen analizar(const char *fuente) {
@@ -84,6 +85,7 @@ static Resumen analizar(const char *fuente) {
             case LINT_MUTABLE_DEFAULT: r.n_mutable_default++; break;
             case LINT_CONCAT_IN_LOOP:  r.n_concat_in_loop++; break;
             case LINT_SAME_COMPARISON: r.n_same_comparison++; break;
+            case LINT_EMPTY_EXCEPT:    r.n_empty_except++; break;
         }
     }
     linter_resultado_destruir(&lr);
@@ -586,6 +588,70 @@ int main(void) {
         /* Suprimible con `# noqa: same-comparison`. */
         Resumen r = analizar("imprimir(x == x)  # noqa: same-comparison\n");
         AFIRMAR(r.n_same_comparison == 0, "noqa_same");
+    }
+
+    /* ─── EMPTY_EXCEPT (v1.69) ─── */
+    {
+        /* `atrapar X: pasar` clasico. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    intentar:\n"
+            "        x = 1\n"
+            "    atrapar Excepcion:\n"
+            "        pasar\n"
+            "    fin intentar\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_empty_except == 1, "empty_pasar");
+    }
+    {
+        /* Con `como e`: tambien warna. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    intentar:\n"
+            "        x = 1\n"
+            "    atrapar Excepcion como e:\n"
+            "        pasar\n"
+            "    fin intentar\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_empty_except == 1, "empty_pasar_como");
+    }
+    {
+        /* Body con codigo real: NO warna. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    intentar:\n"
+            "        x = 1\n"
+            "    atrapar Excepcion:\n"
+            "        imprimir(\"oops\")\n"
+            "    fin intentar\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_empty_except == 0, "empty_con_codigo_skip");
+    }
+    {
+        /* Multiples atrapadores: cada uno se evalua independiente. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    intentar:\n"
+            "        x = 1\n"
+            "    atrapar ErrorDeValor:\n"
+            "        pasar\n"
+            "    atrapar ErrorDeTipo:\n"
+            "        imprimir(\"ok\")\n"
+            "    fin intentar\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_empty_except == 1, "multiple_atrapadores_uno_warna");
+    }
+    {
+        /* Suprimible con `# noqa`. */
+        Resumen r = analizar(
+            "funcion f():\n"
+            "    intentar:\n"
+            "        x = 1\n"
+            "    atrapar Excepcion:   # noqa: empty-except\n"
+            "        pasar\n"
+            "    fin intentar\n"
+            "fin funcion\n");
+        AFIRMAR(r.n_empty_except == 0, "noqa_empty_except");
     }
 
     /* ─── # noqa: directive (v1.64) ─── */

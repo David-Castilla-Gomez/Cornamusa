@@ -877,7 +877,7 @@ cornamusa lsp                         # Language Server Protocol por stdio (v1.5
                                        # para integracion editor (VS Code, etc.)
 ```
 
-Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`, `shadow`, `unused-loop-var`, `mutable-default`, `concat-in-loop`, `same-comparison`.
+Categorias del linter: `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`, `shadow`, `unused-loop-var`, `mutable-default`, `concat-in-loop`, `same-comparison`, `empty-except`.
 
 ---
 
