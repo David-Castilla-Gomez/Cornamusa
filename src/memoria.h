@@ -54,6 +54,7 @@ typedef enum {
     GC_TIPO_METODO_LIGADO,
     GC_TIPO_MODULO,
     GC_TIPO_GENERADOR,  /* v1.31 */
+    GC_TIPO_PROPIEDAD,  /* v1.78: getter para @propiedad */
 } TipoGC;
 
 /*

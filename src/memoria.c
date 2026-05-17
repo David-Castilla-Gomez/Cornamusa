@@ -285,6 +285,11 @@ void gc_marcar_objeto(GCObject *obj) {
             }
             break;
         }
+        case GC_TIPO_PROPIEDAD: {
+            const Propiedad *p = (const Propiedad *)obj;
+            if (p->getter) gc_marcar_objeto(&p->getter->obj);
+            break;
+        }
     }
 }
 
@@ -503,6 +508,12 @@ static void gc_liberar_objeto(GCObject *o) {
                 g->stack_buf = NULL;
             }
             free(g);
+            break;
+        }
+        case GC_TIPO_PROPIEDAD: {
+            /* getter es GCObject — lo maneja su propio liberar via
+               refcount. Aqui solo liberamos la struct Propiedad. */
+            free(o);
             break;
         }
     }

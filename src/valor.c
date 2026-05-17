@@ -602,6 +602,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_METODO_LIGADO:
         case VAL_MODULO:
         case VAL_GENERADOR:
+        case VAL_PROPIEDAD:
             return false;
         case VAL_CLASE:
         case VAL_INSTANCIA:
@@ -1430,6 +1431,39 @@ Valor valor_metodo_ligado(MetodoLigado *m) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Propiedad (v1.78) — getter envuelto para `@propiedad`
+ * ────────────────────────────────────────────────────────────────── */
+
+Propiedad *propiedad_nueva(Closure *getter) {
+    if (!getter) return NULL;
+    Propiedad *p = (Propiedad *)gc_alocar(sizeof(Propiedad), GC_TIPO_PROPIEDAD);
+    if (!p) return NULL;
+    closure_retener(getter);
+    p->getter = getter;
+    p->refcount = 1;
+    return p;
+}
+
+void propiedad_retener(Propiedad *p) { if (p) p->refcount++; }
+
+void propiedad_liberar(Propiedad *p) {
+    if (!p) return;
+    p->refcount--;
+    if (p->refcount > 0) return;
+    closure_liberar(p->getter);
+    gc_desenlazar(&p->obj);
+    free(p);
+}
+
+Valor valor_propiedad(Propiedad *p) {
+    Valor v;
+    v.tipo = VAL_PROPIEDAD;
+    v.dueno_cadena = false;
+    v.como.propiedad = p;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Módulo (Fase 9 v0.9.0)
  * ────────────────────────────────────────────────────────────────── */
 
@@ -1561,6 +1595,10 @@ void valor_destruir(Valor *v) {
             generador_liberar(v->como.generador);
             v->como.generador = NULL;
             break;
+        case VAL_PROPIEDAD:
+            propiedad_liberar(v->como.propiedad);
+            v->como.propiedad = NULL;
+            break;
         default:
             break;
     }
@@ -1677,6 +1715,9 @@ Valor valor_clonar(const Valor *v) {
         case VAL_GENERADOR:
             generador_retener(v->como.generador);
             return valor_generador(v->como.generador);
+        case VAL_PROPIEDAD:
+            propiedad_retener(v->como.propiedad);
+            return valor_propiedad(v->como.propiedad);
     }
     return valor_nulo();
 }
@@ -2294,6 +2335,17 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
             }
             break;
         }
+        case VAL_PROPIEDAD: {
+            const Propiedad *p = v->como.propiedad;
+            const FuncionBC *fn = p->getter ? p->getter->plantilla : NULL;
+            if (fn && fn->nombre) {
+                n = snprintf(buffer, (size_t)capacidad, "<propiedad %.*s>",
+                    fn->longitud_nombre, fn->nombre);
+            } else {
+                n = snprintf(buffer, (size_t)capacidad, "<propiedad>");
+            }
+            break;
+        }
         case VAL_TUPLA: {
             const Tupla *t = v->como.tupla;
             int escritos = snprintf(buffer, (size_t)capacidad, "(");
@@ -2351,6 +2403,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_METODO_LIGADO: return "funcion";  /* visible como funcion */
         case VAL_MODULO:        return "modulo";
         case VAL_GENERADOR:     return "generador";
+        case VAL_PROPIEDAD:     return "propiedad";
     }
     return "desconocido";
 }
@@ -2418,6 +2471,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.modulo != NULL;
         case VAL_GENERADOR:
             return v->como.generador != NULL && !v->como.generador->agotado;
+        case VAL_PROPIEDAD:
+            return v->como.propiedad != NULL;
     }
     return false;
 }
@@ -2565,6 +2620,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
             return a->como.modulo == b->como.modulo;
         case VAL_GENERADOR:
             return a->como.generador == b->como.generador;
+        case VAL_PROPIEDAD:
+            return a->como.propiedad == b->como.propiedad;
     }
     return false;
 }

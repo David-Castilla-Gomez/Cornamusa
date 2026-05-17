@@ -4695,6 +4695,29 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 Valor met_v;
                 if (dicc_obtener(obj.como.instancia->clase->metodos,
                                   nombre, &met_v)) {
+                    /* v1.78: si la entrada es VAL_PROPIEDAD, despachar
+                     * el getter con `yo` como argumento. El frame del
+                     * getter deja su valor de retorno en el TOS, que
+                     * es lo que el opcode original habria devuelto. */
+                    if (met_v.tipo == VAL_PROPIEDAD) {
+                        Closure *getter = met_v.como.propiedad->getter;
+                        /* Retener antes de destruir met_v: si la
+                         * propiedad muere ahora, su getter pierde su
+                         * unica ref antes de que ejecutar_dunder_unario
+                         * lo retenga para el frame. */
+                        closure_retener(getter);
+                        valor_destruir(&met_v);
+                        /* obj ya esta sacado; reempujamos para que
+                         * ejecutar_dunder_unario lo encuentre como
+                         * receptor en TOS. */
+                        empujar(vm, obj);
+                        ResultadoVM rcd = ejecutar_dunder_unario(vm, &frame,
+                                                                 getter,
+                                                                 "propiedad", 9);
+                        closure_liberar(getter);
+                        if (rcd != VM_OK) return rcd;
+                        break;
+                    }
                     if (met_v.tipo != VAL_FUNCION_BC) {
                         valor_destruir(&met_v); valor_destruir(&obj);
                         VM_ERROR("estado interno corrupto: metodo no es closure");

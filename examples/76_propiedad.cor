@@ -1,0 +1,80 @@
+# @propiedad (v1.78): getters automaticos sin parentesis.
+#
+# Patron clasico: atributo computado a partir de campos almacenados.
+# Sin @propiedad: `r.area()` con parentesis. Con @propiedad: `r.area`
+# como si fuera un campo, pero el getter se invoca cada vez.
+
+clase Rectangulo:
+    funcion __iniciar__(yo, ancho, alto):
+        yo.ancho = ancho
+        yo.alto = alto
+    fin funcion
+
+    # Atributo computado: area = ancho * alto.
+    @propiedad
+    funcion area(yo):
+        retornar yo.ancho * yo.alto
+    fin funcion
+
+    # Atributo computado: perimetro = 2 * (ancho + alto).
+    @propiedad
+    funcion perimetro(yo):
+        retornar 2 * (yo.ancho + yo.alto)
+    fin funcion
+
+    # Atributo computado con logica: es_cuadrado.
+    @propiedad
+    funcion es_cuadrado(yo):
+        retornar yo.ancho == yo.alto
+    fin funcion
+
+    # Metodos normales coexisten con propiedades.
+    funcion escalar(yo, factor):
+        retornar Rectangulo(yo.ancho * factor, yo.alto * factor)
+    fin funcion
+fin clase
+
+r = Rectangulo(3, 4)
+imprimir(f"Rectangulo {r.ancho}x{r.alto}")
+imprimir(f"  area:        {r.area}")
+imprimir(f"  perimetro:   {r.perimetro}")
+imprimir(f"  es cuadrado? {r.es_cuadrado}")
+
+# Escalar y reusar las propiedades.
+grande = r.escalar(3)
+imprimir(f"\nRectangulo escalado x3: {grande.ancho}x{grande.alto}")
+imprimir(f"  area:      {grande.area}")
+imprimir(f"  perimetro: {grande.perimetro}")
+
+# Caso cuadrado.
+cuadrado = Rectangulo(5, 5)
+imprimir(f"\nCuadrado: ¿es_cuadrado? {cuadrado.es_cuadrado}")
+
+# ─── Patron 2: validacion / encapsulacion ──────────────────────
+# Propiedad puede transformar el valor crudo antes de devolverlo.
+clase Temperatura:
+    funcion __iniciar__(yo, celsius):
+        yo._celsius = celsius
+    fin funcion
+
+    @propiedad
+    funcion celsius(yo):
+        retornar yo._celsius
+    fin funcion
+
+    @propiedad
+    funcion fahrenheit(yo):
+        retornar yo._celsius * 9 / 5 + 32
+    fin funcion
+
+    @propiedad
+    funcion kelvin(yo):
+        retornar yo._celsius + 273.15
+    fin funcion
+fin clase
+
+t = Temperatura(25)
+imprimir(f"\n25°C en distintas unidades:")
+imprimir(f"  celsius:    {t.celsius}°C")
+imprimir(f"  fahrenheit: {t.fahrenheit}°F")
+imprimir(f"  kelvin:     {t.kelvin}K")

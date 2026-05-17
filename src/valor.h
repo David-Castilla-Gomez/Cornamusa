@@ -77,6 +77,7 @@ typedef enum {
     VAL_METODO_LIGADO, /* método con receptor ligado (Fase 8 S2) */
     VAL_MODULO,        /* módulo cargado via `importar` (Fase 9) */
     VAL_GENERADOR,     /* v1.31: generador suspendible con frame congelado */
+    VAL_PROPIEDAD,     /* v1.78: getter envuelto para `@propiedad` */
 } TipoValor;
 
 /* Forward decls de tipos coleccion. La definición completa va después
@@ -93,6 +94,7 @@ typedef struct Excepcion Excepcion;
 typedef struct Clase Clase;
 typedef struct Instancia Instancia;
 typedef struct MetodoLigado MetodoLigado;
+typedef struct Propiedad Propiedad;
 typedef struct Modulo Modulo;
 typedef struct Generador Generador;
 
@@ -177,6 +179,7 @@ typedef struct Valor {
         MetodoLigado *metodo_ligado; /* refcount; método con receptor */
         Modulo *modulo;     /* refcount; módulo cargado */
         Generador *generador; /* v1.31; refcount; generador suspendible */
+        Propiedad *propiedad; /* v1.78; refcount; getter para `@propiedad` */
     } como;
 } Valor;
 
@@ -562,6 +565,30 @@ void metodo_ligado_retener(MetodoLigado *m);
 void metodo_ligado_liberar(MetodoLigado *m);
 
 Valor valor_metodo_ligado(MetodoLigado *m);
+
+/*
+ * v1.78: Propiedad. Envuelve un Closure que actua como getter cuando
+ * `instancia.atributo` se evalua. El getter recibe `yo` y devuelve un
+ * valor cualquiera. Util para computar atributos derivados:
+ *   @propiedad
+ *   funcion area(yo):
+ *       retornar yo.ancho * yo.alto
+ *   fin funcion
+ *   # uso: rect.area    (sin parentesis — el getter se invoca solo)
+ *
+ * Solo getter en v1.78; @propiedad.setter queda pendiente.
+ */
+struct Propiedad {
+    GCObject obj;
+    Closure *getter;
+    int refcount;
+};
+
+Propiedad *propiedad_nueva(Closure *getter);
+void propiedad_retener(Propiedad *p);
+void propiedad_liberar(Propiedad *p);
+
+Valor valor_propiedad(Propiedad *p);
 
 /*
  * Módulo cargado via `importar` (Fase 9).

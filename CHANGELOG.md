@@ -6,6 +6,121 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.78.0] — 2026-05-17 — `@propiedad`: getters automáticos
+
+Convierte un método en getter automático que se invoca al acceder al
+atributo (sin paréntesis). Útil para atributos computados y para
+encapsulación ligera:
+
+```cornamusa
+clase Rectangulo:
+    funcion __iniciar__(yo, ancho, alto):
+        yo.ancho = ancho
+        yo.alto = alto
+    fin funcion
+
+    @propiedad
+    funcion area(yo):
+        retornar yo.ancho * yo.alto
+    fin funcion
+fin clase
+
+r = Rectangulo(3, 4)
+imprimir(r.area)    # → 12 (sin parentesis: el getter se invoca solo)
+```
+
+### Diseño
+
+- **Nuevo `TipoValor`** `VAL_PROPIEDAD` con tag GC `GC_TIPO_PROPIEDAD`.
+  Envuelve un `Closure *getter` con refcount propio.
+- **Nativa `propiedad(callable)`** crea el wrapper. El decorador `@propiedad`
+  desugara a `area = propiedad(area)` igual que cualquier decorador de
+  función — la única diferencia es que `propiedad()` devuelve un
+  `VAL_PROPIEDAD` en lugar de otra closure.
+- **`OP_METODO` sin cambios**: acepta cualquier valor como entrada del
+  dict `clase.metodos`. Las propiedades se guardan ahí junto a los
+  métodos normales.
+- **`OP_OBTENER_ATRIBUTO` distingue**: si la entrada del dict es
+  `VAL_PROPIEDAD`, despacha el getter con `yo` como argumento usando
+  el mismo helper que los dunders unarios (`ejecutar_dunder_unario`).
+  El frame del getter deja su retorno en el TOS, exactamente donde el
+  opcode original habría dejado el valor cacheado.
+- **Cache fast-path NO promueve** propiedades: el `OP_OBTENER_ATRIBUTO_INSTANCIA_CACHE`
+  cachea valores de `instancia.atributos`, no de `clase.metodos`, así
+  que las propiedades naturalmente toman el slow path cada vez (que
+  invoca el getter, comportamiento correcto).
+
+### Ejemplo de uso
+
+Atributo computado típico:
+
+```cornamusa
+clase Temperatura:
+    funcion __iniciar__(yo, celsius):
+        yo._celsius = celsius
+    fin funcion
+
+    @propiedad
+    funcion fahrenheit(yo):
+        retornar yo._celsius * 9 / 5 + 32
+    fin funcion
+
+    @propiedad
+    funcion kelvin(yo):
+        retornar yo._celsius + 273.15
+    fin funcion
+fin clase
+
+t = Temperatura(25)
+imprimir(t.fahrenheit)   # 77.0
+imprimir(t.kelvin)       # 298.15
+```
+
+### Limitaciones declaradas
+
+- **Solo getter**. No hay setter (`@x.setter`). Asignación a atributo
+  marcado con `@propiedad` no funciona como Python — actualmente
+  sobrescribe la propiedad con el valor crudo en `inst.atributos`
+  (donde gana sobre la propiedad en lookups futuros). Workaround: el
+  setter es siempre un método explícito (`obj.set_x(valor)`).
+- **`@estaticometodo`/`@clasemetodo`** quedan pendientes. Requerirían
+  más TipoValor o un esquema de descriptor más general.
+- **Propiedad no se ve en `dir()` ni reflexión**. Aceptable para esta
+  primera versión.
+
+### Tests
+
+13 asserts nuevos en `test_bytecode_propiedad.c`:
+
+- Propiedad básica (`r.area` → 12).
+- Múltiples propiedades en la misma clase (área y perímetro
+  independientes).
+- Propiedad usa atributos de la instancia (distintas instancias dan
+  distintos resultados).
+- Propiedad puede lanzar; la excepción se propaga normalmente y se
+  puede atrapar.
+- `propiedad()` con argumento no-callable lanza `ErrorDeTipo`.
+- Acceso repetido al atributo invoca el getter cada vez (no es cache).
+
+### Archivos
+
+- `src/valor.{c,h}` — `VAL_PROPIEDAD` + `struct Propiedad` con
+  refcount + constructor/retener/liberar.
+- `src/memoria.{c,h}` — `GC_TIPO_PROPIEDAD` marcado/barrido.
+- `src/nativos.c` — nativa `propiedad()` registrada.
+- `src/vm.c` — `OP_OBTENER_ATRIBUTO` detecta `VAL_PROPIEDAD` y
+  despacha el getter.
+- `tests/unit/test_bytecode_propiedad.c` — 13 asserts.
+- `examples/76_propiedad.cor` — `Rectangulo` con `area/perimetro/es_cuadrado`
+  y `Temperatura` con `fahrenheit/kelvin`.
+
+### Estado
+
+238 tests verde. Cierra el grueso del bloque OOP/decoradores junto
+con v1.72 y v1.77.
+
+---
+
 ## [1.77.0] — 2026-05-17 — Decoradores `@x` sobre métodos de clase
 
 Cierra la limitación declarada desde v1.72: hasta v1.76 los decoradores

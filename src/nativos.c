@@ -2670,6 +2670,39 @@ static Valor nativa_tiempo_formato(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * @propiedad (v1.78). Envuelve una funcion como getter.
+ * El usuario hace:
+ *
+ *   @propiedad
+ *   funcion area(yo):
+ *       retornar yo.ancho * yo.alto
+ *   fin funcion
+ *
+ * que desugar a `area = propiedad(area)`, dejando un VAL_PROPIEDAD
+ * que OP_METODO guarda en clase.metodos. Al acceder `obj.area` el
+ * opcode OP_OBTENER_ATRIBUTO_INSTANCIA invoca el getter con `yo`.
+ * ────────────────────────────────────────────────────────────────── */
+
+static Valor nativa_propiedad(EvalError *err, int n_args, Valor *args,
+                                int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: propiedad() requiere 1 argumento (callable)");
+    }
+    if (args[0].tipo != VAL_FUNCION_BC) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: propiedad() espera una funcion, recibio '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Propiedad *p = propiedad_nueva(args[0].como.closure);
+    if (!p) {
+        return error_nativa(err, linea, columna,
+            "memoria insuficiente al crear propiedad");
+    }
+    return valor_propiedad(p);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Tiempo monotónico + sleep + epoch_ms (v1.73).
  * Wrappers del stdlib `tiempo.cor`. `tiempo_actual` (segundos) ya
  * existe desde v1.19; aqui añadimos ms, monotonic y dormir.
@@ -3807,6 +3840,8 @@ static const EntradaNativa NATIVAS[] = {
     {"tiempo_epoch_ms",     15, nativa_tiempo_epoch_ms},
     {"tiempo_monotonic",    16, nativa_tiempo_monotonic},
     {"tiempo_dormir",       13, nativa_tiempo_dormir},
+    /* @propiedad (v1.78). */
+    {"propiedad",            9, nativa_propiedad},
     /* Azar (v1.26). */
     {"azar_decimal",        12, nativa_azar_decimal},
     {"azar_entero",         11, nativa_azar_entero},
