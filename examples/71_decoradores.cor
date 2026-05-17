@@ -1,0 +1,113 @@
+# Decoradores `@nombre` (v1.72).
+#
+# Sintaxis idiomatica para envolver funciones sin renombrarlas:
+#
+#   @decorador
+#   funcion f(x):
+#       ...
+#   fin funcion
+#
+# Es azucar para:
+#
+#   funcion f(x):
+#       ...
+#   fin funcion
+#   f = decorador(f)
+#
+# Stacking: `@a` + `@b` + `funcion f` produce `f = a(b(f))`
+# (el mas cercano a la funcion se aplica primero).
+
+# ─── 1. Decorador simple: log de cada llamada ───────────────────
+funcion logueado(f):
+    funcion envoltura(*args):
+        imprimir("llamando con:", args)
+        r = f(*args)
+        imprimir("  → resultado:", r)
+        retornar r
+    fin funcion
+    retornar envoltura
+fin funcion
+
+@logueado
+funcion sumar(a, b):
+    retornar a + b
+fin funcion
+
+imprimir("=== ejemplo 1 ===")
+sumar(3, 4)
+
+# ─── 2. Decorador con argumentos (factory) ──────────────────────
+funcion repetir(n):
+    funcion decorador(f):
+        funcion envoltura(s):
+            r = ""
+            para _ en rango(n):
+                r = r + f(s)
+            fin para
+            retornar r
+        fin funcion
+        retornar envoltura
+    fin funcion
+    retornar decorador
+fin funcion
+
+@repetir(3)
+funcion eco(s):
+    retornar s
+fin funcion
+
+imprimir("\n=== ejemplo 2 ===")
+imprimir(eco("ja"))           # jajaja
+
+# ─── 3. Stacking: dos decoradores en cascada ────────────────────
+# Aplicacion: dec_mas_cercano(f), luego dec_mas_lejano sobre el resultado.
+funcion doblar(f):
+    funcion envoltura(x):
+        retornar f(x) * 2
+    fin funcion
+    retornar envoltura
+fin funcion
+
+funcion mas_uno(f):
+    funcion envoltura(x):
+        retornar f(x) + 1
+    fin funcion
+    retornar envoltura
+fin funcion
+
+@doblar
+@mas_uno
+funcion identidad(x):
+    retornar x
+fin funcion
+
+imprimir("\n=== ejemplo 3 ===")
+# identidad(5): 5 → mas_uno → 6 → doblar → 12
+imprimir(identidad(5))        # 12
+
+# ─── 4. Memoizacion (caching de resultados) ─────────────────────
+# Patron clasico: convertir una funcion lenta en una rapida.
+funcion memoizar(f):
+    cache = {}
+    funcion envoltura(n):
+        si n en cache:
+            retornar cache[n]
+        fin si
+        r = f(n)
+        cache[n] = r
+        retornar r
+    fin funcion
+    retornar envoltura
+fin funcion
+
+@memoizar
+funcion fib(n):
+    si n < 2:
+        retornar n
+    fin si
+    retornar fib(n - 1) + fib(n - 2)
+fin funcion
+
+imprimir("\n=== ejemplo 4 ===")
+# Sin memoizar, fib(35) seria lentisimo. Con memoizar, instantaneo.
+imprimir("fib(35) =", fib(35))

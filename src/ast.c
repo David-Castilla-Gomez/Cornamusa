@@ -619,6 +619,8 @@ Sent *sent_funcion(Arena *a, const char *nombre, int len_nombre,
         s->como.funcion.n_parametros = n_params;
         s->como.funcion.anotacion_retorno = anot_retorno;
         s->como.funcion.cuerpo = cuerpo;
+        s->como.funcion.decoradores = NULL;
+        s->como.funcion.n_decoradores = 0;
     }
     return s;
 }

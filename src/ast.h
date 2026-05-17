@@ -537,6 +537,11 @@ struct Sent {
             int n_parametros;
             Expr *anotacion_retorno;    /* `-> tipo`, NULL si no hay */
             Sent *cuerpo;               /* SENT_BLOQUE */
+            /* v1.72: decoradores aplicados de adentro hacia afuera.
+             * `@a` + `@b` + `funcion f` produce `f = a(b(f))`. Vacios
+             * si la funcion no esta decorada. Arena-owned. */
+            Expr **decoradores;
+            int n_decoradores;
         } funcion;
 
         struct {

@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.71.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.72.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.71.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de dieciséis módulos. **Subcomando `cornamusa prof` añade profiler determinista**: registra cada CallFrame y emite tabla por función con `llamadas`, `total`, `self`, `per-call`. Hook único en el dispatch loop sincroniza `profiler.n_stack` con `vm->n_frames` — cuando inactivo es un solo branch (cero coste real). Complementa `fmt`/`lint`/`docs`/`lsp` cerrando la fase de tooling. 226 tests verde con 18 asserts nuevos en `test_profiler`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.72.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de dieciséis módulos. **Decoradores `@nombre` añadidos al core**: `@cache` + `funcion f` desugar a `f = cache(f)`; soporta stacking (`@a @b` → `a(b(f))`), factories con argumentos (`@retry(3)`) y decoradores sobre funciones anidadas. Implementación de desugar puro en el compilador, sin opcodes nuevos. v1.71 añadió `cornamusa prof`. 228 tests verde con 10 asserts nuevos en `test_bytecode_decoradores`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -176,6 +176,7 @@ Hoja de ruta resumida:
 | **v1.69** | **Linter `empty-except` — `atrapar X: pasar` (error swallowing), 12ª categoría** | ✅ |
 | **v1.70** | **`jwt.expirado()` + `jwt.decodificar_y_validar()` — validación de claims `exp`/`nbf` (RFC 7519 §4.1.4/4.1.5)** | ✅ |
 | **v1.71** | **Profiler determinista `cornamusa prof` — tabla por función con `llamadas`/`total`/`self`/`per-call`** | ✅ |
+| **v1.72** | **Decoradores `@nombre` — desugar puro en el compilador, con stacking y factories `@retry(3)`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

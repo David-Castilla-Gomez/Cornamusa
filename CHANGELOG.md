@@ -6,6 +6,95 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.72.0] — 2026-05-17 — Decoradores `@nombre`
+
+Azúcar sintáctica idiomática para envolver funciones sin renombrarlas
+manualmente. `@cache` + `funcion f` desugar a `f = cache(f)`. Stacking
+y factories con argumentos soportados.
+
+```cornamusa
+funcion memoizar(f):
+    cache = {}
+    funcion envoltura(n):
+        si n en cache:
+            retornar cache[n]
+        fin si
+        r = f(n)
+        cache[n] = r
+        retornar r
+    fin funcion
+    retornar envoltura
+fin funcion
+
+@memoizar
+funcion fib(n):
+    si n < 2:
+        retornar n
+    fin si
+    retornar fib(n - 1) + fib(n - 2)
+fin funcion
+
+imprimir(fib(35))   # instantáneo
+```
+
+### Reglas
+
+- **Stacking**: `@a` + `@b` + `funcion f` produce `f = a(b(f))` — el
+  decorador más cercano a la función se aplica primero (igual que
+  Python).
+- **Factories**: `@retry(3)` expresión arbitraria; el resultado de
+  evaluarla es el decorador real. Equivalente a:
+  `tmp = retry(3); f = tmp(f)`.
+- **Funciones anidadas**: decoradores también funcionan dentro de
+  otra función (la asignación va a un slot local en lugar de a una
+  global).
+
+### Implementación
+
+- **Token `TT_AT`**: ya existía en el lexer desde hace tiempo, sin
+  uso. Reutilizado.
+- **AST**: `SENT_FUNCION` gana `Expr **decoradores` y `int n_decoradores`.
+- **Parser**: al inicio de `parser_parsear_sentencia`, si el token
+  actual es `@`, colecciona expresiones `@e` consecutivas y delega
+  a `parsear_funcion`; luego adjunta los decoradores al `SENT_FUNCION`.
+- **Compilador**: desugar puro tras `emitir_closure_de_funcion` + la
+  asignación. Para cada decorador en orden inverso al fuente: compila
+  decorador → empuja → `OP_OBTENER_*` de `f` → `OP_LLAMAR 1` →
+  `OP_ASIGNAR_*` de `f`. Sin opcodes nuevos.
+
+### Limitaciones (declaradas)
+
+- **Solo funciones**, no clases (Python permite `@dataclass` sobre
+  clases; sin demanda concreta, lo dejamos fuera).
+- **No decoración de métodos** dentro de un cuerpo `clase:` (sería el
+  caso `@property` / `@staticmethod`; queda para una posible v1.x si
+  surge un caso real).
+
+### Tests
+
+10 asserts nuevos en `test_bytecode_decoradores.c`:
+
+- Decorador simple aplica una vez (`ident(5) → 105` con `+100`).
+- Stacking `@a @b` produce el orden correcto (`(*2 ∘ +1)(5) = 12`).
+- Orden inverso `@b @a` también (`(+1 ∘ *2)(5) = 11`).
+- Factory `@rep(3)` repite la salida 3 veces.
+- `@x` sin `funcion` después → ErrorDeSintaxis.
+- Decorador en función anidada funciona igual.
+
+### Archivos
+
+- `src/ast.h`, `src/ast.c` — campos `decoradores`/`n_decoradores`.
+- `src/parser.c` — manejo de `TT_AT` en `parser_parsear_sentencia`.
+- `src/compilador.c` — desugar tras `compilar_funcion`.
+- `tests/unit/test_bytecode_decoradores.c` — 10 asserts.
+- `examples/71_decoradores.cor` — 4 escenarios (log, repetir, stacking, memoize).
+
+### Estado
+
+228 tests verde. Repo limpio (lint y fmt sin diferencias).
+
+---
+
 ## [1.71.0] — 2026-05-17 — Profiler determinista (`cornamusa prof`)
 
 Nuevo subcomando que ejecuta un script bajo un profiler determinista

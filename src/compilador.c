@@ -3612,16 +3612,21 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
     if (!emitir_closure_de_funcion(c, s)) return false;
 
     /* La closure recién creada está en el tope del stack. */
+    int slot_local = -1;
+    int idx_global = -1;
     if (c->actual->es_funcion) {
         /* Verificar si ya existe un local con ese nombre (redefinir). */
         int existente = buscar_local(c->actual, nombre, len_nombre);
         if (existente >= 0) {
             chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                 (uint8_t)existente, s->linea);
+            slot_local = existente;
         } else {
             int slot = agregar_local(c, nombre, len_nombre, s->linea);
             if (slot < 0) return false;
-            /* OLD convention para nuevo local. */
+            slot_local = slot;
+            /* OLD convention para nuevo local: el closure ya está en
+             * el slot por la convención "tope = n_locales". */
         }
     } else {
         int idx_nombre = agregar_nombre_global(c, nombre, len_nombre);
@@ -3632,6 +3637,40 @@ static bool compilar_funcion(Compilador *c, const Sent *s) {
         }
         chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
                             (uint8_t)idx_nombre, s->linea);
+        idx_global = idx_nombre;
+    }
+
+    /* v1.72: aplicar decoradores. `@a` + `@b` + `funcion f` produce
+     * `f = a(b(f))`. Iteramos de adentro hacia afuera (orden inverso
+     * al fuente): para cada decorador, empujamos dec(f) y reasignamos. */
+    int n_decs = s->como.funcion.n_decoradores;
+    Expr **decs = s->como.funcion.decoradores;
+    for (int i = n_decs - 1; i >= 0; i--) {
+        /* Compilar la expresión del decorador → top del stack. */
+        if (!compilador_compilar_expr(c, decs[i])) return false;
+        /* Obtener el valor actual de la función (debajo del decorador). */
+        if (slot_local >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_local, s->linea);
+        } else {
+            /* OP_OBTENER_GLOBAL es de 6 bytes (v0.10/F10): opcode +
+             * name_idx + 4 bytes de cache. */
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
+                                (uint8_t)idx_global, s->linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, s->linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, s->linea);
+        }
+        /* Llamar el decorador con la función actual como argumento. */
+        chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1, s->linea);
+        /* Reasignar el resultado al mismo nombre. Ambos ASIGNAR_* hacen
+         * pop del valor, no dejan nada en el stack. */
+        if (slot_local >= 0) {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)slot_local, s->linea);
+        } else {
+            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_GLOBAL,
+                                (uint8_t)idx_global, s->linea);
+        }
     }
     return true;
 }

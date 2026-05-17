@@ -1796,6 +1796,43 @@ Sent *parser_parsear_sentencia(Parser *p) {
 
     int linea = p->actual.linea;
     int col = p->actual.columna;
+    (void)linea; (void)col;
+
+    /* v1.72: decoradores. Una secuencia `@expr` seguida de otra `@expr`...
+     * y finalmente `funcion`. Se coleccionan en orden de fuente y se
+     * adjuntan al SENT_FUNCION devuelto por parsear_funcion. El
+     * compilador emite f = decN(...(dec1(f))...). */
+    if (p->actual.tipo == TT_AT) {
+        Expr **decs = NULL;
+        int n_decs = 0, cap_decs = 0;
+        int dec_linea = p->actual.linea, dec_col = p->actual.columna;
+        while (consumir_si(p, TT_AT)) {
+            Expr *d = parser_parsear_expr(p);
+            if (d == NULL) return NULL;
+            if (n_decs >= cap_decs) {
+                int nuevo_cap = cap_decs == 0 ? 4 : cap_decs * 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)nuevo_cap);
+                if (nuevo == NULL) return NULL;
+                if (n_decs > 0) memcpy(nuevo, decs, sizeof(Expr *) * (size_t)n_decs);
+                decs = nuevo;
+                cap_decs = nuevo_cap;
+            }
+            decs[n_decs++] = d;
+        }
+        if (p->actual.tipo != TT_FUNCION) {
+            error_en(p, &p->actual,
+                "se esperaba 'funcion' tras decorador(es) '@...'");
+            return NULL;
+        }
+        Sent *s = parsear_funcion(p);
+        if (s == NULL) return NULL;
+        s->como.funcion.decoradores = decs;
+        s->como.funcion.n_decoradores = n_decs;
+        s->linea = dec_linea;
+        s->columna = dec_col;
+        return s;
+    }
 
     switch (p->actual.tipo) {
         case TT_PASAR:     avanzar(p); return sent_pasar(p->arena, linea, col);
