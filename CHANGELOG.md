@@ -6,6 +6,87 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.83.0] — 2026-05-17 — ESPEC.md alineado a v1.82 (deuda mayor cerrada)
+
+ESPEC.md llevaba 30+ versiones de atraso desde la auditoría de v1.74,
+declarado como deuda mayor. Esta release hace una pasada de
+mantenimiento que actualiza lo crítico sin reescribir el documento
+entero (sigue siendo 1098 líneas; los cambios son focalizados).
+
+### Cambios en ESPEC.md
+
+**Header** (líneas 1-9):
+- Versión: `1.46.0` → `1.82.0`.
+- Última revisión: 2026-05-16 → 2026-05-17.
+- Resumen del cambio: "pasada de mantenimiento integrando v1.47-v1.82
+  (stdlib expandido a 17 módulos, decoradores sobre funciones y
+  métodos, `@propiedad`, suite completa de tooling con depurador
+  interactivo)".
+
+**§4.2 — Identificadores reservados sin implementar**:
+- Quitada referencia a `siguiente()` built-in global (sigue sin
+  existir, pero el dunder `__siguiente__` SÍ está implementado desde
+  v1.43 — confundía).
+- Aclarado que `__siguiente__` permite iteradores lazy stateful y la
+  señal de fin es `ErrorDeIteracion`.
+
+**§4.4 — Biblioteca estándar**:
+- "Doce módulos" → "Diecisiete módulos (v1.82)".
+- Tabla con columna nueva `Desde` indicando la versión de introducción.
+- Añadidos: `csv` (v1.58), `tiempo` (v1.73), `base64` (v1.59),
+  `hashing` (v1.60), `jwt` (v1.67). Conservados los 12 originales.
+- `cadenas` perdió la entrada `caracter` (eliminada en v1.80 — uso
+  `s[i]` built-in).
+
+**§9 — Decisiones cerradas y trabajo futuro**:
+
+Reescrito completamente. Lo que era stale:
+
+- "Stdlib amplia — doce módulos" → "diecisiete módulos (v1.8-v1.73)".
+- `borrar`/`global` listados como reservas pendientes → movidos a
+  "Implementado desde v1.1" con versiones v1.56/v1.57.
+- "Decoradores (`@deco`)" — "Soporte parcial en el parser" → completo
+  desde v1.72 (funciones), v1.77 (métodos), v1.78 (`@propiedad`).
+
+Sección nueva **Tooling (Fase 5, v1.47-v1.76)** con tabla de los 7
+subcomandos integrados (`fmt`/`lint`/`docs`/`lsp`/`prof`/`cov`/`depurar`)
+y versión de introducción de cada uno. REPL con line editing mencionado.
+
+Lista de reservas pendientes **reducida y honesta**:
+
+1. Async/await (`asincrono`/`esperar`) — v2.x.
+2. Prefijos de cadena `r"..."` / `b"..."`.
+3. Tipos numéricos exactos (`Fraccion`, `Decimal`) — futuro stdlib.
+4. Anotaciones de tipo `: tipo` — el parser las acepta, runtime las ignora.
+5. Decoradores sobre clases o `@x.setter`/`@estaticometodo`/`@clasemetodo`.
+
+Sección nueva **Trabajo de runtime pendiente** añade:
+
+- **TLS/HTTPS** en `red` — el cliente HTTP/1.1 actual es plano.
+  Requiere decisión sobre dep externa (OpenSSL/schannel).
+- **Setter para `@propiedad`** — requiere scope dentro del cuerpo de
+  clase para resolver `@area.setter` Python-style, o sintaxis
+  alternativa.
+
+### Lo que NO se tocó
+
+- **Gramática (§5 PEG)**: no se modificó. La sintaxis core no cambió
+  sustancialmente entre v1.46 y v1.82 — los cambios fueron en
+  semántica/stdlib/tooling. Una pasada formal a la gramática merece
+  release dedicada.
+- **§6 Semántica clave**: revisado por encima, sigue describiendo
+  correctamente lo que la VM hace.
+- **§7 Programa de ejemplo**: el ejemplo sigue siendo válido y
+  representativo.
+
+### Estado
+
+239 tests verde sin cambios. ESPEC.md crece de 1098 a ~1115 líneas
+(tabla de tooling + reservas más completas; -10 líneas por reservas
+quitadas que ya están implementadas).
+
+---
+
 ## [1.82.0] — 2026-05-17 — Cookbook con 10 recetas validadas
 
 Nueva pieza de documentación: `docs/cookbook.md`. Complementa el

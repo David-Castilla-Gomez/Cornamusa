@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.82.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.83.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.82.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Nuevo Cookbook** (`docs/cookbook.md`): 10 recetas listas para copy-paste cubriendo casos reales — procesar CSV y agregar, JWT con expiración, hash SHA-256, backoff exponencial, memoización con decorador, cronómetros, atributos computados con `@propiedad`, parser de argv, counter dict-style, JSON pretty-print. Cada receta es código completo y se ha validado contra el intérprete. Complementa el tutorial (que enseña el lenguaje) y la referencia (que lista APIs) convirtiendo features dispersas en patrones útiles. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.83.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **ESPEC.md actualizado a v1.82** tras 30+ versiones de atraso: §4.4 stdlib pasó de "doce módulos" a 17 con columna `Desde` por versión introducida; §9 "Decisiones cerradas y trabajo futuro" reescrito reflejando que `borrar`/`global`/decoradores/`@propiedad` ya están implementados (no son reservas); sección nueva de tooling listando los 7 subcomandos integrados (`fmt`/`lint`/`docs`/`lsp`/`prof`/`cov`/`depurar`); reservas pendientes reducidas a las honestas (async, raw strings, `@x.setter`, TLS). [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -187,6 +187,7 @@ Hoja de ruta resumida:
 | **v1.80** | **Limpieza stdlib: dead code eliminado, params renombrados, ~80 líneas menos** | ✅ |
 | **v1.81** | **Linter `redundant-bool-compare` + `useless-return` — 14 categorías totales** | ✅ |
 | **v1.82** | **Cookbook con 10 recetas validadas (CSV, JWT, hashing, backoff, memoize, ...)** | ✅ |
+| **v1.83** | **ESPEC.md alineado a v1.82 — stdlib 17 módulos, tooling, decoradores, `@propiedad`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

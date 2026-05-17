@@ -1,8 +1,8 @@
 # Especificación del lenguaje Cornamusa
 
-**Versión del documento:** 1.46.0
+**Versión del documento:** 1.82.0
 **Estado:** Estable.
-**Última revisión:** 2026-05-16 — actualizada a v1.46 (multi-recurso `con A, B:` + combinar `*args` con `**kwargs` en la misma llamada; cierre de la Fase 4).
+**Última revisión:** 2026-05-17 — pasada de mantenimiento integrando los cambios v1.47-v1.82 (stdlib expandido a 17 módulos, decoradores sobre funciones y métodos, `@propiedad`, suite completa de tooling con depurador interactivo). La sección §9 lista lo que cambió desde v1.46 y lo que sigue reservado.
 
 Este documento define la sintaxis, semántica y vocabulario de Cornamusa, un lenguaje de programación dinámico interpretado con identidad castellana. La especificación es el contrato que une al implementador con el usuario del lenguaje: cualquier cambio aquí debe propagarse a `lexer.c`, `parser.c`, los built-ins de `nativos.c` y la documentación de usuario.
 
@@ -371,7 +371,9 @@ Registrados como globales pero pensados para usarse a través del módulo de std
 
 ### 4.2 Identificadores reservados sin implementar
 
-`abrir(ruta, modo)` y `siguiente(it)` (iteración perezosa con `__siguiente__`) están reservados pero **no implementados**: invocarlos da `ErrorDeNombre` como cualquier identificador no definido. La iteración de clases se hace hoy con `__iterar__` (§4.3), que devuelve un iterable nativo. La I/O de archivos vive en el módulo `archivos`.
+`abrir(ruta, modo)` está reservado pero **no implementado** como built-in global: invocarlo da `ErrorDeNombre`. La I/O de archivos vive en el módulo `archivos` (`archivos.leer`, `archivos.escribir`, etc.).
+
+> Nota: el built-in global `siguiente()` que figuraba aquí en v1.46 sigue sin existir (`ErrorDeNombre`), pero el **dunder `__siguiente__`** sí está implementado desde v1.43 — permite iteradores lazy stateful. Lo invoca la VM en cada paso de un `para` cuando `__iterar__` devuelve `yo`. La señal de fin es `ErrorDeIteracion` (atrapable por el usuario igual que cualquier excepción).
 
 ### 4.3 Métodos especiales (dunders)
 
@@ -490,22 +492,27 @@ Patrón Python `__iter__(self): return self` soportado: si la instancia define a
 
 ### 4.4 Biblioteca estándar (stdlib)
 
-Doce módulos. Los archivos viven en `stdlib/*.cor` y se cargan vía `importar`. La lista completa de funciones de cada módulo está en la [referencia rápida](docs/referencia.md#16-biblioteca-estándar-stdlib); aquí solo el resumen:
+**Diecisiete módulos** (v1.82). Los archivos viven en `stdlib/*.cor` y se cargan vía `importar`. La lista completa de funciones de cada módulo está en la [referencia rápida](docs/referencia.md#16-biblioteca-estándar-stdlib); aquí solo el resumen:
 
-| Módulo | Contenido |
-|---|---|
-| `matematicas` | `PI`, `E`, `cuadrado`, `cubo`, `absoluto`, `maximo`, `minimo`, `signo`, `factorial`, `suma_rango`, `es_par`, `es_impar`, `mcd` |
-| `cadenas` | `repetir`, `unir`, `separar`, `reemplazar`, `recortar`(`_izquierda`/`_derecha`), `empieza_con`, `termina_con`, `contiene`, `indice_de`, `contar`, `caracter`, `mayusculas_ascii`, `minusculas_ascii`, `es_vacia` |
-| `funcionales` | `mapear`, `filtrar`, `reducir`, `enumerar`, `cualquiera`, `todos`, `suma`, `minimo`, `maximo` |
-| `formato` | `rellenar`, `alinear_derecha`, `centrar`, `con_decimales`, `numero_con_separador`, `porcentaje`, `como_hex`, `como_binario`, `linea`, `fila` |
-| `archivos` | `leer`, `escribir`, `agregar`, `lineas`, `existe` |
-| `json` | `parsear`, `serializar`, `serializar_indentado` |
-| `fechas` | `ahora`, `componentes`, `construir`, `formato`, `iso8601`, `legible`, aritmética de fechas, calendario; constantes `SEGUNDO`…`SEMANA` |
-| `azar` | `decimal`, `entero`, `semilla`, `elegir`, `barajar`, `muestra`, `booleano`, `uniforme` |
-| `proceso` | `ejecutar`, `capturar`, `codigo` — lanzar procesos externos (cross-platform) |
-| `regex` | `coincide`, `buscar`, `todos`, `reemplazar`, `contiene`, `extraer` — motor backtracking propio |
-| `red` | `obtener`, `descargar_cuerpo`, `parsear_cabeceras` — cliente HTTP/1.1 plano (sin TLS) |
-| `sistema` | `argv` — argumentos del programa |
+| Módulo | Desde | Contenido |
+|---|---|---|
+| `matematicas` | v0.9 | `PI`, `E`, `cuadrado`, `cubo`, `absoluto`, `maximo`, `minimo`, `signo`, `factorial`, `suma_rango`, `es_par`, `es_impar`, `mcd` |
+| `cadenas` | v0.9 | `repetir`, `unir`, `separar`, `reemplazar`, `recortar`(`_izquierda`/`_derecha`), `empieza_con`, `termina_con`, `contiene`, `indice_de`, `contar`, `mayusculas_ascii`, `minusculas_ascii`, `es_vacia` |
+| `funcionales` | v1.11 | `mapear`, `filtrar`, `reducir`, `enumerar`, `cualquiera`, `todos`, `suma`, `minimo`, `maximo` |
+| `formato` | v1.18 | `rellenar`, `alinear_derecha`, `centrar`, `con_decimales`, `numero_con_separador`, `porcentaje`, `como_hex`, `como_binario`, `linea`, `fila` |
+| `archivos` | v1.8 | `leer`, `escribir`, `agregar`, `lineas`, `existe` |
+| `json` | v1.9 | `parsear`, `serializar`, `serializar_indentado` |
+| `csv` | v1.58 | `parsear`, `serializar`, `leer`, `escribir` — RFC 4180-like, separadores configurables |
+| `fechas` | v1.19 | `ahora`, `componentes`, `construir`, `formato`, `iso8601`, `legible`, aritmética de fechas, calendario; constantes `SEGUNDO`…`SEMANA` |
+| `tiempo` | v1.73 | `epoch_segundos`, `epoch_ms`, `monotonic`, `dormir`, clase `Cronometro` — reloj, sleep, cronómetros |
+| `azar` | v1.26 | `decimal`, `entero`, `semilla`, `elegir`, `barajar`, `muestra`, `booleano`, `uniforme` |
+| `proceso` | v1.27 | `ejecutar`, `capturar`, `codigo` — lanzar procesos externos (cross-platform) |
+| `regex` | v1.28 | `coincide`, `buscar`, `todos`, `reemplazar`, `contiene`, `extraer` — motor backtracking propio |
+| `red` | v1.29 | `obtener`, `descargar_cuerpo`, `parsear_cabeceras` — cliente HTTP/1.1 plano (sin TLS) |
+| `base64` | v1.59 | `codificar`, `decodificar`, `codificar_url` — RFC 4648 + variante URL-safe (§5) |
+| `hashing` | v1.60 | `sha256`, `md5`, `hmac_sha256`, `hmac_md5`, `hmac_sha256_bytes` — FIPS 180-4 + RFC 2104/4231 |
+| `jwt` | v1.67 | `codificar`, `decodificar`, `verificar`, `expirado`, `decodificar_y_validar` — RFC 7519 HS256 |
+| `sistema` | v0.9 | `argv` — argumentos del programa |
 
 ```cornamusa
 importar matematicas
@@ -1052,32 +1059,52 @@ fin coincidir
 
 ### Implementado desde v1.1 (eran reservas en versiones anteriores)
 
-- **F-strings con expresiones** (v1.1) y triples (v1.14).
-- **Dunders** completos: aritméticos y de coerción (v1.2), reflejados / `__llamar__` / `__longitud__` (v1.3), `__iterar__` (v1.12), `__entrar__`/`__salir__` (v1.13).
+- **F-strings con expresiones** (v1.1), triples (v1.14), format specs `f"{x:>10.2f}"` (v1.45).
+- **Dunders** completos: aritméticos y de coerción (v1.2), reflejados / `__llamar__` / `__longitud__` (v1.3), `__iterar__` (v1.12), `__entrar__`/`__salir__` (v1.13), `__repr__`/`__booleano__` (v1.41), `__hash__`/`__igual__` (v1.42), `__siguiente__` (v1.43).
 - **`nolocal`** — escritura a upvalue (v1.4).
-- **`con` (context managers)** (v1.13).
+- **`con` (context managers)** (v1.13) — multi-recurso `con A, B:` (v1.46).
 - **Pattern matching `coincidir`** (v1.15-v1.16): literales, bind, wildcard, guardas, patrones estructurales, OR-patterns, star-patterns, type-match.
-- **Destructuring**, `*args`, keyword args, `**kwargs`, spread `*`/`**` (v1.21-v1.25).
+- **Destructuring**, `*args`, keyword args, `**kwargs`, spread `*`/`**` (v1.21-v1.25), combinación `f(*args, **kw)` en la misma llamada (v1.46).
 - **Comprehensions** y **generadores** (`producir`, `producir desde`, generator expressions) (v1.30-v1.34).
-- **Stdlib amplia** — doce módulos (v1.8-v1.29).
+- **Stdlib amplia** — diecisiete módulos (v1.8-v1.73).
+- **Expresión ternaria** `A si C sino B` y **slicing assignment** `xs[i:j] = ...` (v1.44).
+- **`borrar d[k]` / `borrar obj.attr`** (v1.56) — antes era keyword reservada.
+- **`global X`** ejecutable desde funciones (v1.57) — antes era keyword reservada sin implementación VM.
+- **Decoradores `@nombre`** sobre funciones (v1.72) — antes "soporte parcial en parser". Stacking y factories. Sobre métodos de clase desde v1.77 (`OP_INTERCAMBIAR`).
+- **`@propiedad`** (v1.78) — getters automáticos invocados al acceder al atributo. Nuevo `VAL_PROPIEDAD`.
+
+### Tooling (Fase 5, v1.47-v1.76)
+
+Suite completa de herramientas integradas en el ejecutable principal:
+
+| Subcomando | Versión | Función |
+|---|---|---|
+| `cornamusa fmt` | v1.48 | Formateador in-place, modo `--check` para CI, `--stdout` |
+| `cornamusa lint` | v1.49-v1.81 | Linter con 14 categorías + `# noqa: <cat>` para suprimir |
+| `cornamusa docs` | v1.51 | Genera Markdown desde firmas + comentarios |
+| `cornamusa lsp` | v1.52-v1.54 | Language Server Protocol (stdio, JSON-RPC) — diagnostics, hover, goto-def, formatting |
+| `cornamusa prof` | v1.71 | Profiler determinista — tabla por función con `calls`/`total`/`self`/`per-call` |
+| `cornamusa cov` | v1.75 | Coverage tracker — % de líneas top-level cubiertas, `--uncovered` para listar |
+| `cornamusa depurar` | v1.76 | Debugger interactivo — breakpoints, step into/over/out, inspección de globales, backtrace |
+
+REPL: line editing con history navegable y persistencia (v1.47).
 
 ### Reservas pendientes (la sintaxis puede aceptarse, el runtime no las implementa)
 
-1. **`borrar` (`del` de Python)**. Keyword reservada; `quitar(...)` cubre el caso por ahora.
-2. **`global`** (escritura a global desde función). Keyword reservada, sin implementar en la VM.
-3. **Async/await (`asincrono`/`esperar`)**. Keywords reservadas. v2.x.
-4. **Dunders del modelo de datos** — todos implementados (v1.41 `__repr__`/`__booleano__`, v1.42 `__hash__`, v1.43 `__siguiente__`).
-5. **Prefijos de cadena `r"..."` (raw) y `b"..."` (bytes)**. Reservados.
-6. **Tipos numéricos exactos** (`Fraccion`, `Decimal`). En stdlib, futuro.
-7. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta; el runtime las ignora.
-8. **Decoradores (`@deco`)**. Soporte parcial en el parser.
+1. **Async/await (`asincrono`/`esperar`)**. Keywords reservadas. v2.x.
+2. **Prefijos de cadena `r"..."` (raw) y `b"..."` (bytes)**. Reservados.
+3. **Tipos numéricos exactos** (`Fraccion`, `Decimal`). En stdlib, futuro.
+4. **Anotaciones de tipo (`: tipo`)**. La gramática las acepta; el runtime las ignora (sin type-checker).
+5. **Decoradores sobre clases o sobre métodos vía `@x.setter`** (i.e. setter de propiedad, `@estaticometodo`, `@clasemetodo`). El parser rechaza `@x` antes de `clase`; sobre métodos solo soporta decoradores simples que devuelven función — `@propiedad` es excepción nativa.
 
 ### Trabajo de runtime pendiente (no afecta a la sintaxis)
 
 - **GC generacional** — postergado (decisión B10). El GC mark-sweep tri-color actual es suficiente para los workloads conocidos.
 - **Computed-goto y PGO** en el dispatch — evaluados y descartados con datos (regresión o sin mejora medible); ver `benchmarks/RESULTS.md`. `vm.c` usa `switch` + `-O3` + LTO.
 - **JIT / tracing** — aplazado indefinidamente.
-- **Concurrencia / hilos** — aplazada a post-v1.x.
+- **Concurrencia / hilos / async** — aplazada a post-v1.x.
+- **TLS/HTTPS** en `red` — el cliente HTTP/1.1 actual es plano. Requiere decisión sobre dep externa (OpenSSL/schannel).
+- **Setter para `@propiedad`** y `@estaticometodo`/`@clasemetodo` — requieren scope dentro del cuerpo de clase para resolver `@area.setter` (Python-style), o sintaxis alternativa.
 
 ---
 
