@@ -6,6 +6,72 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.90.0] — 2026-05-17 — Cookbook ampliado: 5 recetas más (15 totales)
+
+Cinco recetas nuevas validadas contra el intérprete, llevando el
+total del cookbook a 15. Continúa la línea pedagógica abierta por
+v1.79 (tutorial expandido con 35 ejercicios) y v1.82 (cookbook
+inicial con 10 recetas).
+
+### Recetas añadidas
+
+| # | Receta | Módulos involucrados |
+|---|---|---|
+| 11 | Validar email con regex | `regex` |
+| 12 | Merge de configuración con defaults | dicts + iteración |
+| 13 | Logger con niveles DEBUG/INFO/WARN/ERROR | `tiempo`, clases |
+| 14 | CSV con headers a lista de dicts | `csv`, `funcionales.combinar` |
+| 15 | Ordenar lista de dicts por campo | listas mutables, sort manual |
+
+### Caso destacado: receta 14 usa `funcionales.combinar`
+
+```cornamusa
+importar csv
+importar funcionales
+
+funcion csv_a_dicts(texto):
+    filas = csv.parsear(texto)
+    si longitud(filas) == 0: retornar [] fin si
+    cabecera = filas[0]
+    resultado = []
+    para fila en filas[1:]:
+        d = {}
+        para par en funcionales.combinar(cabecera, fila):
+            d[par[0]] = par[1]
+        fin para
+        agregar(resultado, d)
+    fin para
+    retornar resultado
+fin funcion
+```
+
+Este patrón une csv (v1.58), funcionales.combinar (v1.87), y
+diccionarios — un ejemplo de cómo features añadidas a lo largo de
+varias releases componen bien.
+
+### Caso destacado: receta 11 — validación de email
+
+Documentamos honestamente que el motor regex de Cornamusa no soporta
+`{n,m}`, así que usamos `[a-zA-Z][a-zA-Z]+` (TLD de 2+ letras) en
+lugar de `[a-zA-Z]{2,}`. La receta da el patrón funcional y explica
+la limitación.
+
+### Validación
+
+Las 5 recetas se ejecutaron en lotes durante la redacción. Outputs
+mostrados en el cookbook son los reales del intérprete.
+
+### Sin cambios de código
+
+249 tests verde sin cambios desde v1.89. Bump por convención de release.
+
+### Archivos
+
+- `docs/cookbook.md` — 5 secciones nuevas + índice actualizado.
+  Pasó de ~250 líneas a ~450.
+
+---
+
 ## [1.89.0] — 2026-05-17 — Linter: `bool-coerce-conditional` + `for-rango-longitud` (16 categorías)
 
 Dos checks nuevos al linter para patrones clásicos de código nuevo.

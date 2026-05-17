@@ -16,6 +16,11 @@ Este recetario complementa el [tutorial](tutorial.md) (que enseña el lenguaje) 
 8. [Parser básico de argumentos del programa](#8-parser-básico-de-argumentos-del-programa)
 9. [Contar frecuencias (counter dict-style)](#9-contar-frecuencias-counter-dict-style)
 10. [JSON pretty-print para configuración](#10-json-pretty-print-para-configuración)
+11. [Validar email con regex](#11-validar-email-con-regex)
+12. [Merge de configuración con defaults](#12-merge-de-configuración-con-defaults)
+13. [Logger con niveles](#13-logger-con-niveles)
+14. [CSV con headers a lista de dicts](#14-csv-con-headers-a-lista-de-dicts)
+15. [Ordenar lista de dicts por campo](#15-ordenar-lista-de-dicts-por-campo)
 
 ---
 
@@ -332,9 +337,208 @@ Para parsear: `json.parsear("...")` devuelve el valor correspondiente (dict, lis
 
 ---
 
+## 11. Validar email con regex
+
+**Problema**: aceptar o rechazar una cadena como email plausible. No queremos RFC 5322 completo, solo una primera barrera.
+
+```cornamusa
+importar regex
+
+funcion email_valido(s):
+    retornar regex.coincide(
+        "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+[.][a-zA-Z][a-zA-Z]+$", s)
+fin funcion
+
+para s en ["ana@ejemplo.com", "no-email", "x@y.io", "user@x", "a.b+c@dom.io"]:
+    imprimir(f"  {s} -> {email_valido(s)}")
+fin para
+```
+
+```
+  ana@ejemplo.com -> verdadero
+  no-email -> falso
+  x@y.io -> verdadero
+  user@x -> falso
+  a.b+c@dom.io -> verdadero
+```
+
+El motor regex de Cornamusa no soporta `{n,m}`, así que usamos `[a-zA-Z][a-zA-Z]+` (TLD de 2+ letras) en lugar de `[a-zA-Z]{2,}`. Para validación más estricta combina varias regex o usa una librería específica.
+
+---
+
+## 12. Merge de configuración con defaults
+
+**Problema**: tienes un dict de defaults y otro con overrides del usuario. Quieres el resultado combinado.
+
+```cornamusa
+funcion fusionar(defaults, override):
+    resultado = {}
+    para k en claves(defaults):
+        resultado[k] = defaults[k]
+    fin para
+    para k en claves(override):
+        resultado[k] = override[k]
+    fin para
+    retornar resultado
+fin funcion
+
+DEFAULTS = {
+    "host": "localhost",
+    "puerto": 8080,
+    "timeout": 30,
+    "debug": falso,
+}
+
+usuario = {"host": "api.ejemplo.com", "debug": verdadero}
+config = fusionar(DEFAULTS, usuario)
+imprimir(config)
+```
+
+```
+{"host": "api.ejemplo.com", "puerto": 8080, "timeout": 30, "debug": verdadero}
+```
+
+Las claves del override **sustituyen** las del defaults; las que no están en override conservan el default. Útil para cargar configuración desde JSON encima de constantes del código.
+
+---
+
+## 13. Logger con niveles
+
+**Problema**: registrar mensajes con timestamp y nivel (DEBUG/INFO/WARN/ERROR), filtrando los que están por debajo del nivel mínimo.
+
+```cornamusa
+importar tiempo
+
+DEBUG = 0
+INFO = 1
+WARN = 2
+ERROR = 3
+
+NOMBRES = ["DEBUG", "INFO", "WARN", "ERROR"]
+
+clase Logger:
+    funcion __iniciar__(yo, nivel_min=INFO):
+        yo.nivel_min = nivel_min
+    fin funcion
+
+    funcion _registrar(yo, nivel, mensaje):
+        si nivel < yo.nivel_min:
+            retornar
+        fin si
+        ts = tiempo.epoch_segundos()
+        imprimir(f"[{ts}] {NOMBRES[nivel]}: {mensaje}")
+    fin funcion
+
+    funcion debug(yo, m): yo._registrar(DEBUG, m) fin funcion
+    funcion info(yo, m):  yo._registrar(INFO, m)  fin funcion
+    funcion warn(yo, m):  yo._registrar(WARN, m)  fin funcion
+    funcion error(yo, m): yo._registrar(ERROR, m) fin funcion
+fin clase
+
+log = Logger(INFO)
+log.debug("este no se imprime")     # filtrado: DEBUG < INFO
+log.info("servicio iniciado")
+log.warn("disco al 85%")
+log.error("conexion rechazada")
+```
+
+```
+[1779039672] INFO: servicio iniciado
+[1779039672] WARN: disco al 85%
+[1779039672] ERROR: conexion rechazada
+```
+
+Para escribir a archivo en lugar de stdout, reemplaza `imprimir` por `archivos.agregar("app.log", linea + "\n")`. Para producción real considera incluir fecha legible (`fechas.formato(ts, "%Y-%m-%d %H:%M:%S")`) en lugar de epoch.
+
+---
+
+## 14. CSV con headers a lista de dicts
+
+**Problema**: parsear CSV con primera fila de cabecera y obtener una lista de dicts (uno por fila), accesible por nombre de columna.
+
+```cornamusa
+importar csv
+importar funcionales
+
+funcion csv_a_dicts(texto):
+    filas = csv.parsear(texto)
+    si longitud(filas) == 0:
+        retornar []
+    fin si
+    cabecera = filas[0]
+    resultado = []
+    para fila en filas[1:]:
+        d = {}
+        para par en funcionales.combinar(cabecera, fila):
+            d[par[0]] = par[1]
+        fin para
+        agregar(resultado, d)
+    fin para
+    retornar resultado
+fin funcion
+
+datos = "nombre,edad,ciudad\nAna,30,Madrid\nLuis,25,Sevilla\nEva,40,Bilbao"
+registros = csv_a_dicts(datos)
+para r en registros:
+    imprimir(f"  {r['nombre']} ({r['edad']}, {r['ciudad']})")
+fin para
+```
+
+```
+  Ana (30, Madrid)
+  Luis (25, Sevilla)
+  Eva (40, Bilbao)
+```
+
+Los valores son cadenas (CSV no infiere tipos). Convierte con `entero()`/`decimal()` cuando lo necesites.
+
+---
+
+## 15. Ordenar lista de dicts por campo
+
+**Problema**: ordenar una colección de registros por un campo arbitrario.
+
+```cornamusa
+funcion ordenar_por(lst, campo):
+    copia = lst[:]
+    n = longitud(copia)
+    para i en rango(n):
+        para j en rango(0, n - i - 1):
+            si copia[j][campo] > copia[j + 1][campo]:
+                tmp = copia[j]
+                copia[j] = copia[j + 1]
+                copia[j + 1] = tmp
+            fin si
+        fin para
+    fin para
+    retornar copia
+fin funcion
+
+productos = [
+    {"nombre": "libro", "precio": 25},
+    {"nombre": "lapiz", "precio": 3},
+    {"nombre": "pluma", "precio": 15},
+]
+
+por_precio = ordenar_por(productos, "precio")
+para p en por_precio:
+    imprimir(f"  {p['precio']}€ — {p['nombre']}")
+fin para
+```
+
+```
+  3€ — lapiz
+  15€ — pluma
+  25€ — libro
+```
+
+Bubble sort, O(n²). Para listas grandes considera el `ordenar()` nativo con un comparator personalizado si Cornamusa lo soporta, o usa Schwartzian transform: `funcionales.mapear(lambda p: (p["precio"], p), lst)`, ordenar, extraer.
+
+---
+
 ## Siguientes pasos
 
 - **[Tutorial paso a paso](tutorial.md)**: si todavía no has aprendido el lenguaje, empieza aquí.
 - **[Referencia rápida](referencia.md)**: sintaxis y stdlib completa.
-- **[Ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)**: 72 programas, uno por feature.
+- **[Ejemplos](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/examples)**: 82 programas, uno por feature.
 - **[Issues en GitHub](https://github.com/David-Castilla-Gomez/Cornamusa/issues)**: ¿falta una receta? Pídela.

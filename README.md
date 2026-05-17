@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.89.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.90.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.89.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **dieciocho** módulos. **Linter gana dos categorías más** (16 totales): `bool-coerce-conditional` detecta `si C: retornar verdadero sino: retornar falso fin si` (simplificable a `retornar booleano(C)` o `retornar no C`), y `for-rango-longitud` detecta `para i en rango(longitud(X)):` (no idiomático; sugiere `para x en X:` o `enumerar(X)`). La auditoría del propio repo pilló 3 verdaderos positivos del segundo check; 2 refactorizados a `funcionales.combinar(...)`, 1 suprimido con `# noqa` (caso `encontrar` que ejecuta en tree-walking sin imports). 93 asserts en `test_linter` (de 84). [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.90.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **dieciocho** módulos. **Cookbook ampliado a 15 recetas** (5 nuevas validadas contra el intérprete): validar email con regex, merge de configuración con defaults, logger con niveles DEBUG/INFO/WARN/ERROR, CSV con headers a lista de dicts (usando `funcionales.combinar`), ordenar lista de dicts por campo. Continúa la línea pedagógica de v1.79 (tutorial+ejercicios) y v1.82 (cookbook inicial) — convierte features dispersas en patrones útiles de copy-paste. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -194,6 +194,7 @@ Hoja de ruta resumida:
 | **v1.87** | **`funcionales` extendido: `agrupar_por`, `tomar`, `saltar`, `combinar`, `aplanar`, `unicos`** | ✅ |
 | **v1.88** | **Stdlib `coleccion` — Pila, Cola, ColaDoble (18º módulo)** | ✅ |
 | **v1.89** | **Linter `bool-coerce-conditional` + `for-rango-longitud` — 16 categorías totales** | ✅ |
+| **v1.90** | **Cookbook ampliado: 5 recetas más (email, config, logger, csv-dicts, ordenar) — 15 totales** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

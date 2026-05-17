@@ -115,6 +115,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | `funcionales` extendido: `agrupar_por`/`tomar`/`saltar`/`combinar`/`aplanar`/`unicos` | v1.87 | ✅ |
 | Stdlib `coleccion` con Pila / Cola / ColaDoble (18º módulo) | v1.88 | ✅ |
 | Linter `bool-coerce-conditional` + `for-rango-longitud` (16 categorías) | v1.89 | ✅ |
+| Cookbook ampliado a 15 recetas (email, config, logger, csv-dicts, ordenar) | v1.90 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 
