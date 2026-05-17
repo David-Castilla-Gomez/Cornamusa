@@ -90,6 +90,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Linter `same-comparison` (11ª categoría) — detecta `x == x`, `x < x`, typos clásicos | v1.68 | ✅ |
 | Linter `empty-except` (12ª categoría) — `atrapar X: pasar` silencia errores | v1.69 | ✅ |
 | `jwt.expirado()` + `jwt.decodificar_y_validar()` — validación de claims `exp`/`nbf` | v1.70 | ✅ |
+| Profiler determinista `cornamusa prof` (tabla por función: llamadas/total/self/per-call) | v1.71 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

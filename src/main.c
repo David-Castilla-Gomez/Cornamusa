@@ -92,6 +92,8 @@ static void imprimir_uso(const char *programa) {
         "                             y emite Markdown a stdout o al archivo dado.\n"
         "  lsp                        Inicia el Language Server Protocol (stdio,\n"
         "                             JSON-RPC). Para integracion con editores.\n"
+        "  prof [--top=N] <archivo>   Ejecuta el script con profiler determinista\n"
+        "                             y vuelca tabla por funcion (a stderr).\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -238,7 +240,8 @@ static int ejecutar_archivo(const char *ruta) {
  * idénticamente al tree-walking. El cliente activa esta ruta con
  * la flag `--bytecode`.
  */
-static int ejecutar_archivo_bytecode(const char *ruta) {
+static int ejecutar_archivo_bc_opciones(const char *ruta, bool con_profiler,
+                                        int top_n_profiler) {
     FuenteCargada fc = fuente_cargar_archivo(ruta);
     if (fc.codigo != FUENTE_OK) {
         fprintf(stderr, "Error al cargar '%s': %s\n", ruta, fc.mensaje_error);
@@ -276,6 +279,7 @@ static int ejecutar_archivo_bytecode(const char *ruta) {
 
     VM vm;
     vm_iniciar(&vm);
+    if (con_profiler) profiler_activar(&vm.profiler);
     Valor resultado = valor_nulo();
     ResultadoVM rc_vm = vm_ejecutar(&vm, &chunk, &resultado);
 
@@ -289,12 +293,74 @@ static int ejecutar_archivo_bytecode(const char *ruta) {
         }
         rc = 70;
     }
+    if (con_profiler) {
+        profiler_desactivar(&vm.profiler);
+        profiler_dump(&vm.profiler, stderr, top_n_profiler);
+    }
     valor_destruir(&resultado);
     vm_destruir(&vm);
     chunk_destruir(&chunk);
     arena_destruir(&a);
     fuente_destruir(&fc);
     return rc;
+}
+
+static int ejecutar_archivo_bytecode(const char *ruta) {
+    return ejecutar_archivo_bc_opciones(ruta, false, 0);
+}
+
+/* ──────────────────────────────────────────────────────────────────
+ * Subcomando `prof` (v1.71 - Fase 5 tooling).
+ *
+ * Ejecuta el script con el profiler determinista activado. Al
+ * terminar (normal o por error), vuelca a stderr una tabla ordenada
+ * por self time descendente. Para no contaminar stdout, el dump va
+ * a stderr — el programa puede seguir usando stdout sin interferencia.
+ *
+ * Uso:
+ *   cornamusa prof script.cor [args...]
+ *   cornamusa prof --top=10 script.cor
+ * ────────────────────────────────────────────────────────────────── */
+
+static int subcomando_prof(int argc, char **argv) {
+    const char *archivo = NULL;
+    int top_n = 20;
+    int idx_archivo = -1;
+    for (int i = 2; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--ayuda") == 0
+            || strcmp(arg, "--help") == 0) {
+            fprintf(stderr,
+                "uso: %s prof [--top=N] script.cor [args...]\n"
+                "  Ejecuta el script bajo el profiler determinista.\n"
+                "  --top=N   muestra solo las N funciones con mas self time (default: 20, 0 = todas)\n",
+                argv[0]);
+            return 0;
+        }
+        if (strncmp(arg, "--top=", 6) == 0) {
+            top_n = atoi(arg + 6);
+            if (top_n < 0) top_n = 0;
+            continue;
+        }
+        if (arg[0] == '-' && strcmp(arg, "-") != 0) {
+            fprintf(stderr, "Opcion no reconocida para prof: %s\n", arg);
+            return 64;
+        }
+        archivo = arg;
+        idx_archivo = i;
+        break;  /* el resto son argv del programa */
+    }
+    if (!archivo) {
+        fprintf(stderr, "prof: se requiere un archivo .cor\n");
+        return 64;
+    }
+    /* Pasar argv al programa, igual que en el flujo normal. */
+    if (idx_archivo >= 0) {
+        nativos_set_argv(argc - idx_archivo, &argv[idx_archivo]);
+    } else {
+        nativos_set_argv(0, NULL);
+    }
+    return ejecutar_archivo_bc_opciones(archivo, true, top_n);
 }
 
 /* ──────────────────────────────────────────────────────────────────
@@ -964,6 +1030,9 @@ int main(int argc, char **argv) {
     }
     if (argc >= 2 && strcmp(argv[1], "docs") == 0) {
         return subcomando_docs(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "prof") == 0) {
+        return subcomando_prof(argc, argv);
     }
     if (argc >= 2 && strcmp(argv[1], "lsp") == 0) {
 #ifdef _WIN32

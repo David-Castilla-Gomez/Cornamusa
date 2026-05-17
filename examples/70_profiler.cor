@@ -1,0 +1,42 @@
+# Ejemplo del profiler determinista (v1.71).
+#
+# Ejecutar con:  cornamusa prof examples/70_profiler.cor
+#
+# El profiler vuelca a stderr una tabla ordenada por "self time"
+# (tiempo del frame descontando los frames hijos). Util para
+# encontrar hotspots — la funcion en lo alto de la lista es donde
+# el programa pasa mas tiempo "trabajando", no solo "esperando" a
+# que otra funcion termine.
+
+# fib(n) clasico recursivo: O(2^n), monton de auto-llamadas.
+funcion fib(n):
+    si n < 2:
+        retornar n
+    fin si
+    retornar fib(n - 1) + fib(n - 2)
+fin funcion
+
+# Funcion intermedia que llama a fib varias veces.
+funcion calcular_serie(hasta):
+    resultados = []
+    para i en rango(hasta):
+        agregar(resultados, fib(i))
+    fin para
+    retornar resultados
+fin funcion
+
+# Funcion adicional para mostrar mas de una entrada en la tabla.
+funcion sumar_lista(lst):
+    total = 0
+    para x en lst:
+        total = total + x
+    fin para
+    retornar total
+fin funcion
+
+serie = calcular_serie(22)
+total = sumar_lista(serie)
+
+imprimir("longitud:", longitud(serie))
+imprimir("total:", total)
+imprimir("fib(21):", serie[21])

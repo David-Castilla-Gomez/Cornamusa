@@ -281,6 +281,8 @@ void vm_iniciar(VM *vm) {
     valor_set_hooks(vm, vm_hash_dunder_hook, vm_iguales_dunder_hook);
     /* v1.38: traceback. */
     vm->traceback[0] = '\0';
+    /* v1.71: profiler determinista (inactivo por defecto). */
+    profiler_iniciar(&vm->profiler);
     /*
      * Fase 7: inicializar el GC e instalarlo como memoria global
      * antes de crear el diccionario de globales (que ya pasa por
@@ -382,6 +384,8 @@ void vm_destruir(VM *vm) {
      */
     memoria_destruir(&vm->memoria);
     gc_desinstalar();
+    /* v1.71: liberar tablas del profiler (no-op si nunca se activó). */
+    profiler_destruir(&vm->profiler);
 }
 
 /* Macros locales para el dispatch loop. `frame` es el CallFrame
@@ -1940,6 +1944,39 @@ static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout
     return VM_OK;
 }
 
+/*
+ * v1.71: sincroniza el stack del profiler con vm->n_frames. Llamado
+ * solo cuando profiler activo y los stacks divergen. Si subió: emite
+ * call_enter del frame nuevo (derivando id+nombre desde closure o
+ * modulo_en_carga). Si bajó: emite call_exits hasta sincronizar.
+ */
+static void vm_profiler_sync(VM *vm) {
+    Profiler *p = &vm->profiler;
+    while (p->n_stack < vm->n_frames) {
+        const CallFrame *f = &vm->frames[p->n_stack];
+        const void *id;
+        const char *nombre;
+        char buf[128];
+        if (f->closure && f->closure->plantilla) {
+            id = (const void *)f->closure->plantilla;
+            nombre = f->closure->plantilla->nombre
+                ? f->closure->plantilla->nombre : "<anon>";
+        } else if (f->modulo_en_carga) {
+            id = (const void *)f->modulo_en_carga;
+            snprintf(buf, sizeof(buf), "<modulo:%p>", (void *)f->modulo_en_carga);
+            nombre = buf;
+        } else {
+            /* Top-level del programa: id estable = puntero al chunk. */
+            id = (const void *)f->chunk;
+            nombre = "<top-level>";
+        }
+        profiler_on_call_enter(p, id, nombre);
+    }
+    while (p->n_stack > vm->n_frames) {
+        profiler_on_call_exit(p);
+    }
+}
+
 /* Dispatch interno; la wrapper pública vm_ejecutar gestiona el flag
    gc_habilitado en cualquier path de salida. */
 static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
@@ -1986,6 +2023,15 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
     /* `gc_habilitado` lo gestiona el wrapper público vm_ejecutar. */
 
     for (;;) {
+        /*
+         * v1.71: tick del profiler. Sincroniza el stack interno del
+         * profiler con vm->n_frames. Cuando profiler inactivo es solo
+         * un branch sobre `activo` (cero coste real, predicho como
+         * "no-tomado" por el branch predictor).
+         */
+        if (vm->profiler.activo && vm->profiler.n_stack != vm->n_frames) {
+            vm_profiler_sync(vm);
+        }
         /*
          * v0.8.1: trigger del GC en frontera de opcode (deferred).
          * `gc_alocar` set `trigger_pendiente` cuando detecta que el

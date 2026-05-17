@@ -6,6 +6,86 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.71.0] — 2026-05-17 — Profiler determinista (`cornamusa prof`)
+
+Nuevo subcomando que ejecuta un script bajo un profiler determinista
+y emite una tabla ordenada por **self time** (tiempo del frame
+descontando los frames hijos). Complementa `fmt`/`lint`/`docs`/`lsp`
+cerrando la fase de tooling.
+
+```bash
+cornamusa prof examples/70_profiler.cor
+# (stderr)
+#   llamadas       total        self    per-call  funcion
+#   --------     -------     -------    --------  -------
+#      92712   168.669ms    13.104ms       141ns  fib
+#          1    13.176ms    42.000us    42.000us  <top-level>
+#          1    13.132ms    27.800us    27.800us  calcular_serie
+#          1     2.000us     2.000us     2.000us  sumar_lista
+```
+
+### Diseño
+
+- **Hook único** en el dispatch loop de la VM: cuando profiler activo,
+  sincroniza `profiler.n_stack` con `vm->n_frames`. Push si subió,
+  pop si bajó. Cuando inactivo, es solo un branch sobre la bandera
+  (cero coste real para programas que no usan `prof`).
+- **Reloj monotónico**: `QueryPerformanceCounter` en Windows,
+  `clock_gettime(CLOCK_MONOTONIC)` en POSIX. Resolución submicrosegundo.
+- **`total` vs `self`**:
+  - `total_ns`: tiempo desde push hasta pop (incluye hijos).
+  - `self_ns`: `total - sum(total_de_hijos)`. La métrica útil para
+    encontrar hotspots. Funciones recursivas tienen `total >> self`
+    porque cada nivel acumula al padre.
+- **Identidad por función**: clave = puntero a `FuncionBC` (estable).
+  Diferentes closures de la misma función fuente agregan al mismo
+  bucket. Frames top-level y de módulos se identifican aparte.
+- **Salida a stderr**: stdout queda libre para el output del programa,
+  redirigible a pipe sin contaminar la tabla.
+
+### CLI
+
+```
+cornamusa prof [--top=N] <archivo.cor> [args...]
+  --top=N   muestra solo las N funciones con mas self time (default 20, 0 = todas)
+```
+
+Los `args...` se pasan al programa via `sistema.argv`.
+
+### Verificación de cuentas
+
+`tests/unit/test_profiler.c` con 18 asserts incluye un caso conocido:
+`fib(5)` recursivo debe registrar exactamente `T(5) = 2*fib(6)-1 = 15`
+llamadas. Verificado.
+
+### Limitaciones (declaradas)
+
+- **No mide nativas** que no crean CallFrame. Por ejemplo, una llamada
+  a `cadena_unir(lst, sep)` se contabiliza dentro del `self` del
+  caller — no como entrada propia.
+- **No produce caller/callee tree** (perfile plano). Para call graphs
+  habría que registrar el padre en cada exit; queda para v1.x si surge
+  un caso concreto.
+- **Overhead activo**: cada push/pop registra timestamp + lookup +
+  update. Programas muy hot bajan ~3-5×. No usar en producción.
+- **`alg=none`** y otros frames excepcionales: si una excepción
+  desenrosca varios frames, cada pop se contabiliza al sincronizar.
+
+### Archivos
+
+- `src/profiler.{c,h}` — modulo nuevo.
+- `src/vm.{c,h}` — hook único en dispatch loop, `Profiler` embebido en `VM`.
+- `src/main.c` — subcomando `prof`, refactor de `ejecutar_archivo_bytecode`.
+- `tests/unit/test_profiler.c` — 18 asserts.
+- `examples/70_profiler.cor` — fib recursivo demostrando hotspot.
+
+### Estado
+
+226 tests verde. Repo limpio (lint y fmt sin diferencias). Cierra
+la suite de tooling de Fase 5 junto con `fmt`/`lint`/`docs`/`lsp`.
+
+---
+
 ## [1.70.0] — 2026-05-17 — `jwt`: validación de claims temporales
 
 Pulido del módulo `jwt` (introducido en v1.67). `decodificar()` valida

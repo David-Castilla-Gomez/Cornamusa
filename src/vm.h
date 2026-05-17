@@ -6,6 +6,7 @@
 #include "chunk.h"
 #include "evaluador.h"   /* EvalError */
 #include "memoria.h"     /* Memoria (Fase 7 S1) */
+#include "profiler.h"    /* Profiler determinista (v1.71) */
 #include "valor.h"
 
 /*
@@ -212,6 +213,11 @@ typedef struct {
        error de runtime fatal sale del dispatch. Vacío ("") si no hay
        error o el error es solo de top-level. */
     char traceback[1024];
+
+    /* v1.71: profiler determinista. Inactivo por defecto; el subcomando
+       `cornamusa prof` lo activa antes de ejecutar. Cuando inactivo, los
+       hooks son no-op (un branch). */
+    Profiler profiler;
 } VM;
 
 /* Inicializa la VM. La pila empieza vacía, sin error. */
