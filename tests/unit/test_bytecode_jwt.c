@@ -1,5 +1,5 @@
 /*
- * Tests del modulo stdlib/jwt.cor (v1.67).
+ * Tests del modulo stdlib/jwt.cor (v1.67 + v1.70).
  *
  * Verifica:
  *   - Round-trip (codificar -> decodificar devuelve el mismo payload).
@@ -8,6 +8,8 @@
  *   - Token malformado lanza con mensaje claro.
  *   - jwt.verificar() devuelve true/false sin lanzar.
  *   - Header con alg distinto a HS256 rechazado.
+ *   - jwt.expirado(payload, ahora) (v1.70).
+ *   - jwt.decodificar_y_validar(token, clave, ahora) (v1.70).
  */
 
 #include <stdio.h>
@@ -162,6 +164,92 @@ int main(void) {
             "imprimir(p[\"usuario\"][\"nombre\"], p[\"roles\"][0])\n", out, sizeof(out));
         AFIRMAR(strstr(out, "Ana") != NULL, "anidado_nombre");
         AFIRMAR(strstr(out, "admin") != NULL, "anidado_roles");
+    }
+
+    /* v1.70: jwt.expirado() con claim exp. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "imprimir(jwt.expirado({\"exp\": 1000}, 2000))\n"
+            "imprimir(jwt.expirado({\"exp\": 1000}, 500))\n"
+            "imprimir(jwt.expirado({\"exp\": 1000}, 1000))\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "verdadero\nfalso\nverdadero") != NULL ||
+                strstr(out, "verdadero\r\nfalso\r\nverdadero") != NULL,
+                "expirado_combinaciones");
+    }
+
+    /* v1.70: jwt.expirado() sin claim exp -> nunca expira. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "imprimir(jwt.expirado({\"sub\": \"42\"}, 999999))\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "falso") != NULL, "expirado_sin_exp");
+    }
+
+    /* v1.70: decodificar_y_validar OK con exp en el futuro. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "tok = jwt.codificar({\"sub\": \"42\", \"exp\": 2000}, \"k\")\n"
+            "p = jwt.decodificar_y_validar(tok, \"k\", 1000)\n"
+            "imprimir(p[\"sub\"])\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "42") != NULL, "validar_ok_exp_futuro");
+    }
+
+    /* v1.70: decodificar_y_validar lanza con exp pasado. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "tok = jwt.codificar({\"sub\": \"42\", \"exp\": 1000}, \"k\")\n"
+            "intentar:\n"
+            "    jwt.decodificar_y_validar(tok, \"k\", 2000)\n"
+            "atrapar ErrorDeValor como e:\n"
+            "    imprimir(\"expirado-OK\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "expirado-OK") != NULL, "validar_exp_pasado");
+    }
+
+    /* v1.70: decodificar_y_validar lanza con nbf futuro. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "tok = jwt.codificar({\"sub\": \"42\", \"nbf\": 5000}, \"k\")\n"
+            "intentar:\n"
+            "    jwt.decodificar_y_validar(tok, \"k\", 1000)\n"
+            "atrapar ErrorDeValor como e:\n"
+            "    imprimir(\"nbf-OK\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "nbf-OK") != NULL, "validar_nbf_futuro");
+    }
+
+    /* v1.70: decodificar_y_validar OK cuando nbf <= ahora. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "tok = jwt.codificar({\"sub\": \"42\", \"nbf\": 1000}, \"k\")\n"
+            "p = jwt.decodificar_y_validar(tok, \"k\", 2000)\n"
+            "imprimir(p[\"sub\"])\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "42") != NULL, "validar_ok_nbf_pasado");
+    }
+
+    /* v1.70: decodificar_y_validar tambien valida firma. */
+    {
+        char out[1024];
+        ejecutar_capturando(
+            "importar jwt\n"
+            "tok = jwt.codificar({\"sub\": \"42\"}, \"k\")\n"
+            "intentar:\n"
+            "    jwt.decodificar_y_validar(tok, \"otra\", 1000)\n"
+            "atrapar ErrorDeValor como e:\n"
+            "    imprimir(\"firma-rechazada\")\n"
+            "fin intentar\n", out, sizeof(out));
+        AFIRMAR(strstr(out, "firma-rechazada") != NULL, "validar_firma_mala");
     }
 
     if (fallos == 0) {

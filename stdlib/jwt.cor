@@ -105,3 +105,38 @@ funcion verificar(token, clave):
         retornar falso
     fin intentar
 fin funcion
+
+# ─── Validacion de claims temporales (v1.70) ────────────────────
+#
+# Las claims estandar RFC 7519:
+#   - exp (expiration): timestamp tras el cual el token deja de ser valido.
+#   - nbf (not-before): timestamp antes del cual el token aun NO es valido.
+#   - iat (issued-at): timestamp de emision (informativo).
+#
+# `decodificar()` valida solo la firma — estos helpers validan exp/nbf.
+
+# True si `payload` tiene claim `exp` y el valor es <= `ahora`.
+# Si no hay claim `exp`, devuelve falso (el token no caduca).
+funcion expirado(payload, ahora):
+    si "exp" en payload:
+        retornar payload["exp"] <= ahora
+    fin si
+    retornar falso
+fin funcion
+
+# Atajo seguro: decodifica + valida firma + chequea exp/nbf en una
+# sola llamada. Lanza ErrorDeValor si el token es invalido por
+# cualquier razon (firma, expirado, aun no activo). El parametro
+# `ahora` debe ser el timestamp Unix actual — pasalo explicito (no lo
+# tomamos de `tiempo_actual()` para que la funcion sea pura y
+# testable; ademas el usuario puede usar tiempo simulado).
+funcion decodificar_y_validar(token, clave, ahora):
+    payload = decodificar(token, clave)
+    si expirado(payload, ahora):
+        lanzar ErrorDeValor("jwt: token expirado (exp <= ahora)")
+    fin si
+    si "nbf" en payload y payload["nbf"] > ahora:
+        lanzar ErrorDeValor("jwt: token aun no activo (nbf > ahora)")
+    fin si
+    retornar payload
+fin funcion

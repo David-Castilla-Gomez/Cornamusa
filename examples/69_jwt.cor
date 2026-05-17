@@ -1,9 +1,10 @@
-# Modulo `jwt` (v1.67): JSON Web Tokens con HMAC-SHA-256.
+# Modulo `jwt` (v1.67 + v1.70): JSON Web Tokens con HMAC-SHA-256.
 #
 # Demuestra el ciclo completo de un sistema de autenticacion basico:
 #   - Servidor firma un token con su clave secreta.
 #   - Cliente recibe el token (lo guarda en cookie/header).
 #   - Servidor lo verifica en peticiones posteriores.
+#   - v1.70: validacion de claims temporales (exp, nbf).
 #
 # Construido sobre las piezas:
 #   - json    (v1.9)   serializa el payload.
@@ -67,3 +68,41 @@ si jwt.verificar(token, CLAVE_SERVIDOR):
 sino:
     imprimir("\nVerificacion booleana: rechazado")
 fin si
+
+# ─── 7. v1.70: validar claims temporales (exp, nbf) ─────────────
+# `decodificar()` solo valida la firma — el caller decide si el
+# token aun esta vigente. `decodificar_y_validar()` es el atajo que
+# combina firma + exp + nbf en una sola llamada.
+
+# Simulemos dos momentos en el tiempo:
+ahora_antes_de_caducar = 1735689600 + 60 * 60         # 1h tras emision
+ahora_tras_caducar     = 1735689600 + 60 * 60 * 48    # 48h tras emision
+
+# El token original tiene exp = iat + 24h.
+intentar:
+    p = jwt.decodificar_y_validar(token, CLAVE_SERVIDOR, ahora_antes_de_caducar)
+    imprimir("\nValidado a 1h: usuario id =", p["id"])
+atrapar ErrorDeValor como e:
+    imprimir("Error inesperado:", e)
+fin intentar
+
+intentar:
+    jwt.decodificar_y_validar(token, CLAVE_SERVIDOR, ahora_tras_caducar)
+    imprimir("Bug: deberia haber lanzado")
+atrapar ErrorDeValor como e:
+    imprimir("Validado a 48h: rechazado correctamente —", e)
+fin intentar
+
+# Token con nbf (not-before) en el futuro: aun no es valido.
+token_futuro = jwt.codificar({"sub": "futuro", "nbf": 9999999999}, CLAVE_SERVIDOR)
+intentar:
+    jwt.decodificar_y_validar(token_futuro, CLAVE_SERVIDOR, 1735689600)
+    imprimir("Bug: nbf no rechazo")
+atrapar ErrorDeValor como e:
+    imprimir("nbf futuro: rechazado —", e)
+fin intentar
+
+# Helper jwt.expirado() en aislamiento (sin clave, sin firma).
+imprimir("\njwt.expirado(payload, ahora_tras_caducar):", jwt.expirado(usuario, ahora_tras_caducar))
+sin_exp = {"sub": "x"}
+imprimir("jwt.expirado(payload sin exp, ahora):", jwt.expirado(sin_exp, 999999))

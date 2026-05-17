@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.69.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.70.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.69.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de dieciséis módulos. **Linter gana `empty-except`** (12ª categoría): detecta `atrapar X: pasar` (o cuerpo vacío) — el anti-patrón clásico de "silenciar errores sin tratarlos". Si es deliberado, suprime con `# noqa: empty-except`. El repo está limpio: el barrido confirma 0 falsos positivos y 0 verdaderos positivos (disciplina mantenida). v1.68 trajo `same-comparison`. 224 tests verde con 73 asserts en `test_linter`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.70.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de dieciséis módulos. **Módulo `jwt` gana validación de claims temporales**: `jwt.expirado(payload, ahora)` y `jwt.decodificar_y_validar(token, clave, ahora)` cierran el ciclo de v1.67 — firma + `exp` + `nbf` en una sola llamada. `ahora` se pasa explícito (función pura/testeable; el usuario puede usar tiempo simulado). Cualquier inconsistencia lanza `ErrorDeValor` atrapable. v1.69 trajo `empty-except` al linter. 224 tests verde con 15 asserts en `test_bytecode_jwt`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -174,6 +174,7 @@ Hoja de ruta resumida:
 | **v1.67** | **stdlib `jwt` (RFC 7519 HS256) — codificar/decodificar/verificar, pure-Cornamusa sobre json+base64+hashing** | ✅ |
 | **v1.68** | **Linter `same-comparison` — detecta `x == x` / `x < x` (typos clasicos), 11ª categoría** | ✅ |
 | **v1.69** | **Linter `empty-except` — `atrapar X: pasar` (error swallowing), 12ª categoría** | ✅ |
+| **v1.70** | **`jwt.expirado()` + `jwt.decodificar_y_validar()` — validación de claims `exp`/`nbf` (RFC 7519 §4.1.4/4.1.5)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

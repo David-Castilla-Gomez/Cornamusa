@@ -6,6 +6,80 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.70.0] — 2026-05-17 — `jwt`: validación de claims temporales
+
+Pulido del módulo `jwt` (introducido en v1.67). `decodificar()` valida
+la firma — pero hasta hoy comprobar si el token había caducado era
+responsabilidad manual del caller. Esta release añade dos helpers que
+cierran el ciclo:
+
+```cornamusa
+importar jwt
+
+# Helper aislado: ¿caducó este payload?
+si jwt.expirado(payload, tiempo.epoch_segundos()):
+    # ... rechazar petición
+fin si
+
+# Atajo "todo en uno": firma + exp + nbf en una sola llamada.
+intentar:
+    payload = jwt.decodificar_y_validar(token, CLAVE, ahora)
+atrapar ErrorDeValor como e:
+    # firma inválida, token expirado o aún no activo
+fin intentar
+```
+
+### Decisión: `ahora` se pasa explícito
+
+`decodificar_y_validar(token, clave, ahora)` recibe el timestamp del
+caller en lugar de leerlo internamente de `tiempo.epoch_segundos()`.
+La función queda pura y testeable; además el caller puede usar
+tiempo simulado en tests de expiración sin monkeypatching.
+
+### Cobertura
+
+- `jwt.expirado(payload, ahora)` → `booleano`. `verdadero` si y solo si
+  el payload tiene claim `exp` y `exp <= ahora`. Sin claim `exp`, el
+  token nunca expira (devuelve `falso`).
+- `jwt.decodificar_y_validar(token, clave, ahora)` → `diccionario` o
+  lanza `ErrorDeValor` por (a) firma inválida, (b) `exp <= ahora`, o
+  (c) `nbf > ahora`. La validación de firma se hace primero (es la
+  única garantía criptográfica — sin firma válida no nos podemos
+  fiar de los timestamps).
+
+### Limitaciones (declaradas)
+
+- No se valida `iat` (issued-at) automáticamente — es informativo, no
+  bloquea el token. El caller puede compararlo si quiere.
+- No se validan `iss` (issuer), `aud` (audience), `sub` (subject) — son
+  específicos del flujo de autenticación; pasar lista de aceptados
+  como argumento sería sobre-ingeniería sin un caso concreto.
+- `alg = "none"` (RFC 7519 §6.1) sigue rechazado (heredado de v1.67).
+
+### Tests
+
+8 asserts nuevos en `test_bytecode_jwt.c` (total: 15 asserts):
+
+- `expirado()` con `exp` futuro / pasado / igual a `ahora`.
+- `expirado()` sin claim `exp` devuelve `falso`.
+- `decodificar_y_validar()` OK con `exp` futuro.
+- `decodificar_y_validar()` lanza con `exp` pasado.
+- `decodificar_y_validar()` lanza con `nbf` futuro.
+- `decodificar_y_validar()` OK con `nbf <= ahora`.
+- `decodificar_y_validar()` rechaza firma inválida (no salta el check).
+
+### Archivos
+
+- `stdlib/jwt.cor` — añade `expirado()` y `decodificar_y_validar()`.
+- `tests/unit/test_bytecode_jwt.c` — 7 nuevos asserts.
+- `examples/69_jwt.cor` — sección 7 con caso "1h tras emisión" vs "48h".
+
+### Estado
+
+224 tests verde. Repo sigue limpio (0/97 warnings tras audit).
+
+---
+
 ## [1.69.0] — 2026-05-17 — Linter: `empty-except` (12ª categoría)
 
 Detecta el anti-patrón clásico de "silenciar errores": una cláusula

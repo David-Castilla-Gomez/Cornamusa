@@ -410,7 +410,23 @@ fin si
 
 **Algoritmo soportado**: solo `HS256` (HMAC-SHA-256). RS256/ES256 requieren criptografía de clave pública (no provista por Cornamusa).
 
-**Validación de claims**: `decodificar()` valida solo la firma, NO `exp`/`nbf`/`iat`. La política de expiración es responsabilidad del código cliente (compara `payload["exp"]` con tu reloj).
+**Validación de claims** (v1.70): `decodificar()` sigue validando solo la firma, pero hay dos helpers para validar `exp` y `nbf`:
+
+```cornamusa
+# Helper aislado: ¿caducó este payload?
+si jwt.expirado(payload, ahora):
+    # ...rechazar
+fin si
+
+# Atajo "todo en uno": firma + exp + nbf.
+intentar:
+    payload = jwt.decodificar_y_validar(token, CLAVE, ahora)
+atrapar ErrorDeValor como e:
+    # firma inválida, expirado, o aún no activo
+fin intentar
+```
+
+`ahora` se pasa explícito (no se toma de `tiempo.epoch_segundos()` internamente) para que las funciones sean puras y testeables. `iat`, `iss`, `aud`, `sub` siguen siendo responsabilidad del caller (son específicos del flujo de autenticación).
 
 **`alg=none` (RFC 7519 §6.1)** NO se acepta — mitigación estándar contra ataques de algorithm confusion.
 
