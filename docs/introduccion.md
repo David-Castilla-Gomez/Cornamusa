@@ -46,7 +46,7 @@ ESPEC.md tiene la gramática EBNF, semántica formal y tipos. Las ADRs (`B1` a `
 
 ## Estado del proyecto
 
-Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cercana a Python 3.10+: OOP con herencia y dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers. GC mark-sweep, excepciones con traceback multi-frame, dieciséis módulos de stdlib. Toda la documentación está validada contra el intérprete real.
+Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cercana a Python 3.10+: OOP con herencia y dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, destructuring, `*args`/`**kwargs`, context managers. GC mark-sweep, excepciones con traceback multi-frame, diecisiete módulos de stdlib. Toda la documentación está validada contra el intérprete real.
 
 | Hito | Versión | Estado |
 |---|---|---|
@@ -92,6 +92,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | `jwt.expirado()` + `jwt.decodificar_y_validar()` — validación de claims `exp`/`nbf` | v1.70 | ✅ |
 | Profiler determinista `cornamusa prof` (tabla por función: llamadas/total/self/per-call) | v1.71 | ✅ |
 | Decoradores `@nombre` (stacking, factories `@retry(3)`, funciones anidadas) | v1.72 | ✅ |
+| Stdlib `tiempo` — `monotonic()`, `dormir(s)`, `Cronometro`, `epoch_ms()` (17º módulo) | v1.73 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

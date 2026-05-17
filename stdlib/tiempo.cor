@@ -1,0 +1,81 @@
+# Cornamusa stdlib: tiempo.cor (v1.73)
+#
+# Reloj, sleep y temporizadores. Complementa `fechas.cor` (que se
+# centra en componer/descomponer fechas calendario).
+#
+#   tiempo.epoch_segundos() → segundos enteros desde 1970-01-01 UTC.
+#   tiempo.epoch_ms()       → milisegundos enteros desde 1970-01-01 UTC.
+#   tiempo.monotonic()      → segundos decimales desde un punto arbitrario.
+#                              Util para medir duraciones (no se ve afectado
+#                              por cambios de reloj del sistema, NTP, etc.).
+#   tiempo.dormir(s)        → bloquea s segundos (acepta decimal). Vuelve
+#                              despues de al menos s segundos reales.
+#   tiempo.cronometro()     → instancia con .leer() y .reiniciar() para
+#                              medir duraciones acumulativas.
+#
+# Uso tipico (retry con backoff):
+#
+#   importar tiempo
+#   intentos = 0
+#   mientras intentos < 5:
+#       intentar:
+#           respuesta = red.http_obtener(url)
+#           romper
+#       atrapar ErrorDeSistema:
+#           intentos = intentos + 1
+#           tiempo.dormir(2 ** intentos)   # backoff exponencial
+#       fin intentar
+#   fin mientras
+#
+# Uso tipico (medir duracion):
+#
+#   c = tiempo.cronometro()
+#   trabajo_pesado()
+#   imprimir(f"transcurrido: {c.leer():.3f}s")
+
+# Segundos enteros desde Unix epoch. Equivalente a `fechas.ahora()` —
+# expuesto aqui para que el modulo `tiempo` sea autosuficiente.
+funcion epoch_segundos():
+    retornar tiempo_actual()
+fin funcion
+
+# Milisegundos enteros desde Unix epoch.
+funcion epoch_ms():
+    retornar tiempo_epoch_ms()
+fin funcion
+
+# Reloj monotonico (segundos decimales). El origen es arbitrario
+# pero estable durante la vida del proceso.
+funcion monotonic():
+    retornar tiempo_monotonic()
+fin funcion
+
+# Bloquea `s` segundos (acepta entero o decimal). Si `s <= 0`
+# retorna inmediatamente sin error.
+funcion dormir(s):
+    tiempo_dormir(s)
+fin funcion
+
+# Cronometro: mide duraciones acumulativas. Util cuando solo te
+# importa "cuanto tiempo ha pasado desde X" sin tener que guardar
+# el timestamp manualmente.
+clase Cronometro:
+    funcion __iniciar__(yo):
+        yo.inicio = tiempo_monotonic()
+    fin funcion
+
+    # Segundos transcurridos desde la creacion (o ultimo reiniciar).
+    funcion leer(yo):
+        retornar tiempo_monotonic() - yo.inicio
+    fin funcion
+
+    # Vuelve a poner el reloj a cero.
+    funcion reiniciar(yo):
+        yo.inicio = tiempo_monotonic()
+    fin funcion
+fin clase
+
+# Atajo para crear un cronometro: `c = tiempo.cronometro()`.
+funcion cronometro():
+    retornar Cronometro()
+fin funcion

@@ -6,6 +6,95 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.73.0] — 2026-05-17 — Stdlib `tiempo` (reloj, sleep, cronómetro)
+
+Nuevo módulo (17º de la stdlib) que complementa `fechas`:
+
+```cornamusa
+importar tiempo
+
+# Reloj absoluto (Unix epoch):
+ts_s  = tiempo.epoch_segundos()   # entero
+ts_ms = tiempo.epoch_ms()         # entero (precisión ms)
+
+# Reloj monotónico (para medir duraciones):
+inicio = tiempo.monotonic()
+trabajo_pesado()
+imprimir(f"transcurrido: {tiempo.monotonic() - inicio:.3f}s")
+
+# Sleep cooperativo (acepta decimal, no solo entero):
+tiempo.dormir(0.5)   # bloquea 500ms
+
+# Cronómetro (encapsula el inicio):
+c = tiempo.cronometro()
+trabajo()
+imprimir(c.leer())   # segundos transcurridos
+c.reiniciar()        # vuelve a 0
+```
+
+### Por qué un módulo separado de `fechas`
+
+`fechas` ya cubre componer/descomponer/formatear timestamps absolutos
+(operaciones de calendario). `tiempo` cubre el caso **dinámico**:
+medir duraciones, dormir, cronómetros. Son responsabilidades distintas
+y mantenerlos separados evita confusión.
+
+### Por qué `monotonic` para duraciones
+
+`epoch_segundos()` puede saltar hacia atrás si NTP corrige el reloj
+o si el usuario cambia la zona horaria. Para medir cuánto tardó algo,
+**siempre** usa `monotonic()` — su origen es arbitrario pero estable
+durante la vida del proceso.
+
+### Implementación
+
+Tres nuevas nativas C cross-platform:
+
+| Nativa            | Windows                         | POSIX                       |
+|-------------------|---------------------------------|-----------------------------|
+| `tiempo_epoch_ms` | `GetSystemTimeAsFileTime`       | `clock_gettime(REALTIME)`   |
+| `tiempo_monotonic`| `QueryPerformanceCounter` (vía profiler) | `clock_gettime(MONOTONIC)` |
+| `tiempo_dormir`   | `Sleep(ms)`                     | `nanosleep` (reintenta EINTR) |
+
+`tiempo_monotonic` reusa el helper del profiler (`profiler_tiempo_ns`)
+— ambos quieren el reloj monotónico de mayor resolución disponible,
+así que vale la pena compartir el código.
+
+### Cierre de gap doc
+
+Las docs de `jwt` (v1.70) mencionaban `tiempo.epoch_segundos()` como
+ejemplo de uso, pero el módulo no existía hasta hoy — se usaba
+`tiempo_actual` (built-in de v1.19) o se calculaba manualmente. Esta
+release alinea docs y realidad.
+
+### Tests
+
+9 asserts nuevos en `test_bytecode_tiempo_stdlib.c` (separado del
+`test_bytecode_tiempo.c` original que cubre v1.19):
+
+- `epoch_segundos` retorna ts post-2020.
+- `epoch_ms` es ~1000× `epoch_segundos` (margen 2s).
+- `monotonic` no decreciente.
+- `dormir(0)` retorna inmediato.
+- `dormir(0.05)` bloquea ≥30ms.
+- `cronometro` acumula tras dormir.
+- `cronometro.reiniciar()` resetea.
+- Cronómetros independientes.
+
+### Archivos
+
+- `src/nativos.c` — 3 nuevas nativas + registro.
+- `stdlib/tiempo.cor` — wrappers + clase `Cronometro` (12 funciones).
+- `tests/unit/test_bytecode_tiempo_stdlib.c` — 9 asserts.
+- `examples/72_tiempo.cor` — relojes, medición, cronómetro, backoff
+  exponencial.
+
+### Estado
+
+230 tests verde. Repo limpio (0 warnings en lint).
+
+---
+
 ## [1.72.0] — 2026-05-17 — Decoradores `@nombre`
 
 Azúcar sintáctica idiomática para envolver funciones sin renombrarlas

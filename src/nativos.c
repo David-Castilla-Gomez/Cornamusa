@@ -2670,6 +2670,99 @@ static Valor nativa_tiempo_formato(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * Tiempo monotónico + sleep + epoch_ms (v1.73).
+ * Wrappers del stdlib `tiempo.cor`. `tiempo_actual` (segundos) ya
+ * existe desde v1.19; aqui añadimos ms, monotonic y dormir.
+ * ────────────────────────────────────────────────────────────────── */
+
+#ifdef _WIN32
+#  ifndef WIN32_LEAN_AND_MEAN
+#    define WIN32_LEAN_AND_MEAN
+#  endif
+#  include <windows.h>
+#else
+#  include <time.h>
+#endif
+
+#include "profiler.h"  /* profiler_tiempo_ns reusa el reloj monotonico */
+
+static Valor nativa_tiempo_epoch_ms(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_epoch_ms() no acepta argumentos");
+    }
+#ifdef _WIN32
+    /* FILETIME es 100-ns desde 1601-01-01. Diferencia con epoch Unix:
+       11644473600 segundos = 116444736000000000 unidades de 100-ns. */
+    FILETIME ft;
+    GetSystemTimeAsFileTime(&ft);
+    uint64_t ft100 = ((uint64_t)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+    int64_t ms = (int64_t)((ft100 - 116444736000000000ULL) / 10000ULL);
+    return valor_entero_de_i64(ms);
+#else
+    struct timespec ts;
+    if (clock_gettime(CLOCK_REALTIME, &ts) != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeSistema: clock_gettime(CLOCK_REALTIME) fallo");
+    }
+    int64_t ms = (int64_t)ts.tv_sec * 1000 + (int64_t)ts.tv_nsec / 1000000;
+    return valor_entero_de_i64(ms);
+#endif
+}
+
+static Valor nativa_tiempo_monotonic(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_monotonic() no acepta argumentos");
+    }
+    /* Reusa el reloj monotonico del profiler. */
+    uint64_t ns = profiler_tiempo_ns();
+    return valor_decimal((double)ns / 1e9);
+}
+
+static Valor nativa_tiempo_dormir(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_dormir() requiere 1 argumento (segundos)");
+    }
+    double s;
+    if (args[0].tipo == VAL_DECIMAL) {
+        s = args[0].como.decimal;
+    } else if (args[0].tipo == VAL_ENTERO_SMALL) {
+        s = (double)args[0].como.entero_small;
+    } else if (args[0].tipo == VAL_ENTERO) {
+        s = mp_get_double(args[0].como.entero);
+    } else if (args[0].tipo == VAL_BOOLEANO) {
+        s = args[0].como.booleano ? 1.0 : 0.0;
+    } else {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tiempo_dormir() requiere segundos numericos");
+    }
+    if (s <= 0.0) return valor_nulo();
+#ifdef _WIN32
+    /* Sleep toma milisegundos. Para s muy grande clamp a UINT32_MAX-1. */
+    double ms = s * 1000.0;
+    if (ms > 4294967294.0) ms = 4294967294.0;
+    Sleep((DWORD)ms);
+#else
+    struct timespec ts;
+    ts.tv_sec = (time_t)s;
+    ts.tv_nsec = (long)((s - (double)ts.tv_sec) * 1e9);
+    if (ts.tv_nsec >= 1000000000) { ts.tv_sec++; ts.tv_nsec -= 1000000000; }
+    /* Reintentar si interrumpido por signal. */
+    while (nanosleep(&ts, &ts) == -1) {
+        /* loop hasta completar */
+    }
+#endif
+    return valor_nulo();
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Proceso (v1.27) — built-in primitivo. El módulo `proceso.cor` envuelve.
  * ────────────────────────────────────────────────────────────────── */
 
@@ -3701,6 +3794,10 @@ static const EntradaNativa NATIVAS[] = {
     {"tiempo_descomponer",  18, nativa_tiempo_descomponer},
     {"tiempo_componer",     15, nativa_tiempo_componer},
     {"tiempo_formato",      14, nativa_tiempo_formato},
+    /* Tiempo monotónico + sleep + epoch_ms (v1.73). */
+    {"tiempo_epoch_ms",     15, nativa_tiempo_epoch_ms},
+    {"tiempo_monotonic",    16, nativa_tiempo_monotonic},
+    {"tiempo_dormir",       13, nativa_tiempo_dormir},
     /* Azar (v1.26). */
     {"azar_decimal",        12, nativa_azar_decimal},
     {"azar_entero",         11, nativa_azar_entero},

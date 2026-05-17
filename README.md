@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.72.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.73.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.72.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de dieciséis módulos. **Decoradores `@nombre` añadidos al core**: `@cache` + `funcion f` desugar a `f = cache(f)`; soporta stacking (`@a @b` → `a(b(f))`), factories con argumentos (`@retry(3)`) y decoradores sobre funciones anidadas. Implementación de desugar puro en el compilador, sin opcodes nuevos. v1.71 añadió `cornamusa prof`. 228 tests verde con 10 asserts nuevos en `test_bytecode_decoradores`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.73.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Nuevo módulo `tiempo`**: `epoch_segundos()`/`epoch_ms()` para reloj absoluto, `monotonic()` para medir duraciones (no afectado por NTP/cambios de zona), `dormir(s)` para sleep cooperativo (acepta decimal), y clase `Cronometro` con `.leer()`/`.reiniciar()`. Cierra un gap real: la doc de `jwt` ya mencionaba `tiempo.epoch_segundos()` como ejemplo desde v1.70, pero el módulo no existía hasta hoy. Tres nativas C nuevas (`tiempo_epoch_ms`, `tiempo_monotonic`, `tiempo_dormir`) cross-platform (`QueryPerformanceCounter`/`Sleep` en Windows, `clock_gettime`/`nanosleep` en POSIX). 230 tests verde con 9 asserts nuevos en `test_bytecode_tiempo_stdlib`. [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -177,6 +177,7 @@ Hoja de ruta resumida:
 | **v1.70** | **`jwt.expirado()` + `jwt.decodificar_y_validar()` — validación de claims `exp`/`nbf` (RFC 7519 §4.1.4/4.1.5)** | ✅ |
 | **v1.71** | **Profiler determinista `cornamusa prof` — tabla por función con `llamadas`/`total`/`self`/`per-call`** | ✅ |
 | **v1.72** | **Decoradores `@nombre` — desugar puro en el compilador, con stacking y factories `@retry(3)`** | ✅ |
+| **v1.73** | **Stdlib `tiempo` — epoch_segundos/ms, monotonic, dormir, Cronometro (17º módulo)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

@@ -1,0 +1,59 @@
+# Modulo `tiempo` (v1.73): reloj, sleep, cronometro.
+#
+# Complementa `fechas` (que se centra en componer fechas calendario).
+
+importar tiempo
+
+# ─── 1. Tres relojes distintos ──────────────────────────────────
+imprimir("epoch_segundos:", tiempo.epoch_segundos())
+imprimir("epoch_ms     :", tiempo.epoch_ms())
+imprimir("monotonic    :", tiempo.monotonic())
+
+# ─── 2. Medir duracion con monotonic() ──────────────────────────
+# El reloj monotonico es el correcto para medir duraciones: no se
+# ve afectado por NTP, cambios de zona horaria o ajustes manuales.
+inicio = tiempo.monotonic()
+
+# Algun trabajo simulado:
+suma = 0
+para i en rango(1000000):
+    suma = suma + i
+fin para
+
+transcurrido = tiempo.monotonic() - inicio
+imprimir(f"\nsuma 0..1M tardo {transcurrido:.3f}s")
+
+# ─── 3. Cronometro como clase ───────────────────────────────────
+# Si vas a medir varias cosas seguidas, el cronometro es comodo
+# porque encapsula el "tiempo de inicio".
+c = tiempo.cronometro()
+
+tiempo.dormir(0.1)
+imprimir(f"\ntras dormir 100ms: {c.leer() * 1000:.0f} ms")
+
+c.reiniciar()
+tiempo.dormir(0.05)
+imprimir(f"tras reiniciar + dormir 50ms: {c.leer() * 1000:.0f} ms")
+
+# ─── 4. Backoff exponencial (patron clasico) ────────────────────
+# Util para reintentar operaciones de red:
+funcion intentar_con_backoff():
+    max_intentos = 4
+    para intento en rango(max_intentos):
+        # Aqui iria la operacion real (red, archivo, etc.).
+        # Para el ejemplo, simulamos que siempre falla.
+        exito = intento == max_intentos - 1   # solo "exito" en el ultimo
+        si exito:
+            imprimir(f"  intento {intento + 1}: OK")
+            retornar verdadero
+        fin si
+
+        espera = 0.05 * (2 ** intento)
+        imprimir(f"  intento {intento + 1}: fallo. Espero {espera}s...")
+        tiempo.dormir(espera)
+    fin para
+    retornar falso
+fin funcion
+
+imprimir("\n=== Backoff exponencial ===")
+intentar_con_backoff()
