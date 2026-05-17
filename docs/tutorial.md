@@ -47,6 +47,14 @@ Hola, mundo
 La respuesta es: 42
 ```
 
+### Ejercicios
+
+1. Imprime tu nombre y tu edad en la misma línea: `Me llamo Ana y tengo 30 años`.
+2. Imprime tres líneas: tu nombre, tu ciudad y tu lenguaje favorito (una por línea, una sola llamada a `imprimir` por línea).
+3. Imprime el resultado de `7 * 6` directamente como argumento (sin variable intermedia).
+
+> Las soluciones están al final del tutorial, en el [anexo de soluciones](#anexo-soluciones-a-los-ejercicios).
+
 ---
 
 ## 2. Variables y tipos
@@ -92,6 +100,12 @@ gigante = 2 ** 100
 imprimir(gigante)    # 1267650600228229401496703205376
 ```
 
+### Ejercicios
+
+1. Crea tres variables con tu nombre, año de nacimiento y altura en metros. Imprime una frase que use las tres.
+2. Calcula `2 ** 200` y guarda el resultado en una variable. Imprime el resultado y luego imprime `tipo` del resultado para verificar que sigue siendo `entero`.
+3. Define `x = 5`, luego reasigna `x = "cinco"`. Imprime `tipo(x)` antes y después para confirmar el cambio.
+
 ---
 
 ## 3. Operadores y expresiones
@@ -133,6 +147,12 @@ contador += 1     # equivale a: contador = contador + 1
 contador *= 2
 imprimir(contador)   # 2
 ```
+
+### Ejercicios
+
+1. Calcula y muestra cuántos minutos hay en un año no bisiesto (365 días). Usa solo expresiones, una línea.
+2. Dado un número `n = 17`, imprime si es par o impar (sin usar `si` todavía — solo con expresiones booleanas y `imprimir`).
+3. Verifica con una sola expresión booleana si el año `2026` está entre `2020` y `2030` *inclusive*. Imprime el resultado.
 
 ---
 
@@ -212,6 +232,13 @@ fin para
 # imprime: 1, 3, 5, 7, 9
 ```
 
+### Ejercicios
+
+1. **FizzBuzz**: imprime los números del 1 al 20. Si es múltiplo de 3 imprime `Fizz`, si es múltiplo de 5 imprime `Buzz`, si es de ambos imprime `FizzBuzz`.
+2. Imprime la tabla de multiplicar del `7`: `7 x 1 = 7`, `7 x 2 = 14`, ..., `7 x 10 = 70`.
+3. Suma los números pares del 1 al 100. Esperado: `2550`.
+4. Imprime los números del 1 al 100 que sean palíndromos en base 10 (se leen igual al revés): `1, 2, ..., 9, 11, 22, 33, 44, 55, 66, 77, 88, 99`. Pista: una manera fácil de invertir un número es convertirlo a cadena.
+
 ---
 
 ## 5. Destructuring (desempaquetado)
@@ -264,6 +291,11 @@ para persona en gente:
     imprimir(nombre, "tiene", edad)
 fin para
 ```
+
+### Ejercicios
+
+1. Dado `coord = (3, 7)`, intercambia las componentes usando destructuring (sin variable temporal) e imprime el resultado.
+2. Dada la lista `[("Ana", "Madrid"), ("Luis", "Sevilla"), ("Eva", "Bilbao")]`, itera y para cada par destructura en `nombre, ciudad` dentro del bucle.
 
 ---
 
@@ -414,6 +446,13 @@ contar = crear_contador()
 imprimir(contar(), contar(), contar())   # 1 2 3
 ```
 
+### Ejercicios
+
+1. Escribe una función `factorial(n)` que devuelva `n!`. Verifica con `factorial(10)` (esperado: `3628800`).
+2. Escribe `es_primo(n)` que devuelva `verdadero` o `falso`. Verifica con `[2, 3, 4, 9, 17, 25]`.
+3. Escribe `repetir(s, n)` que devuelva una cadena con `s` repetido `n` veces, separado por guiones. Ejemplo: `repetir("ja", 3)` → `"ja-ja-ja"`.
+4. Escribe una función `aplicar_varios(f, lista)` que aplique la función `f` a cada elemento y devuelva una lista nueva. Pruébala con `aplicar_varios(funcion(x): retornar x*x fin funcion, [1, 2, 3, 4])`. *Nota: o usa una función definida con `funcion` y pásala por nombre.*
+
 ---
 
 ## 7. Estructuras de datos
@@ -488,6 +527,12 @@ imprimir(punto[0])   # 3
 # punto[0] = 10  → ✗ ErrorDeTipo: las tuplas no se modifican
 ```
 
+### Ejercicios
+
+1. Crea una lista con los números del 1 al 50. Usa un bucle `para` para sumarlos. Verifica el total (esperado: `1275`).
+2. Dado `palabras = ["sol", "luna", "estrella", "mar", "viento", "tierra"]`, construye un diccionario `{palabra: longitud}` para todas las palabras.
+3. Dada `votos = ["si", "no", "si", "si", "abstencion", "no", "si"]`, calcula cuántas veces aparece cada valor distinto (cuenta de cada uno).
+
 ---
 
 ## 8. Comprehensions
@@ -524,6 +569,12 @@ Entre **paréntesis** la comprehension es una *generator expression*: perezosa, 
 ```cornamusa
 perezosa = (n * n para n en rango(1, 1000000))    # instantáneo, nada se calcula aún
 ```
+
+### Ejercicios
+
+1. Usa una comprehension para construir la lista de los cubos de los números del 1 al 10: `[1, 8, 27, ..., 1000]`.
+2. Usa una comprehension con filtro para extraer las palabras de longitud impar de `["uno", "dos", "tres", "cuatro", "cinco"]`. Esperado: `["uno", "dos", "cinco"]`.
+3. Construye un diccionario `{n: "par" si n es par sino "impar" para n en rango(1, 6)}`. *Pista*: la expresión ternaria `valor1 si cond sino valor2` es válida en cualquier sitio donde se espere una expresión.
 
 ---
 
@@ -593,6 +644,12 @@ imprimir(cadenas.unir(["a", "b", "c"], "-"))    # a-b-c
 imprimir(cadenas.recortar("  hola  "))          # "hola"
 imprimir(cadenas.reemplazar("foo bar", "o", "0"))  # f00 bar
 ```
+
+### Ejercicios
+
+1. Dada `frase = "hola mundo desde cornamusa"`, imprime cuántas palabras tiene. Pista: `cadenas.separar(frase, " ")` y `longitud`.
+2. Escribe una función `iniciales(nombre_completo)` que devuelva las iniciales de cada palabra en mayúsculas separadas por punto. Ejemplo: `"ana de la torre"` → `"A.D.L.T."`.
+3. Cuenta cuántas vocales (`aeiouáéíóú`) hay en una cadena. *Pista*: itera con `para c en s`.
 
 ---
 
@@ -695,6 +752,13 @@ imprimir(a == Vector(1, 2)) # verdadero
 ```
 
 Los principales: `__cadena__` (`cadena`/`imprimir`/f-strings), `__longitud__` (`longitud`), `__iterar__` (`para`), `__indice__` / `__asignar_indice__` (`obj[i]`), `__llamar__` (`obj(...)`), `__entrar__` / `__salir__` (bloque `con`), los aritméticos (`__sumar__`, `__restar__`, ...) y los de comparación (`__igual__`, `__menor__`, ...). La lista completa está en la [referencia](referencia.md#11-clases-y-objetos).
+
+### Ejercicios
+
+1. Crea una clase `Libro` con `titulo`, `autor`, `paginas`. Añade `__cadena__` que devuelva `"<Libro: 'titulo' de autor (N pags)>"`. Crea dos libros e imprímelos.
+2. Crea una clase `Cuenta` con saldo inicial. Métodos: `depositar(n)`, `retirar(n)` (con error si `n > saldo`), `consultar()`. Verifica con un escenario.
+3. Crea una clase `Fraccion` con numerador y denominador. Implementa `__sumar__` (suma `a/b + c/d = (ad+bc)/(bd)`), `__igual__` (con cross-product: `a/b == c/d` si `a*d == b*c`) y `__cadena__` (`"a/b"`). Verifica `Fraccion(1,2) + Fraccion(1,3) == Fraccion(5,6)`.
+4. Usa `@propiedad` (v1.78) para añadir a `Fraccion` un atributo `decimal` que devuelva el cociente como decimal: `Fraccion(1,4).decimal` → `0.25`.
 
 ---
 
@@ -885,6 +949,12 @@ ErrorDeNombre: nombre 'longutud' no esta definido
     ¿quisiste decir 'longitud'?
 ```
 
+### Ejercicios
+
+1. Escribe una función `dividir_seguro(a, b)` que devuelva `a / b` normalmente, pero si `b == 0` capture el `ErrorAritmetico` y devuelva `nulo`.
+2. Escribe `convertir_a_entero(s)` que devuelva el entero parseado, o `0` si no es válido. Atrapa `ErrorDeValor`.
+3. Modifica `dividir_seguro` para que también valide tipos: si `a` o `b` no son numéricos, lanza `ErrorDeTipo` explícitamente con un mensaje claro.
+
 ---
 
 ## 15. Módulos y la biblioteca estándar
@@ -959,6 +1029,12 @@ imprimir(respuesta["codigo"])
 
 La lista completa de funciones de cada módulo está en la [referencia](referencia.md#16-biblioteca-estándar-stdlib).
 
+### Ejercicios
+
+1. Usa `matematicas.factorial` y un bucle para imprimir `n!` para `n` de 1 a 10.
+2. Lee tu propio archivo fuente con `archivos.leer`, cuenta cuántas líneas tiene usando `cadenas.separar(contenido, "\n")` y `longitud`.
+3. Genera 10 tiradas aleatorias de un dado de 6 caras con `azar.entero(1, 6)`. Calcula la media (suma / 10).
+
 ---
 
 ## 16. Un programa completo
@@ -1024,6 +1100,394 @@ $ ./build/cornamusa --bytecode ventas.cor
  - flauta: 12 x 25 = 300
 Ingreso total: 1300
 Mayor venta: gaita
+```
+
+---
+
+## Anexo: soluciones a los ejercicios
+
+> Todas las soluciones se han validado contra el intérprete v1.78. Hay varias maneras correctas de resolver cada ejercicio — la solución mostrada es **una** forma idiomática, no necesariamente la única ni la más corta.
+
+### §1 — Tu primer programa
+
+```cornamusa
+# 1.1
+nombre = "Ana"
+edad = 30
+imprimir(f"Me llamo {nombre} y tengo {edad} años")
+# → Me llamo Ana y tengo 30 años
+
+# 1.2
+imprimir("Ana")
+imprimir("Madrid")
+imprimir("Cornamusa")
+
+# 1.3
+imprimir(7 * 6)     # → 42
+```
+
+### §2 — Variables y tipos
+
+```cornamusa
+# 2.1
+nombre = "Ana"
+anio_nac = 1995
+altura = 1.65
+imprimir(f"{nombre}, nacida en {anio_nac}, mide {altura}m")
+
+# 2.2
+gigante = 2 ** 200
+imprimir(gigante)      # 1606938...376
+imprimir(tipo(gigante)) # entero (precisión arbitraria)
+
+# 2.3
+x = 5
+imprimir(tipo(x))      # entero
+x = "cinco"
+imprimir(tipo(x))      # cadena
+```
+
+### §3 — Operadores y expresiones
+
+```cornamusa
+# 3.1
+imprimir(365 * 24 * 60)              # 525600
+
+# 3.2  (ternaria + módulo)
+n = 17
+imprimir("par" si n % 2 == 0 sino "impar")
+
+# 3.3
+anio = 2026
+imprimir(anio >= 2020 y anio <= 2030)   # verdadero
+```
+
+### §4 — Control de flujo
+
+```cornamusa
+# 4.1 FizzBuzz
+para i en rango(1, 21):
+    si i % 15 == 0:
+        imprimir("FizzBuzz")
+    sino si i % 3 == 0:
+        imprimir("Fizz")
+    sino si i % 5 == 0:
+        imprimir("Buzz")
+    sino:
+        imprimir(i)
+    fin si
+fin para
+
+# 4.2 tabla del 7
+para i en rango(1, 11):
+    imprimir(f"7 x {i} = {7 * i}")
+fin para
+
+# 4.3 suma pares 1..100
+total = 0
+para i en rango(1, 101):
+    si i % 2 == 0:
+        total = total + i
+    fin si
+fin para
+imprimir(total)      # 2550
+
+# 4.4 palíndromos 1..100
+palindromos = []
+para i en rango(1, 101):
+    s = cadena(i)
+    invertida = ""
+    para c en s:
+        invertida = c + invertida
+    fin para
+    si s == invertida:
+        agregar(palindromos, i)
+    fin si
+fin para
+imprimir(palindromos)
+# → [1, 2, 3, 4, 5, 6, 7, 8, 9, 11, 22, 33, 44, 55, 66, 77, 88, 99]
+```
+
+### §5 — Destructuring
+
+```cornamusa
+# 5.1
+coord = (3, 7)
+a, b = coord
+a, b = b, a
+imprimir((a, b))         # (7, 3)
+
+# 5.2
+gente = [("Ana", "Madrid"), ("Luis", "Sevilla"), ("Eva", "Bilbao")]
+para par en gente:
+    nombre, ciudad = par
+    imprimir(f"{nombre} vive en {ciudad}")
+fin para
+```
+
+### §6 — Funciones
+
+```cornamusa
+# 6.1 factorial
+funcion factorial(n):
+    si n <= 1:
+        retornar 1
+    fin si
+    retornar n * factorial(n - 1)
+fin funcion
+imprimir(factorial(10))      # 3628800
+
+# 6.2 es_primo
+funcion es_primo(n):
+    si n < 2:
+        retornar falso
+    fin si
+    para d en rango(2, n):
+        si d * d > n:
+            romper
+        fin si
+        si n % d == 0:
+            retornar falso
+        fin si
+    fin para
+    retornar verdadero
+fin funcion
+
+# 6.3 repetir
+importar cadenas
+funcion repetir(s, n):
+    partes = []
+    para _ en rango(n):
+        agregar(partes, s)
+    fin para
+    retornar cadenas.unir(partes, "-")
+fin funcion
+imprimir(repetir("ja", 3))   # ja-ja-ja
+
+# 6.4 aplicar_varios (función como argumento)
+funcion aplicar_varios(f, lista):
+    resultado = []
+    para x en lista:
+        agregar(resultado, f(x))
+    fin para
+    retornar resultado
+fin funcion
+funcion cuadrado(x):
+    retornar x * x
+fin funcion
+imprimir(aplicar_varios(cuadrado, [1, 2, 3, 4]))   # [1, 4, 9, 16]
+```
+
+### §7 — Estructuras de datos
+
+```cornamusa
+# 7.1
+total = 0
+para i en rango(1, 51):
+    total = total + i
+fin para
+imprimir(total)              # 1275
+
+# 7.2
+palabras = ["sol", "luna", "estrella", "mar", "viento", "tierra"]
+d = {}
+para p en palabras:
+    d[p] = longitud(p)
+fin para
+imprimir(d)
+# → {"sol": 3, "luna": 4, "estrella": 8, "mar": 3, "viento": 6, "tierra": 6}
+
+# 7.3 contar votos
+votos = ["si", "no", "si", "si", "abstencion", "no", "si"]
+cuenta = {}
+para v en votos:
+    si v en cuenta:
+        cuenta[v] = cuenta[v] + 1
+    sino:
+        cuenta[v] = 1
+    fin si
+fin para
+imprimir(cuenta)
+# → {"si": 4, "no": 2, "abstencion": 1}
+```
+
+### §8 — Comprehensions
+
+```cornamusa
+# 8.1
+cubos = [n * n * n para n en rango(1, 11)]
+imprimir(cubos)
+# → [1, 8, 27, 64, 125, 216, 343, 512, 729, 1000]
+
+# 8.2
+ps = ["uno", "dos", "tres", "cuatro", "cinco"]
+impares = [w para w en ps si longitud(w) % 2 == 1]
+imprimir(impares)            # ["uno", "dos", "cinco"]
+
+# 8.3
+d = {n: ("par" si n % 2 == 0 sino "impar") para n en rango(1, 6)}
+imprimir(d)
+# → {1: "impar", 2: "par", 3: "impar", 4: "par", 5: "impar"}
+```
+
+### §9 — Cadenas
+
+```cornamusa
+importar cadenas
+
+# 9.1 contar palabras
+frase = "hola mundo desde cornamusa"
+imprimir(longitud(cadenas.separar(frase, " ")))   # 4
+
+# 9.2 iniciales
+funcion iniciales(nombre):
+    partes = cadenas.separar(nombre, " ")
+    inits = []
+    para p en partes:
+        agregar(inits, cadenas.mayusculas_ascii(p[0]))
+    fin para
+    retornar cadenas.unir(inits, ".") + "."
+fin funcion
+imprimir(iniciales("ana de la torre"))   # A.D.L.T.
+
+# 9.3 contar vocales
+funcion contar_vocales(s):
+    cuenta = 0
+    para c en s:
+        si c en "aeiouáéíóúAEIOUÁÉÍÓÚ":
+            cuenta = cuenta + 1
+        fin si
+    fin para
+    retornar cuenta
+fin funcion
+imprimir(contar_vocales("Cornamusa"))    # 4
+imprimir(contar_vocales("murciélago"))   # 5
+```
+
+### §10 — Clases
+
+```cornamusa
+# 10.1 Libro
+clase Libro:
+    funcion __iniciar__(yo, titulo, autor, paginas):
+        yo.titulo = titulo
+        yo.autor = autor
+        yo.paginas = paginas
+    fin funcion
+    funcion __cadena__(yo):
+        retornar f"<Libro: '{yo.titulo}' de {yo.autor} ({yo.paginas} pags)>"
+    fin funcion
+fin clase
+
+# 10.2 Cuenta
+clase Cuenta:
+    funcion __iniciar__(yo, saldo):
+        yo.saldo = saldo
+    fin funcion
+    funcion depositar(yo, n):
+        yo.saldo = yo.saldo + n
+    fin funcion
+    funcion retirar(yo, n):
+        si n > yo.saldo:
+            lanzar ErrorDeValor("saldo insuficiente")
+        fin si
+        yo.saldo = yo.saldo - n
+    fin funcion
+    funcion consultar(yo):
+        retornar yo.saldo
+    fin funcion
+fin clase
+
+# 10.3 + 10.4 Fraccion con @propiedad
+clase Fraccion:
+    funcion __iniciar__(yo, num, den):
+        yo.num = num
+        yo.den = den
+    fin funcion
+    funcion __sumar__(yo, otro):
+        retornar Fraccion(yo.num * otro.den + otro.num * yo.den,
+                          yo.den * otro.den)
+    fin funcion
+    funcion __igual__(yo, otro):
+        retornar yo.num * otro.den == otro.num * yo.den
+    fin funcion
+    funcion __cadena__(yo):
+        retornar f"{yo.num}/{yo.den}"
+    fin funcion
+    @propiedad
+    funcion decimal(yo):
+        retornar yo.num / yo.den
+    fin funcion
+fin clase
+
+imprimir(Fraccion(1, 2) + Fraccion(1, 3))          # 5/6
+imprimir(Fraccion(1, 4).decimal)                    # 0.25
+```
+
+### §14 — Manejo de errores
+
+```cornamusa
+# 14.1 dividir_seguro
+funcion dividir_seguro(a, b):
+    intentar:
+        retornar a / b
+    atrapar ErrorAritmetico:
+        retornar nulo
+    fin intentar
+fin funcion
+imprimir(dividir_seguro(10, 2))    # 5.0
+imprimir(dividir_seguro(10, 0))    # nulo
+
+# 14.2 convertir_a_entero
+funcion convertir_a_entero(s):
+    intentar:
+        retornar entero(s)
+    atrapar ErrorDeValor:
+        retornar 0
+    fin intentar
+fin funcion
+
+# 14.3 valida tipos
+funcion dividir_v2(a, b):
+    si tipo(a) != "entero" y tipo(a) != "decimal":
+        lanzar ErrorDeTipo("a debe ser numerico")
+    fin si
+    si tipo(b) != "entero" y tipo(b) != "decimal":
+        lanzar ErrorDeTipo("b debe ser numerico")
+    fin si
+    intentar:
+        retornar a / b
+    atrapar ErrorAritmetico:
+        retornar nulo
+    fin intentar
+fin funcion
+```
+
+### §15 — Módulos y stdlib
+
+```cornamusa
+# 15.1 factoriales 1..10
+importar matematicas
+para n en rango(1, 11):
+    imprimir(f"{n}! = {matematicas.factorial(n)}")
+fin para
+
+# 15.2 contar líneas de tu propio fuente
+importar archivos
+importar cadenas
+contenido = archivos.leer("mi_programa.cor")
+imprimir("lineas:", longitud(cadenas.separar(contenido, "\n")))
+
+# 15.3 dados
+importar azar
+importar funcionales
+azar.semilla(42)   # opcional, para resultados reproducibles
+tiradas = []
+para _ en rango(10):
+    agregar(tiradas, azar.entero(1, 6))
+fin para
+imprimir("tiradas:", tiradas)
+imprimir("media:", funcionales.suma(tiradas) / 10)
 ```
 
 ---

@@ -98,6 +98,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Debugger interactivo `cornamusa depurar` (breakpoints + step + inspect) | v1.76 | ✅ |
 | Decoradores `@x` sobre métodos de clase (con stacking) | v1.77 | ✅ |
 | `@propiedad` — getters invocados al acceder al atributo | v1.78 | ✅ |
+| Tutorial expandido a curso (~35 ejercicios + soluciones validadas) | v1.79 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

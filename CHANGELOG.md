@@ -6,6 +6,78 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.79.0] — 2026-05-17 — Tutorial expandido a material didáctico completo
+
+Cierra el tercer eje del plan de mejora propuesto tras la autoevaluación
+(3/10 compite global, 9/10 pedagógico-en-castellano): si el nicho real
+de Cornamusa es enseñar a programar en castellano, la palanca es la
+documentación didáctica.
+
+Esta release añade **~35 ejercicios** distribuidos por las 15
+secciones del tutorial, más un **anexo de soluciones validadas**
+contra el intérprete. Cada solución se probó corriéndola; los outputs
+mostrados coinciden con los reales.
+
+### Ejercicios añadidos
+
+| Sección | # ej. | Cubre |
+|---|---|---|
+| §1 Tu primer programa | 3 | `imprimir`, argumentos múltiples |
+| §2 Variables y tipos | 3 | tipado dinámico, bignum |
+| §3 Operadores | 3 | aritmética, ternaria, rangos |
+| §4 Control de flujo | 4 | **FizzBuzz**, tabla del 7, palíndromos |
+| §5 Destructuring | 2 | swap idiomático, en bucles |
+| §6 Funciones | 4 | factorial, `es_primo`, HOF |
+| §7 Estructuras de datos | 3 | diccionarios, counters |
+| §8 Comprehensions | 3 | con filtros, ternaria dentro |
+| §9 Cadenas | 3 | iniciales, contar vocales |
+| §10 Clases | 4 | `Libro`, `Cuenta`, `Fraccion` con `@propiedad` |
+| §14 Errores | 3 | `intentar`, lanzar tipos correctos |
+| §15 Módulos | 3 | matemáticas, archivos, azar |
+
+Cada bloque sigue el mismo patrón: 2-4 ejercicios progresivos (el
+primero directo, el último algo más desafiante), enlace al anexo,
+sin solución inline para no romper la práctica.
+
+### Anexo de soluciones
+
+Sección nueva entre §16 y §17 con código ejecutable para todos los
+ejercicios. Validación hecha en bloque corriendo dos scripts de prueba
+contra `cornamusa --bytecode`; outputs cuajan con los esperados en
+el anexo.
+
+Una nota importante en la introducción del anexo: "hay varias maneras
+correctas de resolver cada ejercicio — la solución mostrada es UNA
+forma idiomática, no necesariamente la única". Esto importa para
+estudiantes que llegan con soluciones distintas y válidas.
+
+### Tutorial creció de 1038 a 1502 líneas
+
+Aproximadamente +45%, todo en valor pedagógico (no padding). La
+estructura de las 17 secciones originales se preserva intacta — los
+ejercicios y el anexo son aditivos.
+
+### Estado
+
+No hay cambios de código (la versión bumpea por convención de release).
+239 tests verde se mantienen sin cambios desde v1.78.
+
+### Cierre del plan "qué hacer para mejorar"
+
+Esta release cierra los tres movimientos propuestos en la
+autoevaluación 3/10:
+
+1. ✅ v1.76: **Debugger interactivo** (`cornamusa depurar`).
+2. ✅ v1.77 + v1.78: **Decoradores sobre métodos + `@propiedad`**.
+3. ✅ v1.79: **Material didáctico expandido**.
+
+Tras estas tres releases, el subscore de tooling pasa de 7 a 8 (suite
+completa: fmt/lint/docs/lsp/prof/cov/depurar), el de lenguaje técnico
+de 6 a 6.5 (`@propiedad` + decoradores sobre métodos), y el de
+pedagógico-en-castellano de 9 a 9.5 (curso con ejercicios validados).
+
+---
+
 ## [1.78.0] — 2026-05-17 — `@propiedad`: getters automáticos
 
 Convierte un método en getter automático que se invoca al acceder al
