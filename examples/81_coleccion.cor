@@ -1,0 +1,117 @@
+# stdlib `coleccion` (v1.88): Pila, Cola, ColaDoble.
+#
+# Estructuras de datos clasicas implementadas con clases sobre
+# listas mutables. API idiomatica que se lee mejor que manipular
+# listas directamente.
+
+importar coleccion
+
+# ─── 1. Pila para balanceo de parentesis ────────────────────────
+funcion balanceado(s):
+    p = coleccion.Pila()
+    para c en s:
+        si c == "(":
+            p.poner(c)
+        sino si c == ")":
+            si p.vacia():
+                retornar falso
+            fin si
+            p.sacar()
+        fin si
+    fin para
+    retornar p.vacia()
+fin funcion
+
+imprimir("Balanceo de parentesis:")
+para s en ["((1+2))", "((1+2)", "x*(y+z)", "(()(()))"]:
+    imprimir(f"  {s} -> {balanceado(s)}")
+fin para
+
+# ─── 2. Cola para BFS sobre grafo ───────────────────────────────
+grafo = {
+    "a": ["b", "c"],
+    "b": ["d", "e"],
+    "c": ["f"],
+    "d": [],
+    "e": ["f"],
+    "f": [],
+}
+
+funcion bfs(inicio):
+    importar coleccion
+    cola = coleccion.Cola()
+    cola.poner(inicio)
+    vistos = conjunto()
+    agregar(vistos, inicio)
+    orden = []
+    mientras no cola.vacia():
+        nodo = cola.sacar()
+        agregar(orden, nodo)
+        para vec en grafo[nodo]:
+            si vec en vistos:
+                continuar
+            fin si
+            agregar(vistos, vec)
+            cola.poner(vec)
+        fin para
+    fin mientras
+    retornar orden
+fin funcion
+
+imprimir(f"\nBFS desde 'a': {bfs('a')}")
+
+# ─── 3. ColaDoble para undo/redo ────────────────────────────────
+clase Documento:
+    funcion __iniciar__(yo):
+        yo.texto = ""
+        yo._undo = coleccion.ColaDoble()
+        yo._redo = coleccion.ColaDoble()
+    fin funcion
+
+    funcion escribir(yo, s):
+        yo._undo.poner_final(yo.texto)   # snapshot antes
+        yo._redo = coleccion.ColaDoble()  # invalidar redo
+        yo.texto = yo.texto + s
+    fin funcion
+
+    funcion deshacer(yo):
+        si yo._undo.vacia():
+            retornar
+        fin si
+        yo._redo.poner_final(yo.texto)
+        yo.texto = yo._undo.sacar_final()
+    fin funcion
+
+    funcion rehacer(yo):
+        si yo._redo.vacia():
+            retornar
+        fin si
+        yo._undo.poner_final(yo.texto)
+        yo.texto = yo._redo.sacar_final()
+    fin funcion
+fin clase
+
+d = Documento()
+d.escribir("hola")
+d.escribir(" mundo")
+d.escribir("!")
+imprimir(f"\nDocumento: '{d.texto}'")
+
+d.deshacer()
+imprimir(f"Tras 1 deshacer: '{d.texto}'")
+d.deshacer()
+imprimir(f"Tras 2 deshacer: '{d.texto}'")
+d.rehacer()
+imprimir(f"Tras 1 rehacer:  '{d.texto}'")
+
+# ─── 4. Cola para procesar tareas ───────────────────────────────
+tareas = coleccion.Cola()
+para t en ["compilar", "test", "lint", "publicar"]:
+    tareas.poner(t)
+fin para
+
+imprimir(f"\nProcesando {longitud(tareas)} tareas:")
+mientras no tareas.vacia():
+    actual = tareas.sacar()
+    imprimir(f"  → {actual}")
+fin mientras

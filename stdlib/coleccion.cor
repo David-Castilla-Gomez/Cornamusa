@@ -1,0 +1,179 @@
+# Cornamusa stdlib: coleccion.cor (v1.88)
+#
+# Estructuras de datos clasicas: Pila (LIFO), Cola (FIFO),
+# ColaDoble (deque). Implementadas en pure-Cornamusa sobre listas
+# nativas, con API idiomatica.
+#
+# Uso tipico:
+#
+#   importar coleccion
+#
+#   # Pila: ultimo en entrar es primero en salir.
+#   p = coleccion.Pila()
+#   p.poner(1); p.poner(2); p.poner(3)
+#   imprimir(p.sacar())   # 3
+#   imprimir(p.vista())   # 2 (sin sacar)
+#
+#   # Cola: primero en entrar es primero en salir.
+#   c = coleccion.Cola()
+#   c.poner("ana"); c.poner("luis"); c.poner("eva")
+#   imprimir(c.sacar())   # ana
+#
+#   # ColaDoble: insertar/sacar por ambos extremos.
+#   d = coleccion.ColaDoble()
+#   d.poner_final("medio")
+#   d.poner_frente("inicio")
+#   d.poner_final("fin")
+#   imprimir(d.sacar_frente())   # inicio
+#   imprimir(d.sacar_final())    # fin
+#
+# Nota de rendimiento: `Cola.sacar()` es O(n) porque desplaza la
+# lista interna. Para colas con miles de operaciones, considera
+# usar ColaDoble (que tambien es O(n) para sacar_frente en esta
+# implementacion pure-Cornamusa, pero queda preparada para una
+# version nativa futura con buffer circular).
+
+# ─── Pila (LIFO) ─────────────────────────────────────────────────
+clase Pila:
+    funcion __iniciar__(yo):
+        yo._items = []
+    fin funcion
+
+    # Pone `x` en el tope.
+    funcion poner(yo, x):
+        agregar(yo._items, x)
+    fin funcion
+
+    # Saca y devuelve el tope. Lanza ErrorDeValor si esta vacia.
+    funcion sacar(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("Pila vacia")
+        fin si
+        ultimo = yo._items[-1]
+        quitar(yo._items, -1)
+        retornar ultimo
+    fin funcion
+
+    # Devuelve el tope sin sacarlo. Lanza ErrorDeValor si vacia.
+    funcion vista(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("Pila vacia")
+        fin si
+        retornar yo._items[-1]
+    fin funcion
+
+    funcion vacia(yo):
+        retornar longitud(yo._items) == 0
+    fin funcion
+
+    funcion __longitud__(yo):
+        retornar longitud(yo._items)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"Pila({longitud(yo._items)} elementos, tope={yo._items[-1] si longitud(yo._items) > 0 sino nulo})"
+    fin funcion
+fin clase
+
+# ─── Cola (FIFO) ─────────────────────────────────────────────────
+clase Cola:
+    funcion __iniciar__(yo):
+        yo._items = []
+    fin funcion
+
+    # Pone `x` al final de la cola.
+    funcion poner(yo, x):
+        agregar(yo._items, x)
+    fin funcion
+
+    # Saca y devuelve el primer elemento (frente). O(n) por el
+    # desplazamiento de la lista interna.
+    funcion sacar(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("Cola vacia")
+        fin si
+        primero = yo._items[0]
+        quitar(yo._items, 0)
+        retornar primero
+    fin funcion
+
+    funcion vista(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("Cola vacia")
+        fin si
+        retornar yo._items[0]
+    fin funcion
+
+    funcion vacia(yo):
+        retornar longitud(yo._items) == 0
+    fin funcion
+
+    funcion __longitud__(yo):
+        retornar longitud(yo._items)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"Cola({longitud(yo._items)} elementos)"
+    fin funcion
+fin clase
+
+# ─── ColaDoble (deque) ───────────────────────────────────────────
+# Insertar y sacar por ambos extremos. Util para BFS, sliding windows,
+# undo/redo, etc.
+clase ColaDoble:
+    funcion __iniciar__(yo):
+        yo._items = []
+    fin funcion
+
+    funcion poner_final(yo, x):
+        agregar(yo._items, x)
+    fin funcion
+
+    funcion poner_frente(yo, x):
+        insertar(yo._items, 0, x)
+    fin funcion
+
+    funcion sacar_final(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("ColaDoble vacia")
+        fin si
+        ultimo = yo._items[-1]
+        quitar(yo._items, -1)
+        retornar ultimo
+    fin funcion
+
+    funcion sacar_frente(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("ColaDoble vacia")
+        fin si
+        primero = yo._items[0]
+        quitar(yo._items, 0)
+        retornar primero
+    fin funcion
+
+    funcion vista_frente(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("ColaDoble vacia")
+        fin si
+        retornar yo._items[0]
+    fin funcion
+
+    funcion vista_final(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("ColaDoble vacia")
+        fin si
+        retornar yo._items[-1]
+    fin funcion
+
+    funcion vacia(yo):
+        retornar longitud(yo._items) == 0
+    fin funcion
+
+    funcion __longitud__(yo):
+        retornar longitud(yo._items)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"ColaDoble({longitud(yo._items)} elementos)"
+    fin funcion
+fin clase

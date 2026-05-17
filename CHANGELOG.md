@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.88.0] — 2026-05-17 — Stdlib `coleccion`: Pila, Cola, ColaDoble (18º módulo)
+
+Tres clases de estructuras de datos clásicas en un nuevo módulo
+`stdlib/coleccion.cor`. Pure-Cornamusa sobre listas mutables, API
+idiomática que se lee mejor que manipular las listas directamente.
+
+```cornamusa
+importar coleccion
+
+# Pila (LIFO):
+p = coleccion.Pila()
+p.poner(1); p.poner(2); p.poner(3)
+p.sacar()     # 3
+p.vista()     # 2 (sin sacar)
+
+# Cola (FIFO):
+c = coleccion.Cola()
+c.poner("ana"); c.poner("luis")
+c.sacar()     # "ana"
+
+# ColaDoble (deque):
+d = coleccion.ColaDoble()
+d.poner_final("medio")
+d.poner_frente("inicio")
+d.poner_final("fin")
+d.sacar_frente()    # "inicio"
+d.sacar_final()     # "fin"
+```
+
+### API completa
+
+| Clase | Métodos |
+|---|---|
+| `Pila` | `poner(x)`, `sacar()`, `vista()`, `vacia()`, `__longitud__` |
+| `Cola` | `poner(x)`, `sacar()` (frente), `vista()` (frente), `vacia()`, `__longitud__` |
+| `ColaDoble` | `poner_frente(x)`, `poner_final(x)`, `sacar_frente()`, `sacar_final()`, `vista_frente()`, `vista_final()`, `vacia()`, `__longitud__` |
+
+Todas lanzan `ErrorDeValor("X vacia")` cuando se intenta sacar de
+una colección vacía.
+
+### Casos de uso típicos
+
+- **Pila**: parser de expresiones (RPN), undo/redo simple, balanceo
+  de paréntesis, evaluación postfija.
+- **Cola**: BFS sobre grafos, queue de tareas FIFO, procesamiento en
+  orden de llegada.
+- **ColaDoble**: undo/redo con histórico de ambos lados, sliding
+  windows (e.g. máximo en ventana), simulación de turnos.
+
+### Rendimiento
+
+Implementación pure-Cornamusa: `Pila.sacar()` y
+`ColaDoble.sacar_final()` son O(1). `Cola.sacar()`,
+`ColaDoble.sacar_frente()` y `poner_frente` son O(n) por el
+desplazamiento de la lista interna.
+
+Para colas con miles de operaciones podría merecer la pena una
+versión nativa C con buffer circular — la API está preparada para
+ese reemplazo sin cambio visible al usuario. Para uso pedagógico y
+scripting típico, O(n) está bien.
+
+### Tests
+
+10 asserts en `test_bytecode_coleccion.c`:
+
+- Pila: LIFO básico, `vista` no remueve, sacar vacía lanza, `vacia()`
+  refleja estado.
+- Cola: FIFO básico, vista del frente.
+- ColaDoble: insertar y sacar por ambos extremos, error en vacía.
+- **Uso real cubierto en tests**: balanceo de paréntesis con Pila +
+  BFS sobre grafo con Cola.
+
+### Archivos
+
+- `stdlib/coleccion.cor` — 3 clases (~120 líneas).
+- `tests/unit/test_bytecode_coleccion.c` — 10 asserts.
+- `examples/81_coleccion.cor` — 4 patrones reales: balanceo de
+  paréntesis, BFS, undo/redo en `Documento`, procesar tareas.
+- `docs/referencia.md` §16: nuevo módulo añadido.
+
+### Estado
+
+248 tests verde, lint y fmt limpios. Stdlib pasa de 17 a **18 módulos**.
+
+---
+
 ## [1.87.0] — 2026-05-17 — `funcionales` extendido: agrupar, tomar, saltar, combinar, aplanar, unicos
 
 Seis helpers nuevos en `stdlib/funcionales.cor` para patrones muy

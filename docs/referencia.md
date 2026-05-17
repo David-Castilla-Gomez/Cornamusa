@@ -797,7 +797,7 @@ Se pueden usar directamente, pero la práctica recomendada es importar el módul
 
 ## 16. Biblioteca estándar (`stdlib/`)
 
-Diecisiete módulos. Se importan con `importar <nombre>`.
+Dieciocho módulos. Se importan con `importar <nombre>`.
 
 ### `matematicas`
 
@@ -880,6 +880,16 @@ JSON Web Tokens HS256 (RFC 7519) sobre `json` + `base64` + `hashing`:
 ### `sistema`
 
 `sistema.argv` — lista de cadenas con los argumentos del programa.
+
+### `coleccion` (v1.88)
+
+Estructuras de datos clásicas implementadas con clases sobre listas mutables:
+
+- `Pila()` — LIFO. Métodos: `poner(x)`, `sacar()`, `vista()`, `vacia()`, `__longitud__`.
+- `Cola()` — FIFO. Métodos: `poner(x)`, `sacar()` (saca del frente), `vista()`, `vacia()`, `__longitud__`.
+- `ColaDoble()` — deque. Métodos: `poner_frente(x)`, `poner_final(x)`, `sacar_frente()`, `sacar_final()`, `vista_frente()`, `vista_final()`, `vacia()`, `__longitud__`.
+
+Todos lanzan `ErrorDeValor("X vacia")` al sacar de colección vacía.
 
 ---
 

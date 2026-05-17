@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.87.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.88.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -51,7 +51,7 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **F-cadenas con interpolación real**: `f"hola {nombre}, {edad + 10}"` evalúa cada `{expr}`.
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
 
-**Biblioteca estándar** — diecisiete módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `csv`, `fechas`, `tiempo`, `azar`, `proceso`, `regex`, `red`, `sistema`, `base64`, `hashing`, `jwt`.
+**Biblioteca estándar** — dieciocho módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `csv`, `fechas`, `tiempo`, `azar`, `proceso`, `regex`, `red`, `sistema`, `base64`, `hashing`, `jwt`, `coleccion`.
 
 **Implementación:**
 
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.87.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **`funcionales` extendido con 6 helpers**: `agrupar_por(xs, f)` clasifica en dict por la clave que devuelve la función, `tomar(n, xs)` y `saltar(n, xs)` funcionan con cualquier iterable (incluyendo generadores infinitos — `tomar(10, naturales())` es seguro), `combinar(xs, ys)` empareja en pares estilo zip (se para con el más corto), `aplanar(xss)` colapsa un nivel, `unicos(xs)` deduplica preservando orden de primera aparición. Patrones muy comunes que ahora son one-liners. 246 tests verde con 18 asserts nuevos en `test_bytecode_funcionales_v87`. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.88.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **dieciocho** módulos. **Nuevo `coleccion`** con tres clases: `Pila` (LIFO), `Cola` (FIFO) y `ColaDoble` (deque). API idiomática (`p.poner(x)`, `p.sacar()`, `p.vacia()`) que se lee mejor que manipular listas directamente. Útil para casos clásicos como balanceo de paréntesis, BFS sobre grafos, undo/redo en editores. Implementadas en pure-Cornamusa sobre listas mutables — la versión preparada para nativizar `Cola`/`ColaDoble` con buffer circular en C cuando aparezca el cuello de botella. 248 tests verde con 10 asserts nuevos. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -192,6 +192,7 @@ Hoja de ruta resumida:
 | **v1.85** | **`@clasemetodo` — método recibe `cls`, constructores alternativos polimórficos** | ✅ |
 | **v1.86** | **`tiene_atributo` / `obtener_atributo` / `asignar_atributo` — atributos dinámicos** | ✅ |
 | **v1.87** | **`funcionales` extendido: `agrupar_por`, `tomar`, `saltar`, `combinar`, `aplanar`, `unicos`** | ✅ |
+| **v1.88** | **Stdlib `coleccion` — Pila, Cola, ColaDoble (18º módulo)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
