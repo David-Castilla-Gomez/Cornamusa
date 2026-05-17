@@ -6,6 +6,104 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.91.0] — 2026-05-17 — Stdlib `inspeccion`: introspección y reflexión (19º módulo)
+
+Nuevo módulo `stdlib/inspeccion.cor` con utilidades de introspección
+para instancias, clases y módulos. Complementa los
+`tiene_atributo`/`obtener_atributo`/`asignar_atributo` de v1.86 con
+info estructural de alto nivel.
+
+```cornamusa
+importar inspeccion
+
+clase Perro extiende Animal:
+    funcion ladrar(yo): retornar "guau" fin funcion
+fin clase
+
+rex = Perro("Rex", 5)
+
+inspeccion.obtener_clase(rex)        # <clase Perro>
+inspeccion.obtener_nombre(rex)       # "Perro" (NO "instancia")
+inspeccion.listar_metodos(rex)       # ["__iniciar__", "describir", "ladrar"]
+inspeccion.listar_atributos(rex)     # ["nombre", "edad"]
+inspeccion.describir(rex)            # dict completo con todo lo anterior
+```
+
+### Resuelve un problema común
+
+Hasta v1.90, `tipo(instancia)` siempre devolvía `"instancia"` —
+sin distinguir entre clases. Ahora `nombre_clase(rex)` devuelve
+`"Perro"` exactamente.
+
+### Cuatro nativas C
+
+| Nativa | Tipos aceptados | Devuelve |
+|---|---|---|
+| `clase_de(inst)` | instancia | `VAL_CLASE` o `nulo` |
+| `nombre_clase(x)` | instancia o clase | cadena con nombre |
+| `metodos_de(x)` | instancia o clase | lista de cadenas |
+| `atributos_de(inst)` | instancia | lista de cadenas |
+
+`metodos_de` incluye métodos heredados (que `OP_HEREDAR` copia a
+`clase.metodos`). `atributos_de` solo lista atributos propios, no
+métodos.
+
+### Helpers de `stdlib/inspeccion.cor`
+
+| Helper | Comportamiento |
+|---|---|
+| `obtener_clase(x)` | wrapper de `clase_de` |
+| `obtener_nombre(x)` | wrapper de `nombre_clase` |
+| `listar_metodos(x)` | wrapper de `metodos_de` |
+| `listar_atributos(x)` | wrapper de `atributos_de` |
+| `es_callable(x)` | `tipo(x) en {"funcion", "clase"}` |
+| `es_clase(x)` | `tipo(x) == "clase"` |
+| `es_instancia(x)` | `tipo(x) == "instancia"` |
+| `es_modulo(x)` | `tipo(x) == "modulo"` |
+| `describir(x)` | dict completo con `tipo`, `clase`/`nombre`, `metodos`, `atributos`, `repr` |
+
+Nota: los wrappers usan `obtener_*`/`listar_*` porque `clase` es
+keyword del lenguaje, y `metodos`/`atributos` son nombres más
+naturales para listas que los del nativo singular.
+
+### Casos de uso típicos (ejemplo 82)
+
+1. **Inspección de instancia**: `inspeccion.describir(obj)` da un
+   resumen completo en una llamada.
+2. **Serializador genérico** a JSON: itera `listar_atributos(obj)` y
+   construye un dict con `obtener_atributo(obj, attr)`. Funciona
+   para cualquier instancia sin necesidad de definir `__a_json__`.
+3. **REPL helper `inspeccionar(x)`** que muestra tipo, clase,
+   métodos disponibles y atributos con valores actuales — útil para
+   debugging interactivo.
+
+### Tests
+
+16 asserts en `test_bytecode_inspeccion.c`:
+
+- `clase_de` con instancia y con tipos primitivos.
+- `nombre_clase` con instancia, con clase, rechazo de otros tipos.
+- `metodos_de` con clase y con instancia (mismo resultado).
+- `atributos_de` con instancia, rechazo de no-instancia.
+- `es_clase`/`es_instancia`/`es_callable` con varios tipos.
+- `describir` retorna dict con `tipo`/`clase`/`atributos` correctos.
+
+### Archivos
+
+- `src/nativos.c` — 4 nativas nuevas + helper `claves_a_lista`.
+- `stdlib/inspeccion.cor` — 9 funciones de alto nivel.
+- `tests/unit/test_bytecode_inspeccion.c` — 16 asserts.
+- `examples/82_inspeccion.cor` — 5 casos: inspección básica, tests
+  booleanos, `describir`, serializador genérico a JSON,
+  REPL-style `inspeccionar` helper.
+- `docs/referencia.md` §16: nuevo módulo añadido.
+
+### Estado
+
+250 tests verde, lint+fmt limpios. Stdlib pasa de 18 a **19 módulos**.
+
+---
+
 ## [1.90.0] — 2026-05-17 — Cookbook ampliado: 5 recetas más (15 totales)
 
 Cinco recetas nuevas validadas contra el intérprete, llevando el

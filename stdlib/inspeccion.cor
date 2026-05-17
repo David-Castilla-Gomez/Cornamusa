@@ -1,0 +1,90 @@
+# Cornamusa stdlib: inspeccion.cor (v1.91)
+#
+# Utilidades de reflexion / introspeccion. Wrappers de alto nivel
+# sobre las nativas `clase_de`, `nombre_clase`, `metodos_de`,
+# `atributos_de` y los `tiene_atributo`/`obtener_atributo` (v1.86).
+#
+# Util para:
+# - REPL helpers y debugging interactivo.
+# - Frameworks de serializacion / deserializacion.
+# - Tests genericos basados en estructura.
+# - Logging detallado con introspeccion.
+#
+# Uso:
+#
+#   importar inspeccion
+#
+#   inspeccion.obtener_clase(persona)     # devuelve la clase
+#   inspeccion.obtener_nombre(persona)     # "Persona"
+#   inspeccion.listar_metodos(Persona)     # ["__iniciar__", "saludar", ...]
+#   inspeccion.listar_atributos(persona)   # ["nombre", "edad", ...]
+#   inspeccion.es_callable(x)              # bool: funciones, clases, metodos
+#   inspeccion.es_clase(x)                 # bool
+#   inspeccion.es_instancia(x)             # bool
+#   inspeccion.describir(persona)          # dict con resumen completo
+#
+# (`clase` es keyword del lenguaje, asi que los wrappers usan
+# `obtener_clase` / `obtener_nombre`. Para el caso directo, las
+# nativas `clase_de` y `nombre_clase` siguen disponibles tambien.)
+
+# Devuelve la clase de una instancia, o nulo si no es instancia.
+# (No se puede llamar `clase` porque es keyword del lenguaje.)
+funcion obtener_clase(x):
+    retornar clase_de(x)
+fin funcion
+
+# Nombre de la clase de una instancia o de una clase. ErrorDeTipo si
+# `x` no es ni instancia ni clase.
+funcion obtener_nombre(x):
+    retornar nombre_clase(x)
+fin funcion
+
+# Lista de nombres de metodos de una clase (o de la clase de una
+# instancia). Incluye metodos heredados copiados via OP_HEREDAR.
+funcion listar_metodos(x):
+    retornar metodos_de(x)
+fin funcion
+
+# Lista de nombres de atributos propios de una instancia (sin metodos).
+funcion listar_atributos(x):
+    retornar atributos_de(x)
+fin funcion
+
+# Verdadero si `x` es invocable (funcion definida por el usuario,
+# nativa, clase, metodo ligado, o cualquier wrapper con __llamar__).
+funcion es_callable(x):
+    t = tipo(x)
+    retornar t == "funcion" o t == "clase"
+fin funcion
+
+# Verdadero si `x` es una clase definida por el usuario.
+funcion es_clase(x):
+    retornar tipo(x) == "clase"
+fin funcion
+
+# Verdadero si `x` es una instancia de una clase definida por el usuario.
+funcion es_instancia(x):
+    retornar tipo(x) == "instancia"
+fin funcion
+
+# Verdadero si `x` es un modulo importado.
+funcion es_modulo(x):
+    retornar tipo(x) == "modulo"
+fin funcion
+
+# Resumen completo de un valor — util para debugging interactivo.
+# Devuelve un dict con: tipo, nombre_clase (si aplica), metodos
+# disponibles, atributos propios, repr corto.
+funcion describir(x):
+    t = tipo(x)
+    info = {"tipo": t, "repr": repr(x)}
+    si t == "instancia":
+        info["clase"] = nombre_clase(x)
+        info["metodos"] = metodos_de(x)
+        info["atributos"] = atributos_de(x)
+    sino si t == "clase":
+        info["nombre"] = nombre_clase(x)
+        info["metodos"] = metodos_de(x)
+    fin si
+    retornar info
+fin funcion

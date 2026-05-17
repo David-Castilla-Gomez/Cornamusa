@@ -1,0 +1,105 @@
+# stdlib `inspeccion` (v1.91): introspeccion y reflexion.
+
+importar inspeccion
+
+# ─── Definimos algunas clases ────────────────────────────────────
+clase Animal:
+    funcion __iniciar__(yo, nombre, edad):
+        yo.nombre = nombre
+        yo.edad = edad
+    fin funcion
+
+    funcion describir(yo):
+        retornar f"{yo.nombre} ({yo.edad})"
+    fin funcion
+fin clase
+
+clase Perro extiende Animal:
+    funcion ladrar(yo):
+        retornar f"{yo.nombre}: guau!"
+    fin funcion
+fin clase
+
+# ─── 1. Inspeccionar instancia ──────────────────────────────────
+rex = Perro("Rex", 5)
+imprimir("=== Inspeccion de rex ===")
+imprimir(f"  tipo:       {tipo(rex)}")
+imprimir(f"  clase:      {inspeccion.obtener_clase(rex)}")
+imprimir(f"  nombre:     {inspeccion.obtener_nombre(rex)}")
+imprimir(f"  metodos:    {inspeccion.listar_metodos(rex)}")
+imprimir(f"  atributos:  {inspeccion.listar_atributos(rex)}")
+
+# ─── 2. Tests booleanos ─────────────────────────────────────────
+imprimir("\n=== Tests booleanos ===")
+para par en [
+    ("rex", rex),
+    ("Perro", Perro),
+    ("42", 42),
+    ("'hola'", "hola"),
+    ("inspeccion (modulo)", inspeccion),
+]:
+    nombre = par[0]
+    valor = par[1]
+    imprimir(f"  {nombre}:")
+    imprimir(f"    es_clase:     {inspeccion.es_clase(valor)}")
+    imprimir(f"    es_instancia: {inspeccion.es_instancia(valor)}")
+    imprimir(f"    es_modulo:    {inspeccion.es_modulo(valor)}")
+    imprimir(f"    es_callable:  {inspeccion.es_callable(valor)}")
+fin para
+
+# ─── 3. describir(): resumen completo en una llamada ────────────
+imprimir("\n=== describir(rex) ===")
+info = inspeccion.describir(rex)
+para k en claves(info):
+    imprimir(f"  {k}: {info[k]}")
+fin para
+
+# ─── 4. Caso de uso: serializador generico de instancias ────────
+funcion a_dict_recursivo(obj):
+    si inspeccion.es_instancia(obj):
+        d = {"__tipo__": inspeccion.obtener_nombre(obj)}
+        para attr en inspeccion.listar_atributos(obj):
+            d[attr] = obtener_atributo(obj, attr)
+        fin para
+        retornar d
+    fin si
+    retornar obj
+fin funcion
+
+importar json
+imprimir(f"\n=== Serializado (rex → JSON) ===")
+imprimir(json.serializar_indentado(a_dict_recursivo(rex), 2))
+
+# ─── 5. Inspector REPL-style ────────────────────────────────────
+funcion inspeccionar(x):
+    info = inspeccion.describir(x)
+    importar cadenas
+    imprimir(cadenas.repetir("-", 40))
+    imprimir(f"Tipo: {info['tipo']}")
+    si "clase" en info:
+        imprimir(f"Clase: {info['clase']}")
+    fin si
+    si "nombre" en info:
+        imprimir(f"Nombre: {info['nombre']}")
+    fin si
+    si "metodos" en info:
+        imprimir(f"Metodos disponibles ({longitud(info['metodos'])}):")
+        para m en info["metodos"]:
+            imprimir(f"  · {m}")
+        fin para
+    fin si
+    si "atributos" en info:
+        imprimir(f"Atributos:")
+        para a en info["atributos"]:
+            v = obtener_atributo(x, a)
+            imprimir(f"  · {a} = {repr(v)}")
+        fin para
+    fin si
+    imprimir(cadenas.repetir("-", 40))
+fin funcion
+
+imprimir("\n=== inspeccionar(rex) ===")
+inspeccionar(rex)
+
+imprimir("\n=== inspeccionar(Animal) ===")
+inspeccionar(Animal)

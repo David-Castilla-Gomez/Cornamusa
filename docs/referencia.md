@@ -797,7 +797,7 @@ Se pueden usar directamente, pero la práctica recomendada es importar el módul
 
 ## 16. Biblioteca estándar (`stdlib/`)
 
-Dieciocho módulos. Se importan con `importar <nombre>`.
+Diecinueve módulos. Se importan con `importar <nombre>`.
 
 ### `matematicas`
 
@@ -890,6 +890,19 @@ Estructuras de datos clásicas implementadas con clases sobre listas mutables:
 - `ColaDoble()` — deque. Métodos: `poner_frente(x)`, `poner_final(x)`, `sacar_frente()`, `sacar_final()`, `vista_frente()`, `vista_final()`, `vacia()`, `__longitud__`.
 
 Todos lanzan `ErrorDeValor("X vacia")` al sacar de colección vacía.
+
+### `inspeccion` (v1.91)
+
+Introspección y reflexión sobre instancias, clases y módulos. Útil para serializadores genéricos, REPL helpers y debugging.
+
+- `obtener_clase(inst)` → la clase (VAL_CLASE) o `nulo` si no es instancia.
+- `obtener_nombre(clase_o_inst)` → cadena con el nombre (e.g. `"Persona"` para instancias).
+- `listar_metodos(clase_o_inst)` → lista de nombres de métodos (incluye heredados).
+- `listar_atributos(inst)` → lista de atributos propios de la instancia.
+- `es_callable(x)` / `es_clase(x)` / `es_instancia(x)` / `es_modulo(x)` → booleanos.
+- `describir(x)` → dict con `tipo`, `clase`/`nombre`, `metodos`, `atributos`, `repr`.
+
+Las nativas directas (`clase_de`, `nombre_clase`, `metodos_de`, `atributos_de`) están disponibles globalmente sin `importar`.
 
 ---
 

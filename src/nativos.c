@@ -2625,6 +2625,113 @@ static Valor nativa_obtener_atributo(EvalError *err, int n_args, Valor *args,
     }
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Inspeccion / reflexion (v1.91). Helpers de bajo nivel que exponen
+ * info estructural del runtime. Wrapper de mas alto nivel en
+ * stdlib/inspeccion.cor.
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Helper: extrae las claves (cadena) de un Diccionario a una Lista. */
+static Lista *claves_a_lista(const Diccionario *d) {
+    if (!d) return lista_nueva(0);
+    Lista *l = lista_nueva(d->cuenta);
+    if (!l) return NULL;
+    for (int i = 0; i < d->capacidad; i++) {
+        if (!d->entradas[i].ocupada) continue;
+        if (l->cuenta >= l->capacidad) {
+            int nueva_cap = l->capacidad == 0 ? 4 : l->capacidad * 2;
+            Valor *nueva = (Valor *)realloc(l->elementos, sizeof(Valor) * (size_t)nueva_cap);
+            if (!nueva) { lista_liberar(l); return NULL; }
+            l->elementos = nueva;
+            l->capacidad = nueva_cap;
+        }
+        l->elementos[l->cuenta++] = valor_clonar(&d->entradas[i].clave);
+    }
+    return l;
+}
+
+/* clase_de(instancia) → la clase (VAL_CLASE), o nulo si no es instancia. */
+static Valor nativa_clase_de(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: clase_de() requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_INSTANCIA) {
+        return valor_nulo();
+    }
+    Clase *c = args[0].como.instancia->clase;
+    clase_retener(c);
+    return valor_clase(c);
+}
+
+/* nombre_clase(clase_o_instancia) → cadena con el nombre exacto.
+ * Para VAL_INSTANCIA devuelve el nombre de su clase (e.g. "Persona"
+ * en lugar de "instancia"). Para VAL_CLASE devuelve el nombre.
+ * Para otros tipos lanza ErrorDeTipo. */
+static Valor nativa_nombre_clase(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: nombre_clase() requiere 1 argumento");
+    }
+    const Clase *c = NULL;
+    if (args[0].tipo == VAL_INSTANCIA) {
+        c = args[0].como.instancia->clase;
+    } else if (args[0].tipo == VAL_CLASE) {
+        c = args[0].como.clase;
+    } else {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: nombre_clase() requiere instancia o clase, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    if (!c || !c->nombre) {
+        return valor_cadena_duplicar("?", 1);
+    }
+    return valor_cadena_duplicar(c->nombre, c->longitud_nombre);
+}
+
+/* metodos_de(clase) → lista de cadenas con los nombres de metodos
+ * (incluye metodos heredados copiados a clase.metodos por OP_HEREDAR). */
+static Valor nativa_metodos_de(EvalError *err, int n_args, Valor *args,
+                                 int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: metodos_de() requiere 1 argumento");
+    }
+    const Clase *c = NULL;
+    if (args[0].tipo == VAL_CLASE) {
+        c = args[0].como.clase;
+    } else if (args[0].tipo == VAL_INSTANCIA) {
+        c = args[0].como.instancia->clase;
+    } else {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: metodos_de() requiere instancia o clase, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *l = claves_a_lista(c ? c->metodos : NULL);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+    return valor_lista(l);
+}
+
+/* atributos_de(instancia) → lista de cadenas con los nombres de los
+ * atributos propios (NO incluye metodos heredados de la clase). */
+static Valor nativa_atributos_de(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: atributos_de() requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_INSTANCIA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: atributos_de() requiere instancia, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *l = claves_a_lista(args[0].como.instancia->atributos);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+    return valor_lista(l);
+}
+
 /* asignar_atributo(obj, nombre, valor) → nulo. Muta la instancia.
  * Solo soporta VAL_INSTANCIA. */
 static Valor nativa_asignar_atributo(EvalError *err, int n_args, Valor *args,
@@ -4049,6 +4156,11 @@ static const EntradaNativa NATIVAS[] = {
     {"tiene_atributo",   14, nativa_tiene_atributo},
     {"obtener_atributo", 16, nativa_obtener_atributo},
     {"asignar_atributo", 16, nativa_asignar_atributo},
+    /* Inspeccion / reflexion (v1.91). */
+    {"clase_de",          8, nativa_clase_de},
+    {"nombre_clase",     12, nativa_nombre_clase},
+    {"metodos_de",       10, nativa_metodos_de},
+    {"atributos_de",     12, nativa_atributos_de},
     /* Tiempo (v1.19). */
     {"tiempo_actual",       13, nativa_tiempo_actual},
     {"tiempo_descomponer",  18, nativa_tiempo_descomponer},
