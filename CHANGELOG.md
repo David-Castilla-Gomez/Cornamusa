@@ -6,6 +6,70 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.82.0] — 2026-05-17 — Cookbook con 10 recetas validadas
+
+Nueva pieza de documentación: `docs/cookbook.md`. Complementa el
+tutorial (que enseña el lenguaje secuencialmente) y la referencia
+(que lista APIs) convirtiendo features dispersas en patrones útiles
+listos para copy-paste.
+
+### Recetas incluidas
+
+| # | Receta | Módulos involucrados |
+|---|---|---|
+| 1 | Procesar CSV y agregar | `csv` |
+| 2 | JWT con expiración | `jwt`, `tiempo` |
+| 3 | Hash SHA-256 de un valor | `hashing` |
+| 4 | Backoff exponencial para reintentos | `tiempo`, `intentar/atrapar` |
+| 5 | Memoización con decorador | decoradores (v1.72) |
+| 6 | Cronometrar bloques de código | `tiempo.monotonic`/`cronometro` |
+| 7 | Atributos computados con `@propiedad` | clases, `@propiedad` (v1.78) |
+| 8 | Parser básico de argumentos del programa | `sistema.argv` |
+| 9 | Contar frecuencias (counter dict-style) | `cadenas`, diccionarios |
+| 10 | JSON pretty-print para configuración | `json.serializar_indentado` |
+
+Cada receta:
+
+1. Enuncia el **problema** concreto en una frase.
+2. Da el **código completo** ejecutable (no fragmentos sueltos).
+3. Muestra el **output esperado** verificado contra el intérprete.
+4. Cuando aplica, lista **variantes** comunes ("si el separador es
+   `;`...", "si la firma es por archivo...").
+
+### Validación
+
+Las 10 recetas se ejecutaron en dos lotes con `cornamusa --bytecode`
+durante la redacción; los outputs mostrados en el cookbook son los
+reales (con la excepción de las marcas de tiempo de `cronómetro` y
+similares, que varían entre ejecuciones).
+
+### Por qué un cookbook separado del tutorial
+
+- El **tutorial** enseña progresivamente: si quieres aprender el
+  lenguaje, vas en orden.
+- La **referencia** es densa: si quieres lookup rápido de sintaxis o
+  APIs.
+- El **cookbook** asume que ya conoces lo básico y resuelves un
+  problema concreto. Llegas con "¿cómo firmo un JWT?", encuentras la
+  receta, copia-pega, ajustas a tu caso.
+
+Es el tercer eje pedagógico que en v1.79 había marcado como movimiento
+de alto valor para el nicho de Cornamusa (enseñar a programar en
+castellano). Tras tutorial + cookbook, queda la documentación
+**referencia** y **especificación formal** como ejes técnicos.
+
+### Enlaces actualizados
+
+- README §Documentación: añadido enlace a Cookbook.
+- `docs/introduccion.md`: nueva sección "Si quieres copy-paste para
+  una tarea común" entre "Referencia" y "Especificación".
+
+### Sin cambios de código
+
+239 tests verde sin cambios desde v1.81. Bump de versión por convención.
+
+---
+
 ## [1.81.0] — 2026-05-17 — Linter: `redundant-bool-compare` + `useless-return` (14 categorías)
 
 Dos checks nuevos al linter, ambos pequeños pero útiles. Total: 14

@@ -38,6 +38,12 @@ Pensado para alguien que nunca ha programado o que viene de otro lenguaje. Cubre
 
 Cheatsheet con tablas densas: sintaxis, operadores, built-ins, stdlib, errores comunes. Para abrir cuando estás escribiendo y olvidaste cómo se llamaba algo.
 
+## Si quieres copy-paste para una tarea común
+
+→ **[Cookbook](cookbook.html)**
+
+Recetas validadas para casos reales: procesar CSV, JWT con expiración, backoff exponencial, memoización, atributos computados, contar frecuencias, JSON pretty-print. Cada receta es código completo y ejecutable.
+
 ## Si quieres entender el diseño
 
 → **[Especificación formal](https://github.com/David-Castilla-Gomez/Cornamusa/blob/main/ESPEC.md)** + **[Decisiones (ADRs)](https://github.com/David-Castilla-Gomez/Cornamusa/tree/main/decisiones)**
@@ -101,6 +107,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Tutorial expandido a curso (~35 ejercicios + soluciones validadas) | v1.79 | ✅ |
 | Limpieza stdlib (dead code eliminado, params renombrados) | v1.80 | ✅ |
 | Linter: `redundant-bool-compare` + `useless-return` (14 categorías) | v1.81 | ✅ |
+| Cookbook con 10 recetas validadas (CSV, JWT, hashing, decoradores, ...) | v1.82 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.81.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.82.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.81.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Linter gana dos categorías** (14 en total): `redundant-bool-compare` detecta `x == verdadero`/`x == falso` (debe ser `x`/`no x`), y `useless-return` detecta `retornar nulo` al final de funciones (Cornamusa retorna nulo por defecto), con exclusión inteligente del patrón "find-returns-nil" tras bucles. La auditoría del propio repo pilló 3 verdaderos positivos: 2 en `examples/32_json_archivos.cor` (verificación deliberada de round-trip JSON, suprimidos con `# noqa`) y 1 en `examples/25_biblioteca_oop.cor` (patrón find-returns-nil tras refinar el check). 84 asserts en `test_linter` (de 73). [Tutorial paso a paso](docs/tutorial.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.82.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecisiete** módulos. **Nuevo Cookbook** (`docs/cookbook.md`): 10 recetas listas para copy-paste cubriendo casos reales — procesar CSV y agregar, JWT con expiración, hash SHA-256, backoff exponencial, memoización con decorador, cronómetros, atributos computados con `@propiedad`, parser de argv, counter dict-style, JSON pretty-print. Cada receta es código completo y se ha validado contra el intérprete. Complementa el tutorial (que enseña el lenguaje) y la referencia (que lista APIs) convirtiendo features dispersas en patrones útiles. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -186,6 +186,7 @@ Hoja de ruta resumida:
 | **v1.79** | **Tutorial expandido a curso con ejercicios — ~35 ejercicios + anexo de soluciones validadas** | ✅ |
 | **v1.80** | **Limpieza stdlib: dead code eliminado, params renombrados, ~80 líneas menos** | ✅ |
 | **v1.81** | **Linter `redundant-bool-compare` + `useless-return` — 14 categorías totales** | ✅ |
+| **v1.82** | **Cookbook con 10 recetas validadas (CSV, JWT, hashing, backoff, memoize, ...)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
@@ -233,6 +234,7 @@ cmake --build build -j
 - **[Sitio web](https://david-castilla-gomez.github.io/Cornamusa/)** — tutorial paso a paso + referencia rápida (mdBook desplegado a GitHub Pages).
 - **[Tutorial](docs/tutorial.md)** — aprende Cornamusa desde cero, con código ejecutable.
 - **[Referencia rápida](docs/referencia.md)** — cheatsheet de sintaxis, built-ins, stdlib, errores.
+- **[Cookbook](docs/cookbook.md)** — recetas listas para copy-paste cubriendo casos reales.
 - **[FAQ](FAQ.md)** — preguntas frecuentes para nuevos usuarios.
 - **[ESPEC.md](ESPEC.md)** — especificación formal del lenguaje (gramática EBNF, semántica).
 - **[Decisiones (ADRs)](decisiones/)** — `B1` a `B10`, razonamiento detrás de las decisiones de diseño.
