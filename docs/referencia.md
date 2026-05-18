@@ -936,6 +936,34 @@ args = p.parsear(sistema.argv)
 - **`p.ayuda()`** devuelve el texto generado (uso, descripción, posicionales, opciones, banderas).
 - Errores típicos atrapables: opción desconocida, opción sin valor, tipo inválido, posicional obligatorio ausente.
 
+### `ruta` (v1.94)
+
+Manipulación lexicográfica de rutas al estilo `pathlib.PurePath` de Python. Pure-Cornamusa: no toca el sistema de archivos (excepto `existe()`, que delega a `archivos.existe`). Separador canónico `/`, acepta también `\` en entrada y lo normaliza.
+
+**API funcional (sin instanciar)**:
+
+- `ruta.nombre(s)` → último componente (`"/a/b.txt"` → `"b.txt"`).
+- `ruta.tronco(s)` → nombre sin extensión.
+- `ruta.extension(s)` → sufijo desde el último `.` (incluye el punto), `""` si no hay.
+- `ruta.padre(s)` → la ruta sin el último componente.
+- `ruta.partes(s)` → lista de componentes (primer elemento `"/"` si absoluta).
+- `ruta.es_absoluta(s)` → `verdadero` si empieza por `/`, `\` o letra de unidad Windows (`C:`).
+- `ruta.unir_partes(lista)` → concatena con `/`, una absoluta intermedia reinicia.
+- `ruta.normalizar(s)` → resuelve `.` y `..` lexicográficamente; ruta vacía → `"."`.
+
+**Clase `Ruta`**: envoltorio OO con métodos `.nombre()`, `.tronco()`, `.extension()`, `.padre()` (devuelve Ruta), `.partes()`, `.absoluta()`, `.vacia()`, `.unir(otro)` (acepta cadena o Ruta), `.con_nombre(nuevo)`, `.con_extension(nueva)`, `.normalizada()`, `.cadena()`, `.existe()`. Igualdad por valor (`a == b` si tienen la misma cadena interna). `__cadena__` integrado (se imprime como su ruta).
+
+```cornamusa
+importar ruta
+r = ruta.Ruta("/home/david/notas.txt")
+imprimir(r.nombre())                     # "notas.txt"
+imprimir(r.con_extension(".md").cadena())  # "/home/david/notas.md"
+sub = ruta.Ruta("/etc").unir("nginx").unir("conf.d")
+imprimir(sub.cadena())                   # "/etc/nginx/conf.d"
+```
+
+**Limitación**: `existe()` solo retorna `verdadero` para archivos regulares (no directorios), porque delega a `archivos.existe`, que sigue la misma convención.
+
 ---
 
 ## 17. CLI

@@ -1,0 +1,371 @@
+# Cornamusa stdlib: ruta.cor (v1.94)
+#
+# Manipulacion lexicografica de rutas de archivo al estilo de
+# `pathlib.PurePath` de Python. Pure-Cornamusa: NO toca el sistema
+# de archivos (excepto `existe()`, que delega a `archivos.existe`).
+#
+# Separador canonico: `/`. La clase acepta tambien `\` en la entrada
+# (lo normaliza). Para Windows, usar `/` o las APIs nativas
+# correspondientes.
+#
+# Uso tipico:
+#
+#   importar ruta
+#
+#   r = ruta.Ruta("/home/david/docs/notas.txt")
+#   r.nombre()               # "notas.txt"
+#   r.tronco()               # "notas"
+#   r.extension()            # ".txt"
+#   r.padre().cadena()       # "/home/david/docs"
+#   r.partes()               # ["/", "home", "david", "docs", "notas.txt"]
+#   r.absoluta()             # verdadero
+#
+#   nueva = r.con_extension(".md")
+#   imprimir(nueva.cadena()) # "/home/david/docs/notas.md"
+#
+#   sub = ruta.Ruta("/etc").unir("nginx").unir("conf.d")
+#   imprimir(sub.cadena())   # "/etc/nginx/conf.d"
+#
+#   si r.existe():
+#       imprimir("Si existe")
+#   fin si
+#
+# Helpers de modulo (sin instanciar):
+#
+#   ruta.unir_partes(["a", "b", "c"])     # "a/b/c"
+#   ruta.normalizar("a/./b/../c")         # "a/c"
+#   ruta.es_absoluta("/etc")              # verdadero
+#   ruta.nombre("/x/y/z.txt")             # "z.txt"
+#   ruta.extension("/x/y.tar.gz")         # ".gz"
+#   ruta.tronco("foo.cor")                # "foo"
+
+importar archivos
+importar cadenas
+
+
+# ─── Helpers internos (prefijo _) ───────────────────────────────
+
+funcion _normalizar_sep(s):
+    salida = ""
+    para c en s:
+        si c == "\\":
+            salida = salida + "/"
+        sino:
+            salida = salida + c
+        fin si
+    fin para
+    retornar salida
+fin funcion
+
+
+funcion _partir(s):
+    # Devuelve lista de componentes. Si la ruta es absoluta,
+    # el primer elemento es "/". Componentes vacios entre "//"
+    # se descartan.
+    s = _normalizar_sep(s)
+    partes = []
+    si longitud(s) > 0 y s[0] == "/":
+        agregar(partes, "/")
+    fin si
+    actual = ""
+    para c en s:
+        si c == "/":
+            si longitud(actual) > 0:
+                agregar(partes, actual)
+                actual = ""
+            fin si
+        sino:
+            actual = actual + c
+        fin si
+    fin para
+    si longitud(actual) > 0:
+        agregar(partes, actual)
+    fin si
+    retornar partes
+fin funcion
+
+
+funcion _unir_partes_lista(partes):
+    si longitud(partes) == 0:
+        retornar ""
+    fin si
+    si partes[0] == "/":
+        resto = []
+        para i en rango(1, longitud(partes)):
+            agregar(resto, partes[i])
+        fin para
+        retornar "/" + cadenas.unir(resto, "/")
+    fin si
+    retornar cadenas.unir(partes, "/")
+fin funcion
+
+
+funcion _nombre_de(s):
+    partes = _partir(s)
+    n = longitud(partes)
+    si n == 0:
+        retornar ""
+    fin si
+    ultimo = partes[n - 1]
+    si ultimo == "/":
+        retornar ""
+    fin si
+    retornar ultimo
+fin funcion
+
+
+funcion _split_ext(nombre):
+    # Devuelve [tronco, ext]. ext es el sufijo desde el ULTIMO '.',
+    # siempre que ese '.' no este en la posicion 0 (archivos como
+    # ".gitignore" se consideran sin extension).
+    si longitud(nombre) == 0:
+        retornar ["", ""]
+    fin si
+    idx = -1
+    i = longitud(nombre) - 1
+    mientras i >= 1:
+        si nombre[i] == ".":
+            idx = i
+            romper
+        fin si
+        i = i - 1
+    fin mientras
+    si idx == -1:
+        retornar [nombre, ""]
+    fin si
+    tronco = ""
+    para j en rango(0, idx):
+        tronco = tronco + nombre[j]
+    fin para
+    ext = ""
+    para j en rango(idx, longitud(nombre)):
+        ext = ext + nombre[j]
+    fin para
+    retornar [tronco, ext]
+fin funcion
+
+
+funcion _padre_de(s):
+    partes = _partir(s)
+    n = longitud(partes)
+    si n == 0:
+        retornar ""
+    fin si
+    si n == 1:
+        si partes[0] == "/":
+            retornar "/"
+        fin si
+        retornar ""
+    fin si
+    sin_ultimo = []
+    para i en rango(0, n - 1):
+        agregar(sin_ultimo, partes[i])
+    fin para
+    retornar _unir_partes_lista(sin_ultimo)
+fin funcion
+
+
+funcion _es_absoluta(s):
+    si tipo(s) != "cadena" o longitud(s) == 0:
+        retornar falso
+    fin si
+    primero = s[0]
+    si primero == "/" o primero == "\\":
+        retornar verdadero
+    fin si
+    si longitud(s) >= 2 y s[1] == ":":
+        retornar verdadero
+    fin si
+    retornar falso
+fin funcion
+
+
+funcion _a_cadena(x):
+    # Si x es una instancia Ruta, devuelve x.s; si es cadena, x mismo.
+    si tipo(x) == "instancia":
+        retornar x.s
+    fin si
+    retornar x
+fin funcion
+
+
+# ─── API funcional de modulo ─────────────────────────────────────
+
+funcion es_absoluta(s):
+    retornar _es_absoluta(s)
+fin funcion
+
+
+funcion nombre(s):
+    retornar _nombre_de(s)
+fin funcion
+
+
+funcion tronco(s):
+    par = _split_ext(_nombre_de(s))
+    retornar par[0]
+fin funcion
+
+
+funcion extension(s):
+    par = _split_ext(_nombre_de(s))
+    retornar par[1]
+fin funcion
+
+
+funcion padre(s):
+    retornar _padre_de(s)
+fin funcion
+
+
+funcion partes(s):
+    retornar _partir(s)
+fin funcion
+
+
+funcion unir_partes(lista_partes):
+    # Une una lista de cadenas con "/". Si alguna parte intermedia
+    # es absoluta, descarta lo anterior (igual que `os.path.join`).
+    resultado = ""
+    para p en lista_partes:
+        si _es_absoluta(p):
+            resultado = p
+        sino:
+            si longitud(resultado) == 0:
+                resultado = p
+            sino:
+                ultimo = resultado[longitud(resultado) - 1]
+                si ultimo == "/":
+                    resultado = resultado + p
+                sino:
+                    resultado = resultado + "/" + p
+                fin si
+            fin si
+        fin si
+    fin para
+    retornar _normalizar_sep(resultado)
+fin funcion
+
+
+funcion normalizar(s):
+    # Resuelve "." y ".." lexicograficamente. NO toca FS.
+    partes = _partir(s)
+    resultado = []
+    para p en partes:
+        si p == ".":
+            # skip
+        sino:
+            si p == "..":
+                n = longitud(resultado)
+                si n == 0:
+                    agregar(resultado, "..")
+                sino:
+                    ultimo = resultado[n - 1]
+                    si ultimo == "/":
+                        # No se puede subir mas alla de la raiz
+                    sino:
+                        si ultimo == "..":
+                            agregar(resultado, "..")
+                        sino:
+                            nuevo = []
+                            para i en rango(0, n - 1):
+                                agregar(nuevo, resultado[i])
+                            fin para
+                            resultado = nuevo
+                        fin si
+                    fin si
+                fin si
+            sino:
+                agregar(resultado, p)
+            fin si
+        fin si
+    fin para
+    si longitud(resultado) == 0:
+        retornar "."
+    fin si
+    retornar _unir_partes_lista(resultado)
+fin funcion
+
+
+# ─── Clase Ruta (envoltorio OO) ──────────────────────────────────
+
+clase Ruta:
+    funcion __iniciar__(yo, s):
+        yo.s = _normalizar_sep(s)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar yo.s
+    fin funcion
+
+    funcion cadena(yo):
+        retornar yo.s
+    fin funcion
+
+    funcion __igual__(yo, otro):
+        si tipo(otro) != "instancia":
+            retornar falso
+        fin si
+        retornar yo.s == otro.s
+    fin funcion
+
+    funcion nombre(yo):
+        retornar _nombre_de(yo.s)
+    fin funcion
+
+    funcion tronco(yo):
+        par = _split_ext(_nombre_de(yo.s))
+        retornar par[0]
+    fin funcion
+
+    funcion extension(yo):
+        par = _split_ext(_nombre_de(yo.s))
+        retornar par[1]
+    fin funcion
+
+    funcion padre(yo):
+        retornar Ruta(_padre_de(yo.s))
+    fin funcion
+
+    funcion partes(yo):
+        retornar _partir(yo.s)
+    fin funcion
+
+    funcion absoluta(yo):
+        retornar _es_absoluta(yo.s)
+    fin funcion
+
+    funcion vacia(yo):
+        retornar longitud(yo.s) == 0
+    fin funcion
+
+    funcion unir(yo, otro):
+        # Otro puede ser cadena o instancia Ruta.
+        otro_s = _a_cadena(otro)
+        retornar Ruta(unir_partes([yo.s, otro_s]))
+    fin funcion
+
+    funcion con_nombre(yo, nuevo):
+        pad = _padre_de(yo.s)
+        si longitud(pad) == 0:
+            retornar Ruta(nuevo)
+        fin si
+        retornar Ruta(unir_partes([pad, nuevo]))
+    fin funcion
+
+    funcion con_extension(yo, nueva_ext):
+        # nueva_ext debe empezar por '.' (o cadena vacia para quitar).
+        n = _nombre_de(yo.s)
+        par = _split_ext(n)
+        nuevo_nombre = par[0] + nueva_ext
+        retornar yo.con_nombre(nuevo_nombre)
+    fin funcion
+
+    funcion normalizada(yo):
+        retornar Ruta(normalizar(yo.s))
+    fin funcion
+
+    funcion existe(yo):
+        retornar archivos.existe(yo.s)
+    fin funcion
+fin clase

@@ -1,0 +1,113 @@
+# 85_ruta.cor — manipulacion lexicografica de rutas (v1.94).
+#
+# Stdlib `ruta` da una clase `Ruta` al estilo `pathlib.PurePath` de
+# Python, plus una API funcional para usar sin instanciar. No toca
+# el sistema de archivos (excepto `existe()`).
+
+importar ruta
+
+# ─── 1. API funcional (sin instanciar) ──────────────────────────
+
+imprimir("nombre:        ", ruta.nombre("/home/david/notas.txt"))
+imprimir("tronco:        ", ruta.tronco("notas.txt"))
+imprimir("extension:     ", ruta.extension("/x/y/z.tar.gz"))
+imprimir("padre:         ", ruta.padre("/a/b/c"))
+imprimir("es_absoluta a: ", ruta.es_absoluta("/etc"))
+imprimir("es_absoluta b: ", ruta.es_absoluta("rel/path"))
+imprimir("es_absoluta c: ", ruta.es_absoluta("C:/Users"))
+imprimir("normalizar:    ", ruta.normalizar("a/./b/../c"))
+imprimir("unir_partes:   ", ruta.unir_partes(["etc", "nginx", "conf.d"]))
+imprimir("")
+
+# ─── 2. Clase Ruta (encadenamiento) ─────────────────────────────
+
+r = ruta.Ruta("/home/david/docs/notas.txt")
+
+imprimir("r.nombre():    ", r.nombre())
+imprimir("r.tronco():    ", r.tronco())
+imprimir("r.extension(): ", r.extension())
+imprimir("r.padre():     ", r.padre().cadena())
+imprimir("r.partes():    ", r.partes())
+imprimir("r.absoluta():  ", r.absoluta())
+imprimir("")
+
+# Composicion con `unir`
+sub = ruta.Ruta("/etc").unir("nginx").unir("conf.d").unir("default.conf")
+imprimir("sub.cadena():  ", sub.cadena())
+imprimir("sub.padre(): ", sub.padre().cadena())
+imprimir("sub.nombre():  ", sub.nombre())
+imprimir("")
+
+# ─── 3. Transformaciones ────────────────────────────────────────
+
+imprimir("con_extension('.md'):  ", r.con_extension(".md").cadena())
+imprimir("con_nombre('readme'):  ", r.con_nombre("readme").cadena())
+imprimir("con_extension(''):     ", r.con_extension("").cadena())
+imprimir("")
+
+# ─── 4. Caso practico: organizar archivos por extension ─────────
+
+archivos_lista = [
+    "/datos/foto1.jpg",
+    "/datos/notas.txt",
+    "/datos/script.cor",
+    "/datos/foto2.png",
+    "/datos/manual.md",
+]
+
+clasificados = {"imagenes": [], "texto": [], "codigo": [], "otro": []}
+
+para a en archivos_lista:
+    p = ruta.Ruta(a)
+    ext = p.extension()
+    si ext == ".jpg" o ext == ".png":
+        agregar(clasificados["imagenes"], p.nombre())
+    sino:
+        si ext == ".txt" o ext == ".md":
+            agregar(clasificados["texto"], p.nombre())
+        sino:
+            si ext == ".cor":
+                agregar(clasificados["codigo"], p.nombre())
+            sino:
+                agregar(clasificados["otro"], p.nombre())
+            fin si
+        fin si
+    fin si
+fin para
+
+imprimir("Clasificacion por extension:")
+para tipo en ["imagenes", "texto", "codigo", "otro"]:
+    imprimir("  ", tipo, ":", clasificados[tipo])
+fin para
+imprimir("")
+
+# ─── 5. Normalizar rutas relativas ──────────────────────────────
+
+raras = [
+    "src/./compilador/../vm.c",
+    "../proyecto/lib/utils.cor",
+    "a//b///c",
+    "/etc/./nginx/../apache2/conf",
+]
+
+imprimir("Normalizacion:")
+para raw en raras:
+    imprimir("  ", raw, "->", ruta.normalizar(raw))
+fin para
+imprimir("")
+
+# ─── 6. Igualdad por valor ──────────────────────────────────────
+
+a = ruta.Ruta("/x/y/z")
+b = ruta.Ruta("/x/y/z")
+c = ruta.Ruta("/x/y/w")
+imprimir("a == b:", a == b)
+imprimir("a == c:", a == c)
+imprimir("")
+
+# ─── 7. Comprobacion de existencia en filesystem ────────────────
+# (delega a archivos.existe; solo funciona para archivos, no
+# directorios, segun la API actual de archivos)
+
+imprimir("Existe README.md:        ", ruta.Ruta("README.md").existe())
+imprimir("Existe no_existe.xyz:    ", ruta.Ruta("no_existe.xyz").existe())

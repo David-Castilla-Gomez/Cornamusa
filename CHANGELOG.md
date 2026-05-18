@@ -6,6 +6,153 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.94.0] — 2026-05-18 — Stdlib `ruta`: manipulación lexicográfica de rutas (22º módulo)
+
+Nuevo módulo `stdlib/ruta.cor` con una clase `Ruta` al estilo
+`pathlib.PurePath` de Python plus una API funcional sin instanciar.
+Manipulación **lexicográfica** de rutas — no toca el sistema de
+archivos (excepto `existe()`, que delega a `archivos.existe`).
+Separador canónico `/`, acepta también `\` en entrada y lo
+normaliza. Detección de rutas absolutas Windows (`C:/...`) además
+de POSIX.
+
+```cornamusa
+importar ruta
+
+r = ruta.Ruta("/home/david/docs/notas.txt")
+r.nombre()                       # "notas.txt"
+r.tronco()                       # "notas"
+r.extension()                    # ".txt"
+r.padre().cadena()               # "/home/david/docs"
+r.partes()                       # ["/", "home", "david", "docs", "notas.txt"]
+r.absoluta()                     # verdadero
+
+# Composicion
+sub = ruta.Ruta("/etc").unir("nginx").unir("conf.d")
+sub.cadena()                     # "/etc/nginx/conf.d"
+
+# Transformaciones
+r.con_extension(".md").cadena()  # "/home/david/docs/notas.md"
+r.con_nombre("readme").cadena()  # "/home/david/docs/readme"
+```
+
+### API funcional de módulo
+
+| Función | Qué hace |
+|---|---|
+| `nombre(s)` | último componente |
+| `tronco(s)` | nombre sin extensión |
+| `extension(s)` | sufijo desde el último `.` (incluye el punto), `""` si no hay |
+| `padre(s)` | ruta sin el último componente |
+| `partes(s)` | lista de componentes (primer elemento `"/"` si absoluta) |
+| `es_absoluta(s)` | `/`, `\` o letra de unidad Windows (`C:`) |
+| `unir_partes(lista)` | concatena con `/`; absoluta intermedia reinicia |
+| `normalizar(s)` | resuelve `.` y `..` lexicográficamente; vacío → `"."` |
+
+### Clase `Ruta`
+
+Envoltorio OO con todos los métodos correspondientes (`r.nombre()`,
+`r.tronco()`, `r.extension()`, `r.padre()` (devuelve `Ruta` nueva),
+`r.partes()`, `r.absoluta()`, `r.vacia()`, `r.unir(otro)` (acepta
+cadena o `Ruta`), `r.con_nombre(nuevo)`, `r.con_extension(nueva)`,
+`r.normalizada()`, `r.cadena()`, `r.existe()`).
+
+- **`__cadena__`** integrado: `imprimir(r)` muestra la ruta como
+  cadena, no `"<instancia de Ruta>"`.
+- **`__igual__`** por valor: `Ruta("/x") == Ruta("/x")` es
+  verdadero.
+
+### Casos prácticos (ejemplo 85)
+
+1. API funcional: `nombre`, `extension`, etc. sobre cadenas.
+2. Clase Ruta con encadenamiento (`.unir()`).
+3. Transformaciones (`.con_extension`, `.con_nombre`).
+4. Clasificación de archivos por extensión.
+5. Normalización de rutas con `.` y `..` (`src/./compilador/../vm.c` → `src/vm.c`).
+6. Igualdad por valor entre Rutas.
+7. Comprobación de existencia (delegada a filesystem).
+
+### Tests
+
+24 asserts en `test_bytecode_ruta.c`:
+
+- `nombre` / `tronco` / `extension` con casos típicos y sin extensión.
+- `padre` con ruta normal, raíz, vacía.
+- `es_absoluta` con `/`, `C:`, vacía, relativa.
+- `unir_partes` con relativos, absoluta inicial, absoluta intermedia (reset).
+- `normalizar` con `..`, `.` y vacía.
+- Clase `Ruta`: getters, padre devuelve `Ruta`, absoluta, partes.
+- `unir` encadenado y con Ruta como argumento.
+- `con_nombre` / `con_extension` (incluyendo `""` para quitar).
+- Igualdad por valor.
+- Normalización de separadores Windows (`C:\Users\david` → `C:/Users/david`).
+
+### Bug encontrado y workaround
+
+Durante el desarrollo se encontró un caso edge del compilador VM
+con el patrón:
+
+```cornamusa
+clase X:
+    funcion m(yo, otro):
+        si tipo(otro) == "instancia":
+            v = otro.s          # acceso a atributo
+        sino:
+            v = otro
+        fin si
+        imprimir("...", v)      # uso posterior con imprimir
+        retornar v
+    fin funcion
+fin clase
+```
+
+Cuando este patrón aparece en una clase definida dentro de un
+módulo importado (no en el programa principal), la variable `v`
+queda con un valor incorrecto tras el `si/sino`. La solución fue
+refactorizar a una función helper `_a_cadena(x)` y llamarla desde
+el método:
+
+```cornamusa
+funcion _a_cadena(x):
+    si tipo(x) == "instancia":
+        retornar x.s
+    fin si
+    retornar x
+fin funcion
+
+clase Ruta:
+    funcion unir(yo, otro):
+        otro_s = _a_cadena(otro)
+        retornar Ruta(unir_partes([yo.s, otro_s]))
+    fin funcion
+fin clase
+```
+
+El bug subyacente queda pendiente de investigar en una release
+futura. Por ahora documentado como pitfall conocido.
+
+### Limitación documentada
+
+`Ruta.existe()` delega a `archivos.existe`, que solo retorna
+`verdadero` para archivos regulares — no para directorios. Esto se
+mejorará cuando se añada `archivo_es_directorio` nativo (release
+futura).
+
+### Archivos
+
+- `stdlib/ruta.cor` — Ruta + API funcional (~370 líneas pure-Cornamusa).
+- `tests/unit/test_bytecode_ruta.c` — 13 bloques, 24 asserts.
+- `examples/85_ruta.cor` — 7 secciones demo.
+- `docs/referencia.md` §16: nuevo módulo añadido.
+- `README.md`, `FAQ.md`, `docs/introduccion.md`, `docs/tutorial.md`:
+  stdlib pasa de veintiún a **veintidós módulos**.
+
+### Estado
+
+257 tests verde, lint+fmt limpios. Stdlib alcanza **22 módulos**.
+
+---
+
 ## [1.93.0] — 2026-05-18 — Stdlib `argumentos`: parser CLI estilo argparse (21º módulo)
 
 Nuevo módulo `stdlib/argumentos.cor` con un `Parser` pure-Cornamusa

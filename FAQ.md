@@ -14,7 +14,7 @@ No es una traducción literal de Python: las palabras clave se eligieron para qu
 
 ### ¿Es un toy language o se puede usar en serio?
 
-Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de veintiún módulos (`archivos`, `json`, `csv`, `base64`, `hashing`, `jwt`, `regex`, `fechas`, `tiempo`, `azar`, `proceso`, `red`, `coleccion`, `inspeccion`, `validacion`, `argumentos`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
+Es funcional para programas reales: OOP completo con dunders, closures con `nolocal`, pattern matching, generadores, comprehensions, GC, excepciones con traceback, módulos y una stdlib de veintidós módulos (`archivos`, `json`, `csv`, `base64`, `hashing`, `jwt`, `regex`, `fechas`, `tiempo`, `azar`, `proceso`, `red`, `coleccion`, `inspeccion`, `validacion`, `argumentos`, `ruta`...). Sirve bien para **enseñar a programar en castellano** y para scripting pequeño/mediano.
 
 Lo que todavía le falta para producción seria:
 
