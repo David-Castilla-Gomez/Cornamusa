@@ -962,7 +962,13 @@ sub = ruta.Ruta("/etc").unir("nginx").unir("conf.d")
 imprimir(sub.cadena())                   # "/etc/nginx/conf.d"
 ```
 
-**Limitación**: `existe()` solo retorna `verdadero` para archivos regulares (no directorios), porque delega a `archivos.existe`, que sigue la misma convención.
+**v1.97**: `existe()` ahora cubre archivos Y directorios. Métodos nuevos:
+- `r.es_archivo()` / `r.es_directorio()` — distinguen tipo.
+- `r.listar()` → lista de cadenas con nombres de las entradas inmediatas.
+- `r.listar_rutas()` → lista de `Ruta` (ya unidas con `r`); útil para encadenar (`.extension()`, `.es_directorio()`).
+- `ruta.cwd()` (módulo) → `Ruta` del directorio actual.
+
+Wrappers correspondientes en `stdlib/archivos`: `es_directorio(ruta)`, `listar(ruta)`, `directorio_actual()`, `crear_directorio(ruta)`. Built-ins: `archivo_es_directorio`, `directorio_listar`, `obtener_cwd`, `directorio_crear` (todos atrapan errores como `ErrorDeIO`).
 
 ### `pruebas` (v1.96)
 

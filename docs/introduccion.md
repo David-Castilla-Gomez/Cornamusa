@@ -122,6 +122,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Stdlib `ruta` (`Ruta` lexicográfica estilo pathlib.PurePath, 22º módulo) | v1.94 | ✅ |
 | Fix compilador: nuevos locales en ramas de `si` pre-declarados (regresión v1.94) | v1.95 | ✅ |
 | Stdlib `pruebas` (asserts + Suite, framework testing pure-Cornamusa, 23º módulo) | v1.96 | ✅ |
+| Filesystem: 4 nativos (`es_directorio`, `listar`, `cwd`, `crear`) + wrappers en `archivos` y `ruta` | v1.97 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

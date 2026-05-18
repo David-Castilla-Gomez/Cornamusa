@@ -6,6 +6,141 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.97.0] — 2026-05-18 — Filesystem: directorios, listado, cwd, crear
+
+Cuatro nativas C nuevas para operar sobre el sistema de archivos
+que faltaban hasta v1.96, junto con wrappers en `stdlib/archivos`
+y métodos nuevos en `stdlib/ruta`. Resuelve la limitación
+documentada de `ruta.existe()` en v1.94 (que solo veía archivos,
+no directorios) y habilita scripts que recorren árboles de archivos.
+
+```cornamusa
+importar ruta
+importar archivos
+
+# Built-ins directos
+imprimir(obtener_cwd())                     # "C:/Users/david/Desktop/Cornamusa"
+imprimir(archivo_es_directorio("examples")) # verdadero
+ents = directorio_listar("examples")        # lista de cadenas
+
+# Wrappers en archivos
+archivos.es_directorio("stdlib")
+archivos.listar("stdlib")
+archivos.directorio_actual()
+archivos.crear_directorio("nuevo_dir")  # lanza ErrorDeIO si falla
+
+# Metodos de Ruta (encadenamiento)
+r = ruta.Ruta("examples")
+r.existe()           # verdadero (ahora cubre dirs, v1.94 solo archivos)
+r.es_directorio()    # verdadero
+r.es_archivo()       # falso
+
+# Filtrar archivos .cor en un directorio
+para entrada en ruta.cwd().listar_rutas():
+    si entrada.es_archivo() y entrada.extension() == ".cor":
+        imprimir(entrada.nombre())
+    fin si
+fin para
+```
+
+### Nativas C nuevas (`src/nativos.c`)
+
+| Nativa | Retorna | Errores |
+|---|---|---|
+| `archivo_es_directorio(ruta)` | booleano | falso si no existe |
+| `directorio_listar(ruta)` | lista de cadenas (sin `.`/`..`) | `ErrorDeIO` si la ruta no es directorio |
+| `obtener_cwd()` | cadena (con `\` normalizados a `/`) | `ErrorDeIO` improbable |
+| `directorio_crear(ruta)` | `nulo` | `ErrorDeIO` si ya existe o el padre no |
+
+Portabilidad: usan `sys/stat.h` (universal) y separan
+`<dirent.h>`/`<unistd.h>` POSIX de `<windows.h>` Windows con
+`#ifdef _WIN32`. `_mkdir` / `mkdir`, `_getcwd` / `getcwd`,
+`FindFirstFileA`/`FindNextFileA` / `opendir`/`readdir`.
+
+`obtener_cwd()` normaliza `\` a `/` antes de retornar — coherente
+con la convención de `stdlib/ruta` (separador canónico `/`).
+
+### `stdlib/archivos.cor` (wrappers)
+
+Sección nueva al final del módulo:
+
+- `archivos.es_directorio(ruta)`
+- `archivos.listar(ruta)`
+- `archivos.directorio_actual()`
+- `archivos.crear_directorio(ruta)`
+
+Documentación inline: `existe()` (v1.8) sigue siendo solo para
+archivos; para distinguir, usar `es_directorio()`. `listar` no es
+recursivo. `crear_directorio` no es `mkdir -p` — crea solo un nivel.
+
+### `stdlib/ruta.cor` (métodos nuevos)
+
+- `r.es_archivo()` — verdadero si es archivo regular existente.
+- `r.es_directorio()` — verdadero si es directorio existente.
+- `r.existe()` — **ampliado**: cubre ambos casos (v1.94 solo archivos).
+- `r.listar()` → lista de cadenas con nombres de las entradas
+  inmediatas (sin `.`/`..`).
+- `r.listar_rutas()` → lista de `Ruta`s (ya unidas con `r`), útil
+  para encadenamiento: `entry.extension()`, `entry.es_archivo()`.
+- `ruta.cwd()` (función de módulo) → `Ruta` del directorio actual.
+
+### Tests
+
+13 asserts en `test_bytecode_fs.c`:
+
+- `archivo_es_directorio` con dir, archivo, inexistente.
+- `directorio_listar` con `examples/` (>10 entradas, contiene
+  `01_hola_mundo.cor`).
+- `directorio_listar` lanza `ErrorDeIO` atrapable si la ruta no es
+  directorio.
+- `obtener_cwd` retorna cadena no vacía.
+- `directorio_crear` crea, comprueba con `archivos.es_directorio`,
+  intenta crear de nuevo (falla con `ErrorDeIO`), limpia con
+  `rmdir` desde el test C.
+- Wrappers de `archivos` y métodos de `Ruta`.
+- `ruta.cwd()` retorna `Ruta` (instancia) con cadena no vacía.
+
+### Ejemplo
+
+`examples/87_filesystem.cor` con 7 secciones:
+
+1. Built-ins directos (`obtener_cwd`, `archivo_es_directorio`).
+2. Wrappers en `stdlib/archivos`.
+3. Clase `Ruta` con métodos FS (`existe`, `es_archivo`,
+   `es_directorio`).
+4. Listar contenido de un directorio (`listar_rutas`).
+5. Filtrar por extensión (contar archivos `.cor` en `examples/`).
+6. Recorrer subdirectorios del repo (listar carpetas de top-level).
+7. Crear directorio con cleanup atrapando `ErrorDeIO`.
+
+### Lo que queda pendiente
+
+- `directorio_borrar(ruta)` — borrar directorios. No incluido en
+  esta release (no se necesita aún; cuando se añada, vendrá con un
+  `archivo_borrar` también).
+- `mkdir -p` (crear con padres) — actualmente solo un nivel.
+- Información de mtime/size — para implementar `ls -la` completo.
+- Recursión: `glob`/`encontrar` para árboles enteros.
+
+### Archivos
+
+- `src/nativos.c` — 4 nativas nuevas (~200 líneas C con #ifdef
+  POSIX/Windows) + registro en tabla `NATIVAS`.
+- `stdlib/archivos.cor` — sección filesystem con 4 wrappers.
+- `stdlib/ruta.cor` — 5 métodos nuevos en `Ruta` + función
+  `ruta.cwd()` de módulo.
+- `tests/unit/test_bytecode_fs.c` — 8 bloques, 13 asserts.
+- `examples/87_filesystem.cor` — 7 secciones demo.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+262 tests verde, lint+fmt limpios. Limitación v1.94 de
+`Ruta.existe()` (solo archivos) — **cerrada**.
+
+---
+
 ## [1.96.0] — 2026-05-18 — Stdlib `pruebas`: framework de testing minimalista (23º módulo)
 
 Nuevo módulo `stdlib/pruebas.cor` con un framework de testing

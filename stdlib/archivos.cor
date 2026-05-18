@@ -54,3 +54,34 @@ fin funcion
 funcion agregar(ruta, contenido):
     archivo_agregar(ruta, contenido)
 fin funcion
+
+# ─── Filesystem (v1.97) ─────────────────────────────────────────
+#
+# `existe` (v1.8) solo retorna verdadero para archivos. Para
+# distinguir archivos de directorios, usar `es_directorio`.
+#
+# `listar` devuelve los nombres de las entradas inmediatas (sin
+# recursion, sin "." ni ".."). Lanza ErrorDeIO si la ruta no es
+# un directorio o no se puede leer.
+#
+# `directorio_actual` retorna el cwd como cadena con separadores
+# normalizados a "/".
+#
+# `crear_directorio` crea UN directorio (no recursivo, no "mkdir -p").
+# Lanza ErrorDeIO si ya existe o si el padre no existe.
+
+funcion es_directorio(ruta):
+    retornar archivo_es_directorio(ruta)
+fin funcion
+
+funcion listar(ruta):
+    retornar directorio_listar(ruta)
+fin funcion
+
+funcion directorio_actual():
+    retornar obtener_cwd()
+fin funcion
+
+funcion crear_directorio(ruta):
+    directorio_crear(ruta)
+fin funcion

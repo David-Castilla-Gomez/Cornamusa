@@ -361,6 +361,46 @@ clase Ruta:
     fin funcion
 
     funcion existe(yo):
+        # v1.97: ahora cubre archivos Y directorios.
+        si archivos.existe(yo.s):
+            retornar verdadero
+        fin si
+        retornar archivos.es_directorio(yo.s)
+    fin funcion
+
+    funcion es_archivo(yo):
+        # v1.97. Verdadero si existe y es archivo regular.
         retornar archivos.existe(yo.s)
     fin funcion
+
+    funcion es_directorio(yo):
+        # v1.97. Verdadero si existe y es directorio.
+        retornar archivos.es_directorio(yo.s)
+    fin funcion
+
+    funcion listar(yo):
+        # v1.97. Lista las entradas inmediatas como cadenas (sin
+        # recursion, sin "." ni ".."). Lanza ErrorDeIO si no es
+        # un directorio accesible.
+        retornar archivos.listar(yo.s)
+    fin funcion
+
+    funcion listar_rutas(yo):
+        # v1.97. Como `listar` pero devuelve Rutas (la ruta del
+        # directorio actual unida a cada entrada).
+        entradas = archivos.listar(yo.s)
+        salida = []
+        para nombre en entradas:
+            agregar(salida, yo.unir(nombre))
+        fin para
+        retornar salida
+    fin funcion
 fin clase
+
+
+# ─── Helpers de modulo FS (v1.97) ────────────────────────────────
+
+funcion cwd():
+    # Devuelve una `Ruta` con el directorio actual.
+    retornar Ruta(archivos.directorio_actual())
+fin funcion

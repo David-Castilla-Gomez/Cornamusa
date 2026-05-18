@@ -2184,6 +2184,227 @@ static Valor nativa_archivo_agregar(EvalError *err, int n_args, Valor *args,
     return valor_nulo();
 }
 
+/* ─── v1.97: operaciones de filesystem ─────────────────────────────
+ *
+ * archivo_es_directorio(ruta) → booleano (false si no existe).
+ * directorio_listar(ruta) → lista de cadenas (entradas, sin "." ni "..").
+ * obtener_cwd() → cadena con el directorio actual.
+ * directorio_crear(ruta) → nulo. Lanza ErrorDeIO atrapable si falla
+ *                          (no se trata como exito que ya existiera).
+ *
+ * Portabilidad: usamos sys/stat.h (universal en Win + POSIX) y dirent.h
+ * para POSIX / FindFirstFile-W para Windows. mkdir / _mkdir; getcwd /
+ * _getcwd. Errores se reportan via error_nativa (excepciones atrapables).
+ */
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#include <windows.h>
+#define cor_mkdir(p) _mkdir(p)
+#define cor_getcwd  _getcwd
+#else
+#include <dirent.h>
+#include <unistd.h>
+#define cor_mkdir(p) mkdir((p), 0755)
+#define cor_getcwd  getcwd
+#endif
+
+static Valor nativa_archivo_es_directorio(EvalError *err, int n_args, Valor *args,
+                                            int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_es_directorio() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_es_directorio() espera una cadena con la ruta");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_stack[1024];
+    char *ruta = buf_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+#ifdef _WIN32
+    struct _stat st;
+    int rc = _stat(ruta, &st);
+    bool es_dir = (rc == 0) && ((st.st_mode & _S_IFDIR) != 0);
+#else
+    struct stat st;
+    int rc = stat(ruta, &st);
+    bool es_dir = (rc == 0) && S_ISDIR(st.st_mode);
+#endif
+    if (ruta_heap) free(ruta_heap);
+    return valor_booleano(es_dir);
+}
+
+static Valor nativa_directorio_listar(EvalError *err, int n_args, Valor *args,
+                                        int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_listar() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_listar() espera una cadena con la ruta");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_stack[1024];
+    char *ruta = buf_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+    Lista *l = lista_nueva(0);
+    if (!l) {
+        if (ruta_heap) free(ruta_heap);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+
+#ifdef _WIN32
+    /* Patron: "ruta\*" para que FindFirstFile devuelva todas las entradas. */
+    int pat_len = len_ruta + 3; /* "\*" + '\0' */
+    char *patron = (char *)malloc((size_t)pat_len);
+    if (!patron) {
+        lista_liberar(l);
+        if (ruta_heap) free(ruta_heap);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    memcpy(patron, ruta, (size_t)len_ruta);
+    /* Anadir separador si no lo tiene */
+    int p = len_ruta;
+    if (p > 0 && ruta[p-1] != '\\' && ruta[p-1] != '/') {
+        patron[p++] = '\\';
+    }
+    patron[p++] = '*';
+    patron[p] = '\0';
+
+    WIN32_FIND_DATAA datos;
+    HANDLE h = FindFirstFileA(patron, &datos);
+    free(patron);
+    if (h == INVALID_HANDLE_VALUE) {
+        lista_liberar(l);
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo listar '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    do {
+        const char *n = datos.cFileName;
+        if (n[0] == '.' && (n[1] == '\0' || (n[1] == '.' && n[2] == '\0'))) {
+            continue; /* skip "." y ".." */
+        }
+        int nlen = (int)strlen(n);
+        Valor v = valor_cadena_duplicar(n, nlen);
+        if (v.tipo == VAL_NULO || !lista_agregar(l, v)) {
+            FindClose(h);
+            lista_liberar(l);
+            if (ruta_heap) free(ruta_heap);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    } while (FindNextFileA(h, &datos));
+    FindClose(h);
+#else
+    DIR *d = opendir(ruta);
+    if (!d) {
+        lista_liberar(l);
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo listar '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    struct dirent *ent;
+    while ((ent = readdir(d)) != NULL) {
+        const char *n = ent->d_name;
+        if (n[0] == '.' && (n[1] == '\0' || (n[1] == '.' && n[2] == '\0'))) {
+            continue;
+        }
+        int nlen = (int)strlen(n);
+        Valor v = valor_cadena_duplicar(n, nlen);
+        if (v.tipo == VAL_NULO || !lista_agregar(l, v)) {
+            closedir(d);
+            lista_liberar(l);
+            if (ruta_heap) free(ruta_heap);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    closedir(d);
+#endif
+
+    if (ruta_heap) free(ruta_heap);
+    return valor_lista(l);
+}
+
+static Valor nativa_obtener_cwd(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: obtener_cwd() no acepta argumentos, recibio %d",
+            n_args);
+    }
+    char buf[4096];
+    if (cor_getcwd(buf, sizeof(buf)) == NULL) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo obtener el directorio actual");
+    }
+    /* Normalizamos \ a / para consistencia con stdlib ruta. */
+    for (char *p = buf; *p; p++) {
+        if (*p == '\\') *p = '/';
+    }
+    return valor_cadena_duplicar(buf, (int)strlen(buf));
+}
+
+static Valor nativa_directorio_crear(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_crear() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_crear() espera una cadena con la ruta");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_stack[1024];
+    char *ruta = buf_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+    int rc = cor_mkdir(ruta);
+    if (rc != 0) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo crear directorio '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    if (ruta_heap) free(ruta_heap);
+    return valor_nulo();
+}
+
 /*
  * salir(codigo) → no retorna. Termina el proceso con el código indicado.
  * Si codigo no es entero/booleano, error de tipo.
@@ -4142,6 +4363,11 @@ static const EntradaNativa NATIVAS[] = {
     {"archivo_existe",   14, nativa_archivo_existe},
     {"archivo_lineas",   14, nativa_archivo_lineas},
     {"archivo_agregar",  15, nativa_archivo_agregar},
+    /* Filesystem (v1.97). */
+    {"archivo_es_directorio", 21, nativa_archivo_es_directorio},
+    {"directorio_listar",     17, nativa_directorio_listar},
+    {"obtener_cwd",           11, nativa_obtener_cwd},
+    {"directorio_crear",      16, nativa_directorio_crear},
     /* JSON (v1.9). */
     {"json_parsear",     12, nativa_json_parsear},
     {"json_serializar",  15, nativa_json_serializar},

@@ -1,0 +1,98 @@
+# 87_filesystem.cor — navegacion del filesystem (v1.97).
+#
+# Operaciones de FS habilitadas en v1.97:
+#   - archivo_es_directorio / archivos.es_directorio (built-in + wrapper)
+#   - directorio_listar     / archivos.listar
+#   - obtener_cwd           / archivos.directorio_actual
+#   - directorio_crear      / archivos.crear_directorio
+#
+# Y en stdlib/ruta:
+#   - ruta.cwd()                          → Ruta del cwd
+#   - Ruta.es_archivo() / .es_directorio()
+#   - Ruta.listar()        → lista de cadenas
+#   - Ruta.listar_rutas()  → lista de Rutas (encadenamiento natural)
+
+importar archivos
+importar ruta
+
+# ─── 1. Built-ins directos ──────────────────────────────────────
+
+imprimir("--- 1. Built-ins ---")
+imprimir("cwd:                    ", obtener_cwd())
+imprimir("examples es directorio: ", archivo_es_directorio("examples"))
+imprimir("README.md es directorio:", archivo_es_directorio("README.md"))
+imprimir("")
+
+# ─── 2. Wrappers en archivos.cor ────────────────────────────────
+
+imprimir("--- 2. stdlib archivos ---")
+imprimir("directorio_actual:    ", archivos.directorio_actual())
+imprimir("es_directorio stdlib: ", archivos.es_directorio("stdlib"))
+n_archivos = longitud(archivos.listar("stdlib"))
+imprimir("stdlib contiene:      ", n_archivos, "modulos")
+imprimir("")
+
+# ─── 3. Clase Ruta + metodos FS ─────────────────────────────────
+
+imprimir("--- 3. stdlib ruta ---")
+aqui = ruta.cwd()
+imprimir("cwd (Ruta):    ", aqui.cadena())
+imprimir("cwd nombre:    ", aqui.nombre())
+
+examples_dir = ruta.Ruta("examples")
+imprimir("examples existe:        ", examples_dir.existe())
+imprimir("examples es_archivo:    ", examples_dir.es_archivo())
+imprimir("examples es_directorio: ", examples_dir.es_directorio())
+
+readme = ruta.Ruta("README.md")
+imprimir("README.md es_archivo:   ", readme.es_archivo())
+imprimir("README.md existe:       ", readme.existe())
+imprimir("")
+
+# ─── 4. Listar contenido de un directorio ───────────────────────
+
+imprimir("--- 4. Listar examples (5 primeros) ---")
+para r en examples_dir.listar_rutas()[0:5]:
+    imprimir("  ", r.nombre(), "ext:", r.extension())
+fin para
+imprimir("")
+
+# ─── 5. Filtrar archivos por extension ──────────────────────────
+
+# Contar cuantos .cor hay en examples/
+n_cor = 0
+para r en examples_dir.listar_rutas():
+    si r.extension() == ".cor":
+        n_cor = n_cor + 1
+    fin si
+fin para
+imprimir("Archivos .cor en examples/:", n_cor)
+imprimir("")
+
+# ─── 6. Recorrer subdirectorios (no recursivo) ──────────────────
+
+imprimir("--- 6. Directorios en el repo ---")
+para entrada en ruta.cwd().listar_rutas():
+    si entrada.es_directorio():
+        imprimir("  [dir]", entrada.nombre())
+    fin si
+fin para
+imprimir("")
+
+# ─── 7. Crear + verificar + cleanup ─────────────────────────────
+
+imprimir("--- 7. Crear directorio ---")
+temp_dir = "tmp_ejemplo_87"
+
+# Si quedo de una ejecucion anterior, limpiamos via excepcion atrapada
+intentar:
+    directorio_crear(temp_dir)
+    imprimir("Creado:                 ", temp_dir)
+atrapar ErrorDeIO como e:
+    imprimir("Ya existia (OK):        ", temp_dir)
+fin intentar
+
+imprimir("es_directorio('", temp_dir, "'):", archivo_es_directorio(temp_dir))
+
+# Nota: directorio_borrar() todavia no esta implementado en v1.97.
+# El directorio queda; se puede borrar manualmente.
