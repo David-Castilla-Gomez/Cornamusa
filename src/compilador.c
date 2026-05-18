@@ -2020,8 +2020,87 @@ static bool compilar_asignar_aug(Compilador *c, const Sent *s) {
 }
 
 /*
+ * v1.95: pre-pass que recolecta identificadores ASIGNADOS dentro de
+ * las ramas de un `si` que NO existen aun como locales/globales/upvalues.
+ *
+ * Motivacion: una asignacion `v = expr` dentro de una rama emite
+ * `OP_NULO + agregar_local + OP_ASIGNAR_LOCAL`. Si la rama no se
+ * ejecuta (la otra se toma), el `OP_NULO` no corre — el slot del
+ * stack queda desalineado. Las otras ramas que asignen al mismo
+ * `v` encontraran el slot ya registrado en el compilador y emitiran
+ * `OP_ASIGNAR_LOCAL slot` que pisa lo que sea que este en stack[slot].
+ *
+ * Fix: pre-declarar (OP_NULO + agregar_local) ANTES del si para
+ * cualquier identificador que pueda quedar nuevo. Las asignaciones
+ * dentro de las ramas reusan el slot, no crean uno.
+ *
+ * Recorre cuerpo (siempre SENT_BLOQUE) recursivamente, bajando solo
+ * por sub-SENT_BLOQUE y sub-SENT_SI. NO entra en `funcion`, `clase`,
+ * `para`, `mientras`, `intentar` (tienen su propio control flow).
+ */
+typedef struct {
+    const char *nombre;
+    int longitud;
+} _IdentPendiente;
+
+static bool _ya_recolectado(const _IdentPendiente *arr, int n,
+                              const char *nombre, int len) {
+    for (int i = 0; i < n; i++) {
+        if (arr[i].longitud == len
+            && memcmp(arr[i].nombre, nombre, (size_t)len) == 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static void _recolectar_locales_nuevos_sent(Compilador *c, const Sent *s,
+                                              _IdentPendiente *arr, int cap,
+                                              int *n) {
+    if (s == NULL || *n >= cap) return;
+    switch (s->tipo) {
+        case SENT_BLOQUE:
+            for (int i = 0; i < s->como.bloque.n_sentencias && *n < cap; i++) {
+                _recolectar_locales_nuevos_sent(c, s->como.bloque.sentencias[i],
+                                                  arr, cap, n);
+            }
+            break;
+        case SENT_SI:
+            for (int i = 0; i < s->como.si.n_ramas && *n < cap; i++) {
+                _recolectar_locales_nuevos_sent(c, s->como.si.ramas[i].cuerpo,
+                                                  arr, cap, n);
+            }
+            break;
+        case SENT_ASIGNAR: {
+            Expr *dest = s->como.asignar.destino;
+            if (dest && dest->tipo == EXPR_IDENT) {
+                const char *nombre = dest->como.ident.nombre;
+                int len = dest->como.ident.longitud;
+                if (es_global_declarado(c->actual, nombre, len)) break;
+                if (buscar_local(c->actual, nombre, len) >= 0) break;
+                /* No bajamos a chequear upvalue aqui — solo necesitamos
+                 * detectar nuevos LOCALES. Si la variable resuelve a
+                 * upvalue/global, compilar_asignar lo manejara. */
+                if (!_ya_recolectado(arr, *n, nombre, len)) {
+                    arr[*n].nombre = nombre;
+                    arr[*n].longitud = len;
+                    (*n)++;
+                }
+            }
+            break;
+        }
+        default:
+            /* Para SENT_FUNCION, SENT_CLASE, SENT_PARA, SENT_MIENTRAS,
+             * SENT_INTENTAR no entramos — tienen su propio scope o
+             * control flow. */
+            break;
+    }
+}
+
+/*
  * SENT_SI: cadena de ramas (si / sino si* / sino?).
  *
+ *   [pre-declarar nuevos locales con OP_NULO + agregar_local]   ; v1.95
  *   compile cond1
  *   OP_SALTAR_SI_FALSO L_else1
  *   OP_DESCARTAR             ; cond1 (truthy)
@@ -2039,6 +2118,24 @@ static bool compilar_si(Compilador *c, const Sent *s) {
     /* Hasta 64 ramas razonables en una cadena de `sino si`. */
     int saltos_fin[64];
     int n_saltos_fin = 0;
+
+    /* v1.95: pre-declarar locales nuevos. Solo dentro de funciones —
+     * en top-level las asignaciones van a globals (no hay stack slot). */
+    if (c->actual->es_funcion) {
+        _IdentPendiente pendientes[32];
+        int n_pendientes = 0;
+        for (int i = 0; i < n; i++) {
+            _recolectar_locales_nuevos_sent(c, s->como.si.ramas[i].cuerpo,
+                                              pendientes, 32, &n_pendientes);
+        }
+        for (int i = 0; i < n_pendientes; i++) {
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
+            if (agregar_local(c, pendientes[i].nombre,
+                               pendientes[i].longitud, s->linea) < 0) {
+                return false;
+            }
+        }
+    }
 
     for (int i = 0; i < n; i++) {
         RamaSi *r = &s->como.si.ramas[i];

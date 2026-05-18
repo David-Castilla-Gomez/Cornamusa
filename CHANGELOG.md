@@ -6,6 +6,115 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.95.0] — 2026-05-18 — Fix compilador: pre-declarar locales nuevos antes de `si`
+
+Arregla un bug del compilador VM detectado en v1.94 al implementar
+`stdlib/ruta.cor`. Cuando una variable se declaraba por primera vez
+**dentro** de una rama de un `si/sino`, el slot del stack podía
+quedar desalineado si esa rama no se ejecutaba — manifestándose como
+valores corrompidos (típicamente la siguiente constante del pool) o
+una variable que retornaba `nulo`.
+
+### Síntoma del bug
+
+```cornamusa
+clase X:
+    funcion m(yo, otro):
+        si tipo(otro) == "instancia":
+            v = otro.s
+        sino:
+            v = otro
+        fin si
+        imprimir("v:", v)    # imprimía "v: v:" en vez de "v: hello"
+        retornar v           # retornaba nulo en vez de "hello"
+    fin funcion
+fin clase
+```
+
+Llamando `X().m("hello")`, la rama "sino" se ejecuta porque "hello"
+es cadena (no instancia). La salida correcta sería `v: hello` /
+retorno `"hello"`. La salida buggy era `v: v:` / retorno `nulo`.
+
+### Causa raíz
+
+En `compilar_asignar`, una asignación a un identificador nuevo
+emite `OP_NULO + agregar_local + OP_ASIGNAR_LOCAL` para reservar
+y luego asignar el slot. Si esa secuencia está dentro de una rama
+del `si` que no se ejecuta, el `OP_NULO` nunca corre — el slot del
+stack queda sin reservar. La otra rama, al asignar al mismo nombre,
+encuentra el local ya registrado en la tabla del compilador y emite
+`OP_ASIGNAR_LOCAL slot` directo, pisando memoria equivocada.
+
+### Solución (compilador.c)
+
+En `compilar_si`, un pre-pass recolecta todos los identificadores
+que se asignan **por primera vez** en cualquier rama (recursivamente,
+bajando por sub-`si`s y `SENT_BLOQUE` anidados; no entra en
+funciones/clases/bucles que tienen su propio scope). Antes de
+emitir cualquier código de las ramas, declara cada identificador
+único con `OP_NULO + agregar_local`. Las asignaciones dentro de las
+ramas encuentran el local ya registrado y emiten solo
+`OP_ASIGNAR_LOCAL slot`, sin crear un nuevo slot.
+
+Solo aplica dentro de funciones (`c->actual->es_funcion`) — en
+top-level las asignaciones van a globales, no a slots de stack.
+
+### Comportamiento conservado
+
+- Variables declaradas **solo** en una rama, leídas después del
+  `si`: si esa rama no se ejecuta, la variable es `nulo`
+  (comportamiento documentado de Python). El pre-pass las
+  pre-declara como `nulo`, lo cual coincide con la semántica
+  esperada.
+- Variables ya existentes antes del `si`: el pre-pass las salta
+  (`buscar_local` >= 0).
+- `global X` declarados: también se saltan.
+
+### Tests de regresión
+
+Nuevo `tests/unit/test_bytecode_locales_si.c` con 7 bloques:
+
+1. Si/sino con asignación + acceso a atributo en una rama (caso
+   original del bug).
+2. Tomar la rama `si` (con acceso a atributo) — funciona.
+3. Método de clase: motivó el descubrimiento del bug en v1.94.
+4. Cadena `sino si` con asignación en cada rama.
+5. Múltiples variables nuevas en distintas ramas.
+6. `si` anidado: variable declarada en sub-`si`.
+7. Variable declarada solo en una rama (queda `nulo` si esa rama no
+   se ejecuta — comportamiento esperado).
+
+### Refactor de `stdlib/ruta.cor`
+
+El workaround `_a_cadena()` que se introdujo en v1.94 ya no es
+necesario. El método `Ruta.unir(yo, otro)` vuelve al patrón
+natural:
+
+```cornamusa
+funcion unir(yo, otro):
+    si tipo(otro) == "instancia":
+        otro_s = otro.s
+    sino:
+        otro_s = otro
+    fin si
+    retornar Ruta(unir_partes([yo.s, otro_s]))
+fin funcion
+```
+
+### Estado
+
+258 tests verde (los 257 anteriores + el nuevo test_bytecode_locales_si).
+Bug v1.94 declarado en CHANGELOG como pitfall — ahora **cerrado**.
+
+### Archivos
+
+- `src/compilador.c` — pre-pass `_recolectar_locales_nuevos_sent` +
+  fix en `compilar_si`.
+- `tests/unit/test_bytecode_locales_si.c` — 7 bloques de regresión.
+- `stdlib/ruta.cor` — workaround `_a_cadena` eliminado.
+
+---
+
 ## [1.94.0] — 2026-05-18 — Stdlib `ruta`: manipulación lexicográfica de rutas (22º módulo)
 
 Nuevo módulo `stdlib/ruta.cor` con una clase `Ruta` al estilo

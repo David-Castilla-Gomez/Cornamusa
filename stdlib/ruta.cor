@@ -180,15 +180,6 @@ funcion _es_absoluta(s):
 fin funcion
 
 
-funcion _a_cadena(x):
-    # Si x es una instancia Ruta, devuelve x.s; si es cadena, x mismo.
-    si tipo(x) == "instancia":
-        retornar x.s
-    fin si
-    retornar x
-fin funcion
-
-
 # ─── API funcional de modulo ─────────────────────────────────────
 
 funcion es_absoluta(s):
@@ -341,7 +332,11 @@ clase Ruta:
 
     funcion unir(yo, otro):
         # Otro puede ser cadena o instancia Ruta.
-        otro_s = _a_cadena(otro)
+        si tipo(otro) == "instancia":
+            otro_s = otro.s
+        sino:
+            otro_s = otro
+        fin si
         retornar Ruta(unir_partes([yo.s, otro_s]))
     fin funcion
 

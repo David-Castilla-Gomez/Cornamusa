@@ -120,6 +120,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Stdlib `validacion` (email/URL/fecha/rango + clase `Validador`, 20º módulo) | v1.92 | ✅ |
 | Stdlib `argumentos` (parser CLI estilo argparse, 21º módulo) | v1.93 | ✅ |
 | Stdlib `ruta` (`Ruta` lexicográfica estilo pathlib.PurePath, 22º módulo) | v1.94 | ✅ |
+| Fix compilador: nuevos locales en ramas de `si` pre-declarados (regresión v1.94) | v1.95 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 
