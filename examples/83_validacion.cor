@@ -1,0 +1,75 @@
+# stdlib `validacion` (v1.92): validadores comunes para formularios,
+# entradas de usuario, APIs.
+
+importar validacion
+
+# ─── 1. Validaciones individuales ───────────────────────────────
+imprimir("=== Validaciones individuales ===")
+imprimir(f"  es_email('ana@ej.com'): {validacion.es_email('ana@ej.com')}")
+imprimir(f"  es_url('https://x.io'): {validacion.es_url('https://x.io')}")
+imprimir(f"  es_fecha_iso('2026-05-18'): {validacion.es_fecha_iso('2026-05-18')}")
+imprimir(f"  es_telefono('+34 600 123 456'): {validacion.es_telefono('+34 600 123 456')}")
+imprimir(f"  en_rango(50, 0, 100): {validacion.en_rango(50, 0, 100)}")
+imprimir(f"  longitud_en_rango('hola', 2, 5): {validacion.longitud_en_rango('hola', 2, 5)}")
+
+# ─── 2. Validar un formulario completo ──────────────────────────
+imprimir("\n=== Validar formulario de usuario ===")
+
+datos = {
+    "nombre": "  ",        # invalido: vacio tras recortar
+    "email": "no-email",   # invalido
+    "edad": 200,           # invalido: fuera de rango
+    "rol": "admin",        # valido
+}
+
+v = validacion.Validador()
+v.verificar("nombre", validacion.no_vacia(datos["nombre"]),
+            "el nombre es requerido")
+v.verificar("email", validacion.es_email(datos["email"]),
+            "email invalido")
+v.verificar("edad", validacion.en_rango(datos["edad"], 0, 120),
+            "edad debe estar entre 0 y 120")
+v.verificar("rol", validacion.en_conjunto(datos["rol"], ["admin", "usuario", "invitado"]),
+            "rol no reconocido")
+
+si v.valido():
+    imprimir("  Formulario OK")
+sino:
+    imprimir(f"  {longitud(v.errores)} errores:")
+    para linea en v.resumen():
+        imprimir(f"    - {linea}")
+    fin para
+fin si
+
+# ─── 3. Validar datos correctos ──────────────────────────────────
+imprimir("\n=== Datos correctos ===")
+datos_buenos = {
+    "nombre": "Ana",
+    "email": "ana@ej.com",
+    "edad": 30,
+    "rol": "admin",
+}
+v2 = validacion.Validador()
+v2.verificar("nombre", validacion.no_vacia(datos_buenos["nombre"]), "nombre requerido")
+v2.verificar("email", validacion.es_email(datos_buenos["email"]), "email invalido")
+v2.verificar("edad", validacion.en_rango(datos_buenos["edad"], 0, 120), "edad invalida")
+v2.verificar("rol", validacion.en_conjunto(datos_buenos["rol"], ["admin", "usuario"]), "rol invalido")
+imprimir(f"  valido?: {v2.valido()}")
+
+# ─── 4. Pipeline de procesamiento ───────────────────────────────
+# Filtrar lista de inputs aceptando solo los emails validos.
+imprimir("\n=== Filtrar emails validos ===")
+candidatos = [
+    "ana@ej.com",
+    "no-email",
+    "luis@otro.io",
+    "",
+    "x@y.es",
+    "@incompleto",
+]
+importar funcionales
+validos = funcionales.filtrar(lambda e: validacion.es_email(e), candidatos)
+imprimir(f"  De {longitud(candidatos)} candidatos, {longitud(validos)} validos:")
+para e en validos:
+    imprimir(f"    · {e}")
+fin para

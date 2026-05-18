@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.91.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.92.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -51,7 +51,7 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **F-cadenas con interpolación real**: `f"hola {nombre}, {edad + 10}"` evalúa cada `{expr}`.
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
 
-**Biblioteca estándar** — diecinueve módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `csv`, `fechas`, `tiempo`, `azar`, `proceso`, `regex`, `red`, `sistema`, `base64`, `hashing`, `jwt`, `coleccion`, `inspeccion`.
+**Biblioteca estándar** — veinte módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `csv`, `fechas`, `tiempo`, `azar`, `proceso`, `regex`, `red`, `sistema`, `base64`, `hashing`, `jwt`, `coleccion`, `inspeccion`, `validacion`.
 
 **Implementación:**
 
@@ -83,7 +83,7 @@ Otros ejemplos jugables:
 
 ## Estado del proyecto
 
-**v1.91.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **diecinueve** módulos. **Nueva stdlib `inspeccion`**: introspección y reflexión sobre instancias, clases y módulos. Cuatro nativas C nuevas (`clase_de`, `nombre_clase`, `metodos_de`, `atributos_de`) + wrappers de alto nivel (`obtener_clase`, `obtener_nombre`, `listar_metodos`, `listar_atributos`, `es_callable`, `es_clase`, `es_instancia`, `es_modulo`, `describir`). Resuelve el problema de saber qué clase es una instancia: `nombre_clase(rex)` devuelve `"Perro"` en lugar de `"instancia"`. Útil para serializadores genéricos, REPL helpers y debugging. Complementa los `tiene_atributo/obtener_atributo/asignar_atributo` de v1.86 con info estructural. 250 tests verde con 16 asserts nuevos. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
+**v1.92.0 publicada.** Cornamusa es estable y maduro: paridad sintáctica cercana a Python 3.10+ y una stdlib de **veinte** módulos. **Nueva stdlib `validacion`**: helpers para validar formatos comunes (email, URL, fecha ISO, teléfono), rangos numéricos, longitud de cadenas, pertenencia a conjuntos. Incluye la clase `Validador` para acumular múltiples errores sobre un formulario y reportarlos juntos. Todos los validadores son silenciosos (devuelven booleano, no lanzan) y aceptan tipos no-cadena como falso por diseño. Útil para frameworks de formularios, APIs, procesamiento de entradas de usuario. 252 tests verde con 20 asserts nuevos. [Tutorial paso a paso](docs/tutorial.md), [Cookbook](docs/cookbook.md), [referencia rápida](docs/referencia.md), [FAQ](FAQ.md) y [sitio web](https://david-castilla-gomez.github.io/Cornamusa/) disponibles. Compromisos de estabilidad post-v1.0 documentados en [B10](decisiones/B10-scope-de-v1.md).
 
 Hoja de ruta resumida:
 
@@ -196,6 +196,7 @@ Hoja de ruta resumida:
 | **v1.89** | **Linter `bool-coerce-conditional` + `for-rango-longitud` — 16 categorías totales** | ✅ |
 | **v1.90** | **Cookbook ampliado: 5 recetas más (email, config, logger, csv-dicts, ordenar) — 15 totales** | ✅ |
 | **v1.91** | **Stdlib `inspeccion` — introspección de clases/instancias (19º módulo)** | ✅ |
+| **v1.92** | **Stdlib `validacion` — email/URL/fecha/rango + clase `Validador` (20º módulo)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

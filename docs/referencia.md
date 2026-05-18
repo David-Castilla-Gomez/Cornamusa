@@ -797,7 +797,7 @@ Se pueden usar directamente, pero la práctica recomendada es importar el módul
 
 ## 16. Biblioteca estándar (`stdlib/`)
 
-Diecinueve módulos. Se importan con `importar <nombre>`.
+Veinte módulos. Se importan con `importar <nombre>`.
 
 ### `matematicas`
 
@@ -903,6 +903,16 @@ Introspección y reflexión sobre instancias, clases y módulos. Útil para seri
 - `describir(x)` → dict con `tipo`, `clase`/`nombre`, `metodos`, `atributos`, `repr`.
 
 Las nativas directas (`clase_de`, `nombre_clase`, `metodos_de`, `atributos_de`) están disponibles globalmente sin `importar`.
+
+### `validacion` (v1.92)
+
+Validadores comunes para formularios y entradas de usuario. Todos devuelven booleano (no lanzan) y aceptan tipos no-cadena como `falso` silencioso.
+
+- **Formatos**: `es_email(s)`, `es_url(s)`, `es_fecha_iso(s)` (YYYY-MM-DD), `es_telefono(s)`.
+- **Rangos**: `en_rango(n, lo, hi)` (cerrado), `en_rango_abierto(n, lo, hi)`.
+- **Cadenas**: `longitud_en_rango(s, min, max)`, `no_vacia(s)` (true si tras `recortar` queda no-vacía).
+- **Genéricos**: `coincide(s, patron_regex)`, `en_conjunto(x, valores)`.
+- **`Validador()`**: clase que acumula errores. Métodos: `verificar(campo, cond, msg)`, `valido()`, `tiene_errores()`, `resumen()`.
 
 ---
 

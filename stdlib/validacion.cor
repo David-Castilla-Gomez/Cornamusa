@@ -1,0 +1,173 @@
+# Cornamusa stdlib: validacion.cor (v1.92)
+#
+# Validadores comunes para entradas: emails, URLs, fechas ISO,
+# rangos numericos, longitudes, patrones, pertenencia a conjuntos.
+#
+# Todos los validadores devuelven booleano (no lanzan). Para
+# acumular errores en un formulario, combina con la clase
+# `Validador` al final del modulo.
+#
+# Uso tipico:
+#
+#   importar validacion
+#
+#   si validacion.es_email(input):
+#       imprimir("OK")
+#   sino:
+#       imprimir("email invalido")
+#   fin si
+#
+#   si no validacion.en_rango(edad, 0, 120):
+#       imprimir("edad fuera de rango")
+#   fin si
+
+importar regex
+importar cadenas
+
+# ─── Formatos ─────────────────────────────────────────────────────
+
+# Email plausible (no RFC 5322 completo): x@y.z. El motor regex
+# no soporta {n,m}, asi que usamos [a-z][a-z]+ para TLD de 2+ chars.
+funcion es_email(s):
+    si tipo(s) != "cadena":
+        retornar falso
+    fin si
+    retornar regex.coincide(
+        "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+[.][a-zA-Z][a-zA-Z]+$", s)
+fin funcion
+
+# URL HTTP/HTTPS plausible.
+funcion es_url(s):
+    si tipo(s) != "cadena":
+        retornar falso
+    fin si
+    retornar regex.coincide("^https?://[^ ]+$", s)
+fin funcion
+
+# Fecha ISO 8601 simplificada: YYYY-MM-DD.
+funcion es_fecha_iso(s):
+    si tipo(s) != "cadena":
+        retornar falso
+    fin si
+    si longitud(s) != 10:
+        retornar falso
+    fin si
+    si no regex.coincide("^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$", s):
+        retornar falso
+    fin si
+    # Validacion semantica basica: mes 01-12, dia 01-31.
+    mes = entero(s[5:7])
+    dia = entero(s[8:10])
+    si mes < 1 o mes > 12:
+        retornar falso
+    fin si
+    si dia < 1 o dia > 31:
+        retornar falso
+    fin si
+    retornar verdadero
+fin funcion
+
+# Telefono internacional simplificado: opcional +, seguido de digitos
+# (con posibles espacios o guiones).
+funcion es_telefono(s):
+    si tipo(s) != "cadena":
+        retornar falso
+    fin si
+    # Quitar espacios y guiones para validar.
+    limpio = cadenas.reemplazar(cadenas.reemplazar(s, " ", ""), "-", "")
+    retornar regex.coincide("^[+]?[0-9][0-9][0-9]+$", limpio)
+fin funcion
+
+# ─── Rangos numericos ─────────────────────────────────────────────
+
+# Verdadero si `n` esta en [lo, hi] (ambos inclusive).
+funcion en_rango(n, lo, hi):
+    retornar n >= lo y n <= hi
+fin funcion
+
+# Verdadero si `n` esta estrictamente entre lo y hi (exclusivos).
+funcion en_rango_abierto(n, lo, hi):
+    retornar n > lo y n < hi
+fin funcion
+
+# ─── Cadenas ──────────────────────────────────────────────────────
+
+# Longitud de cadena dentro de [min_len, max_len].
+funcion longitud_en_rango(s, min_len, max_len):
+    si tipo(s) != "cadena":
+        retornar falso
+    fin si
+    n = longitud(s)
+    retornar n >= min_len y n <= max_len
+fin funcion
+
+# Cadena no-vacia tras recortar espacios. Util para validar campos
+# requeridos en formularios.
+funcion no_vacia(s):
+    si tipo(s) != "cadena":
+        retornar falso
+    fin si
+    retornar longitud(cadenas.recortar(s)) > 0
+fin funcion
+
+# ─── Genericos ────────────────────────────────────────────────────
+
+# Verdadero si `s` matchea el patron regex dado.
+funcion coincide(s, patron):
+    si tipo(s) != "cadena":
+        retornar falso
+    fin si
+    retornar regex.coincide(patron, s)
+fin funcion
+
+# Verdadero si `x` esta en el conjunto/lista de valores aceptables.
+funcion en_conjunto(x, valores):
+    para v en valores:
+        si x == v:
+            retornar verdadero
+        fin si
+    fin para
+    retornar falso
+fin funcion
+
+# ─── Acumulador de errores para formularios ──────────────────────
+
+# Recolecta errores de validacion sobre multiples campos.
+# Uso:
+#   v = validacion.Validador()
+#   v.verificar("email", validacion.es_email(datos["email"]), "email invalido")
+#   v.verificar("edad", validacion.en_rango(datos["edad"], 0, 120), "edad fuera de rango")
+#   si v.tiene_errores():
+#       imprimir(v.errores)
+#   fin si
+clase Validador:
+    funcion __iniciar__(yo):
+        yo.errores = {}
+    fin funcion
+
+    # Si `condicion` es falsa, registra `mensaje` bajo `campo`.
+    funcion verificar(yo, campo, condicion, mensaje):
+        si no condicion:
+            yo.errores[campo] = mensaje
+        fin si
+    fin funcion
+
+    # Verdadero si se acumulo al menos un error.
+    funcion tiene_errores(yo):
+        retornar longitud(yo.errores) > 0
+    fin funcion
+
+    # Verdadero si todo OK.
+    funcion valido(yo):
+        retornar longitud(yo.errores) == 0
+    fin funcion
+
+    # Resumen como lista de "campo: mensaje".
+    funcion resumen(yo):
+        lineas = []
+        para campo en claves(yo.errores):
+            agregar(lineas, campo + ": " + yo.errores[campo])
+        fin para
+        retornar lineas
+    fin funcion
+fin clase

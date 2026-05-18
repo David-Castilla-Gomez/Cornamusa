@@ -6,6 +6,114 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.92.0] — 2026-05-18 — Stdlib `validacion`: predicados de datos + clase `Validador` (20º módulo)
+
+Nuevo módulo `stdlib/validacion.cor` con predicados de validación
+sobre datos de entrada (email, URL, fecha ISO, teléfono, rangos
+numéricos, longitudes, conjunto cerrado de valores) + clase
+`Validador` para acumular errores de múltiples campos en un solo
+objeto. Cierra la línea pedagógica "stdlib en castellano para
+casos del día a día" abierta por v1.91 (`inspeccion`) y completa el
+**20º módulo** de stdlib.
+
+```cornamusa
+importar validacion
+
+# Predicados sueltos
+validacion.es_email("ana@empresa.es")          # verdadero
+validacion.es_url("https://cornamusa.dev")     # verdadero
+validacion.es_fecha_iso("2026-05-18")          # verdadero
+validacion.en_rango(25, 18, 65)                # verdadero
+validacion.longitud_en_rango("hola", 3, 10)    # verdadero
+validacion.en_conjunto("rojo", ["rojo", "azul", "verde"])  # verdadero
+
+# Validador acumulando errores
+v = validacion.Validador()
+v.verificar("email", validacion.es_email(form.email), "email inválido")
+v.verificar("edad",  validacion.en_rango(form.edad, 18, 120), "edad fuera de rango")
+v.verificar("nombre", validacion.no_vacia(form.nombre), "nombre obligatorio")
+
+si v.valido():
+    procesar(form)
+sino:
+    para campo, msg en v.errores:
+        imprimir(campo, "→", msg)
+    fin para
+fin si
+```
+
+### Once predicados pure-Cornamusa
+
+| Predicado | Verifica |
+|---|---|
+| `es_email(s)` | regex `^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$` (sin `{n,m}`) |
+| `es_url(s)` | empieza con `http://` o `https://` y tiene host |
+| `es_fecha_iso(s)` | formato `YYYY-MM-DD`, con rangos válidos de mes/día |
+| `es_telefono(s)` | dígitos, espacios, guiones, paréntesis y `+` opcional al inicio |
+| `en_rango(n, lo, hi)` | `lo <= n <= hi` (cerrado por ambos lados) |
+| `en_rango_abierto(n, lo, hi)` | `lo < n < hi` |
+| `longitud_en_rango(s, lo, hi)` | longitud de `s` entre `lo` y `hi` (cerrado) |
+| `no_vacia(s)` | longitud > 0 y no solo espacios |
+| `coincide(s, patron)` | `regex.coincide(patron, s)` (alias breve) |
+| `en_conjunto(x, valores)` | `x` está en la lista/conjunto `valores` |
+
+Todos hacen `tipo(s) != "cadena"` → `falso` defensivamente, así que
+se pueden encadenar sin pre-checks.
+
+### Clase `Validador`
+
+Acumula errores por campo en un dict interno `errores`. Métodos:
+
+- `verificar(campo, condicion, mensaje)`: si `condicion` es falsa,
+  añade `{campo: mensaje}`. Si ya había un error para ese campo, se
+  preserva el primero (no se sobrescribe).
+- `tiene_errores()`: `longitud(errores) > 0`.
+- `valido()`: `longitud(errores) == 0`.
+- `resumen()`: cadena formateada `"campo: mensaje\ncampo: mensaje..."`.
+
+Patrón intencionalmente similar a `validate` de Laravel o
+`pydantic` en versiones bajas — un punto de entrada para casos
+simples sin meter una dependencia de schema completa.
+
+### Tests
+
+20 asserts en `test_bytecode_validacion.c`:
+
+- Cada predicado con caso verdadero, caso falso, no-cadena.
+- `es_fecha_iso` con día 32 (falso), mes 13 (falso), febrero 30
+  (no detectado — limitación documentada, valida sintaxis no
+  calendario).
+- `Validador` con 0, 1, varios errores; `tiene_errores`/`valido`;
+  `resumen` con formato exacto.
+
+### Ejemplo
+
+`examples/83_validacion.cor` con 4 patterns:
+
+1. Validar formulario de registro de usuario.
+2. Validar lista de productos importados de CSV.
+3. Validación con mensajes en castellano natural.
+4. Combinar predicados sueltos sin Validador (validación funcional).
+
+### Archivos
+
+- `stdlib/validacion.cor` — 11 funciones + clase `Validador`
+  (~150 líneas, pure-Cornamusa).
+- `tests/unit/test_bytecode_validacion.c` — 20 asserts.
+- `examples/83_validacion.cor` — 4 patterns.
+- `docs/referencia.md` §16, `README.md`, `FAQ.md`,
+  `docs/introduccion.md`, `docs/tutorial.md` — stdlib pasa de
+  diecinueve a **veinte módulos**.
+
+### Estado
+
+252 tests verde, lint+fmt limpios. Stdlib alcanza **20 módulos**,
+cerrando una fase de expansión que empezó en v1.58 (`csv`) y
+acumula: `csv`, `base64`, `hashing`, `jwt`, `tiempo`, `coleccion`,
+`inspeccion`, `validacion` como las ocho añadidas en esta serie.
+
+---
+
 ## [1.91.0] — 2026-05-17 — Stdlib `inspeccion`: introspección y reflexión (19º módulo)
 
 Nuevo módulo `stdlib/inspeccion.cor` con utilidades de introspección
