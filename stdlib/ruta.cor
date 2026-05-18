@@ -395,6 +395,39 @@ clase Ruta:
         fin para
         retornar salida
     fin funcion
+
+    # v1.99: borrado y metadata. Nota: usamos `eliminar` en lugar
+    # de `borrar` porque `borrar` es keyword del lenguaje (`borrar
+    # d[k]`, `borrar obj.attr`).
+
+    funcion eliminar(yo):
+        # Quita el archivo. Lanza ErrorDeIO si la ruta es un
+        # directorio o no existe. Para directorios usar
+        # `eliminar_directorio`.
+        archivos.eliminar(yo.s)
+    fin funcion
+
+    funcion eliminar_directorio(yo):
+        # Quita el directorio (debe estar VACIO). Lanza ErrorDeIO
+        # si no esta vacio, no existe, o no es directorio.
+        archivos.eliminar_directorio(yo.s)
+    fin funcion
+
+    funcion info(yo):
+        # Devuelve dict con {tamano, mtime_epoch_ms, es_archivo,
+        # es_directorio}. Lanza ErrorDeIO si la ruta no existe.
+        retornar archivos.info(yo.s)
+    fin funcion
+
+    funcion tamano(yo):
+        # Atajo a info["tamano"]. Bytes.
+        retornar archivos.info(yo.s)["tamano"]
+    fin funcion
+
+    funcion mtime_ms(yo):
+        # Atajo a info["mtime_epoch_ms"]. Milisegundos epoch.
+        retornar archivos.info(yo.s)["mtime_epoch_ms"]
+    fin funcion
 fin clase
 
 

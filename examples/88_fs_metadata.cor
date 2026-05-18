@@ -1,0 +1,87 @@
+# 88_fs_metadata.cor — info, borrado y metadata del filesystem (v1.99).
+#
+# v1.97 abrio la navegacion (cwd, listar, crear, es_directorio).
+# v1.99 cierra el set: borrar archivos/directorios e inspeccionar
+# metadata (tamano, mtime, tipo).
+
+importar archivos
+importar ruta
+importar formato
+
+# ─── 1. info() basico ───────────────────────────────────────────
+
+archivos.escribir("ejemplo_temp.txt", "Hola desde Cornamusa v1.99")
+
+i = archivos.info("ejemplo_temp.txt")
+imprimir("--- 1. info() de un archivo ---")
+imprimir("tamano:        ", i["tamano"], "bytes")
+imprimir("mtime_epoch_ms:", i["mtime_epoch_ms"])
+imprimir("es_archivo:    ", i["es_archivo"])
+imprimir("es_directorio: ", i["es_directorio"])
+imprimir("")
+
+# ─── 2. Metodos en Ruta ─────────────────────────────────────────
+
+r = ruta.Ruta("ejemplo_temp.txt")
+imprimir("--- 2. Metodos en Ruta ---")
+imprimir("r.tamano():    ", r.tamano())
+imprimir("r.mtime_ms():  ", r.mtime_ms())
+imprimir("")
+
+# ─── 3. Listado tipo `ls -l` ────────────────────────────────────
+
+imprimir("--- 3. Listado con tamano (stdlib/) ---")
+para entrada en ruta.Ruta("stdlib").listar_rutas():
+    sz = entrada.tamano()
+    imprimir("  ", formato.alinear_derecha(cadena(sz), 7),
+             "  ", entrada.nombre())
+fin para
+imprimir("")
+
+# ─── 4. Eliminar archivos ───────────────────────────────────────
+
+imprimir("--- 4. Eliminar ---")
+imprimir("existe pre:  ", r.existe())
+r.eliminar()
+imprimir("existe post: ", r.existe())
+imprimir("")
+
+# ─── 5. Errores atrapables ──────────────────────────────────────
+
+imprimir("--- 5. Errores ---")
+intentar:
+    archivos.eliminar("no_existe_xyz")
+atrapar ErrorDeIO como e:
+    imprimir("eliminar inexistente:", e)
+fin intentar
+
+intentar:
+    archivos.info("no_existe_xyz")
+atrapar ErrorDeIO como e:
+    imprimir("info inexistente:    ", e)
+fin intentar
+
+# directorio_borrar requiere directorio vacio
+archivos.crear_directorio("dir_demo_88")
+archivos.escribir("dir_demo_88/file.txt", "x")
+intentar:
+    archivos.eliminar_directorio("dir_demo_88")
+atrapar ErrorDeIO como e:
+    imprimir("rmdir no vacio:      ", e)
+fin intentar
+
+# Limpieza
+archivos.eliminar("dir_demo_88/file.txt")
+archivos.eliminar_directorio("dir_demo_88")
+imprimir("limpieza ok")
+imprimir("")
+
+# ─── 6. Patron: encontrar archivos grandes en un dir ────────────
+
+imprimir("--- 6. Archivos > 5 KiB en stdlib/ ---")
+para entrada en ruta.Ruta("stdlib").listar_rutas():
+    si entrada.es_archivo() y entrada.tamano() > 5 * 1024:
+        imprimir("  ", entrada.nombre(), "(",
+                 entrada.tamano(), "bytes)")
+    fin si
+fin para

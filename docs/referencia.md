@@ -970,6 +970,14 @@ imprimir(sub.cadena())                   # "/etc/nginx/conf.d"
 
 Wrappers correspondientes en `stdlib/archivos`: `es_directorio(ruta)`, `listar(ruta)`, `directorio_actual()`, `crear_directorio(ruta)`. Built-ins: `archivo_es_directorio`, `directorio_listar`, `obtener_cwd`, `directorio_crear` (todos atrapan errores como `ErrorDeIO`).
 
+**v1.99**: borrado e info.
+- `r.eliminar()` → quita archivo. Lanza `ErrorDeIO` si la ruta es un directorio o no existe (usar `borrar` es palabra reservada del lenguaje, de ahí `eliminar`).
+- `r.eliminar_directorio()` → quita directorio **vacío**. No es `rm -rf`. Lanza `ErrorDeIO` si no vacío.
+- `r.info()` → dict `{tamano, mtime_epoch_ms, es_archivo, es_directorio}`. Lanza `ErrorDeIO` si no existe.
+- `r.tamano()` / `r.mtime_ms()` → atajos a las claves de `info`.
+
+Wrappers en `stdlib/archivos`: `eliminar(ruta)`, `eliminar_directorio(ruta)`, `info(ruta)`. Built-ins: `archivo_borrar`, `directorio_borrar`, `archivo_info`. `mtime_epoch_ms` tiene precisión por-segundo en Windows y sub-segundo en POSIX.
+
 ### `pruebas` (v1.96)
 
 Framework de testing minimalista pure-Cornamusa. Útil para scripts de comprobación lineales (asserts standalone) o tests organizados (clase `Suite`).

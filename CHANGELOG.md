@@ -6,6 +6,142 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.99.0] — 2026-05-18 — Filesystem completo: borrado e info
+
+Cierra el set de operaciones de FS abiertas en v1.97. Añade
+borrado de archivos y directorios, plus `archivo_info` con
+metadata (tamano, mtime, tipo). Ahora un script Cornamusa puede
+hacer ciclo completo: crear, listar, leer, escribir, modificar,
+borrar — con `ErrorDeIO` atrapable en todos los puntos.
+
+```cornamusa
+importar ruta
+importar archivos
+
+# Info de un archivo
+i = archivos.info("README.md")
+imprimir(i["tamano"], "bytes,",
+         "mtime =", i["mtime_epoch_ms"], "ms epoch")
+
+# Listado con tamano (estilo `ls -l`)
+para entrada en ruta.cwd().listar_rutas():
+    si entrada.es_archivo():
+        imprimir(entrada.tamano(), entrada.nombre())
+    fin si
+fin para
+
+# Borrar despues de procesar
+r = ruta.Ruta("temp.log")
+si r.existe():
+    r.eliminar()
+fin si
+
+# Limpieza de directorios (deben estar vacios)
+archivos.crear_directorio("trabajo")
+# ... procesamiento ...
+archivos.eliminar_directorio("trabajo")
+```
+
+### Nativas C nuevas
+
+| Nativa | Retorna | Errores |
+|---|---|---|
+| `archivo_borrar(ruta)` | `nulo` | `ErrorDeIO` si no existe / es directorio |
+| `directorio_borrar(ruta)` | `nulo` | `ErrorDeIO` si no existe / no vacío |
+| `archivo_info(ruta)` | dict | `ErrorDeIO` si no existe |
+
+`archivo_info` retorna un dict con cuatro claves:
+
+- `"tamano"` — bytes (entero, hasta 2^62 vía `valor_entero_de_i64`,
+  importante para archivos >2GB en Windows MinGW donde `long` es
+  32-bit y truncaría).
+- `"mtime_epoch_ms"` — milisegundos desde UNIX epoch. Precisión
+  por-segundo en Windows; sub-segundo en POSIX (lossy a ms en
+  ambos casos).
+- `"es_archivo"` / `"es_directorio"` — booleanos.
+
+Portabilidad: usa `<sys/stat.h>` (universal). En Windows:
+`struct _stat64` para soporte de archivos grandes; `_rmdir` para
+borrar directorio; `remove()` portable. POSIX: `struct stat`,
+`rmdir()`, `remove()`.
+
+### Wrappers en `stdlib/archivos.cor`
+
+- `archivos.eliminar(ruta)` — wrapper de `archivo_borrar`.
+- `archivos.eliminar_directorio(ruta)` — wrapper de `directorio_borrar`.
+- `archivos.info(ruta)` — wrapper de `archivo_info`.
+
+**Nota de naming**: `borrar` es palabra reservada del lenguaje
+(`borrar d[k]`, `borrar obj.attr`), así que aquí se usa `eliminar`
+para evitar choques de parsing. Mismo motivo que llevó a renombrar
+`obtener_atributo` / `asignar_atributo` antes.
+
+### Métodos nuevos en `Ruta` (`stdlib/ruta.cor`)
+
+- `r.eliminar()` — quita el archivo.
+- `r.eliminar_directorio()` — quita el directorio (debe estar vacío).
+- `r.info()` — dict completo.
+- `r.tamano()` — atajo a `info()["tamano"]`.
+- `r.mtime_ms()` — atajo a `info()["mtime_epoch_ms"]`.
+
+### Bug encontrado y arreglado durante el desarrollo
+
+Inicialmente `mtime_epoch_ms` se construía con
+`valor_entero_de_long((long)mtime_ms)`. En Windows MinGW64, `long`
+es 32-bit, así que un `int64_t` con `1779107383000` (típico de
+2026) se truncaba a `990801456` (≈ 1970-01-12). Fix: usar
+`valor_entero_de_i64(mtime_ms)` directamente, que preserva los 64
+bits completos. Mismo tratamiento para `tamano`.
+
+### Tests
+
+20+ asserts en `test_bytecode_fs2.c`:
+
+- `archivo_borrar` con archivo existente, con archivo inexistente
+  (lanza `ErrorDeIO`).
+- `directorio_borrar` con directorio vacío, con directorio no
+  vacío (lanza).
+- `archivo_info` con archivo (6 bytes), con inexistente (lanza).
+- Wrappers `archivos.eliminar`, `archivos.info`.
+- Métodos `Ruta.eliminar`, `Ruta.info`, `Ruta.tamano`, `Ruta.mtime_ms`.
+
+### Ejemplo
+
+`examples/88_fs_metadata.cor` con 6 secciones:
+
+1. `info()` básico.
+2. Métodos `tamano`, `mtime_ms` en `Ruta`.
+3. Listado tipo `ls -l` con tamaños en `stdlib/`.
+4. `eliminar()` simple.
+5. Errores atrapables (`eliminar` inexistente, `info` inexistente,
+   `eliminar_directorio` no vacío).
+6. Patrón "encontrar archivos grandes": filtrar `> 5 KiB` en
+   `stdlib/` usando `entrada.tamano()`.
+
+### Pendiente futuro
+
+- `rm -rf` recursivo (`eliminar_arbol(ruta)`).
+- `mkdir -p` (crear con padres).
+- Modificar mtime/permisos.
+- Symlinks (lstat, readlink).
+- Watch (notificaciones de cambio en FS).
+
+### Archivos
+
+- `src/nativos.c` — 3 nativas nuevas (~250 líneas C portátiles).
+- `stdlib/archivos.cor` — 3 wrappers nuevos.
+- `stdlib/ruta.cor` — 5 métodos nuevos en clase `Ruta`.
+- `tests/unit/test_bytecode_fs2.c` — 8 bloques, 20+ asserts.
+- `examples/88_fs_metadata.cor` — 6 secciones demo.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+267 tests verde, lint+fmt limpios.
+
+---
+
 ## [1.98.0] — 2026-05-18 — `cornamusa nuevo <nombre>`: scaffold de proyecto
 
 Nuevo subcomando `cornamusa nuevo <nombre>` que crea un esqueleto

@@ -2405,6 +2405,164 @@ static Valor nativa_directorio_crear(EvalError *err, int n_args, Valor *args,
     return valor_nulo();
 }
 
+/* v1.99: archivo_borrar(ruta) → nulo. Lanza ErrorDeIO si no existe o
+ * la ruta es un directorio (en POSIX `unlink` falla con EISDIR; en
+ * Windows `remove` también — `_rmdir` aparte). */
+static Valor nativa_archivo_borrar(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_borrar() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_borrar() espera una cadena con la ruta");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_stack[1024];
+    char *ruta = buf_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+    int rc = remove(ruta);
+    if (rc != 0) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo borrar '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    if (ruta_heap) free(ruta_heap);
+    return valor_nulo();
+}
+
+/* v1.99: directorio_borrar(ruta) → nulo. Solo borra directorios
+ * VACIOS. Lanza ErrorDeIO si no existe, no es directorio, o no esta
+ * vacio (rmdir/_rmdir). No es `rm -rf`. */
+static Valor nativa_directorio_borrar(EvalError *err, int n_args, Valor *args,
+                                        int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_borrar() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_borrar() espera una cadena con la ruta");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_stack[1024];
+    char *ruta = buf_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+#ifdef _WIN32
+    int rc = _rmdir(ruta);
+#else
+    int rc = rmdir(ruta);
+#endif
+    if (rc != 0) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo borrar directorio '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    if (ruta_heap) free(ruta_heap);
+    return valor_nulo();
+}
+
+/* v1.99: archivo_info(ruta) → dict {tamano, mtime_epoch_ms,
+ * es_archivo, es_directorio}. Lanza ErrorDeIO si la ruta no existe.
+ * mtime se reporta en milisegundos desde epoch UNIX (precision por
+ * segundo en Windows; podria mejorarse con GetFileAttributesEx). */
+static Valor nativa_archivo_info(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_info() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_info() espera una cadena con la ruta");
+    }
+    int len_ruta = args[0].como.cadena.longitud;
+    char buf_stack[1024];
+    char *ruta = buf_stack;
+    char *ruta_heap = NULL;
+    if (len_ruta + 1 > (int)sizeof(buf_stack)) {
+        ruta_heap = (char *)malloc((size_t)len_ruta + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len_ruta);
+    ruta[len_ruta] = '\0';
+
+#ifdef _WIN32
+    struct _stat64 st;
+    int rc = _stat64(ruta, &st);
+#else
+    struct stat st;
+    int rc = stat(ruta, &st);
+#endif
+    if (rc != 0) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo obtener info de '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    if (ruta_heap) free(ruta_heap);
+
+#ifdef _WIN32
+    bool es_dir = (st.st_mode & _S_IFDIR) != 0;
+    bool es_arch = (st.st_mode & _S_IFREG) != 0;
+#else
+    bool es_dir = S_ISDIR(st.st_mode);
+    bool es_arch = S_ISREG(st.st_mode);
+#endif
+    int64_t tamano = (int64_t)st.st_size;
+    int64_t mtime_ms = (int64_t)st.st_mtime * 1000;
+
+    Diccionario *d = dicc_nuevo();
+    if (!d) return error_nativa(err, linea, columna, "memoria insuficiente");
+    if (!dicc_asignar(d, valor_cadena_duplicar("tamano", 6),
+                       valor_entero_de_i64(tamano))) {
+        dicc_liberar(d);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    if (!dicc_asignar(d, valor_cadena_duplicar("mtime_epoch_ms", 14),
+                       valor_entero_de_i64(mtime_ms))) {
+        dicc_liberar(d);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    if (!dicc_asignar(d, valor_cadena_duplicar("es_archivo", 10),
+                       valor_booleano(es_arch))) {
+        dicc_liberar(d);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    if (!dicc_asignar(d, valor_cadena_duplicar("es_directorio", 13),
+                       valor_booleano(es_dir))) {
+        dicc_liberar(d);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    return valor_diccionario(d);
+}
+
 /*
  * salir(codigo) → no retorna. Termina el proceso con el código indicado.
  * Si codigo no es entero/booleano, error de tipo.
@@ -4368,6 +4526,10 @@ static const EntradaNativa NATIVAS[] = {
     {"directorio_listar",     17, nativa_directorio_listar},
     {"obtener_cwd",           11, nativa_obtener_cwd},
     {"directorio_crear",      16, nativa_directorio_crear},
+    /* Filesystem (v1.99). */
+    {"archivo_borrar",        14, nativa_archivo_borrar},
+    {"directorio_borrar",     17, nativa_directorio_borrar},
+    {"archivo_info",          12, nativa_archivo_info},
     /* JSON (v1.9). */
     {"json_parsear",     12, nativa_json_parsear},
     {"json_serializar",  15, nativa_json_serializar},

@@ -85,3 +85,34 @@ fin funcion
 funcion crear_directorio(ruta):
     directorio_crear(ruta)
 fin funcion
+
+# v1.99: borrado e info.
+#
+# `eliminar` quita un archivo. Lanza ErrorDeIO si no existe o si
+# la ruta es un directorio (use `eliminar_directorio` para eso).
+#
+# Nota: `borrar` es palabra reservada del lenguaje (`borrar d[k]`,
+# `borrar obj.attr`); por eso usamos `eliminar` aqui.
+#
+# `eliminar_directorio` quita un directorio VACIO. No es `rm -rf`.
+# Lanza ErrorDeIO si no esta vacio o no existe.
+#
+# `info` devuelve un dict con metadatos:
+#   - "tamano": bytes (entero; para directorios es dependiente del
+#     sistema, no fiable).
+#   - "mtime_epoch_ms": milisegundos desde UNIX epoch (precision
+#     por-segundo en Windows; sub-segundo en POSIX).
+#   - "es_archivo": booleano.
+#   - "es_directorio": booleano.
+
+funcion eliminar(ruta):
+    archivo_borrar(ruta)
+fin funcion
+
+funcion eliminar_directorio(ruta):
+    directorio_borrar(ruta)
+fin funcion
+
+funcion info(ruta):
+    retornar archivo_info(ruta)
+fin funcion
