@@ -6,6 +6,125 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.101.0] — 2026-05-18 — `funcionales.ordenar_por`: sort estable con clave
+
+Añade `ordenar_por(xs, clave)` y `ordenar_por_inverso(xs, clave)`
+a `stdlib/funcionales.cor`. Soluciona la limitación del built-in
+`ordenar` que solo compara números y cadenas directamente — ahora
+es trivial ordenar diccionarios por campo, instancias por
+atributo, tuplas por posición, etc. Limitación detectada en
+`examples/89_glob_recorrer.cor` (v1.100) al querer ordenar Rutas
+por `mtime_ms`.
+
+```cornamusa
+importar funcionales
+
+# Ordenar diccionarios por campo
+empleados = [
+    {"nombre": "Ana",    "salario": 35000},
+    {"nombre": "Bruno",  "salario": 42000},
+    {"nombre": "Carlos", "salario": 28000},
+]
+por_salario = funcionales.ordenar_por(empleados, lambda e: e["salario"])
+
+# Ordenar Rutas por fecha de modificacion (descendente)
+recientes = funcionales.ordenar_por_inverso(
+    ruta.encontrar("examples", "*.cor"),
+    lambda r: r.mtime_ms()
+)
+```
+
+### API
+
+| Función | Devuelve |
+|---|---|
+| `ordenar_por(xs, clave)` | nueva lista con `xs` ordenada ascendente por `clave(x)` |
+| `ordenar_por_inverso(xs, clave)` | nueva lista con `xs` ordenada descendente |
+
+`clave(x)` debe devolver un valor comparable con `<=` (número o
+cadena). Si dos elementos producen claves iguales, su orden
+relativo en la entrada se preserva: el sort es **estable** —
+propiedad del mergesort que se usa.
+
+### Por qué pure-Cornamusa y no nativa C
+
+Implementar `ordenar(xs, key=fn)` en el nativo C requeriría
+invocar callbacks de Cornamusa desde dentro de `qsort`, lo cual
+necesita infraestructura no trivial (`vm_llamar_callback`,
+manejo de stack/excepciones desde C, reentrancia). Por contra,
+mergesort en cornamusa puro es:
+
+- **80 líneas legibles** que cualquier usuario puede leer y
+  modificar.
+- **Performance comparable** para listas <10k (donde el
+  bottleneck es la llamada `clave(x)`, no las comparaciones).
+- **Cero infraestructura C nueva** — un cambio aditivo en
+  `stdlib/funcionales.cor`.
+
+### Optimización: precomputo de claves
+
+`ordenar_por` invoca `clave(x)` **una sola vez** por elemento
+antes del mergesort (no por comparación). El mergesort luego
+opera sobre índices comparando las claves pre-computadas. Esto
+es importante cuando `clave` es costosa (acceso a FS, llamada a
+red, computación pesada).
+
+### Estabilidad: aplicación práctica
+
+Como el sort es estable, dos pasadas dan sort por dos claves:
+
+```cornamusa
+paso1 = funcionales.ordenar_por(equipo, lambda p: p["salario"])
+# Segunda pasada por depto. Preserva orden por salario dentro
+# de cada depto, porque el sort es estable.
+paso2 = funcionales.ordenar_por(paso1, lambda p: p["depto"])
+```
+
+### Tests
+
+11 bloques en `test_bytecode_ordenar_por.c`:
+
+- Enteros por identidad.
+- Cadenas por longitud.
+- Lista vacía y de un elemento.
+- No muta la lista original.
+- Diccionarios por campo.
+- **Estabilidad** confirmada con elementos de misma clave.
+- `ordenar_por_inverso`.
+- Clave compuesta (dos pasadas estables = sort por dos campos).
+- Función key con nombre (no lambda).
+- Lista grande (>10 elementos para recurrir varios niveles).
+
+### Ejemplo
+
+`examples/90_ordenar_por.cor` con 6 secciones:
+
+1. Cadenas por longitud.
+2. Diccionarios por campo (ascendente y descendente).
+3. Tuplas por posición — ranking de puntuaciones.
+4. Sort en dos pasadas (por depto, dentro por salario).
+5. Función key con lógica custom (vocales primero).
+6. Patrón top-N (los 3 mayores).
+
+También actualicé `examples/89_glob_recorrer.cor` para usar
+`ordenar_por_inverso` en lugar del bucle manual que tenía antes.
+
+### Archivos
+
+- `stdlib/funcionales.cor` — `ordenar_por`, `ordenar_por_inverso`,
+  helpers internos `_mergesort_idx` y `_merge_idx` (~80 líneas).
+- `tests/unit/test_bytecode_ordenar_por.c` — 11 bloques.
+- `examples/90_ordenar_por.cor` — 6 secciones demo.
+- `examples/89_glob_recorrer.cor` — sección 7 actualizada.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+271 tests verde, lint+fmt limpios.
+
+---
+
 ## [1.100.0] — 2026-05-18 — Glob recursivo en `stdlib/ruta`
 
 Añade matcher glob básico (`*`, `?`) y dos funciones de recorrido

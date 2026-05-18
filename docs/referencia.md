@@ -811,6 +811,8 @@ Veinte módulos. Se importan con `importar <nombre>`.
 
 `mapear(f,xs)`, `filtrar(p,xs)`, `reducir(f,xs,inicial)`, `enumerar(xs,inicio=0)`, `cualquiera(p,xs)`, `todos(p,xs)`, `suma(xs,inicial=0)`, `minimo(xs)`, `maximo(xs)`, `agrupar_por(xs,f)`, `tomar(n,xs)`, `saltar(n,xs)`, `combinar(xs,ys)`, `aplanar(xs)`, `unicos(xs)`.
 
+**v1.101**: `ordenar_por(xs, clave)` y `ordenar_por_inverso(xs, clave)` — mergesort **estable** O(n log n) que ordena `xs` por el resultado de aplicar `clave` a cada elemento. `clave` se invoca **una vez** por elemento (no por comparación). Devuelve nueva lista (no muta `xs`). Soluciona la limitación del built-in `ordenar` que solo compara números y cadenas directamente.
+
 ### `formato`
 
 `rellenar(s,ancho,car=" ")`, `alinear_derecha(...)`, `centrar(...)`, `con_decimales(n,decimales=2)`, `numero_con_separador(n,sep="_")`, `porcentaje(d,decimales=2)`, `como_hex(n,prefijo="0x")`, `como_binario(n,prefijo="0b")`, `linea(car="-",ancho=60)`, `fila(valores,anchos,sep=" | ")`.

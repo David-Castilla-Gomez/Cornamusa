@@ -78,19 +78,13 @@ para r en ruta.Ruta("docs").listar_rutas():
 fin para
 imprimir("")
 
-# ─── 7. Encontrar el archivo mas reciente ───────────────────────
+# ─── 7. Top 3 archivos mas recientes (con ordenar_por v1.101) ───
 
-imprimir("--- 7. Archivo mas reciente en examples/ ---")
+importar funcionales
+
+imprimir("--- 7. Top 3 archivos mas recientes en examples/ ---")
 todos_cor = ruta.encontrar("examples", "*.cor")
-si longitud(todos_cor) > 0:
-    mas_reciente = todos_cor[0]
-    mejor_mtime = mas_reciente.mtime_ms()
-    para r en todos_cor[1:]:
-        m = r.mtime_ms()
-        si m > mejor_mtime:
-            mas_reciente = r
-            mejor_mtime = m
-        fin si
-    fin para
-    imprimir("  ", mas_reciente.nombre(), "(mtime:", mejor_mtime, ")")
-fin si
+por_mtime_desc = funcionales.ordenar_por_inverso(todos_cor, lambda r: r.mtime_ms())
+para r en por_mtime_desc[0:3]:
+    imprimir("  ", r.nombre(), "(mtime:", r.mtime_ms(), ")")
+fin para

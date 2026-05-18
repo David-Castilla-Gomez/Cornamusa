@@ -242,3 +242,116 @@ funcion unicos(xs):
     fin para
     retornar resultado
 fin funcion
+
+# v1.101: ordenar_por(xs, clave) - ordena `xs` por el resultado de
+# `clave(x)` para cada elemento. Devuelve UNA LISTA NUEVA (no
+# muta `xs`). `clave` se invoca una vez por elemento (no por
+# comparacion), asi que la complejidad es O(n) en llamadas a `clave`
+# + O(n log n) en operaciones de mergesort.
+#
+# Soluciona la limitacion de `ordenar` built-in que solo compara
+# numeros y cadenas directamente. Util para ordenar por atributo,
+# por longitud, por fecha, etc.
+#
+# Ejemplo:
+#   gente = [{"nombre": "Ana", "edad": 30}, {"nombre": "Luis", "edad": 25}]
+#   por_edad = funcionales.ordenar_por(gente, lambda p: p["edad"])
+#
+# `clave(x)` debe devolver un valor comparable con `<` (numero o
+# cadena). Si dos elementos producen claves iguales, el orden
+# relativo entre ellos es preservado (sort estable - lo da el
+# mergesort).
+funcion ordenar_por(xs, clave):
+    n = longitud(xs)
+    si n < 2:
+        # Devolvemos una copia para no compartir referencia.
+        salida = []
+        para x en xs:
+            agregar(salida, x)
+        fin para
+        retornar salida
+    fin si
+    # Pre-computar claves una sola vez por elemento.
+    claves = []
+    valores = []
+    para x en xs:
+        agregar(valores, x)
+        agregar(claves, clave(x))
+    fin para
+    # Mergesort sobre indices, comparando claves[idx_a] vs claves[idx_b].
+    indices = []
+    para i en rango(0, n):
+        agregar(indices, i)
+    fin para
+    indices_ord = _mergesort_idx(indices, claves)
+    salida = []
+    para idx en indices_ord:
+        agregar(salida, valores[idx])
+    fin para
+    retornar salida
+fin funcion
+
+
+# Ordena `xs` en orden DESCENDIENTE por `clave(x)`. Equivalente a
+# `ordenar_por` mas un `invertir`, pero sin la pasada extra.
+funcion ordenar_por_inverso(xs, clave):
+    ordenado = ordenar_por(xs, clave)
+    # Invertir la lista resultante en-place no es ideal porque
+    # ordenar_por ya devuelve una nueva. Construimos invertida.
+    n = longitud(ordenado)
+    inv = []
+    para i en rango(n - 1, -1, -1):
+        agregar(inv, ordenado[i])
+    fin para
+    retornar inv
+fin funcion
+
+
+# Helper interno: mergesort sobre lista de indices, comparando
+# `claves[indices[i]]` con `claves[indices[j]]`. Devuelve lista
+# nueva ordenada.
+funcion _mergesort_idx(indices, claves):
+    n = longitud(indices)
+    si n < 2:
+        retornar indices
+    fin si
+    medio = n // 2
+    izq = []
+    para i en rango(0, medio):
+        agregar(izq, indices[i])
+    fin para
+    der = []
+    para i en rango(medio, n):
+        agregar(der, indices[i])
+    fin para
+    izq_ord = _mergesort_idx(izq, claves)
+    der_ord = _mergesort_idx(der, claves)
+    retornar _merge_idx(izq_ord, der_ord, claves)
+fin funcion
+
+
+funcion _merge_idx(izq, der, claves):
+    salida = []
+    i = 0
+    j = 0
+    nl = longitud(izq)
+    nr = longitud(der)
+    mientras i < nl y j < nr:
+        si claves[izq[i]] <= claves[der[j]]:
+            agregar(salida, izq[i])
+            i = i + 1
+        sino:
+            agregar(salida, der[j])
+            j = j + 1
+        fin si
+    fin mientras
+    mientras i < nl:
+        agregar(salida, izq[i])
+        i = i + 1
+    fin mientras
+    mientras j < nr:
+        agregar(salida, der[j])
+        j = j + 1
+    fin mientras
+    retornar salida
+fin funcion

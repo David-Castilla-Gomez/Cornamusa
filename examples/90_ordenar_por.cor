@@ -1,0 +1,102 @@
+# 90_ordenar_por.cor — ordenamiento por clave (v1.101).
+#
+# `ordenar` built-in solo compara numeros y cadenas directamente.
+# `funcionales.ordenar_por(xs, clave)` permite ordenar por el
+# resultado de aplicar `clave` a cada elemento - util para listas
+# de dicts, instancias, tuplas o cualquier valor compuesto.
+#
+# Mergesort pure-Cornamusa O(n log n) estable. `clave` se invoca
+# una vez por elemento (no por comparacion).
+
+importar funcionales
+
+# ─── 1. Ordenar cadenas por longitud ────────────────────────────
+
+palabras = ["zanahoria", "uva", "manzana", "pera", "fresa"]
+por_longitud = funcionales.ordenar_por(palabras, lambda p: longitud(p))
+imprimir("Por longitud:", por_longitud)
+imprimir("")
+
+# ─── 2. Ordenar diccionarios por campo ──────────────────────────
+
+empleados = [
+    {"nombre": "Ana",    "salario": 35000, "anyos": 5},
+    {"nombre": "Bruno",  "salario": 42000, "anyos": 3},
+    {"nombre": "Carlos", "salario": 28000, "anyos": 8},
+    {"nombre": "Diana",  "salario": 51000, "anyos": 12},
+]
+
+imprimir("--- Por salario ascendente ---")
+por_salario = funcionales.ordenar_por(empleados, lambda e: e["salario"])
+para e en por_salario:
+    imprimir("  ", e["nombre"], "->", e["salario"])
+fin para
+imprimir("")
+
+imprimir("--- Por anyos descendente ---")
+por_anyos_desc = funcionales.ordenar_por_inverso(empleados, lambda e: e["anyos"])
+para e en por_anyos_desc:
+    imprimir("  ", e["nombre"], "->", e["anyos"], "anyos")
+fin para
+imprimir("")
+
+# ─── 3. Ordenar tuplas por segundo elemento ─────────────────────
+
+puntuaciones = [["Ana", 85], ["Bruno", 92], ["Carlos", 78], ["Diana", 88]]
+ranking = funcionales.ordenar_por_inverso(puntuaciones, lambda t: t[1])
+imprimir("--- Ranking ---")
+i = 1
+para r en ranking:
+    imprimir("  ", i, ".", r[0], "->", r[1])
+    i = i + 1
+fin para
+imprimir("")
+
+# ─── 4. Estabilidad: combinar dos sorts ─────────────────────────
+# Ordenar por departamento, dentro de cada uno por salario.
+
+equipo = [
+    {"nombre": "Eva",   "depto": "Ventas",       "salario": 45000},
+    {"nombre": "Felipe","depto": "Ingenieria",   "salario": 60000},
+    {"nombre": "Gabi",  "depto": "Ventas",       "salario": 38000},
+    {"nombre": "Hugo",  "depto": "Ingenieria",   "salario": 70000},
+    {"nombre": "Iris",  "depto": "Ventas",       "salario": 52000},
+]
+
+# Primera pasada: por salario (secundario)
+paso1 = funcionales.ordenar_por(equipo, lambda p: p["salario"])
+# Segunda pasada: por depto (primario). El sort estable preserva
+# el orden por salario dentro de cada depto.
+paso2 = funcionales.ordenar_por(paso1, lambda p: p["depto"])
+
+imprimir("--- Por depto, dentro por salario ascendente ---")
+para p en paso2:
+    imprimir("  [", p["depto"], "]", p["nombre"], "->", p["salario"])
+fin para
+imprimir("")
+
+# ─── 5. Funcion key con logica custom ───────────────────────────
+
+# Ordenar palabras priorizando las que empiezan con vocal.
+
+funcion empieza_con_vocal(s):
+    si longitud(s) == 0:
+        retornar 1
+    fin si
+    c = s[0]
+    si c == "a" o c == "e" o c == "i" o c == "o" o c == "u":
+        retornar 0
+    fin si
+    retornar 1
+fin funcion
+
+palabras2 = ["zorro", "abeja", "perro", "elefante", "tigre", "uva"]
+prioridad = funcionales.ordenar_por(palabras2, empieza_con_vocal)
+imprimir("Vocales primero:", prioridad)
+imprimir("")
+
+# ─── 6. Patron: top-N ───────────────────────────────────────────
+
+numeros = [42, 17, 89, 23, 56, 91, 8, 73, 34, 65]
+top_3 = funcionales.ordenar_por_inverso(numeros, lambda n: n)[0:3]
+imprimir("Top 3 de", numeros, "->", top_3)
