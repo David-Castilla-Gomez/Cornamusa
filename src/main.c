@@ -99,6 +99,9 @@ static void imprimir_uso(const char *programa) {
         "  depurar <archivo>          Abre el depurador interactivo. Comandos:\n"
         "                               c/s/n/r control, b/bd/bs breakpoints,\n"
         "                               p NOMBRE inspect, pila stack, q salir.\n"
+        "  nuevo <nombre>             Crea un nuevo proyecto Cornamusa con\n"
+        "                             main.cor + tests/test_main.cor + README +\n"
+        "                             .gitignore. Tests con stdlib pruebas.\n"
         "\n"
         "Sin argumentos abre el REPL interactivo (motor tree-walking).\n",
         programa);
@@ -1144,6 +1147,207 @@ static int subcomando_docs(int argc, char **argv) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * v1.98: subcomando `nuevo` — scaffold de proyecto.
+ *
+ *   cornamusa nuevo <nombre>
+ *
+ * Crea un directorio <nombre>/ con esqueleto:
+ *   <nombre>/main.cor              — programa "Hola mundo"
+ *   <nombre>/tests/test_main.cor   — test minimo usando stdlib pruebas
+ *   <nombre>/README.md             — titulo + instrucciones
+ *   <nombre>/.gitignore            — excluye build/ y archivos temporales
+ *
+ * Si el directorio ya existe, falla con mensaje claro. Imprime los
+ * siguientes pasos en stdout.
+ * ────────────────────────────────────────────────────────────────── */
+#include <sys/stat.h>
+#ifdef _WIN32
+#include <direct.h>
+#define cor_mkdir_main(p) _mkdir(p)
+#else
+#define cor_mkdir_main(p) mkdir((p), 0755)
+#endif
+
+static int _escribir_archivo_simple(const char *ruta, const char *contenido) {
+    FILE *f = fopen(ruta, "wb");
+    if (!f) {
+        fprintf(stderr, "nuevo: no se pudo crear '%s'\n", ruta);
+        return 1;
+    }
+    size_t len = strlen(contenido);
+    if (fwrite(contenido, 1, len, f) != len) {
+        fprintf(stderr, "nuevo: error escribiendo '%s'\n", ruta);
+        fclose(f);
+        return 1;
+    }
+    fclose(f);
+    return 0;
+}
+
+static int subcomando_nuevo(int argc, char **argv) {
+    const char *nombre = NULL;
+    for (int i = 2; i < argc; i++) {
+        const char *arg = argv[i];
+        if (strcmp(arg, "-h") == 0 || strcmp(arg, "--ayuda") == 0
+            || strcmp(arg, "--help") == 0) {
+            printf("Uso: cornamusa nuevo <nombre>\n"
+                   "\n"
+                   "Crea un nuevo proyecto Cornamusa con la siguiente "
+                   "estructura:\n"
+                   "  <nombre>/main.cor\n"
+                   "  <nombre>/tests/test_main.cor\n"
+                   "  <nombre>/README.md\n"
+                   "  <nombre>/.gitignore\n");
+            return 0;
+        }
+        if (arg[0] == '-') {
+            fprintf(stderr, "nuevo: opcion no reconocida: %s\n", arg);
+            return 64;
+        }
+        if (nombre) {
+            fprintf(stderr, "nuevo: solo un nombre de proyecto a la vez\n");
+            return 64;
+        }
+        nombre = arg;
+    }
+    if (!nombre) {
+        fprintf(stderr, "nuevo: se requiere un nombre de proyecto\n"
+                        "Uso: cornamusa nuevo <nombre>\n");
+        return 64;
+    }
+
+    /* Verifica que no existe ni como archivo ni como directorio. */
+    struct stat st_chk;
+    if (stat(nombre, &st_chk) == 0) {
+        fprintf(stderr, "nuevo: '%s' ya existe, abortando\n", nombre);
+        return 1;
+    }
+
+    /* Crear directorio raiz */
+    if (cor_mkdir_main(nombre) != 0) {
+        fprintf(stderr, "nuevo: no se pudo crear directorio '%s'\n", nombre);
+        return 1;
+    }
+
+    /* Crear subdirectorio tests/ */
+    size_t base_len = strlen(nombre);
+    char ruta_buf[1024];
+    if (base_len + 32 >= sizeof(ruta_buf)) {
+        fprintf(stderr, "nuevo: nombre demasiado largo\n");
+        return 1;
+    }
+    snprintf(ruta_buf, sizeof(ruta_buf), "%s/tests", nombre);
+    if (cor_mkdir_main(ruta_buf) != 0) {
+        fprintf(stderr, "nuevo: no se pudo crear '%s'\n", ruta_buf);
+        return 1;
+    }
+
+    /* main.cor */
+    snprintf(ruta_buf, sizeof(ruta_buf), "%s/main.cor", nombre);
+    const char *main_contenido =
+        "# main.cor — programa principal\n"
+        "\n"
+        "funcion saludar(quien):\n"
+        "    retornar \"Hola, \" + quien\n"
+        "fin funcion\n"
+        "\n"
+        "imprimir(saludar(\"mundo\"))\n";
+    if (_escribir_archivo_simple(ruta_buf, main_contenido) != 0) return 1;
+
+    /* tests/test_main.cor */
+    snprintf(ruta_buf, sizeof(ruta_buf), "%s/tests/test_main.cor", nombre);
+    const char *test_contenido =
+        "# tests/test_main.cor — tests del proyecto usando stdlib pruebas\n"
+        "#\n"
+        "# Ejecutar con:\n"
+        "#   cornamusa --bytecode tests/test_main.cor\n"
+        "\n"
+        "importar pruebas\n"
+        "\n"
+        "# Por ahora replicamos la funcion para testearla aisladamente.\n"
+        "# Cuando organices el codigo en modulos, importa main y testea\n"
+        "# `main.saludar(...)` directamente.\n"
+        "funcion saludar(quien):\n"
+        "    retornar \"Hola, \" + quien\n"
+        "fin funcion\n"
+        "\n"
+        "funcion test_saluda_a_mundo():\n"
+        "    pruebas.aseverar_igual(saludar(\"mundo\"), \"Hola, mundo\")\n"
+        "fin funcion\n"
+        "\n"
+        "funcion test_saluda_a_nombre():\n"
+        "    pruebas.aseverar_igual(saludar(\"Ana\"), \"Hola, Ana\")\n"
+        "fin funcion\n"
+        "\n"
+        "s = pruebas.Suite(\"main\")\n"
+        "s.caso(\"saluda a mundo\", test_saluda_a_mundo)\n"
+        "s.caso(\"saluda a Ana\", test_saluda_a_nombre)\n"
+        "r = s.ejecutar()\n"
+        "\n"
+        "# Exit code distinto de cero si algun test fallo,\n"
+        "# para integracion con CI/scripts.\n"
+        "si r[\"fallados\"] > 0:\n"
+        "    salir(1)\n"
+        "fin si\n";
+    if (_escribir_archivo_simple(ruta_buf, test_contenido) != 0) return 1;
+
+    /* README.md */
+    snprintf(ruta_buf, sizeof(ruta_buf), "%s/README.md", nombre);
+    char readme_contenido[2048];
+    snprintf(readme_contenido, sizeof(readme_contenido),
+        "# %s\n"
+        "\n"
+        "Proyecto Cornamusa creado con `cornamusa nuevo`.\n"
+        "\n"
+        "## Ejecutar\n"
+        "\n"
+        "```bash\n"
+        "cornamusa --bytecode main.cor\n"
+        "```\n"
+        "\n"
+        "## Tests\n"
+        "\n"
+        "```bash\n"
+        "cornamusa --bytecode tests/test_main.cor\n"
+        "```\n"
+        "\n"
+        "Exit code 0 si todos pasan, 1 si alguno falla. "
+        "Apto para CI.\n",
+        nombre);
+    if (_escribir_archivo_simple(ruta_buf, readme_contenido) != 0) return 1;
+
+    /* .gitignore */
+    snprintf(ruta_buf, sizeof(ruta_buf), "%s/.gitignore", nombre);
+    const char *gitignore_contenido =
+        "# Build artefacts y temporales\n"
+        "build/\n"
+        "*.tmp\n"
+        "*.log\n"
+        ".cornamusa_historial\n"
+        "\n"
+        "# Editores\n"
+        ".vscode/\n"
+        ".idea/\n"
+        "*.swp\n";
+    if (_escribir_archivo_simple(ruta_buf, gitignore_contenido) != 0) return 1;
+
+    /* Mensaje de exito */
+    printf("Proyecto creado: %s/\n", nombre);
+    printf("\n");
+    printf("Estructura:\n");
+    printf("  %s/main.cor              programa principal\n", nombre);
+    printf("  %s/tests/test_main.cor   tests con stdlib pruebas\n", nombre);
+    printf("  %s/README.md             instrucciones\n", nombre);
+    printf("  %s/.gitignore            exclusiones para git\n", nombre);
+    printf("\n");
+    printf("Siguientes pasos:\n");
+    printf("  cd %s\n", nombre);
+    printf("  cornamusa --bytecode main.cor\n");
+    printf("  cornamusa --bytecode tests/test_main.cor\n");
+    return 0;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Entry point
  * ────────────────────────────────────────────────────────────────── */
 
@@ -1169,6 +1373,9 @@ int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "depurar") == 0
                       || strcmp(argv[1], "debug") == 0)) {
         return subcomando_depurar(argc, argv);
+    }
+    if (argc >= 2 && strcmp(argv[1], "nuevo") == 0) {
+        return subcomando_nuevo(argc, argv);
     }
     if (argc >= 2 && strcmp(argv[1], "lsp") == 0) {
 #ifdef _WIN32

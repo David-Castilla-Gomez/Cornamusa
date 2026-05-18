@@ -1043,6 +1043,13 @@ cornamusa depurar prog.cor            # depurador interactivo (v1.76)
                                        #   b N break, bd N borrar, bs listar
                                        #   p NOMBRE imprimir global, pila stack
                                        #   l listar, q salir, ? ayuda
+
+cornamusa nuevo <nombre>              # scaffold de proyecto (v1.98)
+                                       # crea <nombre>/ con:
+                                       #   main.cor (Hola mundo)
+                                       #   tests/test_main.cor (stdlib pruebas)
+                                       #   README.md + .gitignore
+                                       # Falla si <nombre> ya existe.
 ```
 
 Categorias del linter (16 totales): `unreachable`, `redundant-pasar`, `eq-nulo`, `unused-import`, `unused-local`, `unused-param`, `shadow`, `unused-loop-var`, `mutable-default`, `concat-in-loop`, `same-comparison`, `empty-except`, `redundant-bool-compare`, `useless-return`, `bool-coerce-conditional`, `for-rango-longitud`.

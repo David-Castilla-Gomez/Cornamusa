@@ -51,6 +51,38 @@ set_tests_properties(check_sintaxis_mala PROPERTIES
     WILL_FAIL TRUE
 )
 
+# ───── v1.98: tests del subcomando `nuevo` ─────
+# nuevo --ayuda debe imprimir texto de uso.
+add_test(
+    NAME nuevo_ayuda
+    COMMAND $<TARGET_FILE:cornamusa> nuevo --ayuda
+)
+set_tests_properties(nuevo_ayuda PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "Crea un nuevo proyecto"
+)
+# nuevo sin nombre falla con exit code 64.
+add_test(
+    NAME nuevo_sin_args_falla
+    COMMAND $<TARGET_FILE:cornamusa> nuevo
+)
+set_tests_properties(nuevo_sin_args_falla PROPERTIES
+    LABELS "integracion"
+    WILL_FAIL TRUE
+)
+# nuevo end-to-end: crear scaffold en un directorio temporal,
+# ejecutar el test generado, limpiar. Usa cmake -P para encadenar.
+add_test(
+    NAME nuevo_end_to_end
+    COMMAND ${CMAKE_COMMAND}
+        -DCORNAMUSA=$<TARGET_FILE:cornamusa>
+        -DREPO_ROOT=${CMAKE_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test_nuevo.cmake
+)
+set_tests_properties(nuevo_end_to_end PROPERTIES
+    LABELS "integracion"
+)
+
 # ───── Tests de integración: lexar los ejemplos en examples/ ─────
 # Cada ejemplo se tokeniza con `cornamusa --tokens <archivo>`. Exit
 # code 0 indica que el lexer no encontró errores. Solo verifica el

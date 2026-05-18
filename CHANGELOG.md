@@ -6,6 +6,113 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.98.0] — 2026-05-18 — `cornamusa nuevo <nombre>`: scaffold de proyecto
+
+Nuevo subcomando `cornamusa nuevo <nombre>` que crea un esqueleto
+completo de proyecto Cornamusa: `main.cor`, `tests/test_main.cor`
+(con suite usando stdlib `pruebas` de v1.96), `README.md` y
+`.gitignore`. Cierra el ciclo de las dos releases anteriores:
+ahora un usuario empieza un proyecto con un comando y tiene tests
+funcionales pasando desde el primer commit.
+
+```bash
+$ cornamusa nuevo mi_proyecto
+Proyecto creado: mi_proyecto/
+
+Estructura:
+  mi_proyecto/main.cor              programa principal
+  mi_proyecto/tests/test_main.cor   tests con stdlib pruebas
+  mi_proyecto/README.md             instrucciones
+  mi_proyecto/.gitignore            exclusiones para git
+
+Siguientes pasos:
+  cd mi_proyecto
+  cornamusa --bytecode main.cor
+  cornamusa --bytecode tests/test_main.cor
+
+$ cd mi_proyecto
+$ cornamusa --bytecode tests/test_main.cor
+=== Suite: main ===
+  [OK]    saluda a mundo
+  [OK]    saluda a Ana
+---
+Total: 2 | Pasados: 2 | Fallados: 0
+```
+
+### Archivos generados
+
+- **`main.cor`**: programa "Hola, mundo" con función `saludar(quien)`
+  para que haya algo testeable desde la primera línea.
+- **`tests/test_main.cor`**: 2 casos con `pruebas.Suite`, exit code 1
+  si algún test falla — listo para CI.
+- **`README.md`**: instrucciones para ejecutar el programa y los
+  tests.
+- **`.gitignore`**: excluye `build/`, `*.tmp`, `*.log`,
+  `.cornamusa_historial`, `.vscode/`, `.idea/`, `*.swp`.
+
+### Errores manejados
+
+- `cornamusa nuevo` sin nombre → exit 64 + mensaje "se requiere un
+  nombre de proyecto".
+- `cornamusa nuevo X` cuando `X` ya existe → exit 1 + "ya existe,
+  abortando" (NO sobreescribe).
+- `cornamusa nuevo --ayuda` → texto de uso, exit 0.
+- Opciones desconocidas (`cornamusa nuevo -foo bar`) → exit 64.
+
+### Decisiones de diseño
+
+- **Función `saludar` replicada en el test**: para que el test sea
+  ejecutable sin sintaxis de `importar main` (que requeriría que el
+  test esté ejecutado en un layout específico). El comentario
+  inline explica que cuando el usuario organice en módulos, podrá
+  reemplazar la duplicación por `importar main`.
+- **Exit code 1 cuando algún test falla**: convención Unix para
+  integración con CI. El test generado usa
+  `si r["fallados"] > 0: salir(1) fin si`.
+- **Solo un directorio**: `nuevo` crea solo el directorio raíz del
+  proyecto + `tests/`. No es `mkdir -p` — si quieres
+  `proyectos/nuevos/foo`, debes crear las carpetas padres primero.
+
+### Tests
+
+Tres tests en `tests/CMakeLists.txt`:
+
+1. `nuevo_ayuda`: verifica que `cornamusa nuevo --ayuda` imprime
+   "Crea un nuevo proyecto" (PASS_REGULAR_EXPRESSION).
+2. `nuevo_sin_args_falla`: verifica que `cornamusa nuevo` (sin
+   argumentos) falla con exit code no-cero (WILL_FAIL).
+3. `nuevo_end_to_end` (script CMake `tests/scripts/test_nuevo.cmake`):
+   - Invoca `cornamusa nuevo _test_nuevo_e2e` desde la raíz del
+     repo.
+   - Verifica que se generan los 4 archivos esperados.
+   - Ejecuta el test generado y verifica `Pasados: 2`.
+   - Confirma que un segundo `nuevo` con el mismo nombre falla.
+   - Limpia el directorio temporal al final.
+
+### Archivos
+
+- `src/main.c` — `subcomando_nuevo` + dispatch + entrada en
+  `imprimir_uso`. ~200 líneas C con cuatro plantillas inline.
+- `tests/CMakeLists.txt` — 3 tests del subcomando.
+- `tests/scripts/test_nuevo.cmake` — script CMake para el test
+  end-to-end con cleanup automático.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+265 tests verde, lint+fmt limpios.
+
+### Lo que queda pendiente
+
+- Plantilla extendida con varios módulos (`--plantilla=biblioteca`,
+  `--plantilla=cli`, ...).
+- Integración con git (`git init` automático). De momento se deja
+  al usuario.
+- Plantilla configurable vía archivo (~/.config/cornamusa/plantilla).
+
+---
+
 ## [1.97.0] — 2026-05-18 — Filesystem: directorios, listado, cwd, crear
 
 Cuatro nativas C nuevas para operar sobre el sistema de archivos
