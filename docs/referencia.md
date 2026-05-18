@@ -964,6 +964,38 @@ imprimir(sub.cadena())                   # "/etc/nginx/conf.d"
 
 **Limitación**: `existe()` solo retorna `verdadero` para archivos regulares (no directorios), porque delega a `archivos.existe`, que sigue la misma convención.
 
+### `pruebas` (v1.96)
+
+Framework de testing minimalista pure-Cornamusa. Útil para scripts de comprobación lineales (asserts standalone) o tests organizados (clase `Suite`).
+
+**Asserts standalone** — todos lanzan `ErrorDeValor` con mensaje claro en caso de fallo:
+
+- `aseverar(cond, msg)` — comprueba que `cond` sea verdadero.
+- `aseverar_igual(actual, esperado)` — `actual == esperado`.
+- `aseverar_distinto(a, b)` — `a != b`.
+- `aseverar_verdadero(c)` / `aseverar_falso(c)`.
+- `aseverar_nulo(v)` / `aseverar_no_nulo(v)`.
+- `aseverar_aproximado(a, b, tolerancia)` — `|a-b| ≤ tolerancia` (default `1e-9` si `nulo`).
+- `aseverar_contiene(coleccion, x)` / `aseverar_no_contiene(coleccion, x)`.
+- `aseverar_lanza(callable, nombre_excepcion)` — `callable()` debe lanzar; si `nombre_excepcion` es cadena (p.ej. `"ErrorDeValor"`), exige que aparezca en `repr` de la excepción; si es `nulo`, basta cualquiera.
+
+**Clase `Suite`** — acumula casos nombrados, los ejecuta y reporta:
+
+```cornamusa
+funcion test_suma():
+    pruebas.aseverar_igual(2 + 2, 4)
+fin funcion
+
+s = pruebas.Suite("aritmetica")
+s.caso("suma simple", test_suma)
+r = s.ejecutar()
+# r = {"total": 1, "pasados": 1, "fallados": 0, "fallos": []}
+```
+
+Cada caso se imprime con `[OK]` o `[FAIL]` y un resumen final `Total: N | Pasados: P | Fallados: F`.
+
+**Wrapper funcional**: `pruebas.ejecutar_casos([[etiqueta1, fn1], [etiqueta2, fn2], ...])` para evitar instanciar `Suite` cuando no se necesita reutilizar.
+
 ---
 
 ## 17. CLI

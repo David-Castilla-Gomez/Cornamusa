@@ -1,0 +1,226 @@
+# Cornamusa stdlib: pruebas.cor (v1.96)
+#
+# Framework minimalista de pruebas. Pure-Cornamusa.
+#
+# Dos modos de uso:
+#
+#   1. Asserts sueltos (para scripts de comprobacion lineales):
+#
+#      importar pruebas
+#      pruebas.aseverar(2 + 2 == 4, "matematica basica")
+#      pruebas.aseverar_igual(longitud([1,2,3]), 3)
+#      pruebas.aseverar_lanza(funcion_que_lanza, ErrorAritmetico)
+#
+#      Cualquier fallo lanza `ErrorDeValor` (que es atrapable).
+#
+#   2. Suite con casos nombrados (para tests organizados):
+#
+#      importar pruebas
+#
+#      funcion test_suma():
+#          pruebas.aseverar_igual(2 + 2, 4)
+#          pruebas.aseverar_igual(0 + 0, 0)
+#      fin funcion
+#
+#      funcion test_resta():
+#          pruebas.aseverar_igual(5 - 3, 2)
+#      fin funcion
+#
+#      s = pruebas.Suite("aritmetica")
+#      s.caso("suma", test_suma)
+#      s.caso("resta", test_resta)
+#      r = s.ejecutar()
+#
+#      # r es un dict: {"total": 2, "pasados": 2, "fallados": 0, ...}
+#      # Se imprime un resumen por linea durante la ejecucion.
+#
+#   3. Funcional (sin instanciar Suite):
+#
+#      r = pruebas.ejecutar_casos([
+#          ["suma", test_suma],
+#          ["resta", test_resta],
+#      ])
+
+importar matematicas
+
+
+# ─── Asserts standalone (lanzan ErrorDeValor en fallo) ──────────
+
+funcion aseverar(condicion, mensaje):
+    si no condicion:
+        si mensaje == nulo o mensaje == "":
+            mensaje = "aseveracion fallida"
+        fin si
+        lanzar ErrorDeValor("aseveracion: " + mensaje)
+    fin si
+fin funcion
+
+
+funcion aseverar_igual(actual, esperado):
+    si actual != esperado:
+        lanzar ErrorDeValor(
+            "aseverar_igual: esperado " + repr(esperado) +
+            ", obtenido " + repr(actual))
+    fin si
+fin funcion
+
+
+funcion aseverar_distinto(a, b):
+    si a == b:
+        lanzar ErrorDeValor(
+            "aseverar_distinto: ambos valores son " + repr(a))
+    fin si
+fin funcion
+
+
+funcion aseverar_verdadero(c):
+    si c != verdadero:
+        lanzar ErrorDeValor(
+            "aseverar_verdadero: obtenido " + repr(c))
+    fin si
+fin funcion
+
+
+funcion aseverar_falso(c):
+    si c != falso:
+        lanzar ErrorDeValor(
+            "aseverar_falso: obtenido " + repr(c))
+    fin si
+fin funcion
+
+
+funcion aseverar_nulo(v):
+    si v != nulo:
+        lanzar ErrorDeValor(
+            "aseverar_nulo: obtenido " + repr(v))
+    fin si
+fin funcion
+
+
+funcion aseverar_no_nulo(v):
+    si v == nulo:
+        lanzar ErrorDeValor("aseverar_no_nulo: valor es nulo")
+    fin si
+fin funcion
+
+
+funcion aseverar_aproximado(a, b, tolerancia):
+    si tolerancia == nulo:
+        tolerancia = 0.000000001
+    fin si
+    diff = matematicas.absoluto(a - b)
+    si diff > tolerancia:
+        lanzar ErrorDeValor(
+            "aseverar_aproximado: |" + repr(a) + " - " + repr(b) +
+            "| = " + repr(diff) + " > " + repr(tolerancia))
+    fin si
+fin funcion
+
+
+funcion aseverar_contiene(coleccion, x):
+    si no (x en coleccion):
+        lanzar ErrorDeValor(
+            "aseverar_contiene: " + repr(x) +
+            " no esta en " + repr(coleccion))
+    fin si
+fin funcion
+
+
+funcion aseverar_no_contiene(coleccion, x):
+    si x en coleccion:
+        lanzar ErrorDeValor(
+            "aseverar_no_contiene: " + repr(x) +
+            " esta en " + repr(coleccion))
+    fin si
+fin funcion
+
+
+funcion aseverar_lanza(callable, nombre_excepcion):
+    # `callable` se invoca sin argumentos. Debe lanzar una excepcion.
+    #
+    # `nombre_excepcion`: si es `nulo`, basta con que lance cualquier
+    # excepcion. Si es una cadena (p.ej. "ErrorDeValor"), se exige
+    # ademas que ese nombre aparezca en `repr(excepcion)` — convencion
+    # natural porque las excepciones nativas de Cornamusa tienen
+    # repr del tipo "ErrorDeValor: mensaje".
+    lanzo = falso
+    excepcion_repr = ""
+    intentar:
+        callable()
+    atrapar Excepcion como e:
+        lanzo = verdadero
+        excepcion_repr = repr(e)
+    fin intentar
+    si no lanzo:
+        lanzar ErrorDeValor(
+            "aseverar_lanza: el callable no lanzo ninguna excepcion")
+    fin si
+    si nombre_excepcion != nulo:
+        si tipo(nombre_excepcion) != "cadena":
+            lanzar ErrorDeValor(
+                "aseverar_lanza: nombre_excepcion debe ser cadena o nulo")
+        fin si
+        si no (nombre_excepcion en excepcion_repr):
+            lanzar ErrorDeValor(
+                "aseverar_lanza: esperaba excepcion '" +
+                nombre_excepcion + "', obtuve " + excepcion_repr)
+        fin si
+    fin si
+fin funcion
+
+
+# ─── Suite (clase con acumulacion) ──────────────────────────────
+
+clase Suite:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+        yo.casos = []
+    fin funcion
+
+    funcion caso(yo, etiqueta, fn):
+        agregar(yo.casos, [etiqueta, fn])
+    fin funcion
+
+    funcion ejecutar(yo):
+        # Ejecuta cada caso, captura excepciones, imprime resumen.
+        # Retorna dict {total, pasados, fallados, fallos}.
+        imprimir("=== Suite:", yo.nombre, "===")
+        total = longitud(yo.casos)
+        pasados = 0
+        fallados = 0
+        fallos = []
+        para c en yo.casos:
+            etiqueta = c[0]
+            fn = c[1]
+            intentar:
+                fn()
+                imprimir("  [OK]   ", etiqueta)
+                pasados = pasados + 1
+            atrapar Excepcion como e:
+                imprimir("  [FAIL] ", etiqueta, "->", e)
+                fallados = fallados + 1
+                agregar(fallos, [etiqueta, repr(e)])
+            fin intentar
+        fin para
+        imprimir("---")
+        imprimir("Total:", total, "| Pasados:", pasados,
+                 "| Fallados:", fallados)
+        retornar {
+            "total": total,
+            "pasados": pasados,
+            "fallados": fallados,
+            "fallos": fallos,
+        }
+    fin funcion
+fin clase
+
+
+funcion ejecutar_casos(casos):
+    # Wrapper funcional: acepta lista de [etiqueta, fn], los ejecuta
+    # como un Suite sin nombre, retorna el mismo dict.
+    s = Suite("anonima")
+    para c en casos:
+        s.caso(c[0], c[1])
+    fin para
+    retornar s.ejecutar()
+fin funcion

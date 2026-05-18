@@ -1,0 +1,128 @@
+# 86_pruebas.cor — framework de testing minimalista (v1.96).
+#
+# Stdlib `pruebas` da asserts standalone + clase `Suite` para
+# organizar tests en cornamusa puro. Pure-Cornamusa: sin C, sin
+# infraestructura adicional. Cualquier programa puede correr sus
+# propios tests.
+
+importar pruebas
+importar matematicas
+importar ruta
+
+# ─── 1. Asserts standalone ──────────────────────────────────────
+
+imprimir("--- 1. Asserts sueltos ---")
+
+pruebas.aseverar(2 + 2 == 4, "matematica basica")
+pruebas.aseverar_igual(longitud([1, 2, 3]), 3)
+pruebas.aseverar_distinto("a", "b")
+pruebas.aseverar_aproximado(0.1 + 0.2, 0.3, 0.000001)
+pruebas.aseverar_contiene(["rojo", "azul"], "rojo")
+
+# Si llegamos aqui, los 5 anteriores pasaron
+imprimir("Los 5 asserts standalone pasaron.")
+imprimir("")
+
+# ─── 2. Suite organizada ────────────────────────────────────────
+
+funcion test_factorial_0():
+    pruebas.aseverar_igual(matematicas.factorial(0), 1)
+fin funcion
+
+funcion test_factorial_5():
+    pruebas.aseverar_igual(matematicas.factorial(5), 120)
+fin funcion
+
+funcion test_factorial_grande():
+    # 20! cabe en entero
+    pruebas.aseverar_igual(matematicas.factorial(20), 2432902008176640000)
+fin funcion
+
+funcion test_mcd():
+    pruebas.aseverar_igual(matematicas.mcd(12, 18), 6)
+    pruebas.aseverar_igual(matematicas.mcd(7, 13), 1)
+fin funcion
+
+funcion test_signo():
+    pruebas.aseverar_igual(matematicas.signo(-5), -1)
+    pruebas.aseverar_igual(matematicas.signo(0), 0)
+    pruebas.aseverar_igual(matematicas.signo(42), 1)
+fin funcion
+
+s = pruebas.Suite("matematicas")
+s.caso("factorial(0) == 1", test_factorial_0)
+s.caso("factorial(5) == 120", test_factorial_5)
+s.caso("factorial(20)", test_factorial_grande)
+s.caso("mcd", test_mcd)
+s.caso("signo", test_signo)
+r = s.ejecutar()
+
+imprimir("")
+imprimir("Suite retorno:", r["pasados"], "pasados de", r["total"])
+imprimir("")
+
+# ─── 3. Suite mixta: caso fallando intencionalmente ─────────────
+
+funcion test_que_falla():
+    pruebas.aseverar_igual(1, 2)  # falla intencionalmente
+fin funcion
+
+s2 = pruebas.Suite("demo de fallo")
+s2.caso("este pasa", test_factorial_0)
+s2.caso("este falla intencional", test_que_falla)
+r2 = s2.ejecutar()
+imprimir("")
+imprimir("Suite con fallo - pasados:", r2["pasados"],
+         "/ fallados:", r2["fallados"])
+imprimir("")
+
+# ─── 4. aseverar_lanza para excepciones ─────────────────────────
+
+funcion division_por_cero():
+    x = 1 / 0
+fin funcion
+
+funcion lanza_valor():
+    lanzar ErrorDeValor("test")
+fin funcion
+
+# Verifica que se lanza una excepcion (cualquiera)
+pruebas.aseverar_lanza(division_por_cero, nulo)
+
+# Verifica el tipo concreto (por nombre)
+pruebas.aseverar_lanza(division_por_cero, "ErrorAritmetico")
+pruebas.aseverar_lanza(lanza_valor, "ErrorDeValor")
+
+imprimir("aseverar_lanza: todas las verificaciones pasaron.")
+imprimir("")
+
+# ─── 5. Tests para stdlib ruta ──────────────────────────────────
+
+funcion test_ruta_nombre():
+    pruebas.aseverar_igual(ruta.nombre("/a/b/c.txt"), "c.txt")
+    pruebas.aseverar_igual(ruta.nombre(""), "")
+fin funcion
+
+funcion test_ruta_extension():
+    pruebas.aseverar_igual(ruta.extension("foo.cor"), ".cor")
+    pruebas.aseverar_igual(ruta.extension("sinpunto"), "")
+fin funcion
+
+funcion test_ruta_normalizar():
+    pruebas.aseverar_igual(ruta.normalizar("a/./b/../c"), "a/c")
+    pruebas.aseverar_igual(ruta.normalizar(""), ".")
+fin funcion
+
+funcion test_ruta_unir_encadenado():
+    r = ruta.Ruta("/etc").unir("nginx").unir("conf.d")
+    pruebas.aseverar_igual(r.cadena(), "/etc/nginx/conf.d")
+fin funcion
+
+resultado = pruebas.ejecutar_casos([
+    ["ruta.nombre", test_ruta_nombre],
+    ["ruta.extension", test_ruta_extension],
+    ["ruta.normalizar", test_ruta_normalizar],
+    ["Ruta encadenado", test_ruta_unir_encadenado],
+])
+imprimir("")
+imprimir("Tests de ruta:", resultado["pasados"], "/", resultado["total"])

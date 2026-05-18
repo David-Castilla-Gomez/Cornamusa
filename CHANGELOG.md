@@ -6,6 +6,129 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.96.0] — 2026-05-18 — Stdlib `pruebas`: framework de testing minimalista (23º módulo)
+
+Nuevo módulo `stdlib/pruebas.cor` con un framework de testing
+pure-Cornamusa: asserts standalone para comprobaciones lineales y
+una clase `Suite` para tests organizados con acumulación de
+resultados. Cubre un hueco real — hasta v1.95 los tests de
+Cornamusa se escribían en C contra la VM. Ahora un usuario puede
+escribir tests para su propio código en cornamusa puro.
+
+```cornamusa
+importar pruebas
+importar matematicas
+
+# Modo 1: asserts standalone (cualquier fallo lanza ErrorDeValor)
+pruebas.aseverar(2 + 2 == 4, "matematica basica")
+pruebas.aseverar_igual(longitud([1, 2, 3]), 3)
+pruebas.aseverar_aproximado(0.1 + 0.2, 0.3, 1e-9)
+
+# Modo 2: Suite con casos nombrados
+funcion test_factorial_5():
+    pruebas.aseverar_igual(matematicas.factorial(5), 120)
+fin funcion
+
+s = pruebas.Suite("matematicas")
+s.caso("factorial(5) == 120", test_factorial_5)
+r = s.ejecutar()
+# === Suite: matematicas ===
+#   [OK]    factorial(5) == 120
+# ---
+# Total: 1 | Pasados: 1 | Fallados: 0
+```
+
+### Asserts standalone
+
+Todos lanzan `ErrorDeValor` con mensaje claro en fallo. Pasan
+silenciosamente si la condición se cumple.
+
+| Assert | Lanza si |
+|---|---|
+| `aseverar(cond, msg)` | `cond` no es verdadero |
+| `aseverar_igual(actual, esperado)` | `actual != esperado` |
+| `aseverar_distinto(a, b)` | `a == b` |
+| `aseverar_verdadero(c)` / `aseverar_falso(c)` | `c` distinto al valor esperado |
+| `aseverar_nulo(v)` / `aseverar_no_nulo(v)` | nulidad opuesta |
+| `aseverar_aproximado(a, b, tol)` | `|a-b| > tol` (default `1e-9` si `tol` es `nulo`) |
+| `aseverar_contiene(c, x)` / `aseverar_no_contiene(c, x)` | pertenencia opuesta |
+| `aseverar_lanza(callable, nombre)` | `callable()` no lanza o lanza tipo distinto |
+
+`aseverar_lanza` acepta `nombre_excepcion` como cadena (p.ej.
+`"ErrorAritmetico"`) — exige que aparezca en `repr` de la
+excepción capturada. Si es `nulo`, basta con que `callable()`
+lance cualquier excepción.
+
+### Clase `Suite`
+
+Acumula casos nombrados, los ejecuta capturando excepciones, y
+emite resumen estilo `[OK]` / `[FAIL]`. Retorna dict con
+`{total, pasados, fallados, fallos}` (donde `fallos` es lista de
+`[etiqueta, repr_excepcion]`).
+
+```cornamusa
+s = pruebas.Suite("nombre")
+s.caso("etiqueta", fn_de_test)   # fn no toma argumentos
+r = s.ejecutar()
+```
+
+### Wrapper funcional
+
+`pruebas.ejecutar_casos([[etiqueta, fn], ...])` instancia una
+`Suite` anónima y la ejecuta. Útil cuando no se necesita la suite
+para reutilizar.
+
+### Por qué pure-Cornamusa
+
+El módulo es ~180 líneas sin nativas nuevas. Compone sobre:
+
+- `lanzar ErrorDeValor(msg)` para fallos
+- `intentar/atrapar Excepcion como e` para capturar
+- `repr(v)` para mensajes legibles
+- `matematicas.absoluto` para tolerancia en `aseverar_aproximado`
+
+Demuestra (otra vez, como `argumentos` v1.93) que la stdlib puede
+crecer en cornamusa puro cuando no hay necesidad de tocar el
+runtime.
+
+### Tests
+
+24 asserts en `test_bytecode_pruebas.c`:
+
+- Asserts standalone pasando y fallando con mensaje claro.
+- `aseverar_aproximado` pasa con tolerancia, falla si demasiado
+  estricta.
+- `aseverar_lanza`: con nombre correcto, mismatch, `nulo` acepta
+  cualquiera, falla si no lanza.
+- `Suite`: pasa todos, falla algunos, imprime `[OK]`/`[FAIL]`.
+- `ejecutar_casos` wrapper funcional.
+
+### Ejemplo
+
+`examples/86_pruebas.cor` con 5 secciones:
+
+1. Asserts standalone con 5 verificaciones.
+2. Suite de tests de `matematicas` (factorial, mcd, signo).
+3. Suite con caso fallando intencionalmente para mostrar el output.
+4. `aseverar_lanza` con división por cero y ErrorDeValor.
+5. Tests para el módulo `ruta` (v1.94) usando `ejecutar_casos`.
+
+### Archivos
+
+- `stdlib/pruebas.cor` — ~180 líneas pure-Cornamusa, 12 asserts +
+  clase Suite + wrapper funcional.
+- `tests/unit/test_bytecode_pruebas.c` — 11 bloques, 24 asserts.
+- `examples/86_pruebas.cor` — 5 secciones demo.
+- `docs/referencia.md` §16: nuevo módulo añadido.
+- `README.md`, `FAQ.md`, `docs/introduccion.md`, `docs/tutorial.md`:
+  stdlib pasa de veintidós a **veintitrés módulos**.
+
+### Estado
+
+260 tests verde, lint+fmt limpios. Stdlib alcanza **23 módulos**.
+
+---
+
 ## [1.95.0] — 2026-05-18 — Fix compilador: pre-declarar locales nuevos antes de `si`
 
 Arregla un bug del compilador VM detectado en v1.94 al implementar

@@ -985,7 +985,7 @@ imprimir(mat.PI)
 
 ### La biblioteca estándar
 
-Cornamusa trae **veintidós módulos** listos para usar. Un vistazo rápido:
+Cornamusa trae **veintitrés módulos** listos para usar. Un vistazo rápido:
 
 ```cornamusa
 importar matematicas
