@@ -1,0 +1,92 @@
+# 84_argumentos.cor — parseo de argumentos CLI estilo argparse (v1.93).
+#
+# Stdlib `argumentos` da un Parser pure-Cornamusa para construir
+# scripts con argumentos posicionales, opciones con valor y banderas
+# booleanas. Se inyecta automaticamente `--ayuda` / `-h`. Errores
+# de parseo son `ErrorDeValor` atrapables.
+
+importar argumentos
+
+# ─── 1. Parser tipico: un comando de procesar CSV ───────────────
+
+p = argumentos.Parser("procesar-csv", "Procesa un archivo CSV")
+p.posicional("entrada", "Archivo CSV de entrada", nulo, nulo)
+p.posicional("salida", "Archivo CSV de salida", "cadena", "salida.csv")
+p.opcion("--max-filas", "-m", "Limite de filas a procesar", "entero", 1000)
+p.opcion("--separador", "-s", "Caracter separador", "cadena", ",")
+p.bandera("--verboso", "-v", "Imprimir progreso detallado")
+p.bandera("--saltar-cabecera", nulo, "Ignorar la primera fila")
+
+# Simulamos sistema.argv para que el ejemplo sea determinista
+simulado = ["procesar-csv.cor", "datos.csv",
+            "--max-filas", "500", "-v", "--saltar-cabecera"]
+args = p.parsear(simulado)
+
+imprimir("Entrada:           ", args["entrada"])
+imprimir("Salida:            ", args["salida"])
+imprimir("Max filas:         ", args["--max-filas"])
+imprimir("Separador:         ", args["--separador"])
+imprimir("Verboso:           ", args["--verboso"])
+imprimir("Saltar cabecera:   ", args["--saltar-cabecera"])
+imprimir("")
+
+# ─── 2. Texto de ayuda generado automaticamente ──────────────────
+
+imprimir("─── Ayuda generada ───")
+imprimir(p.ayuda())
+imprimir("")
+
+# ─── 3. Manejo de errores con atrapar ─────────────────────────────
+
+p2 = argumentos.Parser("test", "Demo de errores")
+p2.posicional("archivo", "Archivo", nulo, nulo)
+p2.opcion("--n", "-n", "Numero", "entero", 10)
+
+# Error: posicional ausente
+intentar:
+    p2.parsear(["test"])
+atrapar ErrorDeValor como e:
+    imprimir("Posicional ausente:", e)
+fin intentar
+
+# Error: opcion desconocida
+intentar:
+    p2.parsear(["test", "f.txt", "--xyz"])
+atrapar ErrorDeValor como e:
+    imprimir("Opcion desconocida:", e)
+fin intentar
+
+# Error: tipo invalido
+intentar:
+    p2.parsear(["test", "f.txt", "--n", "no-numero"])
+atrapar ErrorDeValor como e:
+    imprimir("Tipo invalido:     ", e)
+fin intentar
+
+imprimir("")
+
+# ─── 4. Combinacion con stdlib validacion (v1.92) ────────────────
+
+importar validacion
+
+p3 = argumentos.Parser("crear-usuario", "Crea un usuario")
+p3.opcion("--email", "-e", "Correo electronico", "cadena", nulo)
+p3.opcion("--edad", "-a", "Edad", "entero", nulo)
+p3.opcion("--nombre", "-n", "Nombre", "cadena", nulo)
+
+args3 = p3.parsear(["crear-usuario", "--email", "ana@empresa.es",
+                    "--edad", "28", "--nombre", "Ana"])
+
+v = validacion.Validador()
+v.verificar("email", validacion.es_email(args3["--email"]),
+            "email no valido")
+v.verificar("edad",  validacion.en_rango(args3["--edad"], 18, 120),
+            "edad fuera de rango")
+v.verificar("nombre", validacion.no_vacia(args3["--nombre"]),
+            "nombre obligatorio")
+
+si v.valido():
+    imprimir("Usuario valido:", args3["--nombre"], args3["--email"])
+sino:
+    imprimir("Errores:", v.errores)
+fin si

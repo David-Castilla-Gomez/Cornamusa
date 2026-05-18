@@ -914,6 +914,28 @@ Validadores comunes para formularios y entradas de usuario. Todos devuelven bool
 - **Genéricos**: `coincide(s, patron_regex)`, `en_conjunto(x, valores)`.
 - **`Validador()`**: clase que acumula errores. Métodos: `verificar(campo, cond, msg)`, `valido()`, `tiene_errores()`, `resumen()`.
 
+### `argumentos` (v1.93)
+
+Parser de argumentos CLI estilo `argparse`, pure-Cornamusa sobre `sistema.argv`. Soporta argumentos posicionales, opciones con valor (`--max 10` / `-m 10`) y banderas booleanas (`--verboso` / `-v`). Errores son `ErrorDeValor` atrapables.
+
+```cornamusa
+importar argumentos
+importar sistema
+
+p = argumentos.Parser("mi-script", "Descripcion")
+p.posicional(nombre, ayuda, tipo, defecto)     # tipo/defecto nulo: cadena/obligatorio
+p.opcion(largo, corto, ayuda, tipo, defecto)   # ej: "--max", "-m", ...
+p.bandera(largo, corto, ayuda)                 # booleana sin valor
+
+args = p.parsear(sistema.argv)
+# args es un dict con keys = nombres posicionales + flags largas
+```
+
+- **Tipos**: `"cadena"`, `"entero"`, `"decimal"`, `"booleano"` (acepta `verdadero/true/1/si` y `falso/false/0/no`).
+- **`--ayuda` / `-h`** se inyectan automáticamente: imprimen el texto de ayuda generado y llaman a `salir(0)`.
+- **`p.ayuda()`** devuelve el texto generado (uso, descripción, posicionales, opciones, banderas).
+- Errores típicos atrapables: opción desconocida, opción sin valor, tipo inválido, posicional obligatorio ausente.
+
 ---
 
 ## 17. CLI

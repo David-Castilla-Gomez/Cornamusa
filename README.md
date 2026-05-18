@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.92.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.93.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -51,7 +51,7 @@ imprimir("100! =", mat.factorial(100))
 - ✅ **F-cadenas con interpolación real**: `f"hola {nombre}, {edad + 10}"` evalúa cada `{expr}`.
 - ✅ **Módulos**: `importar X.Y como Z`, `desde X importar A, B como C`.
 
-**Biblioteca estándar** — veinte módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `csv`, `fechas`, `tiempo`, `azar`, `proceso`, `regex`, `red`, `sistema`, `base64`, `hashing`, `jwt`, `coleccion`, `inspeccion`, `validacion`.
+**Biblioteca estándar** — veintiún módulos: `matematicas`, `cadenas`, `funcionales`, `formato`, `archivos`, `json`, `csv`, `fechas`, `tiempo`, `azar`, `proceso`, `regex`, `red`, `sistema`, `base64`, `hashing`, `jwt`, `coleccion`, `inspeccion`, `validacion`, `argumentos`.
 
 **Implementación:**
 
@@ -197,6 +197,7 @@ Hoja de ruta resumida:
 | **v1.90** | **Cookbook ampliado: 5 recetas más (email, config, logger, csv-dicts, ordenar) — 15 totales** | ✅ |
 | **v1.91** | **Stdlib `inspeccion` — introspección de clases/instancias (19º módulo)** | ✅ |
 | **v1.92** | **Stdlib `validacion` — email/URL/fecha/rango + clase `Validador` (20º módulo)** | ✅ |
+| **v1.93** | **Stdlib `argumentos` — parser CLI estilo argparse (21º módulo)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

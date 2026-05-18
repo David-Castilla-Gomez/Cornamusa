@@ -1,0 +1,289 @@
+# Cornamusa stdlib: argumentos.cor (v1.93)
+#
+# Parser de argumentos de linea de comandos al estilo argparse,
+# pure-Cornamusa sobre `sistema.argv`. Soporta argumentos
+# posicionales, opciones con valor (`--salida ruta` / `-s ruta`) y
+# banderas booleanas (`--verboso` / `-v`).
+#
+# Uso tipico:
+#
+#   importar argumentos
+#   importar sistema
+#
+#   p = argumentos.Parser("mi-script", "Procesa archivos CSV")
+#   p.posicional("entrada", "Archivo de entrada", nulo, nulo)
+#   p.opcion("--salida", "-s", "Archivo de salida", "cadena", "out.csv")
+#   p.opcion("--max", "-m", "Numero maximo de filas", "entero", 100)
+#   p.bandera("--verboso", "-v", "Imprimir progreso")
+#
+#   args = p.parsear(sistema.argv)
+#   # args = {"entrada": "...", "--salida": "...", "--max": 100, "--verboso": ...}
+#
+#   si args["--verboso"]:
+#       imprimir("Procesando", args["entrada"], "->", args["--salida"])
+#   fin si
+#
+# Tipos soportados: "cadena", "entero", "decimal", "booleano".
+# Si pasas `nulo` como tipo se asume "cadena".
+# Si pasas `nulo` como defecto en un posicional, ese posicional es
+# obligatorio.
+#
+# `--ayuda` / `-h` se inyecta automaticamente: si aparece en
+# cualquier posicion, se imprime el texto de ayuda generado y se
+# llama a `salir(0)`.
+#
+# Errores: si el parseo falla (opcion desconocida, falta valor,
+# tipo incorrecto, posicional obligatorio ausente), se lanza
+# `ErrorDeValor` con mensaje prefijado por "argumentos:". El
+# programa puede atraparla y mostrar mensaje propio, o dejarla
+# propagar (con traceback normal).
+
+importar cadenas
+
+
+funcion _convertir(valor, tipo, nombre):
+    si tipo == nulo o tipo == "cadena":
+        retornar valor
+    fin si
+    si tipo == "entero":
+        intentar:
+            retornar entero(valor)
+        atrapar Excepcion como e:
+            lanzar ErrorDeValor(
+                "argumentos: valor invalido para " + nombre +
+                ": '" + valor + "' no es un entero")
+        fin intentar
+    fin si
+    si tipo == "decimal":
+        intentar:
+            retornar decimal(valor)
+        atrapar Excepcion como e:
+            lanzar ErrorDeValor(
+                "argumentos: valor invalido para " + nombre +
+                ": '" + valor + "' no es un decimal")
+        fin intentar
+    fin si
+    si tipo == "booleano":
+        v = cadenas.minusculas_ascii(valor)
+        si v == "verdadero" o v == "true" o v == "1" o v == "si":
+            retornar verdadero
+        fin si
+        si v == "falso" o v == "false" o v == "0" o v == "no":
+            retornar falso
+        fin si
+        lanzar ErrorDeValor(
+            "argumentos: valor invalido para " + nombre +
+            ": '" + valor + "' no es un booleano")
+    fin si
+    lanzar ErrorDeValor("argumentos: tipo desconocido: " + tipo)
+fin funcion
+
+
+clase Parser:
+    funcion __iniciar__(yo, nombre, descripcion):
+        yo.nombre = nombre
+        yo.descripcion = descripcion
+        yo.posicionales = []
+        yo.opciones = []
+        yo.banderas = []
+    fin funcion
+
+    funcion posicional(yo, nombre, ayuda, tipo, defecto):
+        # tipo: "cadena"/"entero"/"decimal"/"booleano" o nulo (= cadena).
+        # defecto: si es nulo, el posicional es obligatorio.
+        agregar(yo.posicionales, {
+            "nombre": nombre,
+            "ayuda": ayuda,
+            "tipo": tipo,
+            "defecto": defecto,
+            "obligatorio": defecto == nulo,
+        })
+    fin funcion
+
+    funcion opcion(yo, largo, corto, ayuda, tipo, defecto):
+        agregar(yo.opciones, {
+            "largo": largo,
+            "corto": corto,
+            "ayuda": ayuda,
+            "tipo": tipo,
+            "defecto": defecto,
+        })
+    fin funcion
+
+    funcion bandera(yo, largo, corto, ayuda):
+        agregar(yo.banderas, {
+            "largo": largo,
+            "corto": corto,
+            "ayuda": ayuda,
+        })
+    fin funcion
+
+    funcion _buscar_opcion(yo, flag):
+        para op en yo.opciones:
+            si op["largo"] == flag o op["corto"] == flag:
+                retornar op
+            fin si
+        fin para
+        retornar nulo
+    fin funcion
+
+    funcion _buscar_bandera(yo, flag):
+        para b en yo.banderas:
+            si b["largo"] == flag o b["corto"] == flag:
+                retornar b
+            fin si
+        fin para
+        retornar nulo
+    fin funcion
+
+    funcion ayuda(yo):
+        uso = "Uso: " + yo.nombre
+        para p en yo.posicionales:
+            si p["obligatorio"]:
+                uso = uso + " " + p["nombre"]
+            sino:
+                uso = uso + " [" + p["nombre"] + "]"
+            fin si
+        fin para
+        si longitud(yo.opciones) > 0 o longitud(yo.banderas) > 0:
+            uso = uso + " [opciones]"
+        fin si
+
+        lineas = [uso]
+        si yo.descripcion != nulo y yo.descripcion != "":
+            agregar(lineas, "")
+            agregar(lineas, yo.descripcion)
+        fin si
+
+        si longitud(yo.posicionales) > 0:
+            agregar(lineas, "")
+            agregar(lineas, "Argumentos posicionales:")
+            para p en yo.posicionales:
+                linea = "  " + p["nombre"] + "  " + p["ayuda"]
+                si no p["obligatorio"]:
+                    linea = linea + " (defecto: " + cadena(p["defecto"]) + ")"
+                fin si
+                agregar(lineas, linea)
+            fin para
+        fin si
+
+        si longitud(yo.opciones) > 0:
+            agregar(lineas, "")
+            agregar(lineas, "Opciones:")
+            para op en yo.opciones:
+                tipo_str = "cadena"
+                si op["tipo"] != nulo:
+                    tipo_str = op["tipo"]
+                fin si
+                linea = "  " + op["largo"]
+                si op["corto"] != nulo y op["corto"] != "":
+                    linea = linea + ", " + op["corto"]
+                fin si
+                linea = linea + " <" + tipo_str + ">  " + op["ayuda"]
+                si op["defecto"] != nulo:
+                    linea = linea + " (defecto: " + cadena(op["defecto"]) + ")"
+                fin si
+                agregar(lineas, linea)
+            fin para
+        fin si
+
+        agregar(lineas, "")
+        agregar(lineas, "Banderas:")
+        para b en yo.banderas:
+            linea = "  " + b["largo"]
+            si b["corto"] != nulo y b["corto"] != "":
+                linea = linea + ", " + b["corto"]
+            fin si
+            linea = linea + "  " + b["ayuda"]
+            agregar(lineas, linea)
+        fin para
+        agregar(lineas, "  --ayuda, -h  Muestra este mensaje y sale")
+
+        retornar cadenas.unir(lineas, "\n")
+    fin funcion
+
+    funcion parsear(yo, args):
+        # args: lista de cadenas (sistema.argv-style: args[0] es el
+        # nombre del script, args[1:] son los reales).
+        resultado = {}
+
+        # Detectar --ayuda / -h en cualquier posicion
+        para a en args:
+            si a == "--ayuda" o a == "-h":
+                imprimir(yo.ayuda())
+                salir(0)
+            fin si
+        fin para
+
+        # Inicializar resultado con defectos
+        para op en yo.opciones:
+            resultado[op["largo"]] = op["defecto"]
+        fin para
+        para b en yo.banderas:
+            resultado[b["largo"]] = falso
+        fin para
+        para p en yo.posicionales:
+            si no p["obligatorio"]:
+                resultado[p["nombre"]] = p["defecto"]
+            fin si
+        fin para
+
+        idx_pos = 0
+        posicionales_vistos = []
+        i = 1
+
+        mientras i < longitud(args):
+            arg = args[i]
+
+            ban = yo._buscar_bandera(arg)
+            si ban != nulo:
+                resultado[ban["largo"]] = verdadero
+                i = i + 1
+                continuar
+            fin si
+
+            op = yo._buscar_opcion(arg)
+            si op != nulo:
+                si i + 1 >= longitud(args):
+                    lanzar ErrorDeValor(
+                        "argumentos: opcion " + arg + " requiere un valor")
+                fin si
+                valor = args[i + 1]
+                resultado[op["largo"]] = _convertir(valor, op["tipo"], arg)
+                i = i + 2
+                continuar
+            fin si
+
+            si longitud(arg) > 0 y arg[0] == "-":
+                lanzar ErrorDeValor("argumentos: opcion desconocida: " + arg)
+            fin si
+
+            si idx_pos >= longitud(yo.posicionales):
+                lanzar ErrorDeValor(
+                    "argumentos: argumento posicional inesperado: " + arg)
+            fin si
+            p = yo.posicionales[idx_pos]
+            resultado[p["nombre"]] = _convertir(arg, p["tipo"], p["nombre"])
+            agregar(posicionales_vistos, p["nombre"])
+            idx_pos = idx_pos + 1
+            i = i + 1
+        fin mientras
+
+        para p en yo.posicionales:
+            si p["obligatorio"]:
+                visto = falso
+                para nombre en posicionales_vistos:
+                    si nombre == p["nombre"]:
+                        visto = verdadero
+                    fin si
+                fin para
+                si no visto:
+                    lanzar ErrorDeValor(
+                        "argumentos: argumento posicional obligatorio ausente: " + p["nombre"])
+                fin si
+            fin si
+        fin para
+
+        retornar resultado
+    fin funcion
+fin clase

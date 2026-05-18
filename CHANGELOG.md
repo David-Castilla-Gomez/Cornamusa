@@ -6,6 +6,142 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.93.0] — 2026-05-18 — Stdlib `argumentos`: parser CLI estilo argparse (21º módulo)
+
+Nuevo módulo `stdlib/argumentos.cor` con un `Parser` pure-Cornamusa
+para construir scripts CLI con argumentos posicionales, opciones
+con valor (`--max 100` / `-m 100`) y banderas booleanas
+(`--verboso` / `-v`). Inyecta `--ayuda` / `-h` automáticamente,
+genera texto de ayuda y lanza `ErrorDeValor` atrapable en
+condiciones de error.
+
+```cornamusa
+importar argumentos
+importar sistema
+
+p = argumentos.Parser("procesar-csv", "Procesa un archivo CSV")
+p.posicional("entrada", "Archivo CSV de entrada", nulo, nulo)
+p.posicional("salida", "Archivo CSV de salida", "cadena", "out.csv")
+p.opcion("--max-filas", "-m", "Limite de filas", "entero", 1000)
+p.bandera("--verboso", "-v", "Imprimir progreso")
+
+args = p.parsear(sistema.argv)
+
+si args["--verboso"]:
+    imprimir("Procesando", args["entrada"], "→", args["salida"])
+fin si
+```
+
+### API del `Parser`
+
+| Método | Qué hace |
+|---|---|
+| `Parser(nombre, descripcion)` | crea el parser |
+| `posicional(nombre, ayuda, tipo, defecto)` | argumento posicional. Si `defecto == nulo`, es obligatorio; si `tipo == nulo`, se asume `"cadena"` |
+| `opcion(largo, corto, ayuda, tipo, defecto)` | opción con valor (`--flag valor` / `-c valor`). `corto` puede ser `nulo` |
+| `bandera(largo, corto, ayuda)` | flag booleana sin valor; defecto siempre `falso` |
+| `parsear(args)` | parsea `args` (lista, normalmente `sistema.argv`) y devuelve un dict |
+| `ayuda()` | devuelve el texto de ayuda generado |
+
+### Tipos soportados
+
+- `"cadena"` — sin conversión.
+- `"entero"` — convertido con `entero(...)`. Si falla → `ErrorDeValor` con mensaje claro.
+- `"decimal"` — convertido con `decimal(...)`.
+- `"booleano"` — acepta `verdadero/true/1/si` (case-insensitive ASCII) y `falso/false/0/no`.
+
+### Inyección automática de `--ayuda` / `-h`
+
+Si `--ayuda` o `-h` aparecen en cualquier posición de los argumentos
+parseados, el parser imprime `p.ayuda()` y llama a `salir(0)`. No
+es necesario declararlas — siempre están disponibles.
+
+### Errores atrapables
+
+Todos los errores de parseo son `ErrorDeValor` con mensaje prefijado
+por `"argumentos:"`:
+
+- `opcion desconocida: --xyz`
+- `opcion --n requiere un valor`
+- `valor invalido para --n: 'abc' no es un entero`
+- `argumento posicional obligatorio ausente: archivo`
+- `argumento posicional inesperado: extra`
+
+Se atrapan con `atrapar ErrorDeValor como e:` igual que cualquier
+otra excepción del lenguaje. El programa puede mostrar mensaje
+propio + `salir(2)` siguiendo la convención POSIX.
+
+### Pure-Cornamusa
+
+Sin nativas nuevas — el módulo es ~200 líneas de Cornamusa puro
+que componen sobre lo que ya existe: `sistema.argv` (v1.10),
+`cadenas.unir`/`minusculas_ascii`, `agregar`/`longitud`, dicts y
+listas mutables, `intentar/atrapar`, `lanzar ErrorDeValor`.
+Demuestra que la stdlib puede crecer en pure-Cornamusa cuando no
+hay necesidad de tocar el runtime.
+
+### Composable con `validacion` (v1.92)
+
+Patrón natural: parsear args + validar:
+
+```cornamusa
+importar argumentos
+importar validacion
+
+p = argumentos.Parser("crear-usuario", "")
+p.opcion("--email", "-e", "Correo", "cadena", nulo)
+p.opcion("--edad", "-a", "Edad", "entero", nulo)
+
+args = p.parsear(sistema.argv)
+
+v = validacion.Validador()
+v.verificar("email", validacion.es_email(args["--email"]), "email no valido")
+v.verificar("edad",  validacion.en_rango(args["--edad"], 18, 120), "edad fuera de rango")
+
+si no v.valido():
+    imprimir(v.resumen())
+    salir(1)
+fin si
+```
+
+### Tests
+
+20+ asserts en `test_bytecode_argumentos.c`:
+
+- Parseo básico con posicional + opción + bandera.
+- Defaults cuando no se pasan opciones.
+- Forma corta (`-m`) equivalente a la larga (`--max`).
+- Tipos: entero, decimal, booleano (`verdadero`/`true`/`1`/`si` y `falso`/`false`/`0`/`no`).
+- Errores: opción desconocida, posicional obligatorio ausente,
+  tipo inválido, opción sin valor.
+- Posicional con defecto (no obligatorio).
+- Ayuda incluye nombre, descripción, posicionales, opciones
+  larga+corta, banderas, mención de `--ayuda`.
+
+### Ejemplo
+
+`examples/84_argumentos.cor` con 4 secciones:
+
+1. Parser típico para un comando "procesar-csv".
+2. Texto de ayuda generado automáticamente.
+3. Manejo de errores con `atrapar`.
+4. Combinación con `validacion.Validador` para validar args.
+
+### Archivos
+
+- `stdlib/argumentos.cor` — Parser + helper `_convertir` (~250 líneas).
+- `tests/unit/test_bytecode_argumentos.c` — 11 bloques, 20+ asserts.
+- `examples/84_argumentos.cor` — 4 patterns.
+- `docs/referencia.md` §16: nuevo módulo añadido.
+- `README.md`, `FAQ.md`, `docs/introduccion.md`, `docs/tutorial.md`:
+  stdlib pasa de veinte a **veintiún módulos**.
+
+### Estado
+
+255 tests verde, lint+fmt limpios. Stdlib alcanza **21 módulos**.
+
+---
+
 ## [1.92.0] — 2026-05-18 — Stdlib `validacion`: predicados de datos + clase `Validador` (20º módulo)
 
 Nuevo módulo `stdlib/validacion.cor` con predicados de validación
