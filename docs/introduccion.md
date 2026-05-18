@@ -125,6 +125,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Filesystem: 4 nativos (`es_directorio`, `listar`, `cwd`, `crear`) + wrappers en `archivos` y `ruta` | v1.97 | ✅ |
 | `cornamusa nuevo <nombre>` — scaffold de proyecto con main + tests/stdlib pruebas + README + .gitignore | v1.98 | ✅ |
 | FS completo: `archivo_borrar`, `directorio_borrar`, `archivo_info` (tamano + mtime) + métodos en `Ruta` (`eliminar`, `tamano`, `mtime_ms`) | v1.99 | ✅ |
+| Glob recursivo: `ruta.recorrer/encontrar` + métodos `Ruta.coincide/recorrer/encontrar` (matcher `*` `?`) | v1.100 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

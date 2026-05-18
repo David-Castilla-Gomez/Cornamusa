@@ -1,0 +1,96 @@
+# 89_glob_recorrer.cor — busqueda recursiva en arbol de archivos (v1.100).
+#
+# Stdlib `ruta` ahora soporta:
+#   - matcher glob basico (* y ?)
+#   - recorrer(dir): DFS recursivo, devuelve lista de Rutas
+#   - encontrar(dir, patron): filtra recorrer por glob sobre nombres
+#   - Metodos correspondientes en clase Ruta
+
+importar ruta
+importar archivos
+
+# ─── 1. Glob matcher sobre un solo nombre ───────────────────────
+
+imprimir("--- 1. Glob matcher ---")
+imprimir("*.cor en 'hola.cor':   ", ruta.Ruta("hola.cor").coincide("*.cor"))
+imprimir("*.cor en 'hola.txt':   ", ruta.Ruta("hola.txt").coincide("*.cor"))
+imprimir("test_* en 'test_main': ", ruta.Ruta("test_main").coincide("test_*"))
+imprimir("?? en 'ab':            ", ruta.Ruta("ab").coincide("??"))
+imprimir("?? en 'abc':           ", ruta.Ruta("abc").coincide("??"))
+imprimir("")
+
+# ─── 2. Recorrer un directorio (no recursivo, mas dentro) ───────
+
+imprimir("--- 2. Recorrer stdlib (DFS recursivo) ---")
+todos = ruta.recorrer("stdlib")
+imprimir("Total entradas: ", longitud(todos))
+imprimir("Primeras 5 entradas:")
+para r en todos[0:5]:
+    si r.es_directorio():
+        marcador = "[dir]"
+    sino:
+        marcador = "[arch]"
+    fin si
+    imprimir("  ", marcador, r.cadena())
+fin para
+imprimir("")
+
+# ─── 3. Encontrar archivos por patron ───────────────────────────
+
+imprimir("--- 3. Encontrar *.cor en examples ---")
+ejemplos = ruta.encontrar("examples", "*.cor")
+imprimir("Archivos .cor:", longitud(ejemplos))
+imprimir("Primeros 3:")
+para e en ejemplos[0:3]:
+    imprimir("  ", e.nombre())
+fin para
+imprimir("")
+
+# ─── 4. Busqueda recursiva en arbol con sub-directorios ─────────
+
+imprimir("--- 4. test_*.c recursivo en tests/ ---")
+tests_c = ruta.encontrar("tests", "test_*.c")
+imprimir("Encontrados:", longitud(tests_c), "archivos")
+imprimir("Ejemplos:")
+para t en tests_c[0:3]:
+    imprimir("  ", t.cadena())
+fin para
+imprimir("")
+
+# ─── 5. Patron real: total de bytes en stdlib/ ──────────────────
+
+imprimir("--- 5. Tamano total de stdlib/*.cor ---")
+total = 0
+para r en ruta.encontrar("stdlib", "*.cor"):
+    total = total + r.tamano()
+fin para
+imprimir("Total: ", total, "bytes en", longitud(ruta.encontrar("stdlib", "*.cor")),
+         "archivos .cor")
+imprimir("")
+
+# ─── 6. Filtrar via metodo coincide() ───────────────────────────
+
+imprimir("--- 6. Archivos *.md en docs/ (no recursivo dentro de docs) ---")
+para r en ruta.Ruta("docs").listar_rutas():
+    si r.coincide("*.md"):
+        imprimir("  ", r.nombre(), "(", r.tamano(), "bytes)")
+    fin si
+fin para
+imprimir("")
+
+# ─── 7. Encontrar el archivo mas reciente ───────────────────────
+
+imprimir("--- 7. Archivo mas reciente en examples/ ---")
+todos_cor = ruta.encontrar("examples", "*.cor")
+si longitud(todos_cor) > 0:
+    mas_reciente = todos_cor[0]
+    mejor_mtime = mas_reciente.mtime_ms()
+    para r en todos_cor[1:]:
+        m = r.mtime_ms()
+        si m > mejor_mtime:
+            mas_reciente = r
+            mejor_mtime = m
+        fin si
+    fin para
+    imprimir("  ", mas_reciente.nombre(), "(mtime:", mejor_mtime, ")")
+fin si

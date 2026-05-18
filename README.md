@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.99.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.100.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -204,6 +204,7 @@ Hoja de ruta resumida:
 | **v1.97** | **Filesystem: `archivo_es_directorio`, `directorio_listar`, `obtener_cwd`, `directorio_crear` + `ruta.cwd()` y métodos `Ruta.es_archivo/es_directorio/listar`** | ✅ |
 | **v1.98** | **`cornamusa nuevo <nombre>` — scaffold de proyecto con main + tests usando stdlib `pruebas`** | ✅ |
 | **v1.99** | **FS completo: `archivo_borrar`, `directorio_borrar`, `archivo_info` (tamano + mtime) + métodos en `Ruta`** | ✅ |
+| **v1.100** | **Glob recursivo: `recorrer(dir)`, `encontrar(dir, patron)` + métodos `Ruta.coincide/recorrer/encontrar` (`*` y `?`)** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

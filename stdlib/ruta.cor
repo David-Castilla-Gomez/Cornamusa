@@ -278,6 +278,116 @@ funcion normalizar(s):
 fin funcion
 
 
+# ─── Glob matcher (v1.100) ───────────────────────────────────────
+#
+# Soporta dos metacaracteres clasicos:
+#   *    cero o mas caracteres (cualquiera, NO incluye separadores)
+#   ?    exactamente un caracter
+# No soporta `**` recursivo, ni clases `[abc]`, ni alternancias.
+# Para necesidades mas complejas, usar `stdlib/regex`.
+#
+# Implementacion: dos punteros + backtracking en `*`. O(n*m) en el
+# peor caso. Suficiente para patrones tipicos (`*.cor`, `test_*.txt`).
+
+funcion _coincide_glob(s, p):
+    si_p = 0
+    pi_p = 0
+    estrella_s = -1
+    estrella_p = -1
+    n_s = longitud(s)
+    n_p = longitud(p)
+    mientras si_p < n_s:
+        si pi_p < n_p y (p[pi_p] == "?" o p[pi_p] == s[si_p]):
+            si_p = si_p + 1
+            pi_p = pi_p + 1
+        sino:
+            si pi_p < n_p y p[pi_p] == "*":
+                estrella_p = pi_p
+                estrella_s = si_p
+                pi_p = pi_p + 1
+            sino:
+                si estrella_p != -1:
+                    pi_p = estrella_p + 1
+                    estrella_s = estrella_s + 1
+                    si_p = estrella_s
+                sino:
+                    retornar falso
+                fin si
+            fin si
+        fin si
+    fin mientras
+    # Consumir asteriscos al final del patron
+    mientras pi_p < n_p y p[pi_p] == "*":
+        pi_p = pi_p + 1
+    fin mientras
+    retornar pi_p >= n_p
+fin funcion
+
+
+# ─── Recorrido recursivo del filesystem (v1.100) ─────────────────
+#
+# `recorrer(directorio)` devuelve una LISTA (no generador) con
+# todas las Rutas alcanzables desde `directorio`, recursivamente,
+# en orden DFS. Incluye archivos Y directorios. NO sigue symlinks
+# (depende de la implementacion del FS subyacente).
+#
+# `encontrar(directorio, patron)` filtra `recorrer` por el nombre
+# (no la ruta completa) usando el matcher glob.
+#
+# Limites: si el arbol es enorme, todo se carga en memoria. Para
+# arboles grandes el patron recomendado es `recorrer` y procesar
+# manualmente filtrando in-flight.
+
+funcion recorrer(directorio):
+    salida = []
+    _recorrer_aux(directorio, salida)
+    retornar salida
+fin funcion
+
+
+funcion _recorrer_aux(directorio_str, salida):
+    # `directorio_str` puede ser cadena o Ruta. Normalizamos.
+    si tipo(directorio_str) == "instancia":
+        d_str = directorio_str.s
+    sino:
+        d_str = directorio_str
+    fin si
+    # Pre-declarar `entradas` para que sobreviva al `intentar`.
+    # En cornamusa las variables declaradas dentro de un `intentar`
+    # NO escapan al scope exterior (sub-scope).
+    entradas = []
+    fallo = falso
+    intentar:
+        entradas = archivos.listar(d_str)
+    atrapar ErrorDeIO como e:
+        fallo = verdadero
+    fin intentar
+    si fallo:
+        retornar nulo
+    fin si
+    para nombre en entradas:
+        sub = Ruta(unir_partes([d_str, nombre]))
+        agregar(salida, sub)
+        si sub.es_directorio():
+            _recorrer_aux(sub.s, salida)
+        fin si
+    fin para
+fin funcion
+
+
+funcion encontrar(directorio, patron):
+    # Devuelve lista de Rutas cuyo NOMBRE (ultimo componente)
+    # coincide con `patron`. Recorre todo el arbol.
+    coincidencias = []
+    para r en recorrer(directorio):
+        si _coincide_glob(r.nombre(), patron):
+            agregar(coincidencias, r)
+        fin si
+    fin para
+    retornar coincidencias
+fin funcion
+
+
 # ─── Clase Ruta (envoltorio OO) ──────────────────────────────────
 
 clase Ruta:
@@ -427,6 +537,37 @@ clase Ruta:
     funcion mtime_ms(yo):
         # Atajo a info["mtime_epoch_ms"]. Milisegundos epoch.
         retornar archivos.info(yo.s)["mtime_epoch_ms"]
+    fin funcion
+
+    # v1.100: recorrido y busqueda.
+
+    funcion recorrer(yo):
+        # Lista de Rutas alcanzables desde `yo` recursivamente (DFS).
+        # Incluye archivos Y directorios. Si `yo` no es directorio,
+        # retorna lista vacia.
+        salida = []
+        _recorrer_aux(yo.s, salida)
+        retornar salida
+    fin funcion
+
+    funcion encontrar(yo, patron):
+        # Como `recorrer` pero filtrado por glob sobre el nombre
+        # del ultimo componente (`*.cor`, `test_*.txt`, ...).
+        salida = []
+        _recorrer_aux(yo.s, salida)
+        coincidencias = []
+        para r en salida:
+            si _coincide_glob(r.nombre(), patron):
+                agregar(coincidencias, r)
+            fin si
+        fin para
+        retornar coincidencias
+    fin funcion
+
+    funcion coincide(yo, patron):
+        # Verdadero si el nombre de `yo` matchea `patron` glob.
+        # Util para filtrar manualmente o comprobar un solo path.
+        retornar _coincide_glob(yo.nombre(), patron)
     fin funcion
 fin clase
 

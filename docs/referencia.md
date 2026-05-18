@@ -978,6 +978,14 @@ Wrappers correspondientes en `stdlib/archivos`: `es_directorio(ruta)`, `listar(r
 
 Wrappers en `stdlib/archivos`: `eliminar(ruta)`, `eliminar_directorio(ruta)`, `info(ruta)`. Built-ins: `archivo_borrar`, `directorio_borrar`, `archivo_info`. `mtime_epoch_ms` tiene precisión por-segundo en Windows y sub-segundo en POSIX.
 
+**v1.100**: glob recursivo.
+- `ruta.recorrer(directorio)` → lista de `Ruta` con todas las entradas alcanzables desde `directorio` recursivamente (DFS, incluye archivos y directorios).
+- `ruta.encontrar(directorio, patron)` → como `recorrer` filtrado por glob sobre el **nombre** (no la ruta completa).
+- `r.recorrer()` / `r.encontrar(patron)` — métodos equivalentes sobre instancia.
+- `r.coincide(patron)` → verdadero si el nombre de `r` matchea `patron` glob.
+
+Matcher glob soporta `*` (cero o más caracteres) y `?` (uno). No soporta `**` recursivo, clases `[abc]`, ni alternancias — para eso usar `stdlib/regex`. Implementación iterativa O(n·m) con backtracking. Si la ruta no es directorio o no es accesible, `recorrer`/`encontrar` retornan lista vacía silenciosamente.
+
 ### `pruebas` (v1.96)
 
 Framework de testing minimalista pure-Cornamusa. Útil para scripts de comprobación lineales (asserts standalone) o tests organizados (clase `Suite`).

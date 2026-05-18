@@ -6,6 +6,143 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.100.0] — 2026-05-18 — Glob recursivo en `stdlib/ruta`
+
+Añade matcher glob básico (`*`, `?`) y dos funciones de recorrido
+recursivo del filesystem a `stdlib/ruta`. Pure-Cornamusa sobre las
+nativas FS de v1.97 (`directorio_listar`, `archivo_es_directorio`).
+Habilita scripts tipo "encontrar todos los `*.cor` del proyecto"
+en una sola línea.
+
+```cornamusa
+importar ruta
+
+# Recorrer recursivamente
+todos = ruta.recorrer("examples")           # lista de Rutas (DFS)
+
+# Encontrar por patron glob
+cors = ruta.encontrar("examples", "*.cor")  # solo .cor
+tests = ruta.encontrar("tests", "test_*.c") # recurre tests/unit/
+
+# Metodos sobre Ruta
+r = ruta.Ruta("stdlib")
+r.recorrer()                # lista
+r.encontrar("*.cor")        # filtrado
+r.coincide("*.cor")         # un solo path
+```
+
+### Matcher glob
+
+Implementación iterativa O(n·m) con backtracking en `*`. Soporta:
+
+- `*` — cero o más caracteres cualesquiera.
+- `?` — exactamente un carácter.
+
+NO soporta:
+
+- `**` recursivo (toda búsqueda con `encontrar` ya es recursiva).
+- Clases `[abc]`.
+- Alternancias `{a,b}`.
+- Negación `[!abc]`.
+
+Para necesidades más complejas, usar `stdlib/regex`. La función
+interna es `_coincide_glob(cadena, patron)`.
+
+### Recorrido recursivo
+
+`ruta.recorrer(directorio)` devuelve una **lista** (no generador
+lazy) con todas las Rutas alcanzables desde `directorio`
+recursivamente, en orden DFS. Incluye archivos Y directorios. Si la
+ruta no es un directorio accesible, retorna lista vacía
+silenciosamente — para distinguir "vacío" de "inaccesible", usar
+`archivos.es_directorio` antes.
+
+`ruta.encontrar(directorio, patron)` es equivalente a
+`recorrer + filter` por glob sobre el **nombre** (no la ruta
+completa). Útil para `*.cor`, `test_*.txt`, etc.
+
+### Métodos en `Ruta`
+
+| Método | Equivalente |
+|---|---|
+| `r.recorrer()` | `ruta.recorrer(r.cadena())` |
+| `r.encontrar(patron)` | `ruta.encontrar(r.cadena(), patron)` |
+| `r.coincide(patron)` | `_coincide_glob(r.nombre(), patron)` |
+
+### Pitfall encontrado durante el desarrollo
+
+Inicialmente el método `Ruta.recorrer(yo)` llamaba a la función
+módulo `recorrer(yo.s)`. Pero dentro del método de la clase, el
+nombre `recorrer` se resolvía al propio método (vía `yo`), causando
+una llamada infinita con un argumento de tipo incorrecto. Fix:
+llamar al helper `_recorrer_aux(yo.s, salida)` directamente, sin
+pasar por el wrapper del módulo. Mismo patrón que se usó en
+v1.95+ para `Ruta.unir` con `unir_partes`.
+
+Además: `intentar/atrapar` tiene un sub-scope donde las variables
+declaradas dentro NO escapan al exterior (a diferencia de `si/sino`
+desde v1.95). Por eso `_recorrer_aux` pre-declara `entradas = []`
+y `fallo = falso` antes del `intentar`.
+
+### Tests
+
+10 bloques en `test_bytecode_glob.c`:
+
+- Glob básico con extensiones (`*.cor` matchea `hola.cor` pero no
+  `hola.txt`).
+- Glob con `?` (`???` matchea `abc` exacto, no `ab` ni `abcd`).
+- Prefijo + asterisco intermedio (`test_*.c` matchea
+  `test_main.c` pero no `main_test.c`).
+- Patrón con solo asteriscos matchea cualquier cosa, incluso vacío.
+- `recorrer` cuenta entradas de un directorio real.
+- `encontrar` filtra por patrón.
+- Recorrido recursivo entra en sub-directorios.
+- `recorrer` sobre archivo (no directorio) → lista vacía.
+- Métodos `Ruta.recorrer`/`Ruta.encontrar`.
+- `encontrar` devuelve `Ruta`s encadenables (no cadenas).
+
+### Ejemplo
+
+`examples/89_glob_recorrer.cor` con 7 secciones:
+
+1. Matcher glob sobre nombres.
+2. Recorrer `stdlib/` (~23 entradas).
+3. Encontrar `*.cor` en `examples/` (89 archivos).
+4. `test_*.c` recursivo en `tests/` (104 archivos).
+5. Total de bytes en `stdlib/*.cor` (~103 KiB).
+6. Filtrar via método `coincide()` para archivos `*.md`.
+7. Encontrar el archivo más reciente por `mtime_ms`.
+
+### Pendiente futuro
+
+- Generador lazy (`producir`) para no cargar árboles enormes en
+  memoria.
+- `**` recursivo en patrones (`src/**/*.cor`).
+- Clases `[a-z]` en glob.
+- Patrón con paths (no solo nombres), tipo `examples/test_*.cor`.
+
+### Archivos
+
+- `stdlib/ruta.cor` — matcher `_coincide_glob`, helper
+  `_recorrer_aux`, funciones módulo `recorrer`/`encontrar`, 3
+  métodos nuevos en `Ruta` (~80 líneas pure-Cornamusa añadidas).
+- `tests/unit/test_bytecode_glob.c` — 10 bloques.
+- `examples/89_glob_recorrer.cor` — 7 secciones demo.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+269 tests verde, lint+fmt limpios.
+
+### Nota sobre el número de versión
+
+Saltamos de v1.99 a v1.100 (no v2.0). v2.0 está reservada para el
+hito gordo (concurrencia, async/await, NaN-boxing); las releases
+incrementales siguen como 1.NNN.
+
+---
+
 ## [1.99.0] — 2026-05-18 — Filesystem completo: borrado e info
 
 Cierra el set de operaciones de FS abiertas en v1.97. Añade
