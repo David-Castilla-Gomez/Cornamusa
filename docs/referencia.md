@@ -895,6 +895,14 @@ JSON Web Tokens HS256 (RFC 7519) sobre `json` + `base64` + `hashing`:
 
 `sistema.argv` — lista de cadenas con los argumentos del programa.
 
+**v1.104**: entorno del proceso.
+- `sistema.obtener_variable(nombre)` → cadena con el valor, o `nulo` si no está definida.
+- `sistema.establecer_variable(nombre, valor)` → asigna. Si `valor == nulo`, borra la variable.
+- `sistema.variables()` → dict completo `{nombre: valor}` del entorno actual.
+- `sistema.inicio()` → cadena con el directorio HOME (POSIX) o USERPROFILE (Windows). Separadores normalizados a `/`.
+
+Built-ins subyacentes: `obtener_variable_entorno`, `establecer_variable_entorno`, `variables_entorno`, `directorio_inicio`. Portabilidad: `getenv`/`setenv` POSIX, `getenv`/`_putenv_s` Windows. Listado completo via `environ` (POSIX) / `_environ` (Windows).
+
 ### `coleccion` (v1.88)
 
 Estructuras de datos clásicas implementadas con clases sobre listas mutables:

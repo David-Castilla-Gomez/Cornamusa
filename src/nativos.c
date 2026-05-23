@@ -1327,6 +1327,166 @@ static Valor nativa_obtener_argv(EvalError *err, int n_args, Valor *args,
     return valor_lista(l);
 }
 
+/* v1.104: variables de entorno y directorio de inicio del usuario.
+ *
+ * Lectura via getenv() (estandar C). Escritura: setenv POSIX, _putenv_s
+ * Windows. Listado completo via `environ` (POSIX) o `_environ` (Windows).
+ *
+ * `obtener_variable_entorno(nombre)` -> cadena o nulo si no existe.
+ * `establecer_variable_entorno(nombre, valor)` -> nulo. valor=""
+ *   normalmente no quita la variable; usa nulo para borrarla.
+ * `variables_entorno()` -> dict {nombre: valor} de todas.
+ * `directorio_inicio()` -> cadena con HOME (POSIX) o USERPROFILE
+ *   (Windows). Separadores normalizados a "/".
+ */
+#ifdef _WIN32
+extern char **_environ;
+#define cor_environ _environ
+#else
+extern char **environ;
+#define cor_environ environ
+#endif
+
+static Valor nativa_obtener_variable_entorno(EvalError *err, int n_args,
+                                                Valor *args, int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: obtener_variable_entorno() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: obtener_variable_entorno() requiere una cadena");
+    }
+    int len = args[0].como.cadena.longitud;
+    char buf_stack[256];
+    char *nombre = buf_stack;
+    char *nombre_heap = NULL;
+    if (len + 1 > (int)sizeof(buf_stack)) {
+        nombre_heap = (char *)malloc((size_t)len + 1);
+        if (!nombre_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        nombre = nombre_heap;
+    }
+    memcpy(nombre, args[0].como.cadena.texto, (size_t)len);
+    nombre[len] = '\0';
+
+    const char *v = getenv(nombre);
+    if (nombre_heap) free(nombre_heap);
+    if (v == NULL) return valor_nulo();
+    return valor_cadena_duplicar(v, (int)strlen(v));
+}
+
+static Valor nativa_establecer_variable_entorno(EvalError *err, int n_args,
+                                                   Valor *args, int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: establecer_variable_entorno() requiere 2 argumentos, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: establecer_variable_entorno(): nombre debe ser cadena");
+    }
+    if (args[1].tipo != VAL_CADENA && args[1].tipo != VAL_NULO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: establecer_variable_entorno(): valor debe ser cadena o nulo");
+    }
+    int nlen = args[0].como.cadena.longitud;
+    char *nombre = (char *)malloc((size_t)nlen + 1);
+    if (!nombre) return error_nativa(err, linea, columna, "memoria insuficiente");
+    memcpy(nombre, args[0].como.cadena.texto, (size_t)nlen);
+    nombre[nlen] = '\0';
+
+    int rc;
+    if (args[1].tipo == VAL_NULO) {
+        /* Borrar la variable */
+#ifdef _WIN32
+        rc = _putenv_s(nombre, "");
+#else
+        rc = unsetenv(nombre);
+#endif
+    } else {
+        int vlen = args[1].como.cadena.longitud;
+        char *valor = (char *)malloc((size_t)vlen + 1);
+        if (!valor) {
+            free(nombre);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        memcpy(valor, args[1].como.cadena.texto, (size_t)vlen);
+        valor[vlen] = '\0';
+#ifdef _WIN32
+        rc = _putenv_s(nombre, valor);
+#else
+        rc = setenv(nombre, valor, 1);
+#endif
+        free(valor);
+    }
+    free(nombre);
+    if (rc != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeSistema: no se pudo establecer la variable de entorno");
+    }
+    return valor_nulo();
+}
+
+static Valor nativa_variables_entorno(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: variables_entorno() no acepta argumentos");
+    }
+    Diccionario *d = dicc_nuevo();
+    if (!d) return error_nativa(err, linea, columna, "memoria insuficiente");
+    char **env = cor_environ;
+    if (env == NULL) return valor_diccionario(d);
+    for (int i = 0; env[i] != NULL; i++) {
+        const char *entry = env[i];
+        const char *eq = strchr(entry, '=');
+        if (!eq) continue;
+        int nlen = (int)(eq - entry);
+        int vlen = (int)strlen(eq + 1);
+        Valor k = valor_cadena_duplicar(entry, nlen);
+        Valor v = valor_cadena_duplicar(eq + 1, vlen);
+        if (k.tipo == VAL_NULO || v.tipo == VAL_NULO || !dicc_asignar(d, k, v)) {
+            dicc_liberar(d);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    return valor_diccionario(d);
+}
+
+static Valor nativa_directorio_inicio(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_inicio() no acepta argumentos");
+    }
+#ifdef _WIN32
+    const char *h = getenv("USERPROFILE");
+    if (!h) h = getenv("HOMEDRIVE");
+#else
+    const char *h = getenv("HOME");
+#endif
+    if (!h) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeSistema: no se pudo determinar el directorio de inicio");
+    }
+    /* Normalizar separadores a "/" como hace obtener_cwd. */
+    int len = (int)strlen(h);
+    char *copia = (char *)malloc((size_t)len + 1);
+    if (!copia) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < len; i++) {
+        copia[i] = (h[i] == '\\') ? '/' : h[i];
+    }
+    copia[len] = '\0';
+    Valor v = valor_cadena_duplicar(copia, len);
+    free(copia);
+    return v;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * JSON (v1.9)
  *
@@ -4695,6 +4855,11 @@ static const EntradaNativa NATIVAS[] = {
     {"recolectar",      10, nativa_recolectar},
     /* Sistema (v0.9.2). */
     {"obtener_argv",    12, nativa_obtener_argv},
+    /* Entorno (v1.104). */
+    {"obtener_variable_entorno",     24, nativa_obtener_variable_entorno},
+    {"establecer_variable_entorno",  27, nativa_establecer_variable_entorno},
+    {"variables_entorno",            17, nativa_variables_entorno},
+    {"directorio_inicio",            17, nativa_directorio_inicio},
     {"salir",            5, nativa_salir},
     /* I/O de archivos (v1.8). */
     {"archivo_leer",     12, nativa_archivo_leer},

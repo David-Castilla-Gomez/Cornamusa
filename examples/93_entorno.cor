@@ -1,0 +1,103 @@
+# 93_entorno.cor — variables de entorno y home (v1.104).
+#
+# `stdlib/sistema` ahora ofrece acceso al entorno del proceso:
+#   - sistema.obtener_variable(nombre)   -> cadena o nulo
+#   - sistema.establecer_variable(nombre, valor)  (nulo = borrar)
+#   - sistema.variables()                -> dict completo
+#   - sistema.inicio()                   -> home dir
+#
+# Pure-Cornamusa sobre las nativas obtener_variable_entorno,
+# establecer_variable_entorno, variables_entorno y directorio_inicio.
+
+importar sistema
+importar ruta
+
+# ─── 1. Home directory ──────────────────────────────────────────
+
+imprimir("--- 1. Directorio de inicio ---")
+home = sistema.inicio()
+imprimir("Home:", home)
+imprimir("Existe?:", ruta.Ruta(home).existe())
+imprimir("")
+
+# ─── 2. Variables tipicas del sistema ───────────────────────────
+
+imprimir("--- 2. Variables tipicas ---")
+para v en ["PATH", "USER", "USERNAME", "LANG", "SHELL", "HOME"]:
+    valor = sistema.obtener_variable(v)
+    si valor == nulo:
+        imprimir("  ", v, ": (no definida)")
+    sino:
+        # Truncar PATH que suele ser largo
+        si longitud(valor) > 60:
+            valor = valor[0:57] + "..."
+        fin si
+        imprimir("  ", v, ":", valor)
+    fin si
+fin para
+imprimir("")
+
+# ─── 3. Set / get / unset ───────────────────────────────────────
+
+imprimir("--- 3. Ciclo set / get / unset ---")
+sistema.establecer_variable("MI_APP_MODO", "produccion")
+imprimir("set:", sistema.obtener_variable("MI_APP_MODO"))
+
+sistema.establecer_variable("MI_APP_MODO", "desarrollo")
+imprimir("overwrite:", sistema.obtener_variable("MI_APP_MODO"))
+
+sistema.establecer_variable("MI_APP_MODO", nulo)
+imprimir("unset:", sistema.obtener_variable("MI_APP_MODO"))
+imprimir("")
+
+# ─── 4. Configuracion desde entorno con defaults ────────────────
+
+imprimir("--- 4. Patron: config con defaults ---")
+funcion config_o(nombre, defecto):
+    v = sistema.obtener_variable(nombre)
+    si v == nulo:
+        retornar defecto
+    fin si
+    retornar v
+fin funcion
+
+modo = config_o("CORNAMUSA_MODO", "dev")
+puerto = config_o("CORNAMUSA_PUERTO", "8080")
+log_nivel = config_o("CORNAMUSA_LOG", "info")
+imprimir("Modo:    ", modo)
+imprimir("Puerto:  ", puerto)
+imprimir("Log:     ", log_nivel)
+imprimir("")
+
+# ─── 5. Inspeccionar todas las variables ────────────────────────
+
+imprimir("--- 5. Inspeccion ---")
+todas = sistema.variables()
+imprimir("Total variables: ", longitud(todas))
+
+# Buscar las que empiezan con un prefijo
+importar cadenas
+prefijos_interesantes = ["PATH", "USER", "PROGRAM", "TEMP", "PYTHON"]
+imprimir("Variables que empiezan con prefijos comunes:")
+para k en claves(todas):
+    para pref en prefijos_interesantes:
+        si cadenas.empieza_con(k, pref):
+            v = todas[k]
+            si longitud(v) > 40:
+                v = v[0:37] + "..."
+            fin si
+            imprimir("  ", k, "=", v)
+            romper
+        fin si
+    fin para
+fin para
+imprimir("")
+
+# ─── 6. Construir ruta relativa al home ─────────────────────────
+
+imprimir("--- 6. Rutas relativas al home ---")
+cornamusa_dir = ruta.Ruta(sistema.inicio()).unir(".cornamusa")
+config_file = cornamusa_dir.unir("config.cor")
+imprimir("Dir de config:  ", cornamusa_dir.cadena())
+imprimir("Archivo config: ", config_file.cadena())
+imprimir("Existe?:        ", config_file.existe())

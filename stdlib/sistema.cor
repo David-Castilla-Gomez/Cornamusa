@@ -20,3 +20,44 @@
 # argv[0] es la ruta del archivo .cor en ejecución (cuando lo hay);
 # argv[1..] son los argumentos adicionales. Vacío en el REPL.
 argv = obtener_argv()
+
+
+# ─── Entorno (v1.104) ───────────────────────────────────────────
+#
+# Acceso a variables de entorno del proceso y al directorio de
+# inicio del usuario.
+#
+# `obtener_variable(nombre)` -> cadena con el valor, o `nulo` si la
+# variable no esta definida. No lanza error si falta — caller decide.
+#
+# `establecer_variable(nombre, valor)` -> nulo. Si `valor` es nulo,
+# se borra la variable (equivale a `unset`).
+#
+# `variables()` -> dict con todas las variables del entorno. Util
+# para inspeccion o serializacion.
+#
+# `inicio()` -> cadena con el directorio HOME (POSIX) o USERPROFILE
+# (Windows). Separadores normalizados a "/".
+#
+# Ejemplos:
+#   importar sistema
+#   path = sistema.obtener_variable("PATH")
+#   sistema.establecer_variable("MI_VAR", "valor")
+#   sistema.establecer_variable("MI_VAR", nulo)   # borrar
+#   home = sistema.inicio()                       # "/home/usuario"
+
+funcion obtener_variable(nombre):
+    retornar obtener_variable_entorno(nombre)
+fin funcion
+
+funcion establecer_variable(nombre, valor):
+    establecer_variable_entorno(nombre, valor)
+fin funcion
+
+funcion variables():
+    retornar variables_entorno()
+fin funcion
+
+funcion inicio():
+    retornar directorio_inicio()
+fin funcion

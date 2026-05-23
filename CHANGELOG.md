@@ -6,6 +6,153 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.104.0] — 2026-05-23 — Variables de entorno y directorio de inicio
+
+Acceso al entorno del proceso desde scripts Cornamusa: cuatro
+nativas C nuevas (`obtener_variable_entorno`,
+`establecer_variable_entorno`, `variables_entorno`,
+`directorio_inicio`) más wrappers idiomáticos en `stdlib/sistema`.
+Hueco real para scripts CLI que necesitan `$HOME`, `$PATH`, o
+configuración via env vars con defaults.
+
+```cornamusa
+importar sistema
+
+# Home directory
+home = sistema.inicio()                    # "C:/Users/david" o "/home/user"
+
+# Variables tipicas con default
+puerto = sistema.obtener_variable("MI_APP_PUERTO")
+si puerto == nulo:
+    puerto = "8080"
+fin si
+
+# Set / unset
+sistema.establecer_variable("MI_VAR", "valor")
+sistema.establecer_variable("MI_VAR", nulo)   # unset
+
+# Listar todas
+para nombre, valor en sistema.variables():
+    imprimir(nombre, "=", valor)
+fin para
+```
+
+### Nativas C nuevas
+
+| Nativa | Devuelve | Errores |
+|---|---|---|
+| `obtener_variable_entorno(nombre)` | cadena o `nulo` | `ErrorDeTipo` si `nombre` no es cadena |
+| `establecer_variable_entorno(nombre, valor)` | `nulo` | `nombre` cadena; `valor` cadena o `nulo` (= unset). `ErrorDeSistema` si falla |
+| `variables_entorno()` | dict `{nombre: valor}` | — |
+| `directorio_inicio()` | cadena con separadores `/` | `ErrorDeSistema` si no se determina |
+
+Portabilidad:
+- Lectura: `getenv()` (estándar C, portable).
+- Escritura: `setenv()` POSIX, `_putenv_s()` Windows.
+- Unset: `unsetenv()` POSIX, `_putenv_s(nombre, "")` Windows.
+- Listado: `environ` POSIX, `_environ` Windows (declarados `extern char **`).
+- Home: `HOME` POSIX, `USERPROFILE` con fallback a `HOMEDRIVE` en Windows.
+
+`directorio_inicio()` normaliza `\` a `/` antes de retornar, coherente con la convención de `obtener_cwd()` (v1.97) y `stdlib/ruta`.
+
+### Wrappers en `stdlib/sistema`
+
+API idiomática en castellano:
+
+- `sistema.obtener_variable(nombre)`
+- `sistema.establecer_variable(nombre, valor)` — `valor=nulo` borra.
+- `sistema.variables()` — dict completo.
+- `sistema.inicio()` — home como cadena.
+
+### Pitfall encontrado y corregido
+
+El registro inicial de `obtener_variable_entorno` tenía longitud
+incorrecta (puse 25 en vez de 24). El lookup de la tabla de
+globales usa la longitud para buscar, así que el nombre nunca
+hacía match. El mensaje de error fue elocuente: `nombre
+'obtener_variable_entorno' no esta definido (¿quisiste decir
+'obtener_variable_entorno'?)` — el sugeridor encontraba el nombre
+correcto pero la búsqueda exacta fallaba por la longitud. Fix
+trivial: contar bien (`obtener_variable_entorno` son 24 caracteres).
+
+### Patrón documentado: configuración con defaults
+
+`examples/93_entorno.cor` muestra el patrón típico de configurar
+una app vía env vars con fallback a defaults sensatos:
+
+```cornamusa
+funcion config_o(nombre, defecto):
+    v = sistema.obtener_variable(nombre)
+    si v == nulo:
+        retornar defecto
+    fin si
+    retornar v
+fin funcion
+
+modo = config_o("APP_MODO", "dev")
+puerto = config_o("APP_PUERTO", "8080")
+```
+
+### Tests
+
+18 asserts en `test_bytecode_entorno.c`:
+
+- `obtener_variable_entorno` devuelve `nulo` para inexistentes.
+- Round-trip set + get con valor de texto.
+- Borrar pasando `nulo`: la variable desaparece.
+- `variables_entorno()` retorna dict no vacío.
+- `variables_entorno()` refleja cambios inmediatamente tras `set`.
+- `directorio_inicio()` es cadena no vacía.
+- `directorio_inicio()` normaliza separadores (sin `\`).
+- Wrappers `sistema.*`.
+- Errores de tipo (argumento no-cadena lanza `ErrorDeTipo`).
+
+Todos los tests usan prefijo `_CORNAMUSA_TEST_` en nombres de
+variable para evitar choque con el entorno real, y limpian
+después.
+
+### Ejemplo
+
+`examples/93_entorno.cor` con 6 secciones:
+
+1. `sistema.inicio()` y existencia.
+2. Inspección de variables típicas (`PATH`, `USER`, `LANG`,
+   `SHELL`, `HOME`) — truncadas si son largas.
+3. Ciclo set / overwrite / unset.
+4. Patrón configuración con defaults (helper `config_o`).
+5. Buscar variables por prefijo (`PATH*`, `USER*`, `PROGRAM*`,
+   `TEMP*`, `PYTHON*`).
+6. Construir rutas relativas al home: `~/.cornamusa/config.cor`
+   con `ruta.Ruta(sistema.inicio()).unir(...)`.
+
+### Lo que sigue pendiente
+
+- `usuario_actual()` → nombre del usuario (`whoami`). Trivial sobre
+  `USER`/`USERNAME` env var; conviene como helper para no replicar
+  la lógica de detección.
+- `hostname()` → nombre de la máquina. POSIX `gethostname()`,
+  Windows `GetComputerNameA()`.
+- `directorio_temporal()` → `TMPDIR`/`TEMP` con fallback. Útil
+  para `tempfile`-style.
+
+### Archivos
+
+- `src/nativos.c` — 4 nativas con `#ifdef _WIN32` para portabilidad
+  POSIX/Windows (~150 líneas C).
+- `stdlib/sistema.cor` — 4 wrappers + docs inline. Pasa de 23
+  líneas a ~70.
+- `tests/unit/test_bytecode_entorno.c` — 10 bloques, 18 asserts.
+- `examples/93_entorno.cor` — 6 secciones (incluye patrón
+  config-con-defaults y composición con `ruta`).
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+277 tests verde, lint+fmt limpios.
+
+---
+
 ## [1.103.0] — 2026-05-23 — Matemáticas: trig, log, raíz, redondeo + `azar.normal()` Box-Muller
 
 Cierra el TODO declarado en `stdlib/azar.cor:108` (de v1.27): para
