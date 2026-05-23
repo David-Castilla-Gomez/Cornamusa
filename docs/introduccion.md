@@ -132,6 +132,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Entorno: `sistema.obtener_variable`, `establecer_variable`, `variables()`, `inicio()` (home dir) | v1.104 | ✅ |
 | FS copy: `archivo_copiar` + `archivos.copiar_arbol` recursivo con mkdir -p implícito + métodos `Ruta` | v1.105 | ✅ |
 | Cookbook ampliado a 20 recetas (suite de tests, cleanup por mtime, backup incremental, config desde entorno, estadística) | v1.106 | ✅ |
+| Typo suggestions más inteligentes: filtro de idéntico + case-insensitive ASCII (`IMPRIMIR` → `imprimir`) | v1.107 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

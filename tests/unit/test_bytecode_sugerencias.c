@@ -194,6 +194,65 @@ static void test_atributo_sin_sugerencia(void) {
         "quisiste decir");
 }
 
+/* ───── v1.107: case-insensitive ASCII ───── */
+
+static void test_case_insensitive_builtin_mayusculas(void) {
+    /* IMPRIMIR (todo mayusculas) debe sugerir imprimir. Sin el fix,
+     * Levenshtein normal da distancia 8 y no se sugiere. */
+    verificar_error_contiene("case-insensitive IMPRIMIR",
+        "IMPRIMIR(\"x\")",
+        "quisiste decir 'imprimir'");
+}
+
+static void test_case_insensitive_longitud(void) {
+    verificar_error_contiene("case-insensitive LONGITUD",
+        "x = LONGITUD([])",
+        "quisiste decir 'longitud'");
+}
+
+static void test_case_mixto(void) {
+    /* Capitalize estilo Pascal: aunque Levenshtein con 1 char ya lo
+     * cogeria por umbral, confirmamos que tambien funciona con la
+     * ruta case-insensitive. */
+    verificar_error_contiene("case mixto Longitud",
+        "x = Longitud([])",
+        "quisiste decir 'longitud'");
+}
+
+static void test_case_variable_usuario(void) {
+    verificar_error_contiene("case insensitive en variable usuario",
+        "mi_contador = 10\n"
+        "imprimir(MI_CONTADOR)",
+        "quisiste decir 'mi_contador'");
+}
+
+/* ───── v1.107: no sugerir identico ───── */
+
+static void test_no_sugiere_identico(void) {
+    /* Cuando ya tenemos otra variable cercana, no debe sugerirse a
+     * si mismo. Caso indirecto: si hay dos variables muy similares,
+     * la sugerencia debe ser la otra, no la misma. */
+    char err[512];
+    bool hubo = ejecutar_capturando_error(
+        "foobar2026 = 42\n"
+        "imprimir(foobar2027)\n", err, sizeof(err));
+    if (!hubo) {
+        fprintf(stderr, "FALLO [no_sugiere_identico]: no hubo error\n");
+        fallos++;
+        return;
+    }
+    /* foobar2027 no existe; el unico candidato cercano es foobar2026.
+     * NO debe sugerir foobar2027 a si mismo. */
+    if (strstr(err, "quisiste decir 'foobar2027'") != NULL) {
+        fprintf(stderr, "FALLO [no_sugiere_identico]: se sugirio a si mismo: %s\n", err);
+        fallos++;
+    }
+    if (strstr(err, "quisiste decir 'foobar2026'") == NULL) {
+        fprintf(stderr, "FALLO [no_sugiere_identico]: no sugirio foobar2026: %s\n", err);
+        fallos++;
+    }
+}
+
 int main(void) {
     test_sugiere_builtin();
     test_sugiere_builtin_imprimir();
@@ -205,6 +264,12 @@ int main(void) {
     test_sugiere_atributo_instancia();
     test_sugiere_metodo();
     test_atributo_sin_sugerencia();
+    /* v1.107 */
+    test_case_insensitive_builtin_mayusculas();
+    test_case_insensitive_longitud();
+    test_case_mixto();
+    test_case_variable_usuario();
+    test_no_sugiere_identico();
 
     if (fallos == 0) {
         printf("sugerencias: todos los tests pasan\n");

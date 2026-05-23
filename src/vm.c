@@ -763,6 +763,27 @@ static int distancia_levenshtein(const char *a, int alen,
  * a `objetivo`. Actualiza `*mejor_dist`/`*mejor`/`*mejor_len` in-place
  * si encuentra algo mejor. Helper interno de `sugerir_*`.
  */
+/* v1.107: comparacion case-insensitive ASCII. Util para sugerir
+ * el nombre correcto cuando el usuario escribio con case incorrecto
+ * (`IMPRIMIR` → `imprimir`). Levenshtein normal da distancia alta
+ * para diferencias de case en cada caracter, no se ofrece sugerencia.
+ *
+ * Solo ASCII: no toca tildes ni Unicode. Suficiente para builtins
+ * y modulos (todos en ASCII salvo identificadores de usuario, que
+ * suelen seguir un solo estilo). */
+static bool _iguales_ci_ascii(const char *a, int alen,
+                                const char *b, int blen) {
+    if (alen != blen) return false;
+    for (int i = 0; i < alen; i++) {
+        unsigned char ca = (unsigned char)a[i];
+        unsigned char cb = (unsigned char)b[i];
+        if (ca >= 'A' && ca <= 'Z') ca = ca + 32;
+        if (cb >= 'A' && cb <= 'Z') cb = cb + 32;
+        if (ca != cb) return false;
+    }
+    return true;
+}
+
 static void escanear_dicc_cercano(const Diccionario *d,
                                     const char *objetivo, int obj_len,
                                     int *mejor_dist,
@@ -777,6 +798,24 @@ static void escanear_dicc_cercano(const Diccionario *d,
         /* Saltar nombres internos ($iter, $comp_acc, etc.). */
         if (cand[0] == '$') continue;
         int dist = distancia_levenshtein(objetivo, obj_len, cand, cand_len);
+        /* v1.107: no sugerir un nombre identico al objetivo.
+         * Si distancia == 0 el candidato es exactamente el nombre
+         * que el usuario escribio. Mensajes tipo "no esta
+         * definido (¿quisiste decir X?)" donde X == nombre original
+         * son confusos. */
+        if (dist == 0) continue;
+        /* v1.107: match case-insensitive ASCII tiene prioridad alta
+         * (dist artificial = 1). Asi el usuario que escribe
+         * `IMPRIMIR` ve la sugerencia `imprimir` aunque Levenshtein
+         * normal daria distancia muy alta. */
+        if (_iguales_ci_ascii(objetivo, obj_len, cand, cand_len)) {
+            if (1 < *mejor_dist) {
+                *mejor_dist = 1;
+                *mejor = cand;
+                *mejor_len = cand_len;
+            }
+            continue;
+        }
         if (dist < *mejor_dist) {
             *mejor_dist = dist;
             *mejor = cand;

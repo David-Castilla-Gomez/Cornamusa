@@ -6,6 +6,104 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.107.0] — 2026-05-23 — Typo suggestions: case-insensitive + filtro de idéntico
+
+Dos mejoras al "¿quisiste decir...?" en `ErrorDeNombre`,
+motivadas por casos reales observados durante el desarrollo.
+
+```cornamusa
+# Antes de v1.107:
+IMPRIMIR("hola")
+# ErrorDeNombre: nombre 'IMPRIMIR' no esta definido
+
+# Despues:
+# ErrorDeNombre: nombre 'IMPRIMIR' no esta definido
+#   (¿quisiste decir 'imprimir'?)
+```
+
+### Cambio 1: filtro de sugerencia idéntica
+
+`escanear_dicc_cercano` ahora descarta candidatos con
+`distancia == 0` (el mismo nombre que el objetivo). Motivado por
+el bug visto en v1.104: el `obtener_variable_entorno` se registró
+con longitud incorrecta (25 en vez de 24), así que el lookup
+exacto fallaba pero la clave en el dict era idéntica al
+objetivo. Resultado patológico: `"no está definido (¿quisiste
+decir 'obtener_variable_entorno'?)"` — el sugeridor encontraba el
+nombre exacto pero la búsqueda exacta no lo cogía. Mensaje
+confuso para el usuario.
+
+Tras este filtro, ningún sugeridor (`sugerir_nombre_cercano`,
+`sugerir_atributo_cercano`) puede ofrecer un nombre idéntico al
+buscado.
+
+### Cambio 2: case-insensitive ASCII
+
+Cuando el usuario escribe en case incorrecto (`IMPRIMIR`,
+`Longitud`, `MI_CONTADOR`), la distancia Levenshtein normal es
+grande (un cambio por carácter) — el umbral de 2 no cubre, y no
+se sugiere nada.
+
+Fix: helper `_iguales_ci_ascii(a, alen, b, blen)` que compara
+case-insensitive sobre ASCII (`A-Z` ↔ `a-z`). En el scan, si las
+longitudes coinciden y son case-insensitive iguales, el candidato
+recibe **distancia artificial 1** — alta prioridad por encima de
+otras coincidencias léxicas.
+
+Solo ASCII intencionalmente: los built-ins y stdlib están en ASCII,
+y los identificadores de usuario normalmente siguen un estilo
+consistente. Hacer Unicode lowercasing añadiría dependencia de
+utf8proc en el camino caliente del sugeridor. Pragmático.
+
+### Casos cubiertos
+
+| Entrada | Sugerencia |
+|---|---|
+| `imprimr` (typo 1 char) | `imprimir` (Levenshtein 1) |
+| `lojitud` (typo 2 chars) | `longitud` (Levenshtein 2, dentro del umbral) |
+| `IMPRIMIR` (todo upper) | `imprimir` (CI match, dist artificial 1) |
+| `Longitud` (capitalize) | `longitud` (CI match) |
+| `MI_CONTADOR` (variable usuario) | `mi_contador` (CI sobre user-defined) |
+| `cosa_inexistente_xyz` (sin similitud) | sin sugerencia |
+
+Funciona para built-ins, variables del usuario, atributos de
+instancia y métodos — todos usan el mismo `escanear_dicc_cercano`.
+
+### Tests
+
+5 tests nuevos en `test_bytecode_sugerencias.c`:
+
+- `IMPRIMIR` mayúsculas → sugiere `imprimir`.
+- `LONGITUD` → `longitud`.
+- `Longitud` mixto → `longitud`.
+- `MI_CONTADOR` sobre variable user-defined → `mi_contador`.
+- Variables similares (`foobar2026` y `foobar2027` falla): no
+  sugiere el nombre buscado a sí mismo.
+
+Total tests del archivo: 15 (los 10 anteriores + 5 nuevos).
+
+### Limitación documentada
+
+`_iguales_ci_ascii` no maneja Unicode (tildes, `ñ`). Si un
+identificador usa `imprimirá` y otro `IMPRIMIRÁ`, no se detectarán
+como case-insensitive iguales. Caso raro porque los nombres de
+identificadores suelen seguir un estilo consistente. Si surge
+demanda, se puede integrar `utf8proc_tolower` (vendored).
+
+### Archivos
+
+- `src/vm.c` — helper `_iguales_ci_ascii` + filtro `dist == 0` y
+  detección case-insensitive en `escanear_dicc_cercano`.
+- `tests/unit/test_bytecode_sugerencias.c` — 5 tests nuevos al
+  final, llamadas en `main`.
+- `README.md`, `docs/introduccion.md`: entrada de release.
+
+### Estado
+
+279 tests verde, lint+fmt limpios.
+
+---
+
 ## [1.106.0] — 2026-05-23 — Cookbook ampliado a 20 recetas
 
 Cinco recetas nuevas validadas contra el intérprete + refactor de
