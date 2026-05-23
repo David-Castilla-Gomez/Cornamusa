@@ -6,6 +6,111 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.106.0] — 2026-05-23 — Cookbook ampliado a 20 recetas
+
+Cinco recetas nuevas validadas contra el intérprete + refactor de
+la receta 15 para usar `funcionales.ordenar_por` (v1.101) en
+lugar del bubble sort manual original. El cookbook pasa de 15 a
+**20 recetas**, cubriendo las features añadidas entre v1.96 y
+v1.105 que no tenían pattern documentado.
+
+Release de pedagogía pura — sin cambios en runtime ni stdlib.
+Refleja la situación real: 11 releases han añadido
+features (FS, glob, sort, pruebas, matemáticas, entorno, copy) que
+faltaban en el cookbook. Esta release cierra esa brecha.
+
+### Recetas nuevas (16-20)
+
+| # | Receta | Features que combina |
+|---|---|---|
+| 16 | Suite de tests para tu propio código | `pruebas.Suite` (v1.96), exit code para CI |
+| 17 | Limpieza de archivos viejos por fecha | `ruta.encontrar` (v1.100) + `mtime_ms` (v1.99) + `eliminar` |
+| 18 | Backup incremental de un proyecto | `copiar_arbol` (v1.105) + `sistema.inicio()` (v1.104) + `tiempo.epoch_ms()` |
+| 19 | Configuración desde variables de entorno | `sistema.obtener_variable` (v1.104) + clase `Config` + helper `config(n, def)` |
+| 20 | Estadística de muestras normales | `azar.normal` (v1.103) + `ordenar_por` (v1.101) para percentiles + `matematicas.raiz` |
+
+### Receta 15 actualizada
+
+`ordenar_por` (v1.101) reemplaza el bubble sort manual:
+
+**Antes (v1.90)**:
+```cornamusa
+funcion ordenar_por(lst, campo):
+    copia = lst[:]
+    n = longitud(copia)
+    para i en rango(n):
+        para j en rango(0, n - i - 1):
+            si copia[j][campo] > copia[j + 1][campo]:
+                tmp = copia[j]
+                copia[j] = copia[j + 1]
+                copia[j + 1] = tmp
+            fin si
+        fin para
+    fin para
+    retornar copia
+fin funcion
+```
+
+**Ahora (v1.106)**:
+```cornamusa
+importar funcionales
+por_precio = funcionales.ordenar_por(productos, lambda p: p["precio"])
+```
+
+El mergesort estable O(n log n) que `funcionales.ordenar_por` ofrece
+desde v1.101 es mejor en performance Y legibilidad. Se documenta
+además el **truco de las dos pasadas estables** para ordenar por
+dos campos.
+
+### Validación
+
+Las 5 recetas nuevas se ejecutaron en `cornamusa --bytecode` durante
+la redacción. Los outputs mostrados son los reales del intérprete
+(p.ej. la receta 20 muestra `media: 170.17` para semilla 42 —
+valor exacto del Box-Muller con esa semilla).
+
+### Patrón destacado: la receta 19 demuestra "12-factor app"
+
+```cornamusa
+funcion config(nombre, defecto):
+    v = sistema.obtener_variable(nombre)
+    si v == nulo:
+        retornar defecto
+    fin si
+    retornar v
+fin funcion
+
+clase Config:
+    funcion __iniciar__(yo):
+        yo.host = config("APP_HOST", "localhost")
+        yo.puerto = entero(config("APP_PUERTO", "8080"))
+        ...
+```
+
+Patrón estándar para apps que se configuran via env vars sin
+recompilar (clave 12-factor). Encapsula los defaults razonables y
+las conversiones de tipo necesarias (todas las env vars son
+cadenas).
+
+### Sin cambios de código
+
+279 tests verde sin cambios desde v1.105. Bump por convención de
+release: el cookbook es parte del proyecto y merece versión propia
+cuando crece.
+
+### Archivos
+
+- `docs/cookbook.md` — 5 secciones nuevas + receta 15 reescrita.
+  Pasa de ~540 líneas a ~720.
+- `README.md`, `docs/introduccion.md`: entrada de release.
+
+### Estado
+
+279 tests verde, lint+fmt limpios. **Cookbook: 20 recetas
+validadas contra el intérprete real.**
+
+---
+
 ## [1.105.0] — 2026-05-23 — Filesystem: copia de archivos y árboles
 
 Cierra el set de FS abierto en v1.97: ahora un script puede hacer

@@ -21,6 +21,11 @@ Este recetario complementa el [tutorial](tutorial.md) (que enseña el lenguaje) 
 13. [Logger con niveles](#13-logger-con-niveles)
 14. [CSV con headers a lista de dicts](#14-csv-con-headers-a-lista-de-dicts)
 15. [Ordenar lista de dicts por campo](#15-ordenar-lista-de-dicts-por-campo)
+16. [Suite de tests para tu propio código](#16-suite-de-tests-para-tu-propio-código)
+17. [Limpieza de archivos viejos por fecha](#17-limpieza-de-archivos-viejos-por-fecha)
+18. [Backup incremental de un proyecto](#18-backup-incremental-de-un-proyecto)
+19. [Configuración desde variables de entorno](#19-configuración-desde-variables-de-entorno)
+20. [Estadística de muestras normales](#20-estadística-de-muestras-normales)
 
 ---
 
@@ -499,20 +504,7 @@ Los valores son cadenas (CSV no infiere tipos). Convierte con `entero()`/`decima
 **Problema**: ordenar una colección de registros por un campo arbitrario.
 
 ```cornamusa
-funcion ordenar_por(lst, campo):
-    copia = lst[:]
-    n = longitud(copia)
-    para i en rango(n):
-        para j en rango(0, n - i - 1):
-            si copia[j][campo] > copia[j + 1][campo]:
-                tmp = copia[j]
-                copia[j] = copia[j + 1]
-                copia[j + 1] = tmp
-            fin si
-        fin para
-    fin para
-    retornar copia
-fin funcion
+importar funcionales
 
 productos = [
     {"nombre": "libro", "precio": 25},
@@ -520,19 +512,321 @@ productos = [
     {"nombre": "pluma", "precio": 15},
 ]
 
-por_precio = ordenar_por(productos, "precio")
+por_precio = funcionales.ordenar_por(productos, lambda p: p["precio"])
 para p en por_precio:
-    imprimir(f"  {p['precio']}€ — {p['nombre']}")
+    imprimir(p["precio"], "—", p["nombre"])
+fin para
+
+# Descendente
+por_precio_desc = funcionales.ordenar_por_inverso(productos, lambda p: p["precio"])
+```
+
+```
+3 — lapiz
+15 — pluma
+25 — libro
+```
+
+`funcionales.ordenar_por` (v1.101) usa mergesort estable O(n log n) y la función clave se invoca **una sola vez por elemento**. Mucho mejor que bubble sort manual cuando hay muchos registros.
+
+Dos pasadas estables = sort por dos campos:
+
+```cornamusa
+# Por precio descendente, dentro por nombre ascendente
+paso1 = funcionales.ordenar_por(productos, lambda p: p["nombre"])
+paso2 = funcionales.ordenar_por_inverso(paso1, lambda p: p["precio"])
+```
+
+---
+
+## 16. Suite de tests para tu propio código
+
+**Problema**: tienes funciones en `main.cor` y quieres tests que verifiquen comportamiento + reporten `pasados/fallados` para CI.
+
+```cornamusa
+importar pruebas
+
+# Función bajo test
+funcion mcm(a, b):
+    si a == 0 o b == 0:
+        retornar 0
+    fin si
+    mayor = a
+    si b > a:
+        mayor = b
+    fin si
+    candidato = mayor
+    mientras candidato % a != 0 o candidato % b != 0:
+        candidato = candidato + mayor
+    fin mientras
+    retornar candidato
+fin funcion
+
+# Casos
+funcion test_mcm_basico():
+    pruebas.aseverar_igual(mcm(4, 6), 12)
+    pruebas.aseverar_igual(mcm(3, 5), 15)
+fin funcion
+
+funcion test_mcm_coprimos():
+    pruebas.aseverar_igual(mcm(7, 11), 77)
+fin funcion
+
+funcion test_mcm_cero():
+    pruebas.aseverar_igual(mcm(0, 5), 0)
+    pruebas.aseverar_igual(mcm(5, 0), 0)
+fin funcion
+
+funcion test_mcm_iguales():
+    pruebas.aseverar_igual(mcm(8, 8), 8)
+fin funcion
+
+# Ejecutar
+s = pruebas.Suite("mcm")
+s.caso("basico", test_mcm_basico)
+s.caso("coprimos", test_mcm_coprimos)
+s.caso("cero", test_mcm_cero)
+s.caso("iguales", test_mcm_iguales)
+r = s.ejecutar()
+
+# Exit con código distinto de 0 si falló algo (apto para CI)
+si r["fallados"] > 0:
+    salir(1)
+fin si
+```
+
+```
+=== Suite: mcm ===
+  [OK]    basico
+  [OK]    coprimos
+  [OK]    cero
+  [OK]    iguales
+---
+Total: 4 | Pasados: 4 | Fallados: 0
+```
+
+`pruebas.Suite` (v1.96) acumula casos nombrados, captura excepciones de cada `aseverar_*`, y reporta `[OK]/[FAIL]`. El dict de retorno trae `{total, pasados, fallados, fallos}` para integraciones (CI, dashboards).
+
+Para tests en directorios separados, ver `cornamusa nuevo <proyecto>` (v1.98) que genera `tests/test_main.cor` con esta estructura.
+
+---
+
+## 17. Limpieza de archivos viejos por fecha
+
+**Problema**: borrar todos los `.log` en un directorio que tengan más de 30 días.
+
+```cornamusa
+importar ruta
+importar archivos
+importar tiempo
+
+# Encontrar logs y filtrar por edad
+limite_ms = tiempo.epoch_ms() - 30 * 24 * 60 * 60 * 1000   # 30 días atrás
+
+viejos = []
+para r en ruta.encontrar("logs", "*.log"):
+    si r.es_archivo() y r.mtime_ms() < limite_ms:
+        agregar(viejos, r)
+    fin si
+fin para
+
+imprimir("A borrar:", longitud(viejos), "archivos")
+para r en viejos:
+    imprimir("  ", r.cadena(), "(", r.tamano(), "bytes)")
+    r.eliminar()
 fin para
 ```
 
-```
-  3€ — lapiz
-  15€ — pluma
-  25€ — libro
+Componentes:
+
+- `ruta.encontrar(dir, patron)` (v1.100) — recorrido recursivo con filtro glob.
+- `r.mtime_ms()` (v1.99) — fecha de modificación en milisegundos epoch.
+- `tiempo.epoch_ms()` (v1.73) — "ahora" en mismo formato.
+- `r.eliminar()` (v1.99) — borrar archivo. Lanza `ErrorDeIO` si falla.
+
+Variante: en lugar de borrar, mover a `archivado/`:
+
+```cornamusa
+archivos.crear_arbol("archivado")
+para r en viejos:
+    r.copiar(ruta.Ruta("archivado").unir(r.nombre()))
+    r.eliminar()
+fin para
 ```
 
-Bubble sort, O(n²). Para listas grandes considera el `ordenar()` nativo con un comparator personalizado si Cornamusa lo soporta, o usa Schwartzian transform: `funcionales.mapear(lambda p: (p["precio"], p), lst)`, ordenar, extraer.
+---
+
+## 18. Backup incremental de un proyecto
+
+**Problema**: copiar un directorio completo a una ubicación de backup con timestamp para versionarlo.
+
+```cornamusa
+importar archivos
+importar ruta
+importar tiempo
+importar sistema
+
+# Destino: ~/.backups/proyecto-<timestamp>
+home = ruta.Ruta(sistema.inicio())
+ts = tiempo.epoch_ms()
+backup_dir = home.unir(".backups").unir("proyecto-" + cadena(ts))
+
+# Asegurar que ~/.backups existe
+archivos.crear_arbol(home.unir(".backups").cadena())
+
+# Copia recursiva (mkdir -p del destino implícito)
+archivos.copiar_arbol("proyecto", backup_dir.cadena())
+
+# Resumen
+total_archivos = 0
+total_bytes = 0
+para r en backup_dir.recorrer():
+    si r.es_archivo():
+        total_archivos = total_archivos + 1
+        total_bytes = total_bytes + r.tamano()
+    fin si
+fin para
+
+imprimir("Backup en:    ", backup_dir.cadena())
+imprimir("Archivos:     ", total_archivos)
+imprimir("Tamano total: ", total_bytes, "bytes")
+```
+
+```
+Backup en:     C:/Users/david/.backups/proyecto-1779521137419
+Archivos:      87
+Tamano total:  254823 bytes
+```
+
+Componentes clave:
+
+- `sistema.inicio()` (v1.104) — directorio HOME del usuario, separadores normalizados a `/`.
+- `archivos.copiar_arbol(src, dst)` (v1.105) — recursivo con mkdir -p implícito.
+- `Ruta.recorrer()` (v1.100) — recorrido DFS para verificar.
+- `tiempo.epoch_ms()` (v1.73) para nombres únicos.
+
+Para un backup **diff-only** (solo lo que cambió), añadir comprobación de `mtime_ms` antes de copiar.
+
+---
+
+## 19. Configuración desde variables de entorno
+
+**Problema**: tu programa lee configuración (host, puerto, modo, log level) de variables de entorno, con defaults razonables.
+
+```cornamusa
+importar sistema
+
+# Helper: lee env var o devuelve default
+funcion config(nombre, defecto):
+    v = sistema.obtener_variable(nombre)
+    si v == nulo:
+        retornar defecto
+    fin si
+    retornar v
+fin funcion
+
+# Cargar configuración con tipos correctos
+clase Config:
+    funcion __iniciar__(yo):
+        yo.host = config("APP_HOST", "localhost")
+        yo.puerto = entero(config("APP_PUERTO", "8080"))
+        yo.modo = config("APP_MODO", "dev")
+        yo.log_nivel = config("APP_LOG", "info")
+        yo.activo = config("APP_ACTIVO", "verdadero") == "verdadero"
+    fin funcion
+
+    funcion mostrar(yo):
+        imprimir("Config cargada:")
+        imprimir("  host:     ", yo.host)
+        imprimir("  puerto:   ", yo.puerto)
+        imprimir("  modo:     ", yo.modo)
+        imprimir("  log_nivel:", yo.log_nivel)
+        imprimir("  activo:   ", yo.activo)
+    fin funcion
+fin clase
+
+# Uso
+sistema.establecer_variable("APP_MODO", "produccion")
+sistema.establecer_variable("APP_PUERTO", "9000")
+
+cfg = Config()
+cfg.mostrar()
+```
+
+```
+Config cargada:
+  host:      localhost
+  puerto:    9000
+  modo:      produccion
+  log_nivel: info
+  activo:    verdadero
+```
+
+`sistema.obtener_variable` (v1.104) devuelve `nulo` si la variable no está definida — el helper `config(nombre, defecto)` convierte eso al default. Conversiones explícitas (`entero(...)`, comparación a `"verdadero"`) porque todas las env vars son cadenas.
+
+Patrón "12-factor app" para configurar deploys sin recompilar.
+
+---
+
+## 20. Estadística de muestras normales
+
+**Problema**: simular un experimento (alturas, tiempos, errores) y reportar media, mediana, desviación, percentiles.
+
+```cornamusa
+importar azar
+importar funcionales
+importar matematicas
+
+# Generar 1000 muestras de N(170 cm, 8 cm)
+azar.semilla(42)
+muestras = []
+para i en rango(0, 1000):
+    agregar(muestras, azar.normal(170, 8))
+fin para
+
+# Estadísticas básicas
+suma = funcionales.suma(muestras, 0.0)
+media = suma / longitud(muestras)
+
+suma_sq = 0.0
+para x en muestras:
+    suma_sq = suma_sq + (x - media) * (x - media)
+fin para
+desv = matematicas.raiz(suma_sq / longitud(muestras))
+
+# Percentiles (requiere ordenar)
+ordenadas = funcionales.ordenar_por(muestras, lambda x: x)
+n = longitud(ordenadas)
+mediana = ordenadas[n // 2]
+p10 = ordenadas[n // 10]
+p90 = ordenadas[(9 * n) // 10]
+
+imprimir("Estadisticas sobre", n, "muestras de N(170, 8):")
+imprimir("  media:   ", matematicas.redondear(media * 100) / 100)
+imprimir("  desv:    ", matematicas.redondear(desv * 100) / 100)
+imprimir("  mediana: ", matematicas.redondear(mediana * 100) / 100)
+imprimir("  p10:     ", matematicas.redondear(p10 * 100) / 100)
+imprimir("  p90:     ", matematicas.redondear(p90 * 100) / 100)
+```
+
+```
+Estadisticas sobre 1000 muestras de N(170, 8):
+  media:    170.17
+  desv:     7.91
+  mediana:  170.37
+  p10:      159.55
+  p90:      180.62
+```
+
+Componentes:
+
+- `azar.normal(mu, sigma)` (v1.103) — Box-Muller, ya da muestras gaussianas.
+- `azar.semilla(n)` — reproducibilidad importante en análisis estadístico.
+- `funcionales.ordenar_por(xs, clave)` (v1.101) — necesario para percentiles.
+- `matematicas.raiz` (v1.103) — desviación estándar.
+- `matematicas.redondear` para presentar resultados legibles.
+
+Para gráficos en consola, ver el histograma ASCII en `examples/92_matematicas.cor` que usa los mismos componentes + `funcionales.suelo` para binning.
 
 ---
 

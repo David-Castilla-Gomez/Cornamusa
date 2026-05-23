@@ -131,6 +131,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Matemáticas: `raiz`, `ln`, `log10`, `log(x,base)`, `exp`, trig completa, redondeo + `azar.normal(mu, sigma)` Box-Muller | v1.103 | ✅ |
 | Entorno: `sistema.obtener_variable`, `establecer_variable`, `variables()`, `inicio()` (home dir) | v1.104 | ✅ |
 | FS copy: `archivo_copiar` + `archivos.copiar_arbol` recursivo con mkdir -p implícito + métodos `Ruta` | v1.105 | ✅ |
+| Cookbook ampliado a 20 recetas (suite de tests, cleanup por mtime, backup incremental, config desde entorno, estadística) | v1.106 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 
