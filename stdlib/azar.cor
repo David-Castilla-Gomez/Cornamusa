@@ -105,12 +105,39 @@ funcion uniforme(a, b):
     retornar a + (b - a) * azar_decimal()
 fin funcion
 
-# TODO v1.27 o posterior: `normal(mu, sigma)` Box-Muller requiere
-# built-ins ln/cos/sqrt que aún no expone Cornamusa. Cuando se
-# añadan, esta función será:
-#   funcion normal(mu=0.0, sigma=1.0):
-#       u1 = azar_decimal()
-#       u2 = azar_decimal()
-#       z = raiz(-2.0 * log_natural(u1)) * coseno(2.0 * PI * u2)
-#       retornar mu + sigma * z
-#   fin funcion
+# Devuelve un decimal de distribucion normal (Gaussiana) con media
+# `mu` y desviacion estandar `sigma`. Implementacion Box-Muller
+# transform: dadas dos uniformes U1, U2 en (0, 1], se obtiene una
+# muestra normal estandar Z = sqrt(-2 ln U1) cos(2 pi U2), y luego
+# se escala: mu + sigma * Z.
+#
+# El otro componente sin(2 pi U2) se descarta (mas simple que
+# cachear). Cada llamada usa dos uniformes; el costo es bajo.
+#
+# Ejemplo: simular 1000 alturas con media 170cm y desv 8cm:
+#   muestras = []
+#   para i en rango(0, 1000):
+#       agregar(muestras, azar.normal(170, 8))
+#   fin para
+#
+# `mu` y `sigma` deben ser numericos. `sigma` debe ser >= 0;
+# sigma == 0 devuelve `mu` exacto sin sortear.
+funcion normal(mu, sigma):
+    importar matematicas
+    si sigma == 0:
+        retornar mu * 1.0
+    fin si
+    si sigma < 0:
+        lanzar ErrorDeValor("normal: sigma debe ser >= 0")
+    fin si
+    # Evitar log(0) garantizando u1 estrictamente > 0.
+    # azar_decimal() devuelve [0, 1); rechazamos el 0 reintentando.
+    u1 = azar_decimal()
+    mientras u1 == 0:
+        u1 = azar_decimal()
+    fin mientras
+    u2 = azar_decimal()
+    z = matematicas.raiz(-2.0 * matematicas.ln(u1)) *
+        matematicas.coseno(2.0 * matematicas.PI * u2)
+    retornar mu + sigma * z
+fin funcion

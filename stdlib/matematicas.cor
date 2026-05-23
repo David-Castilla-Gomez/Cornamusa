@@ -95,3 +95,103 @@ funcion mcd(a, b):
     fin mientras
     retornar a
 fin funcion
+
+# ─── v1.103: trigonometria, raiz, log, exp, redondeo ────────────
+#
+# Wrappers sobre las nativas C (libm). Aceptan entero/decimal/booleano
+# y devuelven decimal. Los argumentos en angulo van en RADIANES.
+# Errores tipicos lanzan ErrorDeValor atrapable.
+#
+# Constantes ya disponibles: PI, E (definidas arriba).
+
+# Raiz cuadrada. Lanza ErrorDeValor para argumentos negativos.
+funcion raiz(x):
+    retornar mat_raiz(x)
+fin funcion
+
+# Logaritmo natural (base e). Lanza ErrorDeValor si x <= 0.
+funcion ln(x):
+    retornar mat_ln(x)
+fin funcion
+
+# Logaritmo base 10. Lanza ErrorDeValor si x <= 0.
+funcion log10(x):
+    retornar mat_log10(x)
+fin funcion
+
+# Logaritmo en base arbitraria. log_b(x) = ln(x) / ln(b).
+funcion log(x, base):
+    retornar mat_ln(x) / mat_ln(base)
+fin funcion
+
+# Exponencial: e^x.
+funcion exp(x):
+    retornar mat_exp(x)
+fin funcion
+
+# Potencia: x^expo. Tambien hay el operador `**`.
+funcion potencia(x, expo):
+    retornar mat_potencia(x, expo)
+fin funcion
+
+# Trigonometria. Argumento en radianes.
+funcion seno(x):
+    retornar mat_seno(x)
+fin funcion
+
+funcion coseno(x):
+    retornar mat_coseno(x)
+fin funcion
+
+funcion tangente(x):
+    retornar mat_tangente(x)
+fin funcion
+
+# Inversas. arco_seno y arco_coseno requieren x en [-1, 1].
+# arco_tangente acepta cualquier x. arco_tangente2(y, x) maneja
+# cuadrantes correctamente (range completo [-PI, PI]).
+funcion arco_seno(x):
+    retornar mat_arco_seno(x)
+fin funcion
+
+funcion arco_coseno(x):
+    retornar mat_arco_coseno(x)
+fin funcion
+
+funcion arco_tangente(x):
+    retornar mat_arco_tangente(x)
+fin funcion
+
+funcion arco_tangente2(dy, dx):
+    retornar mat_arco_tangente2(dy, dx)
+fin funcion
+
+# Redondeo.
+# `techo(3.2) == 4`, `suelo(3.8) == 3`.
+# `redondear(3.5) == 4`, `redondear(-2.5) == -3` (half-away-from-zero).
+funcion techo(x):
+    retornar mat_techo(x)
+fin funcion
+
+funcion suelo(x):
+    retornar mat_suelo(x)
+fin funcion
+
+funcion redondear(x):
+    retornar mat_redondear(x)
+fin funcion
+
+# Conversion grados <-> radianes.
+funcion grados_a_radianes(g):
+    retornar g * PI / 180.0
+fin funcion
+
+funcion radianes_a_grados(r):
+    retornar r * 180.0 / PI
+fin funcion
+
+# Hipotenusa: sqrt(a^2 + b^2). Mas estable numericamente que
+# raiz(a*a + b*b) para valores grandes.
+funcion hipotenusa(a, b):
+    retornar mat_raiz(a * a + b * b)
+fin funcion

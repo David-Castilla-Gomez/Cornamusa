@@ -128,6 +128,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Glob recursivo: `ruta.recorrer/encontrar` + métodos `Ruta.coincide/recorrer/encontrar` (matcher `*` `?`) | v1.100 | ✅ |
 | `funcionales.ordenar_por(xs, clave)` + `ordenar_por_inverso` — mergesort estable O(n log n) | v1.101 | ✅ |
 | `archivos.eliminar_arbol` (rm -rf, con guardrails) + `crear_arbol` (mkdir -p, idempotente) + métodos `Ruta` | v1.102 | ✅ |
+| Matemáticas: `raiz`, `ln`, `log10`, `log(x,base)`, `exp`, trig completa, redondeo + `azar.normal(mu, sigma)` Box-Muller | v1.103 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

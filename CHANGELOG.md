@@ -6,6 +6,157 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.103.0] — 2026-05-23 — Matemáticas: trig, log, raíz, redondeo + `azar.normal()` Box-Muller
+
+Cierra el TODO declarado en `stdlib/azar.cor:108` (de v1.27): para
+implementar Box-Muller hacían falta built-ins `sqrt`, `ln`, `cos` que
+no se exponían. Esta release añade **15 nativas matemáticas** sobre
+libm, las expone en `stdlib/matematicas.cor`, y completa
+`stdlib/azar.cor` con `normal(mu, sigma)`.
+
+```cornamusa
+importar matematicas
+importar azar
+
+# Funciones continuas
+matematicas.raiz(2)                    # 1.41421...
+matematicas.ln(matematicas.E)          # 1.0
+matematicas.seno(matematicas.PI / 6)   # 0.5
+matematicas.arco_tangente(1) * 4       # PI
+matematicas.hipotenusa(3, 4)           # 5.0
+
+# Distribucion normal
+azar.semilla(2024)
+altura = azar.normal(170, 8)           # ~N(170, 8) cm
+```
+
+### Nativas C nuevas (15)
+
+| Nativa | Comportamiento | Errores |
+|---|---|---|
+| `mat_raiz(x)` | `sqrt(x)` | `ErrorDeValor` si `x < 0` |
+| `mat_ln(x)` | `log(x)` natural | `ErrorDeValor` si `x <= 0` |
+| `mat_log10(x)` | `log10(x)` | `ErrorDeValor` si `x <= 0` |
+| `mat_exp(x)` | `e^x` | — |
+| `mat_potencia(x, expo)` | `pow(x, expo)` | — |
+| `mat_seno(x)`, `mat_coseno(x)`, `mat_tangente(x)` | trig (radianes) | — |
+| `mat_arco_seno(x)`, `mat_arco_coseno(x)` | inversas | `ErrorDeValor` si fuera de `[-1, 1]` |
+| `mat_arco_tangente(x)`, `mat_arco_tangente2(dy, dx)` | `atan`, `atan2` | — |
+| `mat_techo(x)`, `mat_suelo(x)`, `mat_redondear(x)` | `ceil`, `floor`, `round` half-away-from-zero | — |
+
+Las 15 aceptan entero/decimal/booleano vía helper interno
+`_val_a_double` y devuelven `decimal`. `<math.h>` se incluye una
+sola vez en `nativos.c`. Sin manejo especial de NaN/inf — comportamiento de libm.
+
+### Wrappers en `stdlib/matematicas.cor`
+
+API en castellano para uso normal:
+
+- `raiz(x)`, `potencia(x, expo)`, `hipotenusa(a, b)`.
+- `ln(x)`, `log10(x)`, `log(x, base)`, `exp(x)`.
+- `seno(x)`, `coseno(x)`, `tangente(x)`.
+- `arco_seno(x)`, `arco_coseno(x)`, `arco_tangente(x)`,
+  `arco_tangente2(dy, dx)`.
+- `grados_a_radianes(g)`, `radianes_a_grados(r)`.
+- `techo(x)`, `suelo(x)`, `redondear(x)`.
+
+`log(x, base)` se compone como `ln(x) / ln(base)` — no es nativo.
+`hipotenusa(a, b)` se compone como `raiz(a*a + b*b)`.
+
+### `azar.normal(mu, sigma)` con Box-Muller
+
+```cornamusa
+funcion normal(mu, sigma):
+    importar matematicas
+    si sigma == 0:
+        retornar mu * 1.0
+    fin si
+    si sigma < 0:
+        lanzar ErrorDeValor("normal: sigma debe ser >= 0")
+    fin si
+    u1 = azar_decimal()
+    mientras u1 == 0:
+        u1 = azar_decimal()      # evitar log(0)
+    fin mientras
+    u2 = azar_decimal()
+    z = matematicas.raiz(-2.0 * matematicas.ln(u1)) *
+        matematicas.coseno(2.0 * matematicas.PI * u2)
+    retornar mu + sigma * z
+fin funcion
+```
+
+Box-Muller estándar: dos uniformes en `(0, 1]` producen una
+muestra estándar `Z ~ N(0, 1)`. Se descarta el componente `sin(2*PI*u2)`
+(más simple que cachear). El `mientras u1 == 0` evita
+`log(0) = -infinito`. `sigma == 0` corto-circuita devolviendo
+`mu` exacto (convención degenerada).
+
+### Naming: por qué `y` cambió a `expo` y `dy`/`dx`
+
+`y` es palabra reservada del lenguaje (operador booleano `y`).
+Inicialmente puse `potencia(x, y)` y `arco_tangente2(y, x)` —
+fallaba con `ErrorDeSintaxis: se esperaba un nombre de parámetro`.
+Fix: `potencia(x, expo)` y `arco_tangente2(dy, dx)`. Pitfall que
+se ha visto otras veces; documentado en el código.
+
+### Tests
+
+26 asserts en `test_bytecode_matematicas.c`:
+
+- Cada función con casos típicos: `raiz(16)`, `ln(E)`, `seno(0)`,
+  `coseno(0)`, conversión grados↔radianes.
+- Identidad `4 * arco_tangente(1) ≈ PI` con tolerancia `1e-4`.
+- Redondeo half-away-from-zero: `redondear(-2.5) == -3.0`.
+- Errores: `raiz(-1)`, `ln(0)`, `arco_seno(2)` lanzan
+  `ErrorDeValor` atrapable.
+- `azar.normal(0, 1)` con 5000 muestras: media ≈ 0 (tol 0.1),
+  desviación ≈ 1 (tol 0.1).
+- `azar.normal(100, 5)` con 5000 muestras: media ≈ 100 (tol 0.5).
+- `azar.normal(7, 0)` devuelve 7 exacto.
+- `azar.normal(0, -1)` lanza `ErrorDeValor`.
+
+### Ejemplo
+
+`examples/92_matematicas.cor` con 6 secciones:
+
+1. Raíz, potencia, hipotenusa.
+2. Logaritmos y exponencial.
+3. Trigonometría + inversas + conversiones grados/radianes.
+4. Redondeo (techo, suelo, redondear).
+5. Distribución normal: 10 muestras individuales + verificación
+   estadística sobre 10000 muestras (media ≈ 0, desv ≈ 1).
+6. **Histograma ASCII** de alturas `N(170, 8)`: 1000 muestras
+   agrupadas en bins de 10 cm, ordenadas con
+   `funcionales.ordenar_por` (v1.101), barras con `#`. Sale una
+   campana de Gauss perfectamente reconocible.
+
+### Pendiente futuro
+
+- Más distribuciones: `exponencial(lambda)`, `gamma`, `beta`,
+  `binomial(n, p)`, `poisson(lambda)`.
+- Cachear el segundo componente Box-Muller (`sin(2*PI*u2)`) para
+  reducir llamadas a libm a la mitad. No prioritario.
+- Constantes adicionales: `TAU = 2*PI`, `INF`, `NaN`.
+
+### Archivos
+
+- `src/nativos.c` — 15 nativas matemáticas + helper `_val_a_double`
+  + macro `MAT_UNARIA` para reducir boilerplate (~200 líneas C).
+- `stdlib/matematicas.cor` — 18 wrappers nuevos.
+- `stdlib/azar.cor` — `normal(mu, sigma)` reemplaza el TODO de v1.27.
+- `tests/unit/test_bytecode_matematicas.c` — 11 bloques, 26 asserts.
+- `examples/92_matematicas.cor` — 6 secciones (incluye histograma
+  ASCII de campana de Gauss).
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+275 tests verde, lint+fmt limpios. TODO declarado en
+`stdlib/azar.cor:108` — **cerrado**.
+
+---
+
 ## [1.102.0] — 2026-05-23 — Filesystem: `eliminar_arbol` (rm -rf) + `crear_arbol` (mkdir -p)
 
 Cierra dos huecos declarados explícitamente en v1.99 ("Pendiente

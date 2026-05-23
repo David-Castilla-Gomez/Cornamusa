@@ -1,0 +1,109 @@
+# 92_matematicas.cor — trigonometria, raiz, log, exp y normal (v1.103).
+#
+# Stdlib `matematicas` ahora tiene la suite completa de funciones
+# matematicas continuas (raiz, ln, log, exp, trig, redondeo).
+# Stdlib `azar` ahora ofrece `normal(mu, sigma)` con Box-Muller.
+
+importar matematicas
+importar azar
+
+# ─── 1. Raiz, potencia, hipotenusa ──────────────────────────────
+
+imprimir("--- 1. Raiz / potencia ---")
+imprimir("raiz(2)        =", matematicas.raiz(2))
+imprimir("potencia(2,10) =", matematicas.potencia(2, 10))
+imprimir("hipotenusa(3,4)=", matematicas.hipotenusa(3, 4))
+imprimir("")
+
+# ─── 2. Logaritmos y exponencial ────────────────────────────────
+
+imprimir("--- 2. Logaritmos ---")
+imprimir("ln(E)      =", matematicas.ln(matematicas.E))
+imprimir("log10(1000)=", matematicas.log10(1000))
+imprimir("log(8, 2)  =", matematicas.log(8, 2))
+imprimir("exp(1)     =", matematicas.exp(1))
+imprimir("")
+
+# ─── 3. Trigonometria ───────────────────────────────────────────
+
+imprimir("--- 3. Trigonometria ---")
+imprimir("seno(PI/6)    =", matematicas.seno(matematicas.PI / 6))   # 0.5
+imprimir("coseno(PI/3)  =", matematicas.coseno(matematicas.PI / 3)) # 0.5
+imprimir("tangente(PI/4)=", matematicas.tangente(matematicas.PI / 4))# 1
+
+# Inversas
+angulo = matematicas.arco_tangente(1) * 4
+imprimir("4*atan(1) = PI?:", matematicas.absoluto(angulo - matematicas.PI) < 1e-10)
+imprimir("atan2(1, 1) =", matematicas.arco_tangente2(1, 1))   # PI/4
+imprimir("atan2(1, 0) =", matematicas.arco_tangente2(1, 0))   # PI/2
+imprimir("")
+
+# Conversion grados <-> radianes
+imprimir("grados_a_radianes(180) =", matematicas.grados_a_radianes(180))
+imprimir("radianes_a_grados(PI)  =", matematicas.radianes_a_grados(matematicas.PI))
+imprimir("")
+
+# ─── 4. Redondeo ────────────────────────────────────────────────
+
+imprimir("--- 4. Redondeo ---")
+imprimir("techo(3.2)     =", matematicas.techo(3.2))
+imprimir("suelo(3.8)     =", matematicas.suelo(3.8))
+imprimir("redondear(3.5) =", matematicas.redondear(3.5))
+imprimir("redondear(-2.5)=", matematicas.redondear(-2.5))
+imprimir("")
+
+# ─── 5. Distribucion normal (Box-Muller) ────────────────────────
+
+imprimir("--- 5. Distribucion normal ---")
+azar.semilla(2024)
+
+# 10 muestras individuales de N(0, 1)
+imprimir("10 muestras de N(0, 1):")
+para i en rango(0, 10):
+    imprimir("  ", matematicas.redondear(azar.normal(0, 1) * 100) / 100)
+fin para
+imprimir("")
+
+# Verificacion estadistica: 10000 muestras
+n = 10000
+suma = 0.0
+suma_sq = 0.0
+para i en rango(0, n):
+    z = azar.normal(0, 1)
+    suma = suma + z
+    suma_sq = suma_sq + z * z
+fin para
+media = suma / n
+varianza = suma_sq / n - media * media
+desv = matematicas.raiz(varianza)
+imprimir("Sobre 10000 muestras de N(0, 1):")
+imprimir("  media   ~= 0 :", matematicas.redondear(media * 10000) / 10000)
+imprimir("  desv    ~= 1 :", matematicas.redondear(desv * 10000) / 10000)
+imprimir("")
+
+# Simular alturas N(170cm, 8cm) y mostrar histograma simple
+imprimir("--- 6. Histograma de alturas N(170, 8) ---")
+alturas = []
+para i en rango(0, 1000):
+    agregar(alturas, azar.normal(170, 8))
+fin para
+# Contar en bins de 10cm desde 140 a 200
+bins = {}
+para a en alturas:
+    bin = matematicas.suelo(a / 10) * 10
+    si bin en bins:
+        bins[bin] = bins[bin] + 1
+    sino:
+        bins[bin] = 1
+    fin si
+fin para
+# Imprimir ordenado
+importar funcionales
+para par en funcionales.ordenar_por(claves(bins), lambda b: b):
+    n_b = bins[par]
+    barra = ""
+    para j en rango(0, n_b // 5):
+        barra = barra + "#"
+    fin para
+    imprimir("  ", par, "-", par + 10, "cm:", barra, "(", n_b, ")")
+fin para

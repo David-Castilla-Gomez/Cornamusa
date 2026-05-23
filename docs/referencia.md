@@ -803,6 +803,16 @@ Veinte módulos. Se importan con `importar <nombre>`.
 
 `PI`, `E`, `cuadrado(n)`, `cubo(n)`, `absoluto(n)`, `maximo(a,b)`, `minimo(a,b)`, `signo(n)`, `factorial(n)`, `suma_rango(a,b)`, `es_par(n)`, `es_impar(n)`, `mcd(a,b)`.
 
+**v1.103**: funciones continuas (libm). Aceptan enteros/decimales/booleanos, devuelven decimal. Ángulos en **radianes**.
+- **Raíz y potencia**: `raiz(x)` (rechaza negativo), `potencia(x, expo)`, `hipotenusa(a, b)`.
+- **Logaritmos y exponencial**: `ln(x)` (rechaza no-positivo), `log10(x)`, `log(x, base)`, `exp(x)`.
+- **Trigonometría**: `seno(x)`, `coseno(x)`, `tangente(x)`.
+- **Inversas**: `arco_seno(x)` y `arco_coseno(x)` (dominio `[-1, 1]`), `arco_tangente(x)`, `arco_tangente2(dy, dx)` (rango `[-PI, PI]`, maneja cuadrantes).
+- **Conversión**: `grados_a_radianes(g)`, `radianes_a_grados(r)`.
+- **Redondeo**: `techo(x)` (ceil), `suelo(x)` (floor), `redondear(x)` (half-away-from-zero).
+
+Errores típicos lanzan `ErrorDeValor` atrapable. Built-ins subyacentes: `mat_raiz`, `mat_ln`, `mat_log10`, `mat_exp`, `mat_seno`/`coseno`/`tangente`, `mat_arco_*`, `mat_techo`/`suelo`/`redondear`, `mat_potencia`.
+
 ### `cadenas`
 
 `repetir(s,n)`, `es_vacia(s)`, `unir(partes,sep)`, `empieza_con(s,pre)`, `termina_con(s,suf)`, `indice_de(s,sub)`, `contiene(s,sub)`, `separar(s,sep)`, `reemplazar(s,viejo,nuevo)`, `minusculas_ascii(s)`, `mayusculas_ascii(s)`, `recortar(s)`, `recortar_izquierda(s)`, `recortar_derecha(s)`, `contar(s,sub)`. (Para `s[i]` usa la indexación built-in, no función.)
@@ -846,6 +856,8 @@ Reloj, sleep, cronómetro (complementa `fechas`):
 ### `azar`
 
 `decimal()` → [0,1), `entero(a,b)` → [a,b], `semilla(n)`, `elegir(seq)`, `barajar(lista)`, `muestra(seq,k)`, `booleano(p=0.5)`, `uniforme(a,b)`.
+
+**v1.103**: `normal(mu, sigma)` — muestra de distribución normal (Gaussiana) con media `mu` y desviación `sigma` usando transformada Box-Muller. Requiere `sigma >= 0`; `sigma == 0` devuelve `mu` exacto. Para reproducibilidad combinar con `azar.semilla(n)`.
 
 ### `proceso`
 

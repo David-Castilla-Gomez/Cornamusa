@@ -4462,6 +4462,187 @@ static Valor nativa_azar_semilla(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * v1.103: nativas matematicas (raiz, log, exp, trig, redondeo).
+ *
+ * Acepta entero/decimal/booleano como entrada; devuelve decimal.
+ * Errores tipicos lanzan ErrorDeValor atrapable (raiz/log de
+ * argumentos invalidos). Sin manejo especial de NaN/inf —
+ * `tangente(PI/2)` o `ln(-0.5)` devuelven NaN/inf segun la libm.
+ * ────────────────────────────────────────────────────────────────── */
+#include <math.h>
+
+static bool _val_a_double(const Valor *v, double *out) {
+    if (v->tipo == VAL_DECIMAL) { *out = v->como.decimal; return true; }
+    if (v->tipo == VAL_ENTERO_SMALL) { *out = (double)v->como.entero_small; return true; }
+    if (v->tipo == VAL_ENTERO) { *out = mp_get_double(v->como.entero); return true; }
+    if (v->tipo == VAL_BOOLEANO) { *out = v->como.booleano ? 1.0 : 0.0; return true; }
+    return false;
+}
+
+#define MAT_UNARIA(nombre_c, nombre_dom, fn_c)                                 \
+    static Valor nativa_mat_##nombre_c(EvalError *err, int n_args, Valor *args,\
+                                          int linea, int columna) {            \
+        if (n_args != 1) {                                                     \
+            return error_nativa(err, linea, columna,                           \
+                "ErrorDeTipo: " nombre_dom "() requiere 1 argumento, recibio %d",\
+                n_args);                                                       \
+        }                                                                      \
+        double x;                                                              \
+        if (!_val_a_double(&args[0], &x)) {                                    \
+            return error_nativa(err, linea, columna,                           \
+                "ErrorDeTipo: " nombre_dom "() requiere un numero");           \
+        }                                                                      \
+        return valor_decimal(fn_c(x));                                         \
+    }
+
+/* sqrt: validacion explicita de negativo */
+static Valor nativa_mat_raiz(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: raiz() requiere 1 argumento, recibio %d", n_args);
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: raiz() requiere un numero");
+    }
+    if (x < 0.0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: raiz() de numero negativo");
+    }
+    return valor_decimal(sqrt(x));
+}
+
+/* ln: validacion explicita de no-positivo */
+static Valor nativa_mat_ln(EvalError *err, int n_args, Valor *args,
+                             int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: ln() requiere 1 argumento, recibio %d", n_args);
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: ln() requiere un numero");
+    }
+    if (x <= 0.0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: ln() de numero no positivo");
+    }
+    return valor_decimal(log(x));
+}
+
+static Valor nativa_mat_log10(EvalError *err, int n_args, Valor *args,
+                                int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: log10() requiere 1 argumento, recibio %d", n_args);
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: log10() requiere un numero");
+    }
+    if (x <= 0.0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: log10() de numero no positivo");
+    }
+    return valor_decimal(log10(x));
+}
+
+MAT_UNARIA(exp,         "exp",        exp)
+MAT_UNARIA(seno,        "seno",       sin)
+MAT_UNARIA(coseno,      "coseno",     cos)
+MAT_UNARIA(tangente,    "tangente",   tan)
+
+/* asin/acos: validacion de dominio [-1, 1] */
+static Valor nativa_mat_arco_seno(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: arco_seno() requiere 1 argumento");
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: arco_seno() requiere un numero");
+    }
+    if (x < -1.0 || x > 1.0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: arco_seno() requiere x en [-1, 1]");
+    }
+    return valor_decimal(asin(x));
+}
+
+static Valor nativa_mat_arco_coseno(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: arco_coseno() requiere 1 argumento");
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: arco_coseno() requiere un numero");
+    }
+    if (x < -1.0 || x > 1.0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: arco_coseno() requiere x en [-1, 1]");
+    }
+    return valor_decimal(acos(x));
+}
+
+MAT_UNARIA(arco_tangente, "arco_tangente", atan)
+MAT_UNARIA(techo,         "techo",         ceil)
+MAT_UNARIA(suelo,         "suelo",         floor)
+
+/* round(): emula HALF_AWAY_FROM_ZERO independientemente de la libm
+ * (`round` C99 lo hace pero documentamos comportamiento). */
+static Valor nativa_mat_redondear(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: redondear() requiere 1 argumento");
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: redondear() requiere un numero");
+    }
+    return valor_decimal(round(x));
+}
+
+static Valor nativa_mat_arco_tangente2(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: arco_tangente2(y, x) requiere 2 argumentos");
+    }
+    double y, x;
+    if (!_val_a_double(&args[0], &y) || !_val_a_double(&args[1], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: arco_tangente2() requiere numeros");
+    }
+    return valor_decimal(atan2(y, x));
+}
+
+/* potencia(x, y) = x^y. Funcion auxiliar; tambien hay `**` operador. */
+static Valor nativa_mat_potencia(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: potencia(x, y) requiere 2 argumentos");
+    }
+    double x, y;
+    if (!_val_a_double(&args[0], &x) || !_val_a_double(&args[1], &y)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: potencia() requiere numeros");
+    }
+    return valor_decimal(pow(x, y));
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
 
@@ -4568,6 +4749,22 @@ static const EntradaNativa NATIVAS[] = {
     {"azar_decimal",        12, nativa_azar_decimal},
     {"azar_entero",         11, nativa_azar_entero},
     {"azar_semilla",        12, nativa_azar_semilla},
+    /* Matematicas (v1.103). */
+    {"mat_raiz",             8, nativa_mat_raiz},
+    {"mat_ln",               6, nativa_mat_ln},
+    {"mat_log10",            9, nativa_mat_log10},
+    {"mat_exp",              7, nativa_mat_exp},
+    {"mat_seno",             8, nativa_mat_seno},
+    {"mat_coseno",          10, nativa_mat_coseno},
+    {"mat_tangente",        12, nativa_mat_tangente},
+    {"mat_arco_seno",       13, nativa_mat_arco_seno},
+    {"mat_arco_coseno",     15, nativa_mat_arco_coseno},
+    {"mat_arco_tangente",   17, nativa_mat_arco_tangente},
+    {"mat_arco_tangente2",  18, nativa_mat_arco_tangente2},
+    {"mat_techo",            9, nativa_mat_techo},
+    {"mat_suelo",            9, nativa_mat_suelo},
+    {"mat_redondear",       13, nativa_mat_redondear},
+    {"mat_potencia",        12, nativa_mat_potencia},
     /* Proceso (v1.27). */
     {"proceso_ejecutar",    16, nativa_proceso_ejecutar},
     /* Regex (v1.28). */
