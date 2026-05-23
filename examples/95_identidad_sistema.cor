@@ -1,0 +1,105 @@
+# 95_identidad_sistema.cor — usuario, hostname y directorio temporal (v1.108).
+#
+# Completa el modulo `sistema` con identidad del entorno. Combinado
+# con `directorio_inicio` (v1.104), `variables` y `argv`, ya cubre
+# casi todo lo que un script CLI necesita saber del proceso.
+
+importar sistema
+importar archivos
+importar ruta
+importar tiempo
+
+# ─── 1. Identidad basica ────────────────────────────────────────
+
+imprimir("--- 1. Identidad del proceso ---")
+imprimir("Usuario:    ", sistema.usuario())
+imprimir("Host:       ", sistema.host())
+imprimir("Home:       ", sistema.inicio())
+imprimir("CWD:        ", archivos.directorio_actual())
+imprimir("Temp dir:   ", sistema.directorio_temp())
+imprimir("")
+
+# ─── 2. Marca de huella del entorno ─────────────────────────────
+
+imprimir("--- 2. Huella del entorno ---")
+huella = sistema.usuario() + "@" + sistema.host()
+imprimir("Marca:      ", huella)
+imprimir("")
+
+# ─── 3. Archivos temporales con nombres unicos ──────────────────
+
+imprimir("--- 3. Archivo temporal con nombre unico ---")
+
+tmp_dir = ruta.Ruta(sistema.directorio_temp())
+nombre = "cornamusa_" + sistema.usuario() + "_" +
+         cadena(tiempo.epoch_ms()) + ".tmp"
+tmp_file = tmp_dir.unir(nombre)
+
+archivos.escribir(tmp_file.cadena(), "datos temporales del proceso")
+imprimir("Creado:     ", tmp_file.cadena())
+imprimir("Tamano:     ", tmp_file.tamano(), "bytes")
+imprimir("Contenido:  ", archivos.leer(tmp_file.cadena()))
+
+# Limpieza
+tmp_file.eliminar()
+imprimir("Borrado:    ", tmp_file.existe() == falso)
+imprimir("")
+
+# ─── 4. Patron: directorio de trabajo por usuario ───────────────
+
+imprimir("--- 4. Directorio de trabajo por usuario ---")
+
+# Estructura tipo ~/.miapp/{usuario}/cache, ~/.miapp/{usuario}/datos
+base = ruta.Ruta(sistema.inicio()).unir(".miapp").unir(sistema.usuario())
+cache = base.unir("cache")
+datos = base.unir("datos")
+
+archivos.crear_arbol(cache.cadena())
+archivos.crear_arbol(datos.cadena())
+
+imprimir("Cache:      ", cache.cadena())
+imprimir("Datos:      ", datos.cadena())
+imprimir("Estructura:")
+para r en ruta.Ruta(sistema.inicio()).unir(".miapp").recorrer():
+    si r.es_directorio():
+        imprimir("  [dir]", r.cadena())
+    fin si
+fin para
+
+# Limpieza
+archivos.eliminar_arbol(ruta.Ruta(sistema.inicio()).unir(".miapp").cadena())
+imprimir("")
+
+# ─── 5. Sandbox temporal con cleanup garantizado ────────────────
+
+funcion en_sandbox(prefijo, accion):
+    # Crea un directorio temporal unico, ejecuta `accion(ruta)` con
+    # su ruta, y limpia siempre (incluso si la accion lanza).
+    nombre = prefijo + "_" + sistema.usuario() + "_" +
+             cadena(tiempo.epoch_ms())
+    sandbox = ruta.Ruta(sistema.directorio_temp()).unir(nombre)
+    archivos.crear_arbol(sandbox.cadena())
+    error_cap = nulo
+    intentar:
+        accion(sandbox)
+    atrapar Excepcion como e:
+        error_cap = e
+    fin intentar
+    si sandbox.es_directorio():
+        sandbox.eliminar_arbol()
+    fin si
+    si error_cap != nulo:
+        lanzar error_cap
+    fin si
+fin funcion
+
+funcion procesar(dir):
+    archivos.escribir(dir.unir("input.txt").cadena(), "datos de prueba")
+    archivos.escribir(dir.unir("output.txt").cadena(), "resultado")
+    imprimir("  En sandbox:   ", dir.cadena())
+    imprimir("  Archivos:     ", longitud(dir.listar()))
+fin funcion
+
+imprimir("--- 5. Sandbox temporal ---")
+en_sandbox("ejemplo", procesar)
+imprimir("Sandbox limpiado tras la accion.")

@@ -6,6 +6,130 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.108.0] — 2026-05-23 — Sistema completo: usuario, host y directorio temporal
+
+Cierra los tres huecos declarados como pendientes en el CHANGELOG
+de v1.104. Ahora `stdlib/sistema` cubre el set completo de
+identidad y entorno del proceso: argv, variables, home, **usuario,
+host, dir temporal**.
+
+```cornamusa
+importar sistema
+
+sistema.usuario()           # "david"
+sistema.host()              # "MI-LAPTOP"
+sistema.directorio_temp()   # "C:/Users/david/AppData/Local/Temp"
+```
+
+### Nativas C nuevas
+
+| Nativa | Devuelve | Errores |
+|---|---|---|
+| `usuario_actual()` | cadena | `ErrorDeSistema` si no se determina |
+| `hostname()` | cadena | `ErrorDeSistema` si la syscall falla |
+| `directorio_temporal()` | cadena con separadores `/` | siempre devuelve algo (con fallback hardcodeado) |
+
+Portabilidad:
+
+- `usuario_actual`: `getenv("USER")` con fallback a `getenv("LOGNAME")` en POSIX; `getenv("USERNAME")` en Windows.
+- `hostname`: `gethostname(buf, len)` POSIX (vía `<unistd.h>`); `GetComputerNameA(buf, &len)` Windows (vía `<windows.h>`).
+- `directorio_temporal`: `TMPDIR` env con fallback a `/tmp` (POSIX); `TEMP`/`TMP` con fallback a `C:/Windows/Temp` (Windows). Normaliza `\` a `/` antes de devolver — coherente con `obtener_cwd` (v1.97) y `directorio_inicio` (v1.104).
+
+### Wrappers en `stdlib/sistema.cor`
+
+- `sistema.usuario()` → wrapper de `usuario_actual`.
+- `sistema.host()` → wrapper de `hostname`.
+- `sistema.directorio_temp()` → wrapper de `directorio_temporal`.
+
+Nombres más cortos en la API de stdlib que en las nativas — sigue
+el patrón de `sistema.inicio()` vs `directorio_inicio()`.
+
+### Patrón documentado: sandbox temporal con cleanup
+
+`examples/95_identidad_sistema.cor` introduce el helper
+`en_sandbox(prefijo, accion)`:
+
+```cornamusa
+funcion en_sandbox(prefijo, accion):
+    nombre = prefijo + "_" + sistema.usuario() + "_" +
+             cadena(tiempo.epoch_ms())
+    sandbox = ruta.Ruta(sistema.directorio_temp()).unir(nombre)
+    archivos.crear_arbol(sandbox.cadena())
+    error_cap = nulo
+    intentar:
+        accion(sandbox)
+    atrapar Excepcion como e:
+        error_cap = e
+    fin intentar
+    si sandbox.es_directorio():
+        sandbox.eliminar_arbol()
+    fin si
+    si error_cap != nulo:
+        lanzar error_cap
+    fin si
+fin funcion
+```
+
+Combina v1.108 (usuario/temp), v1.102 (`crear_arbol`/`eliminar_arbol`),
+v1.73 (`tiempo.epoch_ms`) para crear directorios temporales únicos
+con cleanup garantizado incluso si la acción lanza excepción.
+
+### Tests
+
+14 asserts en `test_bytecode_sistema_v108.c`:
+
+- Cada nativa devuelve cadena no vacía.
+- `directorio_temporal` tiene separadores `/` (no `\`).
+- `directorio_temporal` apunta a un directorio existente
+  (verificado con `archivo_es_directorio`).
+- Wrappers `sistema.*` devuelven cadenas.
+- Errores: pasar argumentos a funciones sin argumentos lanza
+  `ErrorDeTipo`.
+- Combinación realista: crear archivo en `directorio_temp` con
+  nombre `_test_v108_<usuario>.tmp`, escribir, leer, borrar.
+
+### Ejemplo
+
+`examples/95_identidad_sistema.cor` con 5 secciones:
+
+1. Identidad básica (usuario, host, home, cwd, temp).
+2. Huella del entorno (`usuario@host` como marca).
+3. Archivo temporal con nombre único combinando usuario + timestamp.
+4. Directorio de trabajo por usuario (`~/.miapp/{usuario}/{cache,datos}`).
+5. **Sandbox temporal con cleanup garantizado** (patrón
+   `en_sandbox(prefijo, accion)`).
+
+### Pendientes ahora cerrados
+
+Del CHANGELOG de v1.104 había tres ítems en "Lo que sigue
+pendiente":
+
+- ~~`usuario_actual()`~~ ✓
+- ~~`hostname()`~~ ✓
+- ~~`directorio_temporal()`~~ ✓
+
+Los tres cerrados en esta release.
+
+### Archivos
+
+- `src/nativos.c` — 3 nativas nuevas (~80 líneas C con
+  `#ifdef _WIN32` para portabilidad POSIX/Windows). `<windows.h>`
+  / `<unistd.h>` incluido en la sección v1.108 para que las
+  declaraciones (`DWORD`, `gethostname`) estén disponibles.
+- `stdlib/sistema.cor` — 3 wrappers + docs inline. Pasa de ~70 a
+  ~100 líneas.
+- `tests/unit/test_bytecode_sistema_v108.c` — 8 bloques, 14 asserts.
+- `examples/95_identidad_sistema.cor` — 5 secciones (incluye el
+  patrón sandbox temporal con cleanup garantizado).
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+281 tests verde, lint+fmt limpios.
+
+---
+
 ## [1.107.0] — 2026-05-23 — Typo suggestions: case-insensitive + filtro de idéntico
 
 Dos mejoras al "¿quisiste decir...?" en `ErrorDeNombre`,

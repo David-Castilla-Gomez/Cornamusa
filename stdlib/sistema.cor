@@ -61,3 +61,33 @@ fin funcion
 funcion inicio():
     retornar directorio_inicio()
 fin funcion
+
+
+# ─── Identidad del sistema (v1.108) ─────────────────────────────
+#
+# `usuario()` -> nombre del usuario actual (USER/LOGNAME en POSIX,
+#   USERNAME en Windows). Lanza ErrorDeSistema si no se determina.
+#
+# `host()` -> nombre de la maquina (gethostname / GetComputerNameA).
+#
+# `directorio_temp()` -> directorio temporal del SO. Separadores
+#   normalizados a "/". POSIX: TMPDIR -> "/tmp". Windows:
+#   TEMP -> TMP -> "C:/Windows/Temp".
+#
+# Ejemplos:
+#   importar sistema
+#   imprimir(sistema.usuario())          # "david"
+#   imprimir(sistema.host())             # "MI-LAPTOP"
+#   tmp = sistema.directorio_temp()      # "C:/Users/david/AppData/Local/Temp"
+
+funcion usuario():
+    retornar usuario_actual()
+fin funcion
+
+funcion host():
+    retornar hostname()
+fin funcion
+
+funcion directorio_temp():
+    retornar directorio_temporal()
+fin funcion

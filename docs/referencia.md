@@ -903,6 +903,13 @@ JSON Web Tokens HS256 (RFC 7519) sobre `json` + `base64` + `hashing`:
 
 Built-ins subyacentes: `obtener_variable_entorno`, `establecer_variable_entorno`, `variables_entorno`, `directorio_inicio`. Portabilidad: `getenv`/`setenv` POSIX, `getenv`/`_putenv_s` Windows. Listado completo via `environ` (POSIX) / `_environ` (Windows).
 
+**v1.108**: identidad del sistema.
+- `sistema.usuario()` → nombre del usuario actual. POSIX: `USER`/`LOGNAME`. Windows: `USERNAME`. Lanza `ErrorDeSistema` si no se determina.
+- `sistema.host()` → nombre de la máquina. POSIX: `gethostname()`. Windows: `GetComputerNameA()`.
+- `sistema.directorio_temp()` → directorio temporal del SO. POSIX: `TMPDIR` o `/tmp`. Windows: `TEMP`/`TMP` o `C:/Windows/Temp`. Separadores normalizados a `/`.
+
+Built-ins subyacentes: `usuario_actual`, `hostname`, `directorio_temporal`.
+
 ### `coleccion` (v1.88)
 
 Estructuras de datos clásicas implementadas con clases sobre listas mutables:

@@ -1487,6 +1487,101 @@ static Valor nativa_directorio_inicio(EvalError *err, int n_args, Valor *args,
     return v;
 }
 
+/* v1.108: usuario_actual, hostname y directorio_temporal.
+ *
+ * usuario_actual() -> cadena con el nombre del usuario actual.
+ *   POSIX: getenv("USER") con fallback a getenv("LOGNAME").
+ *   Windows: getenv("USERNAME").
+ *   Si nada esta definido, lanza ErrorDeSistema.
+ *
+ * hostname() -> cadena con el nombre de la maquina.
+ *   POSIX: gethostname(buf, len).
+ *   Windows: GetComputerNameA(buf, &len). Requiere <windows.h>.
+ *
+ * directorio_temporal() -> cadena con el directorio temporal del SO.
+ *   POSIX: TMPDIR env -> "/tmp" -> ErrorDeSistema.
+ *   Windows: TEMP env -> TMP env -> "C:/Windows/Temp".
+ *   Separadores normalizados a "/".
+ */
+#ifdef _WIN32
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
+
+static Valor nativa_usuario_actual(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: usuario_actual() no acepta argumentos");
+    }
+#ifdef _WIN32
+    const char *u = getenv("USERNAME");
+#else
+    const char *u = getenv("USER");
+    if (!u) u = getenv("LOGNAME");
+#endif
+    if (!u || u[0] == '\0') {
+        return error_nativa(err, linea, columna,
+            "ErrorDeSistema: no se pudo determinar el usuario actual");
+    }
+    return valor_cadena_duplicar(u, (int)strlen(u));
+}
+
+static Valor nativa_hostname(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hostname() no acepta argumentos");
+    }
+#ifdef _WIN32
+    char buf[256];
+    DWORD len = sizeof(buf);
+    if (!GetComputerNameA(buf, &len)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeSistema: no se pudo obtener el hostname");
+    }
+    return valor_cadena_duplicar(buf, (int)len);
+#else
+    char buf[256];
+    if (gethostname(buf, sizeof(buf)) != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeSistema: no se pudo obtener el hostname");
+    }
+    buf[sizeof(buf) - 1] = '\0';  /* gethostname puede no terminar en NUL */
+    return valor_cadena_duplicar(buf, (int)strlen(buf));
+#endif
+}
+
+static Valor nativa_directorio_temporal(EvalError *err, int n_args, Valor *args,
+                                          int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: directorio_temporal() no acepta argumentos");
+    }
+#ifdef _WIN32
+    const char *t = getenv("TEMP");
+    if (!t) t = getenv("TMP");
+    if (!t) t = "C:/Windows/Temp";
+#else
+    const char *t = getenv("TMPDIR");
+    if (!t) t = "/tmp";
+#endif
+    int len = (int)strlen(t);
+    char *copia = (char *)malloc((size_t)len + 1);
+    if (!copia) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < len; i++) {
+        copia[i] = (t[i] == '\\') ? '/' : t[i];
+    }
+    copia[len] = '\0';
+    Valor v = valor_cadena_duplicar(copia, len);
+    free(copia);
+    return v;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * JSON (v1.9)
  *
@@ -4954,6 +5049,10 @@ static const EntradaNativa NATIVAS[] = {
     {"establecer_variable_entorno",  27, nativa_establecer_variable_entorno},
     {"variables_entorno",            17, nativa_variables_entorno},
     {"directorio_inicio",            17, nativa_directorio_inicio},
+    /* Entorno (v1.108). */
+    {"usuario_actual",               14, nativa_usuario_actual},
+    {"hostname",                      8, nativa_hostname},
+    {"directorio_temporal",          19, nativa_directorio_temporal},
     {"salir",            5, nativa_salir},
     /* I/O de archivos (v1.8). */
     {"archivo_leer",     12, nativa_archivo_leer},
