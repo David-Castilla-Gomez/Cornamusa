@@ -130,6 +130,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | `archivos.eliminar_arbol` (rm -rf, con guardrails) + `crear_arbol` (mkdir -p, idempotente) + métodos `Ruta` | v1.102 | ✅ |
 | Matemáticas: `raiz`, `ln`, `log10`, `log(x,base)`, `exp`, trig completa, redondeo + `azar.normal(mu, sigma)` Box-Muller | v1.103 | ✅ |
 | Entorno: `sistema.obtener_variable`, `establecer_variable`, `variables()`, `inicio()` (home dir) | v1.104 | ✅ |
+| FS copy: `archivo_copiar` + `archivos.copiar_arbol` recursivo con mkdir -p implícito + métodos `Ruta` | v1.105 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

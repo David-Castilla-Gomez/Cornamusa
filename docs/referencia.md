@@ -1006,6 +1006,12 @@ Wrappers en `stdlib/archivos`: `eliminar(ruta)`, `eliminar_directorio(ruta)`, `i
 
 Wrappers en `stdlib/archivos`: `eliminar_arbol(ruta)`, `crear_arbol(ruta)`. Pure-Cornamusa sobre las nativas de v1.97/v1.99 — no introducen código C nuevo.
 
+**v1.105**: copia.
+- `r.copiar(destino)` → copia un archivo regular. `destino` puede ser cadena o `Ruta`. Devuelve `Ruta(destino)` para encadenar. Lanza `ErrorDeIO` si `r` es un directorio o no existe.
+- `r.copiar_arbol(destino)` → copia recursivamente el árbol. Si `r` es un archivo, fallback a `copiar`. Crea el destino (y sus padres) si no existe — mkdir -p implícito.
+
+Wrappers en `stdlib/archivos`: `copiar(origen, destino)` (delega a built-in `archivo_copiar`), `copiar_arbol(origen, destino)` (recursivo pure-Cornamusa). `archivo_copiar` lee/escribe con buffer de 64 KiB; no preserva mtime ni permisos (pendiente futura).
+
 **v1.100**: glob recursivo.
 - `ruta.recorrer(directorio)` → lista de `Ruta` con todas las entradas alcanzables desde `directorio` recursivamente (DFS, incluye archivos y directorios).
 - `ruta.encontrar(directorio, patron)` → como `recorrer` filtrado por glob sobre el **nombre** (no la ruta completa).

@@ -2723,6 +2723,100 @@ static Valor nativa_archivo_info(EvalError *err, int n_args, Valor *args,
     return valor_diccionario(d);
 }
 
+/* v1.105: archivo_copiar(origen, destino) → nulo.
+ *
+ * Copia bytes literalmente de `origen` a `destino`. `destino` se
+ * trunca si existe. Lanza ErrorDeIO si origen no existe o
+ * destino no se puede abrir para escritura.
+ *
+ * Implementacion: fread/fwrite en buffer de 64 KiB. Sin
+ * preservacion de mtime/permisos (pendiente para release futura).
+ * No es 'cp -r' — solo archivos individuales; para arboles usar
+ * `archivos.copiar_arbol` (pure-Cornamusa). */
+static Valor nativa_archivo_copiar(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_copiar() requiere 2 argumentos, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_copiar() requiere cadenas (origen, destino)");
+    }
+
+    int lo = args[0].como.cadena.longitud;
+    int ld = args[1].como.cadena.longitud;
+    char orig_stack[1024], dest_stack[1024];
+    char *orig = orig_stack, *dest = dest_stack;
+    char *orig_heap = NULL, *dest_heap = NULL;
+    if (lo + 1 > (int)sizeof(orig_stack)) {
+        orig_heap = (char *)malloc((size_t)lo + 1);
+        if (!orig_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        orig = orig_heap;
+    }
+    if (ld + 1 > (int)sizeof(dest_stack)) {
+        dest_heap = (char *)malloc((size_t)ld + 1);
+        if (!dest_heap) {
+            if (orig_heap) free(orig_heap);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        dest = dest_heap;
+    }
+    memcpy(orig, args[0].como.cadena.texto, (size_t)lo); orig[lo] = '\0';
+    memcpy(dest, args[1].como.cadena.texto, (size_t)ld); dest[ld] = '\0';
+
+    FILE *fi = fopen(orig, "rb");
+    if (!fi) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo abrir '%s' para lectura", orig);
+        if (orig_heap) free(orig_heap);
+        if (dest_heap) free(dest_heap);
+        return r;
+    }
+    FILE *fo = fopen(dest, "wb");
+    if (!fo) {
+        fclose(fi);
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo abrir '%s' para escritura", dest);
+        if (orig_heap) free(orig_heap);
+        if (dest_heap) free(dest_heap);
+        return r;
+    }
+
+    enum { BUF_SZ = 65536 };
+    char *buf = (char *)malloc(BUF_SZ);
+    if (!buf) {
+        fclose(fi); fclose(fo);
+        if (orig_heap) free(orig_heap);
+        if (dest_heap) free(dest_heap);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+
+    bool error_io = false;
+    while (!feof(fi)) {
+        size_t leido = fread(buf, 1, BUF_SZ, fi);
+        if (leido == 0) {
+            if (ferror(fi)) error_io = true;
+            break;
+        }
+        size_t escrito = fwrite(buf, 1, leido, fo);
+        if (escrito != leido) { error_io = true; break; }
+    }
+
+    free(buf);
+    fclose(fi);
+    fclose(fo);
+    if (orig_heap) free(orig_heap);
+    if (dest_heap) free(dest_heap);
+    if (error_io) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeIO: error durante la copia");
+    }
+    return valor_nulo();
+}
+
 /*
  * salir(codigo) → no retorna. Termina el proceso con el código indicado.
  * Si codigo no es entero/booleano, error de tipo.
@@ -4876,6 +4970,8 @@ static const EntradaNativa NATIVAS[] = {
     {"archivo_borrar",        14, nativa_archivo_borrar},
     {"directorio_borrar",     17, nativa_directorio_borrar},
     {"archivo_info",          12, nativa_archivo_info},
+    /* Filesystem (v1.105). */
+    {"archivo_copiar",        14, nativa_archivo_copiar},
     /* JSON (v1.9). */
     {"json_parsear",     12, nativa_json_parsear},
     {"json_serializar",  15, nativa_json_serializar},

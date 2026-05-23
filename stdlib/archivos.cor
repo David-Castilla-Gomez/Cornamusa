@@ -166,6 +166,58 @@ funcion eliminar_arbol(ruta):
 fin funcion
 
 
+# v1.105: copia de archivos y de arboles.
+#
+# `copiar(origen, destino)` copia un archivo (bytes literales). El
+# destino se trunca si existe. Lanza ErrorDeIO si origen no
+# existe o el destino no se puede escribir. NO preserva mtime ni
+# permisos (pendiente futura).
+#
+# `copiar_arbol(origen, destino)` copia recursivamente un arbol
+# entero. Crea `destino` y sus padres si faltan (mkdir -p
+# implicito). Si `destino` ya existe como directorio, copia DENTRO
+# (idempotente sobre dirs existentes). Si `origen` es un archivo
+# regular, fallback a `copiar(origen, destino)`. Lanza ErrorDeIO
+# si origen no existe.
+
+funcion copiar(origen, destino):
+    archivo_copiar(origen, destino)
+fin funcion
+
+
+funcion copiar_arbol(origen, destino):
+    si tipo(origen) != "cadena" o tipo(destino) != "cadena":
+        lanzar ErrorDeValor(
+            "copiar_arbol: origen y destino deben ser cadenas")
+    fin si
+    si longitud(origen) == 0 o longitud(destino) == 0:
+        lanzar ErrorDeValor("copiar_arbol: rutas vacias rechazadas")
+    fin si
+    # Si origen es archivo regular, fallback a copia simple.
+    si no archivo_es_directorio(origen):
+        si archivo_existe(origen):
+            archivo_copiar(origen, destino)
+            retornar nulo
+        fin si
+        lanzar ErrorDeIO("copiar_arbol: '" + origen + "' no existe")
+    fin si
+    # Asegurar que el directorio destino existe.
+    si no archivo_es_directorio(destino):
+        crear_arbol(destino)
+    fin si
+    # Recorrer entradas inmediatas de origen.
+    para entrada en directorio_listar(origen):
+        sub_origen = origen + "/" + entrada
+        sub_destino = destino + "/" + entrada
+        si archivo_es_directorio(sub_origen):
+            copiar_arbol(sub_origen, sub_destino)
+        sino:
+            archivo_copiar(sub_origen, sub_destino)
+        fin si
+    fin para
+fin funcion
+
+
 funcion crear_arbol(ruta):
     si tipo(ruta) != "cadena":
         lanzar ErrorDeValor(

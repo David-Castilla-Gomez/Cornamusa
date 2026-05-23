@@ -585,6 +585,34 @@ clase Ruta:
         # Idempotente: si ya existe, no falla.
         archivos.crear_arbol(yo.s)
     fin funcion
+
+    # v1.105: copia.
+
+    funcion copiar(yo, destino):
+        # Copia un archivo regular (bytes literales). `destino`
+        # puede ser cadena o Ruta. Lanza ErrorDeIO si `yo` es un
+        # directorio o no existe. Para arboles, usar `copiar_arbol`.
+        si tipo(destino) == "instancia":
+            destino_s = destino.s
+        sino:
+            destino_s = destino
+        fin si
+        archivos.copiar(yo.s, destino_s)
+        retornar Ruta(destino_s)
+    fin funcion
+
+    funcion copiar_arbol(yo, destino):
+        # Copia recursivamente el arbol entero. Si `yo` es un
+        # archivo, fallback a `copiar`. `destino` se crea si no
+        # existe (mkdir -p implicito).
+        si tipo(destino) == "instancia":
+            destino_s = destino.s
+        sino:
+            destino_s = destino
+        fin si
+        archivos.copiar_arbol(yo.s, destino_s)
+        retornar Ruta(destino_s)
+    fin funcion
 fin clase
 
 

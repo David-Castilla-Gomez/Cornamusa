@@ -6,6 +6,139 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.105.0] — 2026-05-23 — Filesystem: copia de archivos y árboles
+
+Cierra el set de FS abierto en v1.97: ahora un script puede hacer
+**crear → listar/info → leer/escribir → copiar → borrar** sobre
+archivos y árboles enteros. Una nativa C nueva
+(`archivo_copiar`) + función pure-Cornamusa `copiar_arbol`
+recursiva sobre las primitivas existentes.
+
+```cornamusa
+importar archivos
+importar ruta
+
+# Copia simple (bytes literales, destino se trunca si existe)
+archivos.copiar("config.toml", "config.toml.bak")
+
+# Copia recursiva con mkdir -p implicito
+archivos.copiar_arbol("proyecto", "back/up/2026/proyecto")
+
+# Encadenable via Ruta
+r = ruta.Ruta("origen.dat").copiar("respaldo.dat")
+imprimir(r.tamano())          # ya es Ruta del destino
+```
+
+### Nativa C nueva
+
+| Nativa | Devuelve | Errores |
+|---|---|---|
+| `archivo_copiar(origen, destino)` | `nulo` | `ErrorDeIO` si origen no existe o destino no escribible |
+
+Implementación: `fread`/`fwrite` con buffer de 64 KiB en heap.
+Modo binario (`"rb"`/`"wb"`) para preservar bytes literales sin
+traducción CRLF. Errores de I/O durante la copia (disco lleno,
+fallo de medio) se detectan via `ferror`/`fwrite` mismatch y
+lanzan `ErrorDeIO`. NO preserva mtime ni permisos — pendiente para
+una release futura junto con `archivo_chmod` / `archivo_set_mtime`.
+
+### Funciones nuevas en `stdlib/archivos.cor`
+
+```cornamusa
+archivos.copiar(origen, destino)         # wrapper directo
+archivos.copiar_arbol(origen, destino)   # recursivo, pure-Cornamusa
+```
+
+`copiar_arbol` se implementa así (~30 líneas):
+
+1. Si `origen` es archivo regular, fallback a `archivo_copiar`.
+2. Si `origen` no existe, lanzar `ErrorDeIO`.
+3. Si `destino` no existe como directorio, llamar a `crear_arbol`
+   (mkdir -p implícito — usa la v1.102).
+4. Por cada entrada en `directorio_listar(origen)`: recursión si
+   es directorio, `archivo_copiar` si es archivo.
+
+Idempotente: si el destino ya existe como directorio, la copia
+sigue (no falla). Útil para copias incrementales.
+
+### Métodos nuevos en `Ruta`
+
+- `r.copiar(destino)` → copia archivo. `destino` puede ser cadena
+  o `Ruta`. Devuelve `Ruta(destino)` para encadenar (p.ej.
+  `r.copiar("x").tamano()`).
+- `r.copiar_arbol(destino)` → análogo recursivo.
+
+Ambos aceptan `Ruta` o cadena como `destino`, normalizando con un
+chequeo de `tipo(destino) == "instancia"`.
+
+### Patrones documentados (ejemplo 94)
+
+1. **Copia simple con truncación**: el destino se sobrescribe
+   completamente, no se append-ea.
+2. **Backup con timestamp**: combinar `archivos.copiar_arbol` con
+   `tiempo.epoch_ms()` para nombres únicos.
+3. **mkdir -p implícito**: `copiar_arbol("src", "back/up/2026")`
+   crea todos los padres necesarios.
+4. **Encadenamiento via Ruta**: `Ruta(x).copiar(y).tamano()`.
+
+### Tests
+
+22 asserts en `test_bytecode_copiar.c`:
+
+- `archivo_copiar`: contenido y tamano coinciden.
+- Destino se trunca si existía con contenido más largo.
+- Origen inexistente lanza `ErrorDeIO`.
+- Wrapper `archivos.copiar`.
+- `copiar_arbol`: árbol con archivos en varios niveles.
+- Mkdir -p implícito en destino (crea padres profundos).
+- Fallback: `copiar_arbol` con archivo regular = `copiar`.
+- Origen inexistente y ruta vacía lanzan `ErrorDeIO`/`ErrorDeValor`.
+- Métodos `Ruta.copiar` devuelven `Ruta` encadenable.
+
+### Ejemplo
+
+`examples/94_copiar.cor` con 7 secciones:
+
+1. Copia simple + sobrescritura.
+2. Copia de árbol completo con verificación via `recorrer`.
+3. mkdir -p implícito en destino profundo.
+4. Fallback con archivo regular.
+5. **Backup con timestamp** usando `tiempo.epoch_ms()`.
+6. Encadenamiento via `Ruta`.
+7. Errores atrapables.
+
+### Lo que sigue pendiente del set FS
+
+- Symlinks (lstat, readlink, crear).
+- Watch (notificaciones de cambio).
+- `archivo_chmod` / `archivo_set_mtime` — modificar permisos y
+  fecha.
+- Preservar mtime/permisos en `copiar` (opcional via flag).
+- Move/rename: `archivo_mover(orig, dest)`. Hoy se hace con
+  `copiar` + `eliminar`, pero `rename()` es atómico en mismo FS.
+
+### Archivos
+
+- `src/nativos.c` — `nativa_archivo_copiar` (~100 líneas C con
+  buffer 64 KiB y manejo de error de I/O).
+- `stdlib/archivos.cor` — `copiar` (wrapper) + `copiar_arbol`
+  (recursivo pure-Cornamusa, ~30 líneas).
+- `stdlib/ruta.cor` — métodos `r.copiar(destino)` y
+  `r.copiar_arbol(destino)` aceptando cadena o `Ruta`.
+- `tests/unit/test_bytecode_copiar.c` — 10 bloques, 22 asserts.
+- `examples/94_copiar.cor` — 7 secciones demo (incluye backup
+  con timestamp y encadenamiento).
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+279 tests verde, lint+fmt limpios. **Ciclo FS completo**: crear,
+listar, info, leer, escribir, **copiar**, borrar — todo
+disponible y atrapable.
+
+---
+
 ## [1.104.0] — 2026-05-23 — Variables de entorno y directorio de inicio
 
 Acceso al entorno del proceso desde scripts Cornamusa: cuatro

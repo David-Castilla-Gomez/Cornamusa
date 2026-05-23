@@ -1,0 +1,123 @@
+# 94_copiar.cor — copia de archivos y arboles (v1.105).
+#
+# Cierra el set de FS abierto en v1.97. Ahora un script puede:
+#   - crear (v1.97: crear_directorio, v1.102: crear_arbol)
+#   - listar/info (v1.97: listar, v1.99: info)
+#   - leer/escribir (v1.8: leer, escribir)
+#   - copiar (v1.105: copiar, copiar_arbol)
+#   - borrar (v1.99: eliminar, v1.102: eliminar_arbol)
+# Ciclo completo.
+
+importar archivos
+importar ruta
+
+# ─── 1. Copia simple de archivo ─────────────────────────────────
+
+imprimir("--- 1. Copia simple ---")
+archivos.escribir("origen_94.txt", "Hola desde v1.105")
+archivos.copiar("origen_94.txt", "copia_94.txt")
+imprimir("Copia:", archivos.leer("copia_94.txt"))
+
+# Sobrescritura: el destino se trunca
+archivos.escribir("dest_94.txt", "contenido previo muy largo que se debe truncar")
+archivos.copiar("origen_94.txt", "dest_94.txt")
+imprimir("Tras sobrescribir:", archivos.leer("dest_94.txt"))
+
+# Limpieza
+archivos.eliminar("origen_94.txt")
+archivos.eliminar("copia_94.txt")
+archivos.eliminar("dest_94.txt")
+imprimir("")
+
+# ─── 2. Copia de arbol con archivos en varios niveles ───────────
+
+imprimir("--- 2. Copia de arbol completo ---")
+
+# Setup del origen
+archivos.crear_arbol("src_94/codigo/utils")
+archivos.crear_arbol("src_94/docs")
+archivos.escribir("src_94/main.cor",       "# programa principal")
+archivos.escribir("src_94/codigo/lib.cor", "# biblioteca")
+archivos.escribir("src_94/codigo/utils/helpers.cor", "# helpers")
+archivos.escribir("src_94/docs/readme.md", "# README")
+
+# Copia recursiva
+archivos.copiar_arbol("src_94", "dst_94")
+
+# Verificar via recorrido del destino
+imprimir("Arbol copiado a dst_94/:")
+para r en ruta.Ruta("dst_94").recorrer():
+    si r.es_archivo():
+        imprimir("  ", r.cadena(), "(", r.tamano(), "bytes)")
+    fin si
+fin para
+imprimir("")
+
+# ─── 3. mkdir -p implicito en el destino ────────────────────────
+
+imprimir("--- 3. mkdir -p implicito ---")
+# El destino "back/up/2026" no existe; copiar_arbol lo crea
+archivos.copiar_arbol("src_94", "back/up/2026/codigo")
+imprimir("Destino creado:")
+imprimir("  back/up/2026/codigo/main.cor existe?:",
+         archivos.existe("back/up/2026/codigo/main.cor"))
+
+archivos.eliminar_arbol("back")
+imprimir("")
+
+# ─── 4. Fallback: copiar_arbol con archivo regular ──────────────
+
+imprimir("--- 4. copiar_arbol con archivo regular ---")
+archivos.escribir("uno_solo.txt", "soy un archivo")
+archivos.copiar_arbol("uno_solo.txt", "copia_de_uno.txt")
+imprimir("Copia simple via copiar_arbol:", archivos.leer("copia_de_uno.txt"))
+archivos.eliminar("uno_solo.txt")
+archivos.eliminar("copia_de_uno.txt")
+imprimir("")
+
+# ─── 5. Patron real: backup con timestamp ───────────────────────
+
+imprimir("--- 5. Patron backup con timestamp ---")
+importar tiempo
+ts = tiempo.epoch_ms()
+backup_dir = "src_94_backup_" + cadena(ts)
+archivos.copiar_arbol("src_94", backup_dir)
+imprimir("Backup creado en:", backup_dir)
+imprimir("Archivos en backup:")
+para r en ruta.Ruta(backup_dir).recorrer():
+    si r.es_archivo():
+        imprimir("  ", r.nombre())
+    fin si
+fin para
+
+# Limpieza completa
+archivos.eliminar_arbol(backup_dir)
+archivos.eliminar_arbol("src_94")
+archivos.eliminar_arbol("dst_94")
+imprimir("")
+
+# ─── 6. Encadenamiento via Ruta ─────────────────────────────────
+
+imprimir("--- 6. Encadenamiento via Ruta ---")
+archivos.escribir("origen.dat", "datos importantes")
+nueva = ruta.Ruta("origen.dat").copiar("respaldo.dat")
+imprimir("Devolvio:", nueva.cadena())
+imprimir("tamano:", nueva.tamano())
+archivos.eliminar("origen.dat")
+nueva.eliminar()
+imprimir("")
+
+# ─── 7. Errores atrapables ──────────────────────────────────────
+
+imprimir("--- 7. Errores ---")
+intentar:
+    archivos.copiar("no_existe.txt", "destino.txt")
+atrapar ErrorDeIO como e:
+    imprimir("  copiar inexistente:", e)
+fin intentar
+
+intentar:
+    archivos.copiar_arbol("", "dst")
+atrapar ErrorDeValor como e:
+    imprimir("  arbol vacia:", e)
+fin intentar
