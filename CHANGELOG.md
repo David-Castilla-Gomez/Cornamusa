@@ -6,6 +6,150 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.102.0] — 2026-05-23 — Filesystem: `eliminar_arbol` (rm -rf) + `crear_arbol` (mkdir -p)
+
+Cierra dos huecos declarados explícitamente en v1.99 ("Pendiente
+futuro"): borrado recursivo y creación con padres. Pure-Cornamusa
+sobre las nativas FS de v1.97 y v1.99 — sin código C nuevo. Ahora
+los scripts pueden hacer scaffolding completo + cleanup con dos
+llamadas, sin componer bucles manuales.
+
+```cornamusa
+importar archivos
+
+# mkdir -p en una linea
+archivos.crear_arbol("proyecto/src/utils")
+archivos.crear_arbol("proyecto/tests")
+archivos.crear_arbol("proyecto/docs/api")
+
+# Idempotente: si ya existe, no falla
+archivos.crear_arbol("proyecto/src/utils")    # OK
+
+# rm -rf con guardrails
+archivos.eliminar_arbol("proyecto")           # borra todo el arbol
+archivos.eliminar_arbol("")                   # ErrorDeValor (guardrail)
+archivos.eliminar_arbol("/")                  # ErrorDeValor (guardrail)
+```
+
+### API
+
+| Función | Hace |
+|---|---|
+| `archivos.crear_arbol(ruta)` | Crea ruta y todos los padres intermedios. Idempotente. Acepta `/` y `\` mezclados. |
+| `archivos.eliminar_arbol(ruta)` | Borra recursivamente. Si ruta es archivo, fallback a `eliminar`. |
+
+Wrappers correspondientes en `Ruta`:
+
+| Método | Equivalente |
+|---|---|
+| `r.crear_arbol()` | `archivos.crear_arbol(r.cadena())` |
+| `r.eliminar_arbol()` | `archivos.eliminar_arbol(r.cadena())` |
+
+### Guardrails de seguridad
+
+`eliminar_arbol` rechaza tres rutas peligrosas con `ErrorDeValor`:
+
+- `""` (cadena vacía)
+- `"/"` (raíz POSIX)
+- `"\\"` (raíz Windows)
+
+Esto evita el accidente clásico de borrar todo el filesystem por
+una variable mal pasada. Si el usuario realmente quiere borrar la
+raíz, puede llamar a `directorio_listar("/")` + bucle manual — la
+acción consciente.
+
+Además:
+
+- Si la ruta no existe → `ErrorDeIO` atrapable.
+- Si un componente intermedio en `crear_arbol` existe como
+  archivo (no directorio), el `directorio_crear` interno fallará
+  con `ErrorDeIO`. Esto es intencional — no se sobrescriben
+  archivos.
+
+### Implementación
+
+Pure-Cornamusa, ~80 líneas en `stdlib/archivos.cor`.
+
+**`eliminar_arbol(ruta)`**:
+1. Validar guardrails.
+2. Si es archivo regular, fallback a `archivo_borrar`.
+3. Si es directorio, iterar `directorio_listar(ruta)`. Por cada
+   entrada: si es directorio, recursión; si es archivo,
+   `archivo_borrar`.
+4. Finalmente `directorio_borrar` sobre el directorio ya vacío.
+
+**`crear_arbol(ruta)`**:
+1. Normalizar separadores `\` → `/`.
+2. Detectar prefijo absoluto (`/`, drive letter `C:`).
+3. Iterar caracteres acumulando componentes. Por cada `/`, llamar
+   a `directorio_crear` sobre el path acumulado (saltando si ya
+   existe vía `archivo_es_directorio`).
+4. Componente final tras el último separador.
+
+### Por qué pure-Cornamusa y no nativa C
+
+Implementar `rmdir -r` en C con portabilidad POSIX/Windows es
+~200 líneas de `#ifdef _WIN32` con `FindFirstFile`/`opendir` +
+recursión + manejo de errores en cada nivel. Pure-Cornamusa son
+~80 líneas legibles que reusan exactamente las primitivas que ya
+existen (`archivo_es_directorio`, `directorio_listar`,
+`archivo_borrar`, `directorio_borrar`, `directorio_crear`). La
+performance es perfectamente adecuada para casos típicos
+(scaffolding, cleanup de directorios temporales, sandboxes en
+tests). Patrón ya establecido en v1.100 (glob) y v1.101 (ordenar).
+
+### Tests
+
+8 bloques en `test_bytecode_arbol.c`:
+
+- `crear_arbol` crea 4 niveles correctamente.
+- `crear_arbol` idempotente: dos llamadas seguidas no fallan.
+- `eliminar_arbol` recursivo con archivos en cada nivel.
+- Guardrails: `""` y `"/"` lanzan `ErrorDeValor`.
+- Fallback: `eliminar_arbol(archivo)` borra el archivo.
+- Inexistente: `eliminar_arbol("no_existe")` lanza `ErrorDeIO`.
+- Métodos `Ruta.crear_arbol()` y `Ruta.eliminar_arbol()`.
+- `crear_arbol` acepta separadores `\\` mezclados.
+
+### Ejemplo
+
+`examples/91_arbol_fs.cor` con 7 secciones:
+
+1. Crear estructura de proyecto en un solo paso, recorrer para
+   verificar.
+2. Poblar con archivos en distintos niveles + listado de tamaños.
+3. Borrado recursivo.
+4. Idempotencia de `crear_arbol`.
+5. Guardrails: `""`, `"/"`, inexistente.
+6. Patrón **sandbox temporal**: función que crea un dir, ejecuta
+   un callback, y limpia siempre (incluso si lanza).
+7. Métodos sobre `Ruta`.
+
+### Lo que sigue pendiente del set FS
+
+- Symlinks (`lstat`, `readlink`, crear).
+- Watch (notificaciones de cambio en FS).
+- Modificar mtime/permisos.
+- Copy (`archivo_copiar`, `eliminar_arbol_copiar`).
+
+### Archivos
+
+- `stdlib/archivos.cor` — `eliminar_arbol` + `crear_arbol`
+  (~80 líneas pure-Cornamusa, con guardrails).
+- `stdlib/ruta.cor` — métodos `r.eliminar_arbol()` y
+  `r.crear_arbol()`.
+- `tests/unit/test_bytecode_arbol.c` — 8 bloques.
+- `examples/91_arbol_fs.cor` — 7 secciones demo (incluye patrón
+  sandbox temporal con cleanup garantizado).
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+273 tests verde, lint+fmt limpios.
+
+---
+
 ## [1.101.0] — 2026-05-18 — `funcionales.ordenar_por`: sort estable con clave
 
 Añade `ordenar_por(xs, clave)` y `ordenar_por_inverso(xs, clave)`

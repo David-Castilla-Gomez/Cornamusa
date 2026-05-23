@@ -116,3 +116,120 @@ fin funcion
 funcion info(ruta):
     retornar archivo_info(ruta)
 fin funcion
+
+# v1.102: borrado recursivo y creacion de arbol.
+#
+# `eliminar_arbol(ruta)` (rm -rf):
+#   - Si es archivo regular, lo borra (fallback a `eliminar`).
+#   - Si es directorio, borra recursivamente todo su contenido y
+#     finalmente el propio directorio.
+#   - Lanza ErrorDeValor si la ruta es vacia o solo un separador
+#     ("/", "\\") — guardrail anti-accidente.
+#   - Lanza ErrorDeIO si la ruta no existe.
+#
+# `crear_arbol(ruta)` (mkdir -p):
+#   - Crea el directorio creando padres intermedios si faltan.
+#   - Idempotente: si la ruta ya existe como directorio, no falla.
+#   - Lanza ErrorDeIO si un componente intermedio existe como archivo.
+
+funcion eliminar_arbol(ruta):
+    si tipo(ruta) != "cadena":
+        lanzar ErrorDeValor(
+            "eliminar_arbol: ruta debe ser cadena, no '" + tipo(ruta) + "'")
+    fin si
+    si longitud(ruta) == 0:
+        lanzar ErrorDeValor("eliminar_arbol: ruta vacia rechazada")
+    fin si
+    si ruta == "/" o ruta == "\\":
+        lanzar ErrorDeValor(
+            "eliminar_arbol: ruta raiz '" + ruta + "' rechazada por seguridad")
+    fin si
+    # Si es archivo, fallback a eliminar
+    si no archivo_es_directorio(ruta):
+        si archivo_existe(ruta):
+            archivo_borrar(ruta)
+            retornar nulo
+        fin si
+        lanzar ErrorDeIO("eliminar_arbol: '" + ruta + "' no existe")
+    fin si
+    # Es directorio: borrar contenido recursivamente
+    para entrada en directorio_listar(ruta):
+        sub = ruta + "/" + entrada
+        si archivo_es_directorio(sub):
+            eliminar_arbol(sub)
+        sino:
+            archivo_borrar(sub)
+        fin si
+    fin para
+    # Finalmente borrar el directorio (ahora vacio)
+    directorio_borrar(ruta)
+fin funcion
+
+
+funcion crear_arbol(ruta):
+    si tipo(ruta) != "cadena":
+        lanzar ErrorDeValor(
+            "crear_arbol: ruta debe ser cadena, no '" + tipo(ruta) + "'")
+    fin si
+    si longitud(ruta) == 0:
+        lanzar ErrorDeValor("crear_arbol: ruta vacia rechazada")
+    fin si
+    # Normalizar separadores: aceptar \ y /
+    normalizada = ""
+    para c en ruta:
+        si c == "\\":
+            normalizada = normalizada + "/"
+        sino:
+            normalizada = normalizada + c
+        fin si
+    fin para
+    # Construir y crear cada nivel
+    # Detectar prefijo absoluto: "/", "C:/", etc.
+    acumulado = ""
+    inicio = 0
+    si normalizada[0] == "/":
+        acumulado = "/"
+        inicio = 1
+    fin si
+    # Drive letter Windows: "C:..." — preservar "C:" como prefijo
+    si longitud(normalizada) >= 2 y normalizada[1] == ":":
+        acumulado = normalizada[0] + ":"
+        inicio = 2
+        si longitud(normalizada) >= 3 y normalizada[2] == "/":
+            acumulado = acumulado + "/"
+            inicio = 3
+        fin si
+    fin si
+    # Iterar componentes separados por "/"
+    componente = ""
+    i = inicio
+    n = longitud(normalizada)
+    mientras i < n:
+        c = normalizada[i]
+        si c == "/":
+            si longitud(componente) > 0:
+                si longitud(acumulado) > 0 y acumulado[longitud(acumulado)-1] != "/":
+                    acumulado = acumulado + "/"
+                fin si
+                acumulado = acumulado + componente
+                si no archivo_es_directorio(acumulado):
+                    directorio_crear(acumulado)
+                fin si
+                componente = ""
+            fin si
+        sino:
+            componente = componente + c
+        fin si
+        i = i + 1
+    fin mientras
+    # Componente final
+    si longitud(componente) > 0:
+        si longitud(acumulado) > 0 y acumulado[longitud(acumulado)-1] != "/":
+            acumulado = acumulado + "/"
+        fin si
+        acumulado = acumulado + componente
+        si no archivo_es_directorio(acumulado):
+            directorio_crear(acumulado)
+        fin si
+    fin si
+fin funcion

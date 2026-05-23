@@ -1,0 +1,124 @@
+# 91_arbol_fs.cor — borrado recursivo y mkdir -p (v1.102).
+#
+# Stdlib `archivos` cierra el set FS con:
+#   - `crear_arbol(ruta)` — equivalente a `mkdir -p`. Crea todos
+#     los directorios padres si faltan. Idempotente.
+#   - `eliminar_arbol(ruta)` — equivalente a `rm -rf`. Borra
+#     recursivamente. Guardrail anti-accidente para "/" y "".
+#
+# Plus metodos `Ruta.crear_arbol()` y `Ruta.eliminar_arbol()`.
+
+importar archivos
+importar ruta
+
+# ─── 1. Crear estructura de proyecto en un solo paso ────────────
+
+imprimir("--- 1. crear_arbol ---")
+archivos.crear_arbol("demo_proyecto/src/utils")
+archivos.crear_arbol("demo_proyecto/tests")
+archivos.crear_arbol("demo_proyecto/docs/api")
+
+# Pintar arbol que acabamos de crear
+imprimir("Estructura creada:")
+para r en ruta.Ruta("demo_proyecto").recorrer():
+    si r.es_directorio():
+        imprimir("  [dir]", r.cadena())
+    fin si
+fin para
+imprimir("")
+
+# ─── 2. Poblar y luego borrar ────────────────────────────────────
+
+archivos.escribir("demo_proyecto/main.cor", "imprimir(\"Hola\")")
+archivos.escribir("demo_proyecto/src/utils/helper.cor", "# helper")
+archivos.escribir("demo_proyecto/tests/test_main.cor", "# tests")
+archivos.escribir("demo_proyecto/docs/api/index.md", "# API")
+
+imprimir("--- 2. Contenido tras poblar ---")
+para r en ruta.Ruta("demo_proyecto").recorrer():
+    si r.es_archivo():
+        imprimir("  ", r.cadena(), "(", r.tamano(), "bytes)")
+    fin si
+fin para
+imprimir("")
+
+# ─── 3. Borrado recursivo ───────────────────────────────────────
+
+imprimir("--- 3. eliminar_arbol ---")
+archivos.eliminar_arbol("demo_proyecto")
+imprimir("post-borrado existe?:", archivos.es_directorio("demo_proyecto"))
+imprimir("")
+
+# ─── 4. Idempotencia de crear_arbol ─────────────────────────────
+
+imprimir("--- 4. crear_arbol idempotente ---")
+archivos.crear_arbol("idemp/uno/dos")
+archivos.crear_arbol("idemp/uno/dos")     # no falla
+archivos.crear_arbol("idemp/uno")          # no falla
+imprimir("Sigue existiendo:", archivos.es_directorio("idemp/uno/dos"))
+archivos.eliminar_arbol("idemp")
+imprimir("")
+
+# ─── 5. Guardrails ──────────────────────────────────────────────
+
+imprimir("--- 5. Guardrails de eliminar_arbol ---")
+intentar:
+    archivos.eliminar_arbol("")
+atrapar ErrorDeValor como e:
+    imprimir("  vacia:", e)
+fin intentar
+
+intentar:
+    archivos.eliminar_arbol("/")
+atrapar ErrorDeValor como e:
+    imprimir("  raiz:", e)
+fin intentar
+
+intentar:
+    archivos.eliminar_arbol("no_existe_demo")
+atrapar ErrorDeIO como e:
+    imprimir("  inexistente:", e)
+fin intentar
+imprimir("")
+
+# ─── 6. Patron real: scaffold + cleanup en una funcion ──────────
+
+funcion correr_en_sandbox(nombre, accion):
+    # Crea un directorio temporal, ejecuta `accion` con esa ruta,
+    # y limpia al final (incluso si `accion` lanza).
+    sandbox = "sandbox_" + nombre
+    archivos.crear_arbol(sandbox)
+    error_capturado = nulo
+    intentar:
+        accion(sandbox)
+    atrapar Excepcion como e:
+        error_capturado = e
+    fin intentar
+    # Cleanup garantizado
+    si archivos.es_directorio(sandbox):
+        archivos.eliminar_arbol(sandbox)
+    fin si
+    si error_capturado != nulo:
+        lanzar error_capturado
+    fin si
+fin funcion
+
+funcion escribir_y_leer(dir):
+    archivos.escribir(dir + "/dato.txt", "contenido en sandbox")
+    contenido = archivos.leer(dir + "/dato.txt")
+    imprimir("  Leido:", contenido)
+fin funcion
+
+imprimir("--- 6. Sandbox temporal ---")
+correr_en_sandbox("ejemplo", escribir_y_leer)
+imprimir("Post-sandbox existe?:", archivos.es_directorio("sandbox_ejemplo"))
+imprimir("")
+
+# ─── 7. Metodos en Ruta ─────────────────────────────────────────
+
+imprimir("--- 7. Via clase Ruta ---")
+r = ruta.Ruta("via_ruta/nivel1/nivel2")
+r.crear_arbol()
+imprimir("creado via metodo:", r.existe())
+ruta.Ruta("via_ruta").eliminar_arbol()
+imprimir("eliminado via metodo:", ruta.Ruta("via_ruta").existe())

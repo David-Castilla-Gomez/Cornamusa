@@ -980,6 +980,12 @@ Wrappers correspondientes en `stdlib/archivos`: `es_directorio(ruta)`, `listar(r
 
 Wrappers en `stdlib/archivos`: `eliminar(ruta)`, `eliminar_directorio(ruta)`, `info(ruta)`. Built-ins: `archivo_borrar`, `directorio_borrar`, `archivo_info`. `mtime_epoch_ms` tiene precisión por-segundo en Windows y sub-segundo en POSIX.
 
+**v1.102**: borrado recursivo y mkdir -p.
+- `r.eliminar_arbol()` → borra el árbol entero (rm -rf). Si la ruta es un archivo, fallback a `eliminar()`. Lanza `ErrorDeValor` si la ruta es vacía o un separador raíz (`""`, `"/"`, `"\\"`) — guardrail anti-accidente. Lanza `ErrorDeIO` si no existe.
+- `r.crear_arbol()` → crea el directorio creando todos los padres (mkdir -p). **Idempotente**: si la ruta ya existe como directorio, no falla. Acepta separadores `/` y `\` mezclados.
+
+Wrappers en `stdlib/archivos`: `eliminar_arbol(ruta)`, `crear_arbol(ruta)`. Pure-Cornamusa sobre las nativas de v1.97/v1.99 — no introducen código C nuevo.
+
 **v1.100**: glob recursivo.
 - `ruta.recorrer(directorio)` → lista de `Ruta` con todas las entradas alcanzables desde `directorio` recursivamente (DFS, incluye archivos y directorios).
 - `ruta.encontrar(directorio, patron)` → como `recorrer` filtrado por glob sobre el **nombre** (no la ruta completa).

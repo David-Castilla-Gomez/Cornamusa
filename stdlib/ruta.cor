@@ -569,6 +569,22 @@ clase Ruta:
         # Util para filtrar manualmente o comprobar un solo path.
         retornar _coincide_glob(yo.nombre(), patron)
     fin funcion
+
+    # v1.102: borrado recursivo y mkdir -p.
+
+    funcion eliminar_arbol(yo):
+        # Borra el arbol entero (rm -rf). Lanza ErrorDeValor si la
+        # ruta interna es vacia o un separador raiz. Para archivos
+        # regulares, fallback a `eliminar`. Lanza ErrorDeIO si no
+        # existe.
+        archivos.eliminar_arbol(yo.s)
+    fin funcion
+
+    funcion crear_arbol(yo):
+        # Crea el directorio y todos sus padres (mkdir -p).
+        # Idempotente: si ya existe, no falla.
+        archivos.crear_arbol(yo.s)
+    fin funcion
 fin clase
 
 
