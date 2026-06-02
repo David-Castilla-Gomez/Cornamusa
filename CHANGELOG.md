@@ -6,6 +6,179 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.110.0] — 2026-05-24 — Distribuciones azar + constantes mat (TAU/INF/NaN)
+
+Cierra el pendiente declarado en CHANGELOG de v1.103: tres
+distribuciones adicionales en `stdlib/azar` (exponencial,
+binomial, Poisson) plus constantes especiales en
+`stdlib/matematicas` (TAU, INFINITO, NO_NUMERO) y predicados para
+detectar inf/NaN. Release pequeña tras dos grandes (v1.108
+sistema completo, v1.109 deuda OOP).
+
+```cornamusa
+importar azar
+importar matematicas
+
+# Distribuciones nuevas
+azar.exponencial(2.0)        # tiempo hasta evento, media 0.5
+azar.binomial(100, 0.3)      # exitos de 100 ensayos Bernoulli
+azar.poisson(5)              # eventos por intervalo, media 5
+
+# Constantes especiales
+matematicas.TAU              # 2*PI
+matematicas.INFINITO         # decimal infinito positivo
+matematicas.NO_NUMERO        # NaN
+
+# Predicados (NaN != NaN, hay que usar el predicado)
+matematicas.es_no_numero(matematicas.NO_NUMERO)   # verdadero
+matematicas.es_infinito(matematicas.INFINITO)     # verdadero
+matematicas.es_finito(5)                          # verdadero
+```
+
+### Nativas C nuevas (4)
+
+| Nativa | Devuelve | Notas |
+|---|---|---|
+| `mat_infinito()` | decimal `+inf` | `INFINITY` de `<math.h>` |
+| `mat_no_numero()` | decimal `NaN` | `NAN` de `<math.h>` |
+| `mat_es_infinito(x)` | booleano | `isinf(x)` |
+| `mat_es_no_numero(x)` | booleano | `isnan(x)` |
+
+Necesarias porque en Cornamusa `1.0 / 0.0` lanza
+`ErrorAritmetico` (no devuelve infinito). Estas son la única forma
+de obtener inf/NaN reales.
+
+### Constantes nuevas en `stdlib/matematicas.cor`
+
+```cornamusa
+TAU = 6.283185307179586    # 2 * PI
+INFINITO = mat_infinito()
+NO_NUMERO = mat_no_numero()
+```
+
+TAU es conveniente para ángulos completos (una vuelta = TAU
+radianes) — recomendado por la "Tau Manifesto". PI sigue
+existiendo para retrocompatibilidad y casos típicos.
+
+### Wrappers de predicados
+
+```cornamusa
+funcion es_infinito(x): retornar mat_es_infinito(x) fin
+funcion es_no_numero(x): retornar mat_es_no_numero(x) fin
+funcion es_finito(x):
+    retornar no mat_es_infinito(x) y no mat_es_no_numero(x)
+fin
+```
+
+**IEEE 754**: `NaN != NaN`. Una comparación directa como
+`x == NO_NUMERO` SIEMPRE es falsa, incluso si `x` ES NaN. La única
+forma correcta de detectar NaN es `es_no_numero(x)`. Igual con
+infinito: aunque `INFINITO == INFINITO` sí es verdadero, usar
+`es_infinito(x)` también captura `-infinito` y es más legible.
+
+### Distribuciones en `stdlib/azar.cor`
+
+**`exponencial(tasa)`** — pure-Cornamusa, ~10 líneas.
+
+Modelo: tiempo hasta el próximo evento en un proceso Poisson con
+tasa `lambda`. Media = `1/tasa`. Soporte `[0, +inf)`.
+
+Implementación: inversa de la CDF acumulada:
+`X = -ln(U)/lambda` donde `U ~ Uniform(0, 1)`. La protección
+contra `U=0` (que daría `ln(0) = -inf`) hace re-sortear.
+
+**`binomial(n, p)`** — pure-Cornamusa, ~15 líneas.
+
+Modelo: número de éxitos en `n` ensayos Bernoulli independientes
+con probabilidad `p` por éxito. Soporte `{0, 1, ..., n}`,
+media = `n*p`.
+
+Implementación: cuenta éxitos sumando `n` Bernoulli(p). O(n).
+Para n muy grande (>10000) sería mejor usar aproximación normal
+o Poisson, pero la implementación directa es suficiente para
+casos comunes y mantiene legibilidad.
+
+**`poisson(media)`** — pure-Cornamusa, ~15 líneas.
+
+Modelo: número de eventos en intervalo fijo. Media = `lambda`,
+soporte `{0, 1, 2, ...}` (en teoría sin tope).
+
+Implementación: **algoritmo de Knuth**. Multiplicar uniformes
+hasta que el producto baje del umbral `e^-lambda`. Performance
+buena para `media <= 30`; para valores mayores tendría sentido
+usar PTRS (más complejo) o aproximación normal (más sencilla),
+pero los casos con media > 30 son raros en simulaciones típicas.
+
+### Verificación estadística
+
+Cada distribución tiene un test que comprueba que la media
+empírica converge al valor teórico con tolerancia razonable
+sobre 2000-5000 muestras y semilla fija:
+
+| Distribución | Media teórica | Tolerancia |
+|---|---|---|
+| `exponencial(2)` | `0.5` | `0.05` |
+| `binomial(100, 0.3)` | `30` | `0.5` |
+| `poisson(7)` | `7` | `0.2` |
+
+Plus casos borde: `binomial(n, 0) == 0` siempre, `binomial(n, 1) == n` siempre, `poisson(0) == 0` siempre.
+
+### Tests
+
+22 asserts en `test_bytecode_distribuciones.c`:
+
+- Constantes: `TAU == 2*PI`, predicados sobre `INFINITO`/`NO_NUMERO`.
+- `NaN != NaN` confirmado (regla IEEE 754).
+- Tres distribuciones: media empírica converge a la teórica.
+- `exponencial` siempre devuelve `>= 0`.
+- `binomial(n, 0)` siempre `0`; `binomial(n, 1)` siempre `n`.
+- `poisson(0)` siempre `0`.
+- Errores: rechazos por parámetros inválidos lanzan `ErrorDeValor`.
+
+### Ejemplo
+
+`examples/97_distribuciones.cor` con 5 secciones:
+
+1. Constantes especiales y predicados (`NaN != NaN`).
+2. **Exponencial**: tiempos entre llamadas a un centro
+   (`exponencial(3.0)` con media 1/3 min).
+3. **Binomial**: aciertos en 10 partidas de 20 disparos con
+   tirador al 75% (media teórica = 15).
+4. **Poisson**: clientes que entran a una tienda 24 horas, media
+   5/hora. Incluye **histograma horizontal ASCII** por hora.
+5. **Simulación**: 1000 llegadas exponencial(2) ≈ 500s; comparar
+   con `poisson(200)` para 100s del mismo proceso.
+
+### Pendientes futuros
+
+- Más distribuciones: gamma, beta, chi-cuadrado, log-normal.
+- Eficiencia: PTRS para Poisson con media grande.
+- Cachear segundo componente Box-Muller en `normal` (mitad de
+  llamadas a libm).
+
+### Archivos
+
+- `src/nativos.c` — 4 nativas matemáticas nuevas (~70 líneas C).
+- `stdlib/matematicas.cor` — `TAU`, `INFINITO`, `NO_NUMERO` +
+  `es_infinito`, `es_no_numero`, `es_finito`.
+- `stdlib/azar.cor` — `exponencial`, `binomial`, `poisson`
+  (~50 líneas pure-Cornamusa).
+- `tests/unit/test_bytecode_distribuciones.c` — 11 bloques,
+  22 asserts.
+- `examples/97_distribuciones.cor` — 5 secciones (incluye
+  histograma ASCII Poisson + comparación exponencial/Poisson).
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+285 tests verde, lint+fmt limpios. Módulo `azar` completo para
+modelado estadístico básico (uniforme, normal, exponencial,
+binomial, Poisson) + módulo `matematicas` con constantes
+especiales IEEE 754.
+
+---
+
 ## [1.109.0] — 2026-05-24 — `@propiedad` con setter: cierra el modelo OOP
 
 Cierra la **deuda OOP grande declarada desde v1.78**: ahora una

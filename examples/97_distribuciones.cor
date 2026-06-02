@@ -1,0 +1,142 @@
+# 97_distribuciones.cor — distribuciones aleatorias adicionales (v1.110).
+#
+# v1.103 trajo `azar.normal(mu, sigma)` con Box-Muller. v1.110
+# anade tres distribuciones mas para modelar fenomenos comunes:
+#
+#   exponencial(tasa) - tiempos entre eventos en procesos Poisson
+#   binomial(n, p)    - numero de exitos en n ensayos Bernoulli
+#   poisson(media)    - numero de eventos en intervalo fijo
+#
+# Plus constantes especiales TAU, INFINITO, NO_NUMERO y predicados
+# es_infinito/es_no_numero/es_finito en matematicas.
+
+importar azar
+importar matematicas
+
+azar.semilla(2026)
+
+# ─── 1. Constantes especiales ───────────────────────────────────
+
+imprimir("--- 1. Constantes especiales ---")
+imprimir("PI:        ", matematicas.PI)
+imprimir("TAU:       ", matematicas.TAU)
+imprimir("E:         ", matematicas.E)
+imprimir("INFINITO:  ", matematicas.INFINITO)
+imprimir("NO_NUMERO: ", matematicas.NO_NUMERO)
+imprimir("")
+
+# IEEE 754: NaN != NaN. Hay que usar el predicado.
+n = matematicas.NO_NUMERO
+imprimir("n == n:                    ", n == n, "  (siempre falso)")
+imprimir("matematicas.es_no_numero(n):", matematicas.es_no_numero(n))
+imprimir("matematicas.es_finito(5):   ", matematicas.es_finito(5))
+imprimir("matematicas.es_finito(INF): ", matematicas.es_finito(matematicas.INFINITO))
+imprimir("")
+
+# ─── 2. Distribucion exponencial: tiempos entre eventos ─────────
+
+imprimir("--- 2. Exponencial: tiempos entre llamadas a un centro ---")
+
+# Modelo: llegan llamadas con tasa 3 por minuto en promedio.
+# El tiempo entre llamadas sigue exponencial con tasa 3, media 1/3 min.
+tiempos = []
+para i en rango(0, 20):
+    agregar(tiempos, azar.exponencial(3.0))
+fin para
+
+imprimir("Tiempos entre llamadas (min):")
+para t en tiempos:
+    s = matematicas.redondear(t * 1000) / 1000
+    imprimir("  ", s)
+fin para
+
+media = 0.0
+para t en tiempos:
+    media = media + t
+fin para
+media = media / longitud(tiempos)
+imprimir("Media empirica:  ", matematicas.redondear(media * 1000) / 1000)
+imprimir("Media teorica:   ", 1.0 / 3.0)
+imprimir("")
+
+# ─── 3. Distribucion binomial: n ensayos Bernoulli ──────────────
+
+imprimir("--- 3. Binomial: aciertos en n disparos ---")
+
+# Modelo: tirador con 75% de aciertos hace 20 disparos.
+# Numero de aciertos sigue binomial(20, 0.75).
+aciertos_por_juego = []
+para juego en rango(0, 10):
+    agregar(aciertos_por_juego, azar.binomial(20, 0.75))
+fin para
+
+imprimir("Aciertos en 10 partidas de 20 disparos:")
+para a en aciertos_por_juego:
+    imprimir("  ", a)
+fin para
+
+# Media teorica = n*p = 20*0.75 = 15
+media2 = 0
+para a en aciertos_por_juego:
+    media2 = media2 + a
+fin para
+media2 = media2 / 10.0
+imprimir("Media empirica: ", media2)
+imprimir("Media teorica:  ", 20 * 0.75)
+imprimir("")
+
+# ─── 4. Distribucion Poisson: eventos por intervalo ─────────────
+
+imprimir("--- 4. Poisson: clientes que entran por hora ---")
+
+# Modelo: en promedio entran 5 clientes por hora en una tienda.
+# Numero por hora sigue Poisson(media=5).
+clientes_por_hora = []
+para hora en rango(0, 24):
+    agregar(clientes_por_hora, azar.poisson(5))
+fin para
+
+imprimir("Clientes por hora (24 horas):")
+total = 0
+para c en clientes_por_hora:
+    total = total + c
+fin para
+imprimir("Total dia:    ", total)
+imprimir("Media empirica:", total / 24.0)
+imprimir("Media teorica: ", 5)
+
+# Histograma horizontal
+imprimir("")
+imprimir("Histograma:")
+para h en rango(0, 24):
+    barra = ""
+    para i en rango(0, clientes_por_hora[h]):
+        barra = barra + "#"
+    fin para
+    hora_str = cadena(h)
+    si h < 10:
+        hora_str = "0" + hora_str
+    fin si
+    imprimir("  ", hora_str, "h: ", barra, " (", clientes_por_hora[h], ")")
+fin para
+imprimir("")
+
+# ─── 5. Simulacion: cola de un servidor ─────────────────────────
+# Combinando exponencial (tiempo entre llegadas) + Poisson (lotes)
+
+imprimir("--- 5. Simulacion: 1000 llegadas a un servidor ---")
+
+# 1000 eventos exponenciales con tasa 2 por segundo
+suma_exp = 0.0
+para i en rango(0, 1000):
+    suma_exp = suma_exp + azar.exponencial(2.0)
+fin para
+imprimir("Tiempo total para 1000 llegadas (s):",
+         matematicas.redondear(suma_exp * 100) / 100)
+imprimir("Tiempo teorico esperado:             ", 1000.0 / 2.0)
+
+# Comparar con Poisson para mismo intervalo
+intervalo = 100  # segundos
+lambda_efectiva = 2 * intervalo  # tasa * tiempo = 200 eventos esperados
+llegadas_pois = azar.poisson(lambda_efectiva)
+imprimir("Llegadas Poisson(200) en", intervalo, "s:", llegadas_pois)

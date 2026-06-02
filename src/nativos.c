@@ -5046,6 +5046,61 @@ static Valor nativa_mat_potencia(EvalError *err, int n_args, Valor *args,
     return valor_decimal(pow(x, y));
 }
 
+/* v1.110: constantes especiales para representar infinito y NaN.
+ * Util en codigo cientifico que necesita valores limite (limites de
+ * funciones, integrales divergentes, sentinelas). En cornamusa el
+ * operador `/` lanza ErrorAritmetico para division por cero, asi que
+ * estas constantes son la unica forma de obtener inf/nan reales. */
+static Valor nativa_mat_infinito(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: infinito() no acepta argumentos");
+    }
+    return valor_decimal(INFINITY);
+}
+
+static Valor nativa_mat_no_numero(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    (void)args;
+    if (n_args != 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: no_numero() no acepta argumentos");
+    }
+    return valor_decimal(NAN);
+}
+
+/* v1.110: predicados para detectar inf y NaN. `x != x` es la forma
+ * estandar de testear NaN sin requerir bit fiddling. */
+static Valor nativa_mat_es_infinito(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: es_infinito() requiere 1 argumento");
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: es_infinito() requiere un numero");
+    }
+    return valor_booleano(isinf(x) != 0);
+}
+
+static Valor nativa_mat_es_no_numero(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: es_no_numero() requiere 1 argumento");
+    }
+    double x;
+    if (!_val_a_double(&args[0], &x)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: es_no_numero() requiere un numero");
+    }
+    return valor_booleano(isnan(x) != 0);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Registro
  * ────────────────────────────────────────────────────────────────── */
@@ -5182,6 +5237,11 @@ static const EntradaNativa NATIVAS[] = {
     {"mat_suelo",            9, nativa_mat_suelo},
     {"mat_redondear",       13, nativa_mat_redondear},
     {"mat_potencia",        12, nativa_mat_potencia},
+    /* Matematicas: constantes especiales y predicados (v1.110). */
+    {"mat_infinito",        12, nativa_mat_infinito},
+    {"mat_no_numero",       13, nativa_mat_no_numero},
+    {"mat_es_infinito",     15, nativa_mat_es_infinito},
+    {"mat_es_no_numero",    16, nativa_mat_es_no_numero},
     /* Proceso (v1.27). */
     {"proceso_ejecutar",    16, nativa_proceso_ejecutar},
     /* Regex (v1.28). */

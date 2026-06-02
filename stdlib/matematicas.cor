@@ -13,6 +13,10 @@
 # Constantes
 PI = 3.141592653589793
 E  = 2.718281828459045
+# v1.110: constantes adicionales
+TAU = 6.283185307179586    # 2 * PI, conveniente para angulos completos
+INFINITO = mat_infinito()  # decimal infinito positivo
+NO_NUMERO = mat_no_numero() # NaN (Not a Number)
 
 # Operaciones simples
 funcion cuadrado(n):
@@ -194,4 +198,25 @@ fin funcion
 # raiz(a*a + b*b) para valores grandes.
 funcion hipotenusa(a, b):
     retornar mat_raiz(a * a + b * b)
+fin funcion
+
+# v1.110: predicados sobre inf y NaN.
+#
+# IEEE 754 garantiza que `NaN != NaN`. Por tanto `x == NO_NUMERO`
+# NUNCA es verdadero (¡incluso si x ES NaN!) — siempre usar
+# `es_no_numero(x)` para detectar. Lo mismo no aplica a infinito:
+# `INFINITO == INFINITO` es verdadero. Pero usar `es_infinito(x)`
+# es mas claro y captura -infinito tambien.
+
+funcion es_infinito(x):
+    retornar mat_es_infinito(x)
+fin funcion
+
+funcion es_no_numero(x):
+    retornar mat_es_no_numero(x)
+fin funcion
+
+# Equivalente a `not (es_infinito(x) or es_no_numero(x))`.
+funcion es_finito(x):
+    retornar no mat_es_infinito(x) y no mat_es_no_numero(x)
 fin funcion

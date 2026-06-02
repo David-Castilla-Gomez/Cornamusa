@@ -141,3 +141,75 @@ funcion normal(mu, sigma):
         matematicas.coseno(2.0 * matematicas.PI * u2)
     retornar mu + sigma * z
 fin funcion
+
+
+# ─── v1.110: distribuciones adicionales ─────────────────────────
+#
+# `exponencial(tasa)` - distribucion exponencial con parametro `tasa`
+# (lambda en notacion estandar). Media = 1/tasa. Util para tiempos
+# entre eventos en procesos Poisson, vidas utiles, etc.
+# Metodo: -ln(U)/tasa donde U ~ Uniform(0, 1).
+funcion exponencial(tasa):
+    importar matematicas
+    si tasa <= 0:
+        lanzar ErrorDeValor("exponencial: tasa debe ser > 0")
+    fin si
+    u = azar_decimal()
+    mientras u == 0:
+        u = azar_decimal()
+    fin mientras
+    retornar -matematicas.ln(u) / tasa
+fin funcion
+
+
+# `binomial(n, p)` - distribucion binomial con `n` ensayos y
+# probabilidad `p` de exito por ensayo. Retorna numero de exitos
+# en {0, 1, ..., n}.
+# Metodo directo: suma de n Bernoulli(p). O(n) — para n grande
+# podria usarse aproximacion normal/Poisson, pero para n <= 10000
+# este metodo es suficiente.
+funcion binomial(n, p):
+    si tipo(n) != "entero":
+        lanzar ErrorDeTipo("binomial: n debe ser entero")
+    fin si
+    si n < 0:
+        lanzar ErrorDeValor("binomial: n debe ser >= 0")
+    fin si
+    si p < 0 o p > 1:
+        lanzar ErrorDeValor("binomial: p debe estar en [0, 1]")
+    fin si
+    exitos = 0
+    para i en rango(0, n):
+        si azar_decimal() < p:
+            exitos = exitos + 1
+        fin si
+    fin para
+    retornar exitos
+fin funcion
+
+
+# `poisson(media)` - distribucion Poisson con media `media` (lambda).
+# Retorna entero >= 0.
+# Metodo: algoritmo de Knuth (multiplicar uniformes hasta superar
+# e^-media). Buen rendimiento para media <= 30; para valores mayores
+# podria usarse PTRS o normal approx, pero esos casos son raros.
+funcion poisson(media):
+    importar matematicas
+    si media < 0:
+        lanzar ErrorDeValor("poisson: media debe ser >= 0")
+    fin si
+    si media == 0:
+        retornar 0
+    fin si
+    limite = matematicas.exp(-media)
+    k = 0
+    p = 1.0
+    mientras verdadero:
+        k = k + 1
+        p = p * azar_decimal()
+        si p <= limite:
+            romper
+        fin si
+    fin mientras
+    retornar k - 1
+fin funcion

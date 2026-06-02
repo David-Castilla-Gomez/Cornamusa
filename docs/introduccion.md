@@ -135,6 +135,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | Typo suggestions más inteligentes: filtro de idéntico + case-insensitive ASCII (`IMPRIMIR` → `imprimir`) | v1.107 | ✅ |
 | Sistema completo: `usuario_actual`, `hostname`, `directorio_temporal` + wrappers `sistema.usuario/host/directorio_temp` | v1.108 | ✅ |
 | `@propiedad` con setter via `@escritor` (Python-style) — cierra OOP read+write + `ErrorDeAtributo` atrapable | v1.109 | ✅ |
+| `azar.exponencial/binomial/poisson` + constantes `TAU/INFINITO/NO_NUMERO` + predicados `es_infinito/es_no_numero/es_finito` | v1.110 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

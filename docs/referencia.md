@@ -803,6 +803,10 @@ Veinte módulos. Se importan con `importar <nombre>`.
 
 `PI`, `E`, `cuadrado(n)`, `cubo(n)`, `absoluto(n)`, `maximo(a,b)`, `minimo(a,b)`, `signo(n)`, `factorial(n)`, `suma_rango(a,b)`, `es_par(n)`, `es_impar(n)`, `mcd(a,b)`.
 
+**v1.110**: constantes y predicados.
+- Constantes: `TAU` (2·PI), `INFINITO` (decimal infinito positivo), `NO_NUMERO` (NaN).
+- Predicados: `es_infinito(x)`, `es_no_numero(x)`, `es_finito(x)` — necesarios porque IEEE 754 garantiza `NaN != NaN` (comparación directa nunca detecta NaN).
+
 **v1.103**: funciones continuas (libm). Aceptan enteros/decimales/booleanos, devuelven decimal. Ángulos en **radianes**.
 - **Raíz y potencia**: `raiz(x)` (rechaza negativo), `potencia(x, expo)`, `hipotenusa(a, b)`.
 - **Logaritmos y exponencial**: `ln(x)` (rechaza no-positivo), `log10(x)`, `log(x, base)`, `exp(x)`.
@@ -858,6 +862,13 @@ Reloj, sleep, cronómetro (complementa `fechas`):
 `decimal()` → [0,1), `entero(a,b)` → [a,b], `semilla(n)`, `elegir(seq)`, `barajar(lista)`, `muestra(seq,k)`, `booleano(p=0.5)`, `uniforme(a,b)`.
 
 **v1.103**: `normal(mu, sigma)` — muestra de distribución normal (Gaussiana) con media `mu` y desviación `sigma` usando transformada Box-Muller. Requiere `sigma >= 0`; `sigma == 0` devuelve `mu` exacto. Para reproducibilidad combinar con `azar.semilla(n)`.
+
+**v1.110**: tres distribuciones adicionales.
+- `exponencial(tasa)` — tiempos entre eventos en procesos Poisson. `tasa > 0`; media `= 1/tasa`. Implementación: `-ln(U)/tasa`.
+- `binomial(n, p)` — número de éxitos en `n` ensayos Bernoulli con probabilidad `p`. `n >= 0`, `0 <= p <= 1`. Implementación: contar éxitos de `n` Bernoulli(p).
+- `poisson(media)` — número de eventos por intervalo con media dada. `media >= 0`. Implementación: algoritmo de Knuth (multiplicar uniformes hasta superar `e^-media`).
+
+Todas pure-Cornamusa sobre `azar_decimal` (PRNG xoshiro256\*\*). Verificadas estadísticamente: media empírica converge al valor teórico con ~5000 muestras.
 
 ### `proceso`
 
