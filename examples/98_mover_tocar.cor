@@ -1,0 +1,124 @@
+# 98_mover_tocar.cor — renombrar/mover archivos y manipular mtime (v1.111).
+#
+# Cierra el set FS modificador:
+#   - crear/listar/info (v1.97)
+#   - leer/escribir/borrar (v1.8/1.99)
+#   - copiar (v1.105)
+#   - eliminar/crear arbol (v1.102)
+#   - MOVER (rename atomico) (v1.111)
+#   - tocar / set_mtime (v1.111)
+#
+# Ciclo completo.
+
+importar archivos
+importar ruta
+importar tiempo
+
+# ─── 1. Renombrar un archivo ────────────────────────────────────
+
+imprimir("--- 1. Renombrar ---")
+archivos.escribir("temp_v111.txt", "datos")
+archivos.mover("temp_v111.txt", "renombrado_v111.txt")
+imprimir("original existe?:", archivos.existe("temp_v111.txt"))
+imprimir("renombrado existe?:", archivos.existe("renombrado_v111.txt"))
+archivos.eliminar("renombrado_v111.txt")
+imprimir("")
+
+# ─── 2. Mover entre directorios (atomico mismo FS) ──────────────
+
+imprimir("--- 2. Mover entre directorios ---")
+archivos.crear_arbol("staging")
+archivos.crear_arbol("publicado")
+
+archivos.escribir("staging/articulo.md", "# Mi articulo")
+
+# Promocion: staging -> publicado en un rename atomico
+archivos.mover("staging/articulo.md", "publicado/articulo.md")
+
+imprimir("staging vacio?:", longitud(archivos.listar("staging")) == 0)
+imprimir("publicado tiene:", archivos.listar("publicado"))
+
+archivos.eliminar_arbol("staging")
+archivos.eliminar_arbol("publicado")
+imprimir("")
+
+# ─── 3. Tocar: actualizar mtime al instante actual ──────────────
+
+imprimir("--- 3. tocar ---")
+
+archivos.escribir("antiguo.txt", "x")
+# Mover mtime al pasado (2020-01-01 UTC)
+archivos.set_mtime("antiguo.txt", 1577836800000)
+info_antes = archivos.info("antiguo.txt")
+imprimir("Pre-touch mtime:", info_antes["mtime_epoch_ms"])
+
+# Tocar lo lleva al instante actual
+archivos.tocar("antiguo.txt")
+info_despues = archivos.info("antiguo.txt")
+imprimir("Post-touch mtime:", info_despues["mtime_epoch_ms"])
+imprimir("Avanzo en el tiempo?:", info_despues["mtime_epoch_ms"] > info_antes["mtime_epoch_ms"])
+
+archivos.eliminar("antiguo.txt")
+imprimir("")
+
+# ─── 4. Patron rotacion de logs ─────────────────────────────────
+
+imprimir("--- 4. Rotacion de logs ---")
+archivos.escribir("app.log", "linea de log\n")
+archivos.agregar("app.log", "otra linea\n")
+archivos.agregar("app.log", "tercera linea\n")
+
+# Rotar: app.log -> app.log.1, crear nuevo app.log vacio
+si archivos.existe("app.log"):
+    intentar:
+        archivos.eliminar("app.log.1")
+    atrapar ErrorDeIO como e:
+        pasar    # no existia, no pasa nada
+    fin intentar
+    archivos.mover("app.log", "app.log.1")
+fin si
+archivos.escribir("app.log", "")    # log nuevo vacio
+
+imprimir("app.log existe (nuevo, vacio):", archivos.existe("app.log"),
+         "tamano:", archivos.info("app.log")["tamano"])
+imprimir("app.log.1 (rotado):           ", archivos.existe("app.log.1"),
+         "tamano:", archivos.info("app.log.1")["tamano"])
+
+archivos.eliminar("app.log")
+archivos.eliminar("app.log.1")
+imprimir("")
+
+# ─── 5. Preservar mtime al copiar ───────────────────────────────
+
+imprimir("--- 5. Preservar mtime al copiar (manual) ---")
+archivos.escribir("src_pres.txt", "datos importantes")
+archivos.set_mtime("src_pres.txt", 1577836800000)   # 2020-01-01
+mtime_orig = archivos.info("src_pres.txt")["mtime_epoch_ms"]
+
+# Copia simple no preserva mtime (es el instante actual)
+archivos.copiar("src_pres.txt", "dst_pres.txt")
+mtime_copia = archivos.info("dst_pres.txt")["mtime_epoch_ms"]
+imprimir("Copia auto mtime:", mtime_copia, "(no es", mtime_orig, ")")
+
+# Para preservar, re-aplicar mtime tras copiar
+archivos.set_mtime("dst_pres.txt", mtime_orig)
+mtime_restaurado = archivos.info("dst_pres.txt")["mtime_epoch_ms"]
+imprimir("Tras restaurar:  ", mtime_restaurado)
+imprimir("Coincide:        ", mtime_restaurado == mtime_orig)
+
+archivos.eliminar("src_pres.txt")
+archivos.eliminar("dst_pres.txt")
+imprimir("")
+
+# ─── 6. Encadenamiento via Ruta ─────────────────────────────────
+
+imprimir("--- 6. Via Ruta ---")
+archivos.escribir("origen.txt", "x")
+nueva = ruta.Ruta("origen.txt").mover("destino_final.txt")
+imprimir("Tipo retornado:", tipo(nueva))
+imprimir("Path:           ", nueva.cadena())
+
+# Configurar mtime conocido para snapshot consistente en backups
+nueva.set_mtime(1577836800000)
+imprimir("Mtime fijado:   ", nueva.mtime_ms())
+nueva.eliminar()

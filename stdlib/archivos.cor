@@ -185,6 +185,35 @@ funcion copiar(origen, destino):
 fin funcion
 
 
+# v1.111: mover y modificar mtime.
+#
+# `mover(origen, destino)` renombra/mueve un archivo. ATOMICO en
+# el mismo sistema de archivos (rename()). Cross-FS no es atomico
+# en POSIX pero Windows MoveFileExA lo gestiona transparentemente.
+# Lanza ErrorDeIO si la operacion falla.
+#
+# `tocar(ruta)` actualiza el mtime al instante actual (como `touch`
+# de Unix). Si el archivo no existe, NO lo crea — para crear
+# usa `escribir(ruta, "")`.
+#
+# `set_mtime(ruta, ms)` establece el mtime explicito en milisegundos
+# UNIX epoch. Util para preservar mtime al copiar entre sistemas
+# o restaurar de backups.
+
+funcion mover(origen, destino):
+    archivo_mover(origen, destino)
+fin funcion
+
+funcion set_mtime(ruta, mtime_ms):
+    archivo_set_mtime(ruta, mtime_ms)
+fin funcion
+
+funcion tocar(ruta):
+    importar tiempo
+    archivo_set_mtime(ruta, tiempo.epoch_ms())
+fin funcion
+
+
 funcion copiar_arbol(origen, destino):
     si tipo(origen) != "cadena" o tipo(destino) != "cadena":
         lanzar ErrorDeValor(

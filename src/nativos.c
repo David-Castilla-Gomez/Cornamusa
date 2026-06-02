@@ -2916,6 +2916,163 @@ static Valor nativa_archivo_copiar(EvalError *err, int n_args, Valor *args,
     return valor_nulo();
 }
 
+/* v1.111: archivo_mover(origen, destino) -> nulo.
+ *
+ * Renombra/mueve un archivo. ATOMICO en el mismo sistema de archivos
+ * (rename() es atomico en POSIX y Windows). Cross-FS no es atomico
+ * pero se intenta copiar+borrar como fallback.
+ *
+ * Lanza ErrorDeIO si la operacion falla (origen no existe, destino
+ * sin permisos, etc.). El comportamiento Windows: rename() falla si
+ * el destino ya existe; usamos MoveFileExA con MOVEFILE_REPLACE_EXISTING
+ * para mantener consistencia con POSIX. */
+static Valor nativa_archivo_mover(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_mover() requiere 2 argumentos, recibio %d",
+            n_args);
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_mover() requiere cadenas (origen, destino)");
+    }
+    int lo = args[0].como.cadena.longitud;
+    int ld = args[1].como.cadena.longitud;
+    char orig_stack[1024], dest_stack[1024];
+    char *orig = orig_stack, *dest = dest_stack;
+    char *orig_heap = NULL, *dest_heap = NULL;
+    if (lo + 1 > (int)sizeof(orig_stack)) {
+        orig_heap = (char *)malloc((size_t)lo + 1);
+        if (!orig_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        orig = orig_heap;
+    }
+    if (ld + 1 > (int)sizeof(dest_stack)) {
+        dest_heap = (char *)malloc((size_t)ld + 1);
+        if (!dest_heap) {
+            if (orig_heap) free(orig_heap);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        dest = dest_heap;
+    }
+    memcpy(orig, args[0].como.cadena.texto, (size_t)lo); orig[lo] = '\0';
+    memcpy(dest, args[1].como.cadena.texto, (size_t)ld); dest[ld] = '\0';
+
+#ifdef _WIN32
+    /* MoveFileExA es nivel-Win32 y soporta REPLACE_EXISTING. */
+    BOOL ok = MoveFileExA(orig, dest, MOVEFILE_REPLACE_EXISTING);
+    int rc = ok ? 0 : -1;
+#else
+    int rc = rename(orig, dest);
+#endif
+    if (rc != 0) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo mover '%s' a '%s'", orig, dest);
+        if (orig_heap) free(orig_heap);
+        if (dest_heap) free(dest_heap);
+        return r;
+    }
+    if (orig_heap) free(orig_heap);
+    if (dest_heap) free(dest_heap);
+    return valor_nulo();
+}
+
+/* v1.111: archivo_set_mtime(ruta, mtime_ms) -> nulo.
+ *
+ * Establece la fecha de modificacion (mtime) del archivo o directorio
+ * en `ruta` a `mtime_ms` milisegundos desde UNIX epoch.
+ *
+ * POSIX: utimes() con struct timeval[2] = {atime, mtime}. Como no
+ * queremos cambiar atime, se lee primero con stat y se reusa.
+ *
+ * Windows: SetFileTime() con FILETIME. Conversion: epoch UNIX
+ * (1970) a epoch Windows (1601) anadiendo 11644473600 segundos.
+ *
+ * Lanza ErrorDeIO si la ruta no existe o la operacion falla.
+ *
+ * Tambien existe archivo_tocar(ruta) en stdlib/archivos.cor como
+ * azucar: actualiza mtime al instante actual. */
+static Valor nativa_archivo_set_mtime(EvalError *err, int n_args, Valor *args,
+                                        int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_set_mtime() requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_set_mtime() ruta debe ser cadena");
+    }
+    int64_t mtime_ms;
+    if (!valor_entero_a_i64(&args[1], &mtime_ms)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: archivo_set_mtime() mtime_ms debe ser entero");
+    }
+    int len = args[0].como.cadena.longitud;
+    char buf_stack[1024];
+    char *ruta = buf_stack;
+    char *ruta_heap = NULL;
+    if (len + 1 > (int)sizeof(buf_stack)) {
+        ruta_heap = (char *)malloc((size_t)len + 1);
+        if (!ruta_heap) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        ruta = ruta_heap;
+    }
+    memcpy(ruta, args[0].como.cadena.texto, (size_t)len);
+    ruta[len] = '\0';
+
+#ifdef _WIN32
+    HANDLE h = CreateFileA(ruta, FILE_WRITE_ATTRIBUTES,
+                            FILE_SHARE_READ | FILE_SHARE_WRITE,
+                            NULL, OPEN_EXISTING,
+                            FILE_FLAG_BACKUP_SEMANTICS, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: no se pudo abrir '%s' para set_mtime", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    /* FILETIME = numero de intervalos de 100ns desde 1601-01-01 UTC.
+     * UNIX epoch (1970-01-01) - Windows epoch (1601-01-01) =
+     *   11644473600 segundos = 116444736000000000 intervalos de 100ns. */
+    int64_t intervalos = (mtime_ms * 10000LL) + 116444736000000000LL;
+    FILETIME ft;
+    ft.dwLowDateTime = (DWORD)(intervalos & 0xFFFFFFFFLL);
+    ft.dwHighDateTime = (DWORD)(intervalos >> 32);
+    BOOL ok = SetFileTime(h, NULL, NULL, &ft);
+    CloseHandle(h);
+    if (!ok) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: SetFileTime fallo para '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+#else
+    /* utimes acepta dos timevals: [atime, mtime]. Preservamos atime
+     * leyendo stat primero. */
+    struct stat st;
+    if (stat(ruta, &st) != 0) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: archivo_set_mtime: '%s' no existe", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+    struct timeval tv[2];
+    tv[0].tv_sec = st.st_atime;
+    tv[0].tv_usec = 0;
+    tv[1].tv_sec = (time_t)(mtime_ms / 1000);
+    tv[1].tv_usec = (suseconds_t)((mtime_ms % 1000) * 1000);
+    if (utimes(ruta, tv) != 0) {
+        Valor r = error_nativa(err, linea, columna,
+            "ErrorDeIO: utimes fallo para '%s'", ruta);
+        if (ruta_heap) free(ruta_heap);
+        return r;
+    }
+#endif
+    if (ruta_heap) free(ruta_heap);
+    return valor_nulo();
+}
+
 /*
  * salir(codigo) → no retorna. Termina el proceso con el código indicado.
  * Si codigo no es entero/booleano, error de tipo.
@@ -5182,6 +5339,9 @@ static const EntradaNativa NATIVAS[] = {
     {"archivo_info",          12, nativa_archivo_info},
     /* Filesystem (v1.105). */
     {"archivo_copiar",        14, nativa_archivo_copiar},
+    /* Filesystem (v1.111). */
+    {"archivo_mover",         13, nativa_archivo_mover},
+    {"archivo_set_mtime",     17, nativa_archivo_set_mtime},
     /* JSON (v1.9). */
     {"json_parsear",     12, nativa_json_parsear},
     {"json_serializar",  15, nativa_json_serializar},

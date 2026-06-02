@@ -601,6 +601,30 @@ clase Ruta:
         retornar Ruta(destino_s)
     fin funcion
 
+    # v1.111: mover y modificar mtime.
+
+    funcion mover(yo, destino):
+        # Renombra/mueve este archivo. Devuelve Ruta(destino) para
+        # encadenar. Acepta cadena o Ruta como destino.
+        si tipo(destino) == "instancia":
+            destino_s = destino.s
+        sino:
+            destino_s = destino
+        fin si
+        archivos.mover(yo.s, destino_s)
+        retornar Ruta(destino_s)
+    fin funcion
+
+    funcion tocar(yo):
+        # Actualiza mtime al instante actual.
+        archivos.tocar(yo.s)
+    fin funcion
+
+    funcion set_mtime(yo, mtime_ms):
+        # Establece mtime explicito en ms UNIX epoch.
+        archivos.set_mtime(yo.s, mtime_ms)
+    fin funcion
+
     funcion copiar_arbol(yo, destino):
         # Copia recursivamente el arbol entero. Si `yo` es un
         # archivo, fallback a `copiar`. `destino` se crea si no

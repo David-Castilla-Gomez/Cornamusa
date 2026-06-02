@@ -1030,6 +1030,13 @@ Wrappers en `stdlib/archivos`: `eliminar_arbol(ruta)`, `crear_arbol(ruta)`. Pure
 
 Wrappers en `stdlib/archivos`: `copiar(origen, destino)` (delega a built-in `archivo_copiar`), `copiar_arbol(origen, destino)` (recursivo pure-Cornamusa). `archivo_copiar` lee/escribe con buffer de 64 KiB; no preserva mtime ni permisos (pendiente futura).
 
+**v1.111**: mover y modificar mtime.
+- `r.mover(destino)` → renombra/mueve el archivo. Atómico en mismo FS (`rename` POSIX / `MoveFileExA` Windows). Sobrescribe destino si existe. Devuelve `Ruta(destino)` para encadenar. Acepta cadena o `Ruta`.
+- `r.tocar()` → actualiza mtime al instante actual (como `touch` de Unix). NO crea el archivo si no existe.
+- `r.set_mtime(mtime_ms)` → establece mtime explícito en milisegundos UNIX epoch. Útil para preservar mtime al copiar o restaurar backups.
+
+Wrappers en `stdlib/archivos`: `mover(origen, destino)`, `tocar(ruta)`, `set_mtime(ruta, ms)`. Built-ins: `archivo_mover` (`rename`/`MoveFileExA` con `REPLACE_EXISTING`), `archivo_set_mtime` (`utimes` POSIX / `SetFileTime` Windows con conversión UNIX → Windows epoch).
+
 **v1.100**: glob recursivo.
 - `ruta.recorrer(directorio)` → lista de `Ruta` con todas las entradas alcanzables desde `directorio` recursivamente (DFS, incluye archivos y directorios).
 - `ruta.encontrar(directorio, patron)` → como `recorrer` filtrado por glob sobre el **nombre** (no la ruta completa).

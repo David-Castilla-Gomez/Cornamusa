@@ -6,6 +6,149 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.111.0] — 2026-05-24 — FS modificadores: `archivo_mover`, `set_mtime`, `tocar`
+
+Cierra los pendientes declarados en CHANGELOG de v1.105:
+**`archivo_mover`** (rename atómico) y **`archivo_set_mtime`**
+(touch / restaurar mtime). Con esto el módulo FS tiene el ciclo
+completo de operaciones para cualquier script de mantenimiento:
+
+```
+crear   → crear_directorio (v1.97), crear_arbol (v1.102), escribir (v1.8)
+leer    → leer, lineas (v1.8), info (v1.99), listar/recorrer (v1.97/v1.100)
+copiar  → copiar (v1.105), copiar_arbol (v1.105)
+mover   → mover (v1.111)                    ← NUEVO
+mtime   → set_mtime, tocar (v1.111)         ← NUEVO
+borrar  → eliminar (v1.99), eliminar_arbol (v1.102)
+```
+
+```cornamusa
+importar archivos
+importar ruta
+
+# Rename atomico
+archivos.mover("borrador.txt", "publicado.txt")
+
+# touch: actualizar mtime al ahora
+archivos.tocar("hito.txt")
+
+# Restaurar mtime preciso (preservar al copiar)
+archivos.copiar("orig.dat", "back.dat")
+archivos.set_mtime("back.dat", archivos.info("orig.dat")["mtime_epoch_ms"])
+
+# Via Ruta encadenable
+nueva = ruta.Ruta("origen").mover("destino")
+nueva.set_mtime(1577836800000)   # 2020-01-01
+```
+
+### Nativas C nuevas
+
+| Nativa | Devuelve | Implementación |
+|---|---|---|
+| `archivo_mover(orig, dest)` | `nulo` | `rename()` POSIX, `MoveFileExA` con `MOVEFILE_REPLACE_EXISTING` Windows |
+| `archivo_set_mtime(ruta, ms)` | `nulo` | `utimes()` POSIX, `SetFileTime()` Windows con conversión epoch |
+
+Ambas lanzan `ErrorDeIO` si la operación falla (origen inexistente,
+destino no escribible, etc.).
+
+**Sobrescritura coherente entre plataformas**: en POSIX `rename()`
+sobrescribe destino si existe. En Windows, `rename()` falla si el
+destino existe; por eso usamos `MoveFileExA` con
+`MOVEFILE_REPLACE_EXISTING` para mantener la misma semántica.
+
+**Conversión epoch Windows**: `SetFileTime` usa `FILETIME` =
+intervalos de 100ns desde 1601-01-01 UTC. La conversión:
+`(mtime_ms * 10000) + 116444736000000000` (diferencia 1601 → 1970
+en intervalos de 100ns).
+
+**Preservar atime en POSIX**: `utimes` cambia atime y mtime
+juntos. Para preservar el atime original leemos primero con
+`stat` y se lo pasamos de vuelta.
+
+### Wrappers en `stdlib/archivos`
+
+```cornamusa
+funcion mover(origen, destino):
+    archivo_mover(origen, destino)
+fin funcion
+
+funcion set_mtime(ruta, mtime_ms):
+    archivo_set_mtime(ruta, mtime_ms)
+fin funcion
+
+funcion tocar(ruta):
+    importar tiempo
+    archivo_set_mtime(ruta, tiempo.epoch_ms())
+fin funcion
+```
+
+`tocar` compone `set_mtime` con `tiempo.epoch_ms` (v1.73): touch
+de Unix sin código duplicado.
+
+### Métodos en `Ruta`
+
+- `r.mover(destino)` → devuelve `Ruta(destino)` para encadenar.
+  `destino` puede ser cadena o `Ruta`.
+- `r.tocar()` → atajo de `archivos.tocar(r.s)`.
+- `r.set_mtime(ms)` → atajo de `archivos.set_mtime(r.s, ms)`.
+
+### Patrones documentados (ejemplo 98)
+
+1. **Renombrar simple** con verificación de existencia.
+2. **Promoción staging → publicado** entre directorios (atómica
+   en mismo FS).
+3. **Touch** para actualizar mtime al ahora.
+4. **Rotación de logs**: `app.log` → `app.log.1`, crear nuevo
+   `app.log` vacío.
+5. **Preservar mtime al copiar**: copiar + `set_mtime` con el
+   mtime del origen. La copia simple no preserva mtime, pero
+   esta composición sí.
+6. **Encadenamiento via `Ruta`**.
+
+### Tests
+
+22 asserts en `test_bytecode_mover.c`:
+
+- `archivo_mover`: origen desaparece, destino aparece, contenido
+  preservado.
+- Sobrescritura: mover sobre destino existente reemplaza.
+- Origen inexistente lanza `ErrorDeIO`.
+- `archivo_set_mtime`: timestamp 2020-01-01 (1577836800000 ms) se
+  lee correcto con `archivo_info`.
+- `set_mtime` sobre inexistente lanza `ErrorDeIO`.
+- Wrappers `archivos.mover/set_mtime/tocar`.
+- Métodos `Ruta.mover/set_mtime/tocar`.
+- Mover entre directorios (mismo FS).
+
+### Lo que sigue pendiente del set FS
+
+- Symlinks (lstat, readlink, crear).
+- Watch (notificaciones de cambio).
+- `archivo_chmod` (permisos POSIX / atributos Windows).
+- Cross-FS atomic rename con fallback automático a copiar+borrar
+  (hoy `MoveFileExA` lo gestiona en Windows; POSIX `rename()`
+  retorna `EXDEV` para cross-FS y habría que detectarlo).
+
+### Archivos
+
+- `src/nativos.c` — 2 nativas nuevas (~200 líneas C con `#ifdef`
+  POSIX/Windows, incluye conversión epoch).
+- `stdlib/archivos.cor` — `mover`, `tocar`, `set_mtime`.
+- `stdlib/ruta.cor` — 3 métodos nuevos en clase `Ruta`.
+- `tests/unit/test_bytecode_mover.c` — 8 bloques, 22 asserts.
+- `examples/98_mover_tocar.cor` — 6 secciones (incluye rotación
+  de logs y preservación de mtime al copiar).
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+287 tests verde, lint+fmt limpios. **Ciclo FS completo**: crear,
+leer, escribir, listar/info, copiar, **mover**, **tocar mtime**,
+borrar.
+
+---
+
 ## [1.110.0] — 2026-05-24 — Distribuciones azar + constantes mat (TAU/INF/NaN)
 
 Cierra el pendiente declarado en CHANGELOG de v1.103: tres
