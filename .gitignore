@@ -4,6 +4,9 @@ build-*/
 build_*/
 out/
 
+# Archivos personales sueltos del usuario (no parte del proyecto)
+*.pdf
+
 # mdBook output (regenerado por el CI; no se commitea)
 book/
 *.o
