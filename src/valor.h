@@ -582,17 +582,25 @@ Valor valor_metodo_ligado(MetodoLigado *m);
  *   fin funcion
  *   # uso: rect.area    (sin parentesis — el getter se invoca solo)
  *
- * Solo getter en v1.78; @propiedad.setter queda pendiente.
+ * v1.109: anadido `setter` opcional. NULL si la propiedad es solo
+ * lectura. Cuando obj.attr = valor se ejecuta y la clase tiene una
+ * propiedad con setter para ese nombre, se invoca setter(yo, valor)
+ * en lugar de asignar el atributo directo. Sin setter, la asignacion
+ * lanza ErrorDeAtributo (atributo de solo lectura).
  */
 struct Propiedad {
     GCObject obj;
     Closure *getter;
+    Closure *setter;   /* v1.109: NULL si solo getter */
     int refcount;
 };
 
 Propiedad *propiedad_nueva(Closure *getter);
 void propiedad_retener(Propiedad *p);
 void propiedad_liberar(Propiedad *p);
+/* v1.109: vincula un setter a una propiedad ya existente. Retiene
+ * el setter; libera el anterior si lo habia (caso raro de redefinir). */
+void propiedad_vincular_setter(Propiedad *p, Closure *setter);
 
 Valor valor_propiedad(Propiedad *p);
 

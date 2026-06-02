@@ -4902,6 +4902,52 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 uint8_t idx = LEER_BYTE();
                 const Valor *nombre = &frame->chunk->constantes[idx];
                 /* Stack: [..., obj, valor]. */
+                /* v1.109: peek antes de sacar para chequear si hay
+                 * @propiedad con setter. Si la hay, despachar al
+                 * setter sin sacar (el dunder_binario espera el stack
+                 * tal cual). */
+                if (vm->tope - vm->pila < 2) {
+                    VM_ERROR("estado interno corrupto: OP_ASIGNAR_ATRIBUTO sin operandos");
+                    return VM_ERROR_RUNTIME;
+                }
+                Valor *peek_obj = &vm->tope[-2];
+                if (peek_obj->tipo == VAL_INSTANCIA) {
+                    Valor met_v;
+                    if (dicc_obtener(peek_obj->como.instancia->clase->metodos,
+                                       nombre, &met_v)
+                        && met_v.tipo == VAL_PROPIEDAD
+                        && met_v.como.propiedad
+                        && met_v.como.propiedad->getter != NULL) {
+                        /* Es una propiedad: setter obligatorio o error. */
+                        Closure *setter = met_v.como.propiedad->setter;
+                        if (!setter) {
+                            Valor val = sacar(vm);
+                            Valor ob = sacar(vm);
+                            valor_destruir(&met_v);
+                            valor_destruir(&val);
+                            valor_destruir(&ob);
+                            VM_ERROR("ErrorDeAtributo: '%.*s' es una propiedad de solo lectura",
+                                     nombre->como.cadena.longitud,
+                                     nombre->como.cadena.texto);
+                            RAISE_OR_DIE();
+                        }
+                        closure_retener(setter);
+                        valor_destruir(&met_v);
+                        /* Stack ya esta [..., yo, valor]. Despacha al
+                         * setter; cuando termine retornara su valor
+                         * (tipicamente nulo) en TOS — exactamente lo
+                         * que OP_DESCARTAR del compilador espera. */
+                        ResultadoVM rcs = ejecutar_dunder_binario(vm, &frame,
+                                                                   setter,
+                                                                   "setter", 6);
+                        closure_liberar(setter);
+                        if (rcs != VM_OK) return rcs;
+                        break;
+                    }
+                    /* Si la entrada en metodos no es propiedad (es un
+                     * metodo normal) seguimos al camino estandar. */
+                }
+                /* Camino estandar: asignar como atributo de instancia. */
                 Valor valor = sacar(vm);
                 Valor obj = sacar(vm);
                 if (obj.tipo != VAL_INSTANCIA) {
@@ -4936,6 +4982,36 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     return VM_ERROR_RUNTIME;
                 }
                 Clase *cl = vm->tope[-1].como.clase;
+                /* v1.109: marcador @escritor. La nativa `escritor` envuelve
+                 * el setter en una Propiedad con getter=NULL. Aqui
+                 * detectamos ese marcador y fusionamos con la propiedad
+                 * ya guardada con el mismo nombre. */
+                if (closure.tipo == VAL_PROPIEDAD
+                    && closure.como.propiedad
+                    && closure.como.propiedad->getter == NULL
+                    && closure.como.propiedad->setter != NULL) {
+                    Valor existente;
+                    if (!dicc_obtener(cl->metodos, nombre, &existente)
+                        || existente.tipo != VAL_PROPIEDAD
+                        || existente.como.propiedad == NULL
+                        || existente.como.propiedad->getter == NULL) {
+                        valor_destruir(&closure);
+                        VM_ERROR("@escritor requiere una @propiedad previa con el mismo nombre");
+                        return VM_ERROR_RUNTIME;
+                    }
+                    /* Setear clase_definicion del setter para que `super`
+                     * funcione si el setter lo usa. */
+                    Closure *setter_cl = closure.como.propiedad->setter;
+                    if (setter_cl->clase_definicion) {
+                        clase_liberar(setter_cl->clase_definicion);
+                    }
+                    clase_retener(cl);
+                    setter_cl->clase_definicion = cl;
+                    /* Fusionar: vincular setter a la propiedad existente. */
+                    propiedad_vincular_setter(existente.como.propiedad, setter_cl);
+                    valor_destruir(&closure);   /* libera el marker */
+                    break;
+                }
                 /* Set clase_definicion. Si OP_HEREDAR copió este closure
                    desde un padre, ya tendrá clase_definicion=Padre — no
                    sobreescribimos en ese caso (super seguiría apuntando

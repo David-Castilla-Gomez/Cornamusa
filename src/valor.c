@@ -1442,6 +1442,7 @@ Propiedad *propiedad_nueva(Closure *getter) {
     if (!p) return NULL;
     closure_retener(getter);
     p->getter = getter;
+    p->setter = NULL;   /* v1.109: solo lectura por defecto */
     p->refcount = 1;
     return p;
 }
@@ -1452,9 +1453,20 @@ void propiedad_liberar(Propiedad *p) {
     if (!p) return;
     p->refcount--;
     if (p->refcount > 0) return;
-    closure_liberar(p->getter);
+    if (p->getter) closure_liberar(p->getter);   /* v1.109: NULL en marcadores @escritor */
+    if (p->setter) closure_liberar(p->setter);
     gc_desenlazar(&p->obj);
     free(p);
+}
+
+/* v1.109: vincula un setter a la propiedad. Retiene el closure. Si
+ * ya habia setter (caso raro de redefinir en el cuerpo de clase),
+ * libera el anterior. */
+void propiedad_vincular_setter(Propiedad *p, Closure *setter) {
+    if (!p || !setter) return;
+    if (p->setter) closure_liberar(p->setter);
+    closure_retener(setter);
+    p->setter = setter;
 }
 
 Valor valor_propiedad(Propiedad *p) {

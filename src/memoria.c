@@ -288,6 +288,7 @@ void gc_marcar_objeto(GCObject *obj) {
         case GC_TIPO_PROPIEDAD: {
             const Propiedad *p = (const Propiedad *)obj;
             if (p->getter) gc_marcar_objeto(&p->getter->obj);
+            if (p->setter) gc_marcar_objeto(&p->setter->obj);   /* v1.109 */
             break;
         }
         case GC_TIPO_METODO_ESTATICO: {

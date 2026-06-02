@@ -1197,6 +1197,10 @@ DEFINIR_EXC_NATIVA(ErrorDeIO)
    la atrapa internamente en OP_ITER_SIGUIENTE para terminar el bucle
    `para`; también puede atraparse explícitamente por el usuario. */
 DEFINIR_EXC_NATIVA(ErrorDeIteracion)
+/* v1.109: usado cuando se accede o asigna a una propiedad que no
+   permite la operacion (propiedad solo lectura sin setter, o atributo
+   inexistente sobre un valor sin atributos). */
+DEFINIR_EXC_NATIVA(ErrorDeAtributo)
 
 #undef DEFINIR_EXC_NATIVA
 
@@ -3679,6 +3683,57 @@ static Valor nativa_propiedad(EvalError *err, int n_args, Valor *args,
     return valor_propiedad(p);
 }
 
+/* v1.109: `@escritor` decorador para vincular un setter a una
+ * propiedad ya existente. Envuelve el closure en una Propiedad con
+ * setter=closure y getter=NULL como marcador. OP_METODO detecta que
+ * el marcador (propiedad sin getter pero con setter) y lo fusiona
+ * con la propiedad ya guardada con ese mismo nombre.
+ *
+ * Patron de uso (Python-style):
+ *
+ *   clase Caja:
+ *       @propiedad
+ *       funcion lado(yo):
+ *           retornar yo._lado
+ *       fin funcion
+ *
+ *       @escritor
+ *       funcion lado(yo, valor):
+ *           si valor < 0:
+ *               lanzar ErrorDeValor("lado debe ser >= 0")
+ *           fin si
+ *           yo._lado = valor
+ *       fin funcion
+ *   fin clase
+ *
+ * Si no hay propiedad previa con ese nombre cuando se procesa
+ * @escritor, OP_METODO lanza error claro indicando el orden
+ * requerido. */
+static Valor nativa_escritor(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: escritor() requiere 1 argumento (callable)");
+    }
+    if (args[0].tipo != VAL_FUNCION_BC) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: escritor() espera una funcion, recibio '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    /* Crear una Propiedad-marcador: getter NULL, setter = la closure.
+     * OP_METODO la detectara y fusionara con la propiedad existente. */
+    Propiedad *p = (Propiedad *)gc_alocar(sizeof(Propiedad), GC_TIPO_PROPIEDAD);
+    if (!p) {
+        return error_nativa(err, linea, columna,
+            "memoria insuficiente al crear setter");
+    }
+    closure_retener(args[0].como.closure);
+    p->getter = NULL;
+    p->setter = args[0].como.closure;
+    p->refcount = 1;
+    return valor_propiedad(p);
+}
+
 /* v1.84: `@estaticometodo` — marca una funcion para que cuando se
  * acceda via `Clase.X` o `instancia.X`, NO se le ligue el receptor.
  * El usuario hace:
@@ -5040,6 +5095,7 @@ static const EntradaNativa NATIVAS[] = {
     {"ErrorDeSistema",  14, nativa_exc_ErrorDeSistema},
     {"ErrorDeIO",       9,  nativa_exc_ErrorDeIO},
     {"ErrorDeIteracion", 16, nativa_exc_ErrorDeIteracion},
+    {"ErrorDeAtributo", 15, nativa_exc_ErrorDeAtributo},
     /* GC manual (v0.8.1). */
     {"recolectar",      10, nativa_recolectar},
     /* Sistema (v0.9.2). */
@@ -5101,6 +5157,7 @@ static const EntradaNativa NATIVAS[] = {
     {"tiempo_dormir",       13, nativa_tiempo_dormir},
     /* @propiedad (v1.78). */
     {"propiedad",            9, nativa_propiedad},
+    {"escritor",             8, nativa_escritor},   /* v1.109 */
     /* @estaticometodo (v1.84). */
     {"estaticometodo",      14, nativa_estaticometodo},
     /* @clasemetodo (v1.85). */

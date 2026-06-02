@@ -6,6 +6,186 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.109.0] — 2026-05-24 — `@propiedad` con setter: cierra el modelo OOP
+
+Cierra la **deuda OOP grande declarada desde v1.78**: ahora una
+propiedad puede tener setter además de getter. Sintaxis
+Python-style con un segundo método del mismo nombre decorado con
+`@escritor`. Plus excepción `ErrorDeAtributo` atrapable.
+
+```cornamusa
+clase Termometro:
+    funcion __iniciar__(yo):
+        yo._c = 0
+    fin funcion
+
+    @propiedad
+    funcion celsius(yo):
+        retornar yo._c
+    fin funcion
+
+    @escritor
+    funcion celsius(yo, c):
+        si c < -273.15:
+            lanzar ErrorDeValor("bajo cero absoluto")
+        fin si
+        yo._c = c
+    fin funcion
+fin clase
+
+t = Termometro()
+t.celsius = 100        # ejecuta el setter, valida
+t.celsius              # 100 (via getter)
+t.celsius = -300       # lanza ErrorDeValor
+```
+
+### Diseño: `@escritor` como decorator marker
+
+El decorator `@escritor` crea una `Propiedad` con `getter == NULL`
+y `setter == closure` — un **marker** que OP_METODO detecta y
+**fusiona** con la propiedad ya guardada bajo el mismo nombre.
+
+Razonamiento: Python usa `@x.setter` que requiere que `x` (el
+objeto propiedad) sea accesible dentro del cuerpo de la clase para
+acceder a su atributo `.setter`. En Cornamusa el cuerpo de clase
+solo admite métodos (no asignaciones top-level ni acceso a
+identificadores). Por eso `@escritor` se aplica sin argumentos y
+el OP_METODO hace la fusión por nombre.
+
+Patrón: declarar getter y setter como dos métodos con el mismo
+nombre, decorados con `@propiedad` y `@escritor` respectivamente.
+Idéntico ergonómicamente a Python.
+
+### Cambios C
+
+**`src/valor.h`**: `Propiedad` extendida con `Closure *setter`
+(NULL si solo lectura). Helper `propiedad_vincular_setter`.
+
+**`src/valor.c`**: `propiedad_nueva` inicializa `setter = NULL`.
+`propiedad_liberar` libera setter si lo hay. Ambos closures
+soportan NULL.
+
+**`src/memoria.c`**: GC mark de `Propiedad` ahora marca también el
+setter.
+
+**`src/nativos.c`**: nueva nativa `escritor(fn)` que envuelve fn
+en marker `Propiedad{getter=NULL, setter=fn}`. Nueva excepción
+canónica `ErrorDeAtributo` (sigue el patrón de `DEFINIR_EXC_NATIVA`).
+
+**`src/vm.c`** (dos cambios):
+
+1. **OP_METODO**: si el valor a guardar es un marker `@escritor`
+   (propiedad con getter=NULL pero setter!=NULL), busca la
+   propiedad existente con ese nombre y la fusiona con
+   `propiedad_vincular_setter`. Si no hay propiedad previa, error
+   claro: `"@escritor requiere una @propiedad previa con el mismo
+   nombre"`. Setea `clase_definicion` del setter para que `super`
+   funcione correctamente.
+
+2. **OP_ASIGNAR_ATRIBUTO**: peek antes de sacar — si la clase de
+   la instancia tiene una `Propiedad` con ese nombre:
+   - Con setter: `ejecutar_dunder_binario(vm, &frame, setter,
+     "setter", 6)` — el dunder ya espera el stack `[obj, valor]`
+     que tenemos. El setter ejecuta y su retorno (típicamente
+     `nulo`) queda en TOS para que OP_DESCARTAR del compilador lo
+     saque.
+   - Sin setter: `VM_ERROR("ErrorDeAtributo: 'X' es una propiedad
+     de solo lectura")` + `RAISE_OR_DIE()` para que sea atrapable.
+   
+   Si no hay propiedad: comportamiento estándar (asigna a
+   `instancia->atributos`).
+
+### Excepción nueva: `ErrorDeAtributo`
+
+Atrapable con `atrapar ErrorDeAtributo como e:`. Se lanza desde
+OP_ASIGNAR_ATRIBUTO cuando se intenta asignar a una propiedad de
+solo lectura. Reservada para uso futuro en otros casos relacionados
+con atributos.
+
+### Pitfall encontrado durante el desarrollo
+
+`ejecutar_dunder_binario` solo **prepara** el frame del setter; no
+lo ejecuta inline. Tras `break`, el ciclo principal continúa
+ejecutando el bytecode del setter. Mi código inicial sacaba un
+`Valor ret` y empujaba `nulo` justo tras el dunder — pero eso
+sacaba el closure del nuevo frame antes de ejecutarse,
+corrompiendo el stack del setter. El setter llamaba con
+`valor = nulo` y `yo` desplazado. Fix: no manipular el stack
+después del dunder. El setter ya deja su retorno en TOS, y el
+`OP_DESCARTAR` que el compilador emite tras `OP_ASIGNAR_ATRIBUTO`
+lo limpia naturalmente.
+
+### Tests
+
+13 asserts en `test_bytecode_propiedad_setter.c`:
+
+- Setter invocado: `c.x = 10` ejecuta el setter (verificado por
+  efecto secundario: el setter duplica el valor).
+- Validación: setter lanza `ErrorDeValor` y el valor NO se
+  modifica.
+- Propiedad sin setter: `ErrorDeAtributo` atrapable.
+- `@escritor` sin `@propiedad` previa: error de compilación
+  visible al ejecutar.
+- Atributos normales no afectados (caso sin propiedad sigue
+  funcionando).
+- Setter puede leer otros atributos de `yo` (closure de yo).
+
+### Ejemplo
+
+`examples/96_propiedad_setter.cor` con 3 secciones:
+
+1. **Validación en setter**: clase `Edad` rechaza valores fuera
+   de rango y no-enteros con excepciones atrapables.
+2. **Termómetro multi-propiedad**: `celsius`/`fahrenheit`/`kelvin`
+   con getters y dos setters que componen. `kelvin` queda solo
+   lectura sin `@escritor`.
+3. **Cuenta bancaria con protección**: setter de `saldo` que
+   **bloquea cualquier asignación directa** (`c.saldo = 999999`
+   lanza), forzando el uso de `depositar/retirar` que mantienen
+   historial. Patrón clásico de encapsulación.
+
+### Estado del modelo de objetos
+
+Tras v1.109 Cornamusa tiene paridad con Python 3.10 en OOP:
+
+- ✓ Herencia simple (v0.7)
+- ✓ Dunders aritméticos, comparación, contenedor, conversión (v1.2+)
+- ✓ `__hash__` + `__igual__` (v1.42)
+- ✓ `__siguiente__` iteradores lazy (v1.43)
+- ✓ Decoradores (v1.72)
+- ✓ `@propiedad` solo lectura (v1.78)
+- ✓ `@estaticometodo` (v1.84) / `@clasemetodo` (v1.85)
+- ✓ Atributos dinámicos: `tiene_atributo`/`obtener_atributo`/
+  `asignar_atributo` (v1.86)
+- ✓ `inspeccion` (v1.91)
+- ✓ **`@propiedad` con setter (v1.109)**
+
+Sin pendientes en OOP. Lo único que falta para "Python completo"
+es múltiple herencia con MRO C3 — decisión de diseño deliberada
+(complejidad innecesaria para un lenguaje pedagógico).
+
+### Archivos
+
+- `src/valor.h` / `valor.c` — `Propiedad.setter`,
+  `propiedad_vincular_setter`.
+- `src/memoria.c` — GC mark del setter.
+- `src/nativos.c` — `nativa_escritor`, `nativa_exc_ErrorDeAtributo`
+  + 2 entradas en la tabla NATIVAS.
+- `src/vm.c` — OP_METODO con fusión + OP_ASIGNAR_ATRIBUTO con
+  dispatch al setter.
+- `tests/unit/test_bytecode_propiedad_setter.c` — 6 bloques,
+  13 asserts.
+- `examples/96_propiedad_setter.cor` — 3 secciones (validación,
+  termómetro multi-prop, cuenta bancaria).
+- `README.md`, `docs/introduccion.md`: entrada de release.
+
+### Estado
+
+283 tests verde, lint+fmt limpios. **Deuda OOP de v1.78
+oficialmente cerrada.**
+
+---
+
 ## [1.108.0] — 2026-05-23 — Sistema completo: usuario, host y directorio temporal
 
 Cierra los tres huecos declarados como pendientes en el CHANGELOG

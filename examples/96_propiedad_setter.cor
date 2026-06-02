@@ -1,0 +1,192 @@
+# 96_propiedad_setter.cor — propiedades read+write con @escritor (v1.109).
+#
+# v1.78 introdujo @propiedad para getters (lectura). v1.109 cierra
+# el ciclo con @escritor (setter): a una propiedad con setter se le
+# asigna como a un atributo normal, pero el setter se ejecuta y
+# puede validar/transformar el valor antes de guardarlo.
+#
+# Sintaxis Python-style: dos metodos con el MISMO nombre, uno
+# decorado con @propiedad (getter) y otro con @escritor (setter).
+# El segundo se fusiona con la propiedad existente.
+
+# ─── 1. Validacion: rechazar valores invalidos ──────────────────
+
+clase Edad:
+    funcion __iniciar__(yo, anyos):
+        yo._anyos = 0
+        yo.anyos = anyos    # invoca el setter, valida
+    fin funcion
+
+    @propiedad
+    funcion anyos(yo):
+        retornar yo._anyos
+    fin funcion
+
+    @escritor
+    funcion anyos(yo, n):
+        si tipo(n) != "entero":
+            lanzar ErrorDeTipo("anyos debe ser entero")
+        fin si
+        si n < 0 o n > 150:
+            lanzar ErrorDeValor("anyos fuera de rango (0-150)")
+        fin si
+        yo._anyos = n
+    fin funcion
+fin clase
+
+imprimir("--- 1. Validacion en setter ---")
+e = Edad(25)
+imprimir("edad inicial:", e.anyos)
+
+e.anyos = 30
+imprimir("edad post-set:", e.anyos)
+
+intentar:
+    e.anyos = -5
+atrapar ErrorDeValor como err:
+    imprimir("rechazado negativo:", err)
+fin intentar
+imprimir("edad sigue:", e.anyos)
+
+intentar:
+    e.anyos = "veinte"
+atrapar ErrorDeTipo como err:
+    imprimir("rechazado no-entero:", err)
+fin intentar
+imprimir("")
+
+# ─── 2. Atributo computado con escritura ────────────────────────
+
+clase Termometro:
+    funcion __iniciar__(yo):
+        yo._celsius = 0
+    fin funcion
+
+    @propiedad
+    funcion celsius(yo):
+        retornar yo._celsius
+    fin funcion
+
+    @escritor
+    funcion celsius(yo, c):
+        si c < -273.15:
+            lanzar ErrorDeValor("temperatura por debajo del cero absoluto")
+        fin si
+        yo._celsius = c
+    fin funcion
+
+    @propiedad
+    funcion fahrenheit(yo):
+        retornar yo._celsius * 9.0 / 5.0 + 32
+    fin funcion
+
+    @escritor
+    funcion fahrenheit(yo, f):
+        # Asigna celsius transformando; valida en el setter de celsius
+        yo.celsius = (f - 32) * 5.0 / 9.0
+    fin funcion
+
+    @propiedad
+    funcion kelvin(yo):
+        retornar yo._celsius + 273.15
+    fin funcion
+    # kelvin es de solo lectura: no tiene @escritor
+fin clase
+
+imprimir("--- 2. Termometro con multiples propiedades ---")
+t = Termometro()
+t.celsius = 100
+imprimir("celsius:    ", t.celsius)
+imprimir("fahrenheit: ", t.fahrenheit)
+imprimir("kelvin:     ", t.kelvin)
+
+# Asignar via fahrenheit (compone setters)
+t.fahrenheit = 32   # debe ser 0 grados celsius
+imprimir("post fahrenheit=32 -> celsius:", t.celsius)
+
+# Kelvin es solo lectura
+intentar:
+    t.kelvin = 300
+atrapar ErrorDeAtributo como err:
+    imprimir("kelvin solo lectura:", err)
+fin intentar
+imprimir("")
+
+# ─── 3. Patron banco: depositos validados ───────────────────────
+
+clase Cuenta:
+    funcion __iniciar__(yo, titular):
+        yo.titular = titular
+        yo._saldo = 0
+        yo._historial = []
+    fin funcion
+
+    @propiedad
+    funcion saldo(yo):
+        retornar yo._saldo
+    fin funcion
+
+    @escritor
+    funcion saldo(yo, nuevo):
+        # No se pueden hacer asignaciones directas; obligar al uso de
+        # depositar/retirar para mantener historial.
+        lanzar ErrorDeValor("usa depositar() o retirar(), no asignacion directa")
+    fin funcion
+
+    funcion depositar(yo, monto):
+        si monto <= 0:
+            lanzar ErrorDeValor("monto debe ser positivo")
+        fin si
+        yo._saldo = yo._saldo + monto
+        agregar(yo._historial, "deposito +" + cadena(monto))
+    fin funcion
+
+    funcion retirar(yo, monto):
+        si monto <= 0:
+            lanzar ErrorDeValor("monto debe ser positivo")
+        fin si
+        si monto > yo._saldo:
+            lanzar ErrorDeValor("saldo insuficiente")
+        fin si
+        yo._saldo = yo._saldo - monto
+        agregar(yo._historial, "retiro -" + cadena(monto))
+    fin funcion
+
+    @propiedad
+    funcion historial(yo):
+        # Devuelve copia para que el caller no pueda modificar el interno
+        copia = []
+        para h en yo._historial:
+            agregar(copia, h)
+        fin para
+        retornar copia
+    fin funcion
+fin clase
+
+imprimir("--- 3. Cuenta bancaria con setter de proteccion ---")
+c = Cuenta("Ana")
+c.depositar(100)
+c.depositar(50)
+c.retirar(30)
+imprimir("Saldo:    ", c.saldo)
+imprimir("Historial:", c.historial)
+
+# El setter de saldo bloquea cualquier asignacion directa
+intentar:
+    c.saldo = 999999   # intento de fraude
+atrapar ErrorDeValor como err:
+    imprimir("fraude bloqueado:", err)
+fin intentar
+
+# Validaciones de depositar/retirar
+intentar:
+    c.depositar(-10)
+atrapar ErrorDeValor como err:
+    imprimir("rechazado:", err)
+fin intentar
+
+intentar:
+    c.retirar(99999)
+atrapar ErrorDeValor como err:
+    imprimir("rechazado:", err)
+fin intentar
