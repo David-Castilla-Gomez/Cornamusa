@@ -264,6 +264,19 @@ struct ParteFCadena {
     Expr *expr;
     const char *spec;          /* v1.45: NULL si no hay `:fmt_spec` */
     int spec_longitud;
+    /* v1.112: f"{expr=}" debug format. Si `debug_texto` != NULL, se
+     * emite esa cadena literal (que incluye la expr original tal cual
+     * la escribio el usuario y el `=` plus cualquier espacio antes
+     * del valor) ANTES de evaluar/formatear la expresion. Ejemplo:
+     *
+     *   f"{x=}"       -> debug_texto = "x="     -> "x=5"
+     *   f"{x = }"     -> debug_texto = "x = "   -> "x = 5"
+     *   f"{x*2=}"     -> debug_texto = "x*2="   -> "x*2=10"
+     *
+     * NULL si no es debug. Cuando lo es, `spec` puede seguir aplicandose
+     * al valor mostrado tras el `=` (ej. f"{x=:>5}"). */
+    const char *debug_texto;
+    int debug_longitud;
 };
 
 /* ──────────────────────────────────────────────────────────────────

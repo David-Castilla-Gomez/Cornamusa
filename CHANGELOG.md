@@ -6,6 +6,141 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.112.0] — 2026-06-03 — F-string debug format `f"{x=}"`
+
+Añade el patrón de print-debugging conciso de Python 3.8: sufijo
+`=` dentro de una interpolación emite la expresión textual + `=` +
+valor. Sin ambigüedad con operadores `==`/`!=`/`<=`/`>=`.
+
+```cornamusa
+x = 5
+imprimir(f"{x=}")            # "x=5"
+imprimir(f"{x*2=}")          # "x*2=10"
+imprimir(f"{x = }")          # "x = 5"   (espacios preservados)
+imprimir(f"{x=:>5}")         # "x=    5" (combinable con spec v1.45)
+
+# Multiple debugs en una linea
+a, b = 1, 2
+imprimir(f"{a=}, {b=}, {a+b=}")    # "a=1, b=2, a+b=3"
+```
+
+### Antes vs después
+
+```cornamusa
+# Antes (v1.45-v1.111):
+imprimir(f"precio={precio}, descuento={descuento}, final={final}")
+
+# Ahora (v1.112):
+imprimir(f"{precio=}, {descuento=}, {final=}")
+```
+
+Reduce muchísimo la verborrea típica de print-debugging.
+Especialmente útil dentro de funciones donde se quieren imprimir
+varios valores intermedios.
+
+### Detección de `=` sin ambigüedad
+
+El parser detecta `=` como debug **solo** si el carácter no está
+precedido por `=`, `!`, `<` o `>`. Esto evita falsos positivos:
+
+```cornamusa
+f"{a == b}"   # operador == → comparación, NO debug
+f"{a != b}"   # operador != → comparación
+f"{a <= b}"   # operador <= → comparación
+f"{a >= b}"   # operador >= → comparación
+```
+
+Compatible 100% con código pre-v1.112: cualquier f-string que ya
+funcionaba sigue funcionando idéntico. La detección es puramente
+sintáctica al final de la expresión, antes de `}` o `:`.
+
+### Implementación
+
+**`src/ast.h`** — `ParteFCadena` extendida con `debug_texto` y
+`debug_longitud`. NULL si no es debug.
+
+**`src/parser.c`** — tras extraer la expresión, escanear hacia
+atrás desde el final saltando espacios. Si el último carácter
+no-blanco es `=` y no es operador, marcar como debug y guardar el
+slice completo (con espacios preservados).
+
+**`src/compilador.c`** — antes de compilar `p->expr`, si es debug,
+emitir el `debug_texto` como literal en stack. Tras formatear el
+valor (`OP_FORMATO_F` o `OP_FORMATO_F_SPEC`), `OP_SUMAR` para
+fusionar `"expr=" + valor` en un solo string. El OP_SUMAR exterior
+del bucle concatena este resultado al acumulado.
+
+**`src/evaluador.c`** — actualizado para coherencia con
+tree-walking (excepto specs que están congelados en v0.5).
+
+### Espacios preservados
+
+El texto debug se copia literalmente desde el código fuente. Si
+hay espacios entre la expresión, el `=` y el cierre `}`, se
+preservan:
+
+| Código | Output |
+|---|---|
+| `f"{x=}"` | `"x=5"` |
+| `f"{x =}"` | `"x =5"` |
+| `f"{x= }"` | `"x= 5"` |
+| `f"{x = }"` | `"x = 5"` |
+
+### Combinación con format specs
+
+`f"{x=:>5}"` aplica el spec `>5` (alineación derecha, ancho 5) al
+**valor**, no al debug literal:
+
+```cornamusa
+x = 5
+n = 10
+imprimir(f"{x=:>5}")   # "x=    5"
+imprimir(f"{n=:0>4}")  # "n=0010"
+```
+
+Coherente con Python.
+
+### Tests
+
+12 asserts en `test_bytecode_fstring_debug.c`:
+
+- Básico `f"{x=}"`.
+- Preservación de espacios (3 variantes).
+- Expresión compuesta `f"{x*2=}"`.
+- Debug + spec `f"{x=:>5}"`.
+- Múltiples debugs en una f-string.
+- Mezcla debug + interpolación normal + literal.
+- Operadores `==`/`!=`/`<=`/`>=` NO emiten literal (no son debug).
+- Debug con cadena, atributo, función `longitud`.
+- Compatibilidad: f-strings sin `=` siguen funcionando.
+
+### Ejemplo
+
+`examples/99_fstring_debug.cor` con 8 secciones que cubren todos
+los patrones: básico, espacios, spec, múltiples, operadores, debug
+de función real (`calcular_descuento`), atributos/índices, mezcla
+con literales.
+
+### Archivos
+
+- `src/ast.h` — `ParteFCadena.debug_texto` y `debug_longitud`.
+- `src/parser.c` — detección del `=` debug + verificación de
+  no-operador.
+- `src/compilador.c` — emisión del literal `"expr="` antes del
+  valor + `OP_SUMAR` para fusionar.
+- `src/evaluador.c` — coherencia con tree-walking.
+- `tests/unit/test_bytecode_fstring_debug.c` — 12 bloques.
+- `examples/99_fstring_debug.cor` — 8 secciones demo.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+289 tests verde, lint+fmt limpios. Compatibilidad total con
+código pre-v1.112.
+
+---
+
 ## [1.111.0] — 2026-05-24 — FS modificadores: `archivo_mover`, `set_mtime`, `tocar`
 
 Cierra los pendientes declarados en CHANGELOG de v1.105:

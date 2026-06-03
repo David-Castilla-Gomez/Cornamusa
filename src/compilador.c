@@ -1404,6 +1404,23 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             for (int i = 0; i < n; i++) {
                 const ParteFCadena *p = &partes[i];
                 if (p->expr) {
+                    /* v1.112: para `f"{expr=}"` empujar primero el
+                     * literal "expr=" + posibles espacios, luego el
+                     * valor formateado, y OP_SUMAR para unirlos en
+                     * un solo string. El resultado cuenta como UNA
+                     * parte que se concatena al acumulado por el
+                     * OP_SUMAR exterior al final del iter. */
+                    bool tiene_debug = (p->debug_texto && p->debug_longitud > 0);
+                    if (tiene_debug) {
+                        Valor dbg = valor_cadena_duplicar(
+                            p->debug_texto, p->debug_longitud);
+                        if (dbg.tipo == VAL_NULO) {
+                            error_compilacion(c, e->linea, e->columna,
+                                "memoria insuficiente al compilar debug f-cadena");
+                            return false;
+                        }
+                        chunk_emitir_constante(c->actual->chunk, dbg, e->linea);
+                    }
                     if (!compilador_compilar_expr(c, p->expr)) return false;
                     if (p->spec && p->spec_longitud > 0) {
                         /* v1.45: con format spec. Almacenamos el spec
@@ -1432,6 +1449,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         /* v1.2: validar que el resultado de OP_FORMATO_F
                          * (posiblemente venido de `__cadena__`) sea cadena. */
                         chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                    }
+                    if (tiene_debug) {
+                        /* Fusionar "expr=" + valor en un solo string
+                         * en stack. Despues el OP_SUMAR exterior lo
+                         * concatena al acumulado. */
+                        chunk_emitir_byte(c->actual->chunk, OP_SUMAR, e->linea);
                     }
                 } else {
                     Valor v = valor_cadena_desde_escapes(p->literal, p->longitud);

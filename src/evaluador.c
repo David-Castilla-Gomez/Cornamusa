@@ -705,6 +705,33 @@ Valor evaluador_evaluar_expr(Evaluador *ev, const Expr *e) {
                 const ParteFCadena *p = &partes[i];
                 Valor pieza;
                 if (p->expr) {
+                    /* v1.112: si es debug f"{expr=}", concatenar
+                     * primero "expr=" al acumulado, luego seguir con
+                     * la pieza normal (el valor formateado). */
+                    if (p->debug_texto && p->debug_longitud > 0) {
+                        Valor dbg = valor_cadena_duplicar(
+                            p->debug_texto, p->debug_longitud);
+                        if (dbg.tipo == VAL_NULO) {
+                            valor_destruir(&acc);
+                            return error_en(ev, e, "memoria insuficiente");
+                        }
+                        int la = acc.como.cadena.longitud;
+                        int ld = dbg.como.cadena.longitud;
+                        char *combinado = (char *)malloc((size_t)(la + ld + 1));
+                        if (!combinado) {
+                            valor_destruir(&acc); valor_destruir(&dbg);
+                            return error_en(ev, e, "memoria insuficiente");
+                        }
+                        if (la > 0) memcpy(combinado, acc.como.cadena.texto, (size_t)la);
+                        if (ld > 0) memcpy(combinado + la, dbg.como.cadena.texto, (size_t)ld);
+                        combinado[la + ld] = '\0';
+                        valor_destruir(&acc);
+                        valor_destruir(&dbg);
+                        acc.tipo = VAL_CADENA;
+                        acc.dueno_cadena = true;
+                        acc.como.cadena.texto = combinado;
+                        acc.como.cadena.longitud = la + ld;
+                    }
                     Valor v = evaluador_evaluar_expr(ev, p->expr);
                     if (ev->error.tuvo_error) {
                         valor_destruir(&v); valor_destruir(&acc);

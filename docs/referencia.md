@@ -512,6 +512,22 @@ f"{'hola mundo':.4}" # "hola"
 
 El `:` de slicing (`xs[1:3]`) y dict (`{k: v}`) **no** se confunden con el inicio de un spec — el parser solo detecta `:` cuando está en el nivel superior de la interpolación, fuera de `[]`/`()`/`{}` anidados.
 
+### Debug format (v1.112)
+
+Sufijo `=` dentro de `{expr=}` emite la expresión tal cual escrita por el usuario + `=` + valor formateado. Equivalente a `f"expr={expr}"`, pero sin tener que duplicar el texto:
+
+```cornamusa
+x = 5
+imprimir(f"{x=}")           # "x=5"
+imprimir(f"{x*2=}")          # "x*2=10"
+imprimir(f"{x = }")          # "x = 5"   (espacios preservados)
+imprimir(f"{x=:>5}")         # "x=    5" (combinable con spec)
+```
+
+El parser **no confunde** `=` debug con operadores `==`, `!=`, `<=`, `>=`: el `=` solo se interpreta como debug si NO está precedido por `=`, `!`, `<` o `>`.
+
+Patrón estándar de print debugging (Python 3.8+). Reduce muchísimo la verborrea típica de `imprimir(f"x = {x}, y = {y}, suma = {x+y}")` → `imprimir(f"{x=}, {y=}, {x+y=}")`.
+
 Limitación: el spec **no** invoca `__cadena__` — la stringificación dentro del spec es siempre canónica. Si necesitas el dunder, computa `cadena(obj)` primero.
 
 ---

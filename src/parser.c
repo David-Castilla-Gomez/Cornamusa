@@ -371,6 +371,8 @@ static Expr *parsear_f_cadena(Parser *p) {
             pl.expr = NULL;                                               \
             pl.spec = NULL;                                               \
             pl.spec_longitud = 0;                                         \
+            pl.debug_texto = NULL;                                        \
+            pl.debug_longitud = 0;                                        \
             EMPUJAR_PARTE(pl);                                            \
             buf_len = 0;                                                  \
         }                                                                 \
@@ -448,6 +450,42 @@ static Expr *parsear_f_cadena(Parser *p) {
             } else {
                 len_expr = i - inicio_expr;
             }
+            /* v1.112: detectar trailing `=` para debug format `f"{x=}"`.
+             * Buscar el ultimo `=` no-operador (no precedido por
+             * `=`, `!`, `<`, `>`) saltando espacios al final. Si lo
+             * encontramos, todo desde inicio_expr hasta el final
+             * (incluyendo el `=` y los espacios despues) se convierte
+             * en debug_texto, y la expresion cornamusa real queda
+             * cortada justo antes del `=`. */
+            int debug_off = -1;
+            int debug_total = 0;
+            {
+                int fin = inicio_expr + len_expr;
+                int j = fin - 1;
+                while (j >= inicio_expr
+                       && (cuerpo[j] == ' ' || cuerpo[j] == '\t')) {
+                    j--;
+                }
+                if (j >= inicio_expr && cuerpo[j] == '=') {
+                    bool es_operador = false;
+                    if (j > inicio_expr) {
+                        char prev = cuerpo[j - 1];
+                        if (prev == '=' || prev == '!'
+                            || prev == '<' || prev == '>') {
+                            es_operador = true;
+                        }
+                    }
+                    if (!es_operador) {
+                        /* j apunta al `=`. La expresion real va de
+                         * inicio_expr a j (excl). debug_texto cubre
+                         * inicio_expr a fin (la slice tal cual con
+                         * eventuales espacios despues del `=`). */
+                        debug_off = inicio_expr;
+                        debug_total = fin - inicio_expr;
+                        len_expr = j - inicio_expr;
+                    }
+                }
+            }
             i++; /* skip '}' */
             if (len_expr == 0) {
                 error_en(p, &t,
@@ -484,6 +522,8 @@ static Expr *parsear_f_cadena(Parser *p) {
                podría invalidarse si la fuente desaparece). */
             pe.spec = NULL;
             pe.spec_longitud = 0;
+            pe.debug_texto = NULL;
+            pe.debug_longitud = 0;
             if (spec_off >= 0 && spec_len > 0) {
                 char *spec_copia = (char *)arena_alocar(p->arena,
                     (size_t)spec_len + 1);
@@ -494,6 +534,15 @@ static Expr *parsear_f_cadena(Parser *p) {
                 pe.spec_longitud = spec_len;
             } else if (spec_off >= 0 && spec_len == 0) {
                 /* Spec vacío `f"{x:}"` — equivalente a sin spec. */
+            }
+            /* v1.112: copiar debug_texto a arena si aplica. */
+            if (debug_off >= 0 && debug_total > 0) {
+                char *dbg = (char *)arena_alocar(p->arena,
+                    (size_t)debug_total);
+                if (!dbg) { goto fallo_oom; }
+                memcpy(dbg, cuerpo + debug_off, (size_t)debug_total);
+                pe.debug_texto = dbg;
+                pe.debug_longitud = debug_total;
             }
             EMPUJAR_PARTE(pe);
             continue;

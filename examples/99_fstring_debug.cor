@@ -1,0 +1,100 @@
+# 99_fstring_debug.cor — f-string debug format `f"{x=}"` (v1.112).
+#
+# Patron clasico de debugging traido de Python 3.8: dentro de una
+# interpolacion `{expr=}` se emite la expresion tal cual escrita
+# por el usuario, un signo igual, y el valor evaluado. Reduce
+# enormemente el "print debugging" repetitivo.
+#
+# Antes (v1.45):
+#   imprimir(f"x = {x}, y = {y}, x+y = {x+y}")
+#
+# Ahora (v1.112):
+#   imprimir(f"{x=}, {y=}, {x+y=}")
+
+# ─── 1. Patron basico ───────────────────────────────────────────
+
+imprimir("--- 1. Basico ---")
+x = 5
+n = 10
+imprimir(f"{x=}")            # x=5
+imprimir(f"{n=}")            # n=10
+imprimir(f"{x + n=}")        # x + n=15
+imprimir("")
+
+# ─── 2. Preservacion de espacios ────────────────────────────────
+
+imprimir("--- 2. Espacios alrededor del = ---")
+imprimir(f"{x=}")            # "x=5"
+imprimir(f"{x =}")           # "x =5"
+imprimir(f"{x= }")           # "x= 5"
+imprimir(f"{x = }")          # "x = 5"
+imprimir("")
+
+# ─── 3. Combinacion con format spec ─────────────────────────────
+
+imprimir("--- 3. Debug + spec ---")
+pi = 3.14159
+imprimir(f"{pi=:.2f}")         # pi=3.14
+imprimir(f"{x=:>5}")           # x=    5 (padding derecha)
+imprimir(f"{n=:0>4}")          # n=0010
+imprimir("")
+
+# ─── 4. Multiples valores en una linea ──────────────────────────
+
+imprimir("--- 4. Multiples ---")
+a = "hola"
+b = [1, 2, 3]
+c = {"clave": "valor"}
+imprimir(f"{a=}, {b=}, {c=}")
+imprimir("")
+
+# ─── 5. Operadores NO se confunden con debug ────────────────────
+
+imprimir("--- 5. Operadores ==, !=, <=, >= ---")
+i = 5
+imprimir(f"comparacion: {i == 5}")    # comparacion: verdadero
+imprimir(f"diferente:   {i != 0}")    # diferente: verdadero
+imprimir(f"menor o ig:  {i <= 10}")   # menor o ig: verdadero
+imprimir("")
+
+# ─── 6. Patron real: print debugging de una funcion ─────────────
+
+imprimir("--- 6. Debug de funcion ---")
+
+funcion calcular_descuento(precio, porcentaje):
+    descuento = precio * porcentaje / 100
+    final = precio - descuento
+    # Print debugging clasico, ahora super conciso:
+    imprimir(f"  {precio=}, {porcentaje=}, {descuento=}, {final=}")
+    retornar final
+fin funcion
+
+calcular_descuento(100, 15)
+calcular_descuento(250, 30)
+imprimir("")
+
+# ─── 7. Acceso a atributos ──────────────────────────────────────
+
+imprimir("--- 7. Atributos y elementos ---")
+
+clase Punto:
+    funcion __iniciar__(yo, abs, ord):
+        yo.abs = abs
+        yo.ord = ord
+    fin funcion
+fin clase
+
+p = Punto(3, 4)
+imprimir(f"{p.abs=}, {p.ord=}")
+
+lista = [10, 20, 30]
+imprimir(f"{lista[0]=}, {lista[2]=}")
+imprimir(f"{longitud(lista)=}")
+imprimir("")
+
+# ─── 8. Combinacion con texto normal ────────────────────────────
+
+imprimir("--- 8. Mezcla literal + debug ---")
+estado = "activo"
+ms_transcurridos = 1234
+imprimir(f">>> sistema {estado=}, latencia {ms_transcurridos=}ms <<<")
