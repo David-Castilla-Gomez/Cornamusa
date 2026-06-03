@@ -849,7 +849,9 @@ Token lexer_siguiente(Lexer *l) {
         case '}': return crear_token(l, TT_LLAVE_DER);
         case ',': return crear_token(l, TT_COMA);
         case '.': return crear_token(l, TT_PUNTO);
-        case ':': return crear_token(l, TT_DOS_PUNTOS);
+        case ':':
+            /* v1.113: walrus operator `:=` para asignacion en expresion. */
+            return crear_token(l, coincidir(l, '=') ? TT_WALRUS : TT_DOS_PUNTOS);
         case ';': return crear_token(l, TT_PUNTO_COMA);
         case '@': return crear_token(l, TT_AT);
         case '~': return crear_token(l, TT_TILDE_BIT);
@@ -951,6 +953,7 @@ const char *tipo_token_nombre(TipoToken t) {
         case TT_ASIGNAR_DOBLE_BARRA: return "TT_ASIGNAR_DOBLE_BARRA";
         case TT_ASIGNAR_PORCENTAJE:  return "TT_ASIGNAR_PORCENTAJE";
         case TT_ASIGNAR_DOBLE_ASTER: return "TT_ASIGNAR_DOBLE_ASTER";
+        case TT_WALRUS:              return "TT_WALRUS";
 
         case TT_AMPERSAND:           return "TT_AMPERSAND";
         case TT_BARRA_VERT:          return "TT_BARRA_VERT";

@@ -138,6 +138,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | `azar.exponencial/binomial/poisson` + constantes `TAU/INFINITO/NO_NUMERO` + predicados `es_infinito/es_no_numero/es_finito` | v1.110 | ✅ |
 | FS modificadores: `archivo_mover` (rename atómico) + `archivo_set_mtime`/`tocar` + métodos `Ruta` | v1.111 | ✅ |
 | F-string debug format `f"{x=}"` — Python 3.8 style, sin ambigüedad con `==`/`!=`/`<=`/`>=` | v1.112 | ✅ |
+| Walrus operator `:=` — asignación en expresión (PEP 572), `si (n := f()) > 0:` | v1.113 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

@@ -80,6 +80,28 @@ signo = "pos" si n > 0 sino ("cero" si n == 0 sino "neg")
 
 Precedencia más baja que cualquier operador. Asociativa derecha. Vive en **una sola línea**: un `si` que abre línea es siempre el inicio de una sentencia `si`, no una ternaria.
 
+### Walrus operator `:=` (v1.113)
+
+Asignación como expresión (PEP 572 de Python). `nombre := valor` asigna `valor` a `nombre` y deja el valor en la expresión:
+
+```cornamusa
+si (n := longitud(xs)) > 5:
+    imprimir(f"grande: {n=}")
+fin si
+
+mientras (item := siguiente()) != nulo:
+    procesar(item)
+fin mientras
+```
+
+Solo el lado izquierdo IDENT — no se admite `obj.x := v` ni `xs[0] := v`. Se permite paréntesis (`(n := 5)`) en cualquier expresión.
+
+**Semántica**:
+- Si la variable ya existe (local, upvalue, global), se actualiza.
+- Si no existe, se crea (local nuevo en función, global en top-level).
+
+**Limitación**: dentro de bucles, crear una variable **nueva** con `:=` falla porque el slot del compilador se fija en la primera iteración. La variable debe pre-existir antes del loop si va a usarse con walrus.
+
 ---
 
 ## 2. Operadores

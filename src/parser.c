@@ -604,6 +604,16 @@ static Expr *parsear_nulo(Parser *p) {
 static Expr *parsear_ident(Parser *p) {
     Token t = p->actual;
     avanzar(p);
+    /* v1.113: walrus `nombre := expr`. Si el siguiente token es :=,
+     * parsea el lado derecho como expresion (recursivo, asociativa por
+     * la derecha como cualquier asignacion). Devuelve EXPR_WALRUS. */
+    if (check(p, TT_WALRUS)) {
+        avanzar(p);  /* consume := */
+        Expr *valor = parser_parsear_expr(p);
+        if (!valor) return NULL;
+        return expr_walrus(p->arena, t.inicio, t.longitud, valor,
+                            t.linea, t.columna);
+    }
     return expr_ident(p->arena, t.inicio, t.longitud, t.linea, t.columna);
 }
 

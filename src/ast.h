@@ -89,6 +89,12 @@ typedef enum {
        Estilo Python: `a if c else b`. Precedencia muy baja, por encima de
        `lambda`. Se desugara a un salto condicional en el compilador. */
     EXPR_TERNARIA,
+
+    /* v1.113: walrus / asignacion en expresion — `nombre := expresion`.
+       Asigna `expresion` a `nombre` y deja el valor en stack. Permite
+       `si (n := f()) > 0:` y patrones similares. Solo IDENT como
+       destino (no atributos ni indices). */
+    EXPR_WALRUS,
 } TipoExpr;
 
 struct Expr {
@@ -219,6 +225,14 @@ struct Expr {
             Expr *si_no;        /* valor cuando cond es falso */
         } ternaria;
 
+        /* v1.113: walrus `nombre := valor`. Asigna `valor` a `nombre`
+         * y el valor de la expresion es el asignado (queda en stack). */
+        struct {
+            const char *nombre;
+            int longitud;
+            Expr *valor;
+        } walrus;
+
         /*
          * F-cadena descompuesta en partes (v1.1).
          *
@@ -302,6 +316,8 @@ Expr *expr_binario(Arena *a, Expr *izq, TipoToken op, Expr *der, int linea, int 
 Expr *expr_unario(Arena *a, TipoToken op, Expr *operando, int linea, int col);
 Expr *expr_logica(Arena *a, Expr *izq, bool es_y, Expr *der, int linea, int col);
 Expr *expr_ternaria(Arena *a, Expr *si_si, Expr *cond, Expr *si_no, int linea, int col);
+/* v1.113 */
+Expr *expr_walrus(Arena *a, const char *nombre, int longitud, Expr *valor, int linea, int col);
 Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, int col);
 Expr *expr_atributo(Arena *a, Expr *objeto, const char *nombre, int len, int linea, int col);
 Expr *expr_grupo(Arena *a, Expr *interna, int linea, int col);

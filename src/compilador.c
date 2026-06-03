@@ -857,6 +857,62 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             return true;
         }
 
+        case EXPR_WALRUS: {
+            /* v1.113: `nombre := valor`. Asigna `valor` a `nombre` y
+             * deja el valor en stack como resultado de la expresion.
+             *
+             * Plan:
+             *   1. Compilar valor -> stack [v]
+             *   2. OP_DUP -> stack [v, v]
+             *   3. Asignar TOS al destino (pop) -> stack [v]
+             *
+             * Para nuevo local en funcion: agregar_local registra el
+             * slot en la posicion del primer v (sin OP_NULO), luego
+             * OP_DUP empuja la copia que sera el resultado. Esto FALLA
+             * dentro de bucles para variables creadas por primera vez
+             * con walrus (el slot se fija en iter 1; en iter 2+ apunta
+             * a posicion incorrecta — mismo bug que v0.11.5). Para
+             * walrus dentro de loops, la variable debe pre-existir
+             * (`n = 0` antes del loop). */
+            if (!compilador_compilar_expr(c, e->como.walrus.valor)) return false;
+            const char *nombre = e->como.walrus.nombre;
+            int len = e->como.walrus.longitud;
+
+            if (c->actual->es_funcion) {
+                int slot = buscar_local(c->actual, nombre, len);
+                if (slot >= 0) {
+                    chunk_emitir_byte(c->actual->chunk, OP_DUP, e->linea);
+                    chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                        (uint8_t)slot, e->linea);
+                    return true;
+                }
+                int upv = resolver_upvalue(c, c->actual, nombre, len, e->linea);
+                if (upv >= 0) {
+                    chunk_emitir_byte(c->actual->chunk, OP_DUP, e->linea);
+                    chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
+                                        (uint8_t)upv, e->linea);
+                    return true;
+                }
+                /* Nuevo local. El valor v esta en TOS; agregar_local lo
+                 * registra como slot. Luego OP_DUP empuja la copia que
+                 * es el resultado de la expresion. */
+                if (agregar_local(c, nombre, len, e->linea) < 0) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_DUP, e->linea);
+                return true;
+            }
+            /* Top-level: variable global. */
+            chunk_emitir_byte(c->actual->chunk, OP_DUP, e->linea);
+            int gidx = agregar_nombre_global(c, nombre, len);
+            if (gidx < 0 || gidx > 255) {
+                error_compilacion(c, e->linea, e->columna,
+                    "demasiadas constantes para walrus (operando byte)");
+                return false;
+            }
+            chunk_emitir_byte2(c->actual->chunk, OP_DEFINIR_GLOBAL,
+                                (uint8_t)gidx, e->linea);
+            return true;
+        }
+
         case EXPR_TERNARIA: {
             /* v1.44: `si_si si cond sino si_no`. Desugar a salto
                condicional. OP_SALTAR_SI_FALSO hace peek de cond, así

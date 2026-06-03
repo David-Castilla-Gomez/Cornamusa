@@ -6,6 +6,145 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.113.0] — 2026-06-03 — Walrus operator `:=` (asignación como expresión)
+
+Añade el walrus operator de Python (PEP 572): `nombre := valor`
+es una **expresión** que asigna `valor` a `nombre` y deja el
+valor en stack. Permite patrones como `si (n := f()) > 0:` y
+`mientras (item := siguiente()) != nulo:`.
+
+```cornamusa
+# Llamar UNA vez y usar el valor en condicion + cuerpo
+xs = [1, 2, 3, 4, 5, 6, 7, 8]
+si (n := longitud(xs)) > 5:
+    imprimir(f"lista grande con {n} elementos")
+fin si
+
+# Patron procesador con sentinela
+fuente = ["dato1", "dato2", "STOP"]
+i = 0
+mientras (item := fuente[i]) != "STOP":
+    procesar(item)
+    i = i + 1
+fin mientras
+
+# Validacion con conversion en una linea
+si (edad := entero(input_str)) < 0 o edad > 150:
+    lanzar ErrorDeValor(f"{edad=} fuera de rango")
+fin si
+```
+
+### Sintaxis
+
+Solo identificador como destino: `nombre := valor`. No se admite
+`obj.x := v` ni `xs[0] := v` (atributos e índices usan `=`
+normal). El parser detecta `:=` como infix tras un IDENT,
+asociativo a la derecha por el recursive descent que delega en
+`parser_parsear_expr`.
+
+### Cambios
+
+**Lexer** (`src/lexer.c` + `src/lexer.h`):
+- Nuevo token `TT_WALRUS` para `:=`.
+- En el case de `:`, mirar el siguiente char con `coincidir('=')`.
+
+**AST** (`src/ast.h` + `src/ast.c`):
+- Nuevo `EXPR_WALRUS` con `{nombre, longitud, valor}`.
+- Constructor `expr_walrus()`.
+- Dump `(walrus nombre valor)` para `--ast`.
+
+**Parser** (`src/parser.c`):
+- En `parsear_ident`, si el siguiente token es `TT_WALRUS`,
+  consumir y parsear el lado derecho como expresión completa.
+  Devolver `EXPR_WALRUS` en lugar de `EXPR_IDENT`.
+
+**Compilador** (`src/compilador.c`):
+- Nuevo caso `EXPR_WALRUS`:
+  1. Compilar el valor → stack `[v]`.
+  2. Si la variable es local existente: `OP_DUP` + `OP_ASIGNAR_LOCAL`.
+  3. Si es upvalue: `OP_DUP` + `OP_ASIGNAR_UPVALUE`.
+  4. Si es nuevo local en función: `agregar_local` (el valor en TOS
+     ya es el slot del nuevo local) + `OP_DUP` para empujar la copia.
+  5. Si top-level: `OP_DUP` + `OP_DEFINIR_GLOBAL`.
+
+El resultado en todos los casos: el valor queda en stack como
+resultado de la expresión walrus.
+
+### Limitación documentada
+
+Dentro de bucles, crear una variable **nueva** con `:=` falla
+porque el slot del compilador se fija en la primera iteración
+(mismo bug que v0.11.5 que motivó la solución `OP_NULO +
+agregar_local` para `si` en v1.95).
+
+**Workaround**: si la variable es nueva y va a usarse con walrus
+en un loop, pre-declararla antes del bucle:
+
+```cornamusa
+# BUG potencial:
+mientras (tmp := f()) > 0:    # tmp se "fija" en iter 1
+    ...
+fin mientras
+
+# Solucion: pre-declarar
+tmp = 0
+mientras (tmp := f()) > 0:    # OK: tmp ya existe
+    ...
+fin mientras
+```
+
+Un fix futuro podría aplicar la misma técnica de v1.95
+(pre-pass que recolecta nuevos locales y emite `OP_NULO +
+agregar_local` antes del bucle).
+
+### Tests
+
+12 asserts en `test_bytecode_walrus.c`:
+
+- Walrus top-level crea global.
+- Valor de la expresión walrus se usa en aritmética.
+- Walrus en condición de `si`.
+- Walrus en condición de `mientras` (variable existente).
+- Walrus dentro de función: nuevo local + reasignar existente.
+- Walrus con expresión compuesta (`longitud(lista)`).
+- Walrus anidado en aritmética: `3 + (x := 10) * 2 == 23`.
+- Walrus con cadena.
+- Dict literal `{"clave": 42}` NO se rompe con la nueva token.
+- Código sin walrus sigue compilando.
+
+### Ejemplo
+
+`examples/100_walrus.cor` con 8 secciones:
+
+1. Idea básica.
+2. En condiciones (caso clásico, evita doble cálculo).
+3. En bucles con sentinela.
+4. Dentro de funciones (`validar_edad` con conversión y rangos).
+5. Cache temporal de cálculo costoso.
+6. Anidación en aritmética.
+7. Limitación documentada (variable nueva en loop).
+8. Combinación con f-string debug (`f"{datos[0]=}"`) — v1.112 + v1.113.
+
+### Archivos
+
+- `src/lexer.c`/`src/lexer.h` — `TT_WALRUS`.
+- `src/ast.h`/`src/ast.c` — `EXPR_WALRUS` + `expr_walrus()` +
+  dump.
+- `src/parser.c` — detección en `parsear_ident`.
+- `src/compilador.c` — caso `EXPR_WALRUS` con `OP_DUP` +
+  asignación.
+- `tests/unit/test_bytecode_walrus.c` — 11 bloques, 12 asserts.
+- `examples/100_walrus.cor` — 8 secciones demo.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación actualizada.
+
+### Estado
+
+291 tests verde, lint+fmt limpios. Compatibilidad total con
+código pre-v1.113 (TT_WALRUS solo se genera con `:=` literal).
+
+---
+
 ## [1.112.0] — 2026-06-03 — F-string debug format `f"{x=}"`
 
 Añade el patrón de print-debugging conciso de Python 3.8: sufijo

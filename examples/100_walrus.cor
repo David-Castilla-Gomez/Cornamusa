@@ -1,0 +1,132 @@
+# 100_walrus.cor — operador walrus `:=` (v1.113).
+#
+# Asigna como expresion. Util cuando quieres usar un valor recien
+# computado en la misma sentencia donde se calcula. Estilo PEP 572
+# de Python.
+#
+# Patron general:
+#   (nombre := expresion)
+#
+# El valor asignado se queda en la expresion para que pueda usarse
+# en la condicion, la siguiente operacion, etc.
+
+# ─── 1. Idea basica ─────────────────────────────────────────────
+
+imprimir("--- 1. Idea basica ---")
+
+(n := 5)
+imprimir(f"{n=}")            # n=5
+
+# El valor de (n := 5) es 5, asi que se puede usar en aritmetica
+m := (10 * 2)
+imprimir(f"{m=}")            # m=20
+imprimir("")
+
+# ─── 2. En condiciones (el caso clasico) ────────────────────────
+
+imprimir("--- 2. En condiciones ---")
+
+# Antes: tendrias que calcular y guardar primero
+xs = [1, 2, 3, 4, 5, 6, 7, 8]
+# longitud(xs) se llama UNA vez y el valor queda en `n`
+si (n := longitud(xs)) > 5:
+    imprimir(f"lista grande con {n} elementos")
+fin si
+
+# Equivalente sin walrus (mas verboso):
+#   n = longitud(xs)
+#   si n > 5: ...
+imprimir("")
+
+# ─── 3. En bucles mientras ──────────────────────────────────────
+
+imprimir("--- 3. En bucles ---")
+
+# Patron procesador con sentinela: leer hasta encontrar marcador
+fuente = ["dato1", "dato2", "STOP", "dato3"]
+i = 0
+mientras (item := fuente[i]) != "STOP":
+    imprimir(f"  procesando: {item}")
+    i = i + 1
+fin mientras
+imprimir(f"Detenido tras {i} items")
+imprimir("")
+
+# ─── 4. Dentro de funciones ─────────────────────────────────────
+
+imprimir("--- 4. Dentro de funciones ---")
+
+funcion validar_edad(s):
+    # Convertir y validar en la misma sentencia
+    si (n := entero(s)) < 0:
+        retornar f"invalido: {n=}"
+    fin si
+    si n > 150:
+        retornar f"sospechoso: {n=}"
+    fin si
+    retornar f"OK: {n=}"
+fin funcion
+
+imprimir(validar_edad("25"))
+imprimir(validar_edad("200"))
+imprimir(validar_edad("-5"))
+imprimir("")
+
+# ─── 5. Patron: cache temporal ──────────────────────────────────
+
+imprimir("--- 5. Cache temporal ---")
+
+funcion costoso(x):
+    # Simula calculo costoso
+    retornar x * x * x
+fin funcion
+
+# Llamar UNA vez y reusar el resultado en condicion + mensaje
+val = 7
+si (c := costoso(val)) > 100:
+    imprimir(f"  {val}^3 = {c} es mayor que 100")
+sino:
+    imprimir(f"  {val}^3 = {c} es <= 100")
+fin si
+imprimir("")
+
+# ─── 6. Anidacion en aritmetica ─────────────────────────────────
+
+imprimir("--- 6. Walrus en aritmetica ---")
+
+# (x := 10) tiene valor 10. Se puede usar en cualquier posicion
+# donde se acepte una expresion.
+resultado = 3 + (x := 10) * 2
+imprimir(f"{resultado=}")    # 3 + 20 = 23
+imprimir(f"{x=}")            # 10
+imprimir("")
+
+# ─── 7. Limitacion: nuevo local dentro de loop ─────────────────
+
+imprimir("--- 7. Limitacion documentada ---")
+
+# Dentro de bucles, walrus a una variable NUEVA falla porque el
+# slot del compilador se fija en la primera iteracion. La variable
+# debe pre-existir si va a usarse con walrus en un loop:
+
+# Esto FUNCIONA: tmp pre-existe
+tmp = 0
+suma = 0
+i = 1
+mientras i <= 5:
+    si (tmp := i * 10) > 25:
+        suma = suma + tmp
+    fin si
+    i = i + 1
+fin mientras
+imprimir(f"  suma (preexistente OK): {suma}")
+imprimir("")
+
+# ─── 8. Combinacion con f-string debug (v1.112) ────────────────
+
+imprimir("--- 8. Combinacion con f-string debug ---")
+
+datos = [10, 20, 30, 40, 50]
+si (suma := datos[0] + datos[-1]) > 50:
+    imprimir(f"  Endpoints {datos[0]=}, {datos[-1]=}, {suma=}")
+fin si

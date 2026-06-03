@@ -67,6 +67,7 @@ typedef enum {
     TT_ASIGNAR_DOBLE_BARRA,/* //= */
     TT_ASIGNAR_PORCENTAJE, /* %= */
     TT_ASIGNAR_DOBLE_ASTER,/* **= */
+    TT_WALRUS,             /* := v1.113: asignacion en expresion */
 
     /* ─── Operadores bitwise ─── */
     TT_AMPERSAND,          /* &  */

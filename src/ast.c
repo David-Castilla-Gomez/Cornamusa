@@ -98,6 +98,18 @@ Expr *expr_ternaria(Arena *a, Expr *si_si, Expr *cond, Expr *si_no,
     return e;
 }
 
+/* v1.113: walrus `nombre := valor`. */
+Expr *expr_walrus(Arena *a, const char *nombre, int longitud, Expr *valor,
+                   int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_WALRUS, linea, col);
+    if (e) {
+        e->como.walrus.nombre = nombre;
+        e->como.walrus.longitud = longitud;
+        e->como.walrus.valor = valor;
+    }
+    return e;
+}
+
 Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, int col) {
     Expr *e = nuevo_expr(a, EXPR_LLAMADA, linea, col);
     if (e) {
@@ -495,6 +507,16 @@ static void expr_a_buffer(const Expr *e, EscrituraBuffer *eb) {
             expr_a_buffer(e->como.ternaria.si_si, eb);
             wb_escribir(eb, " ");
             expr_a_buffer(e->como.ternaria.si_no, eb);
+            wb_escribir(eb, ")");
+            break;
+        case EXPR_WALRUS:
+            wb_escribir(eb, "(walrus ");
+            for (int k = 0; k < e->como.walrus.longitud; k++) {
+                char tmp[2] = { e->como.walrus.nombre[k], '\0' };
+                wb_escribir(eb, tmp);
+            }
+            wb_escribir(eb, " ");
+            expr_a_buffer(e->como.walrus.valor, eb);
             wb_escribir(eb, ")");
             break;
     }
