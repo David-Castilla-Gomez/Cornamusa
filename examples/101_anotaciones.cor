@@ -1,0 +1,171 @@
+# 101_anotaciones.cor — tipos opcionales sintacticos (v1.114).
+#
+# Cornamusa permite anotaciones de tipo en parametros, retornos y
+# asignaciones de variables, SIN verificacion runtime. Igual que
+# las type hints de Python (PEP 484). Util para:
+#   - Documentar la intencion del codigo.
+#   - Habilitar herramientas externas (typer, linter de tipos).
+#   - Servir como contrato leible entre modulos.
+#
+# Las anotaciones son cualquier expresion; el compilador las
+# descarta tras parsear. Igualmente, los tipos NO existen como
+# entidades verificables — son solo identificadores en posicion
+# de anotacion.
+
+# ─── 1. Anotaciones en parametros y retorno ─────────────────────
+
+imprimir("--- 1. Funciones anotadas ---")
+
+funcion saludar(nombre: cadena) -> cadena:
+    retornar "Hola, " + nombre
+fin funcion
+
+funcion contar_letras(s: cadena) -> entero:
+    retornar longitud(s)
+fin funcion
+
+funcion sumar(a: entero, b: entero) -> entero:
+    retornar a + b
+fin funcion
+
+imprimir(saludar("Ana"))
+imprimir(contar_letras("Cornamusa"))
+imprimir(sumar(3, 4))
+imprimir("")
+
+# ─── 2. Con valores por defecto ─────────────────────────────────
+
+imprimir("--- 2. Anotaciones con defaults ---")
+
+funcion intervalo(inicio: entero = 0, limite: entero = 10, paso: entero = 1) -> lista:
+    resultado: lista = []
+    i: entero = inicio
+    mientras i < limite:
+        agregar(resultado, i)
+        i = i + paso
+    fin mientras
+    retornar resultado
+fin funcion
+
+imprimir(intervalo())
+imprimir(intervalo(5, 15))
+imprimir(intervalo(0, 20, 3))
+imprimir("")
+
+# ─── 3. Anotaciones en variables (top-level) ────────────────────
+
+imprimir("--- 3. Anotaciones en variables ---")
+
+# Estos son funcionalmente identicos a x = "Ana" / n = 30, pero
+# documentan el tipo esperado.
+nombre: cadena = "Ana"
+edad: entero = 30
+activo: booleano = verdadero
+puntuaciones: lista = [85, 92, 78]
+config: diccionario = {"modo": "produccion", "puerto": 8080}
+
+imprimir(f"{nombre=}")
+imprimir(f"{edad=}")
+imprimir(f"{activo=}")
+imprimir(f"{puntuaciones=}")
+imprimir(f"{config=}")
+imprimir("")
+
+# ─── 4. Mezcla anotados y sin anotar ────────────────────────────
+
+imprimir("--- 4. Anotaciones parciales ---")
+
+# No necesitas anotar TODO. Anotar solo lo importante esta bien.
+funcion procesar(items, factor: decimal = 1.5):
+    total: decimal = 0
+    para item en items:
+        total = total + item * factor
+    fin para
+    retornar total
+fin funcion
+
+imprimir(procesar([1, 2, 3, 4]))
+imprimir(procesar([1, 2, 3, 4], 2.0))
+imprimir("")
+
+# ─── 5. Patron: estructura tipo data class ──────────────────────
+
+imprimir("--- 5. Funciones que documentan estructura ---")
+
+clase Punto:
+    funcion __iniciar__(yo, x: decimal, ord: decimal):
+        yo.x = x
+        yo.ord = ord
+    fin funcion
+
+    funcion distancia(yo, otro: Punto) -> decimal:
+        importar matematicas
+        dx: decimal = yo.x - otro.x
+        dy: decimal = yo.ord - otro.ord
+        retornar matematicas.raiz(dx * dx + dy * dy)
+    fin funcion
+fin clase
+
+p1 = Punto(0, 0)
+p2 = Punto(3, 4)
+imprimir(f"distancia: {p1.distancia(p2)}")
+imprimir("")
+
+# ─── 6. Anotaciones NO se verifican en runtime ──────────────────
+
+imprimir("--- 6. Anotaciones sin verificacion ---")
+
+# Aunque anotemos `entero`, el runtime acepta cualquier tipo.
+# Las anotaciones son documentacion, no garantias.
+funcion deberia_recibir_entero(x: entero) -> cadena:
+    retornar tipo(x) + " (anotado como entero)"
+fin funcion
+
+imprimir(deberia_recibir_entero(42))
+imprimir(deberia_recibir_entero("realmente cadena"))
+imprimir(deberia_recibir_entero([1, 2, 3]))
+imprimir("")
+
+# Lo mismo para anotaciones de variables
+mal_tipado: entero = "tambien cadena"   # anotamos entero, asignamos cadena
+imprimir(f"{tipo(mal_tipado)=}, {mal_tipado=}")
+imprimir("")
+
+# ─── 7. Anotaciones como contrato de documentacion ──────────────
+
+imprimir("--- 7. Patron contrato leible ---")
+
+# Anotar la interfaz publica de una clase ayuda a quien la use,
+# incluso sin verificacion runtime.
+
+clase Cuenta:
+    funcion __iniciar__(yo, titular: cadena, saldo_inicial: decimal = 0.0):
+        yo.titular = titular
+        yo._saldo = saldo_inicial
+        # Nota: anotaciones en asignaciones a atributos (yo._x) no
+        # estan soportadas; usar IDENT puro local o variable global.
+        yo._operaciones = []
+    fin funcion
+
+    funcion depositar(yo, monto: decimal) -> nulo:
+        si monto <= 0:
+            lanzar ErrorDeValor("monto debe ser positivo")
+        fin si
+        yo._saldo = yo._saldo + monto
+        agregar(yo._operaciones, "+" + cadena(monto))
+    fin funcion
+
+    funcion saldo(yo) -> decimal:
+        retornar yo._saldo
+    fin funcion
+
+    funcion historial(yo) -> lista:
+        retornar yo._operaciones
+    fin funcion
+fin clase
+
+c = Cuenta("Maria", 100.0)
+c.depositar(50.0)
+c.depositar(25.0)
+imprimir(f"Saldo: {c.saldo()}")
+imprimir(f"Historial: {c.historial()}")

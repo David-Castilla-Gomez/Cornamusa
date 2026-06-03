@@ -6,6 +6,152 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.114.0] — 2026-06-03 — Tipos opcionales sintácticos (PEP 484-style)
+
+Cornamusa permite anotaciones de tipo en parámetros, retornos y
+asignaciones de variables, sin verificación runtime. Útil para
+documentación, contratos legibles entre módulos y futuras
+herramientas externas (linter de tipos, generadores de docs).
+
+```cornamusa
+# Parametros y retorno
+funcion sumar(a: entero, b: entero = 0) -> entero:
+    retornar a + b
+fin funcion
+
+# Variables top-level y locales
+nombre: cadena = "Ana"
+edades: lista = [25, 30, 35]
+
+funcion procesar(items: lista) -> nulo:
+    total: entero = 0
+    para item en items:
+        total = total + item
+    fin para
+    imprimir(total)
+fin funcion
+```
+
+### Lo que ya estaba
+
+**Parámetros y retorno ya se parseaban** desde versiones previas
+— el parser de `funcion` aceptaba `nombre: tipo` para cada
+parámetro (guardado en `Parametro.anotacion_tipo`) y `-> tipo`
+para el retorno. El token `TT_FLECHA` para `->` ya existía. El
+problema: no estaba documentado, no había tests dedicados, y los
+ejemplos del repo nunca usaban anotaciones.
+
+v1.114 **documenta** la feature, **añade tests** para prevenir
+regresiones, y **completa el set** con anotaciones en
+asignaciones de variables (la pieza que faltaba).
+
+### Lo nuevo: anotaciones en asignaciones
+
+```cornamusa
+# Top-level
+config: diccionario = {"modo": "produccion"}
+
+# Locales dentro de funcion
+funcion calcular():
+    contador: entero = 0
+    para i en rango(10):
+        contador = contador + i
+    fin para
+    retornar contador
+fin funcion
+```
+
+**Implementación** (`src/parser.c`, función
+`parsear_asignar_o_expr`):
+
+```c
+if (primero->tipo == EXPR_IDENT && check(p, TT_DOS_PUNTOS)) {
+    avanzar(p);  /* consume ':' */
+    Expr *anot = parser_parsear_expr(p);
+    if (anot == NULL) return NULL;
+    /* anot se ignora; debe seguir un '=' con valor. */
+    if (!consumir(p, TT_ASIGNAR, ...)) return NULL;
+    Expr *valor = parser_parsear_expr(p);
+    return sent_asignar(p->arena, primero, valor, linea, col);
+}
+```
+
+Detección: si `primero` (el destino) es un `EXPR_IDENT` puro y el
+siguiente token es `:`, parsear anotación y descartar. Después
+exigir `=` y continuar como asignación normal.
+
+### Filosofía: sin verificación runtime
+
+Las anotaciones son **documentación con sintaxis**. El compilador
+las descarta tras parsear:
+
+- `x: entero = "cadena"` NO falla en runtime.
+- `funcion f(x: TipoQueNoExiste)` parsea aunque `TipoQueNoExiste`
+  no esté definido.
+- `tipo(x)` devuelve el tipo real, no el anotado.
+
+Mismo enfoque que Python con type hints. Permite que las
+herramientas externas (linter de tipos al estilo `mypy`,
+generadores de docs, IDEs) lean las anotaciones sin imponer
+overhead runtime.
+
+### Limitaciones declaradas
+
+- **No anotación en atributos**: `yo.x: tipo = ...` NO parsea.
+  Necesitaría extender el parser de `EXPR_ATRIBUTO`.
+- **No anotación en destructuring**: `a: tipo, b: tipo = par` NO
+  parsea. La detección de anotación es solo para IDENT puro
+  pre-coma.
+- **Anotaciones son cualquier expresión**: el parser solo verifica
+  que sea una expresión válida. `x: lista[entero, cadena]` parsea
+  aunque `lista[entero, cadena]` no tenga sentido como expresión
+  ejecutable.
+
+### Tests
+
+15 asserts en `test_bytecode_anotaciones.c`:
+
+- Anotaciones en parámetros (básico, con default, mixto).
+- Retorno `-> tipo`.
+- Anotaciones en variables top-level y locales.
+- Tipos compuestos como anotación (`lista`, `diccionario`).
+- **No verificación runtime**: `x: entero = "cadena"` no falla.
+- Función completa con todos los elementos anotados.
+- Compatibilidad: código sin anotaciones sigue compilando.
+- Anotación como identificador en posición de tipo (incluso usando
+  nombre de función built-in como `longitud` — pasa porque es
+  solo documentación).
+
+### Ejemplo
+
+`examples/101_anotaciones.cor` con 7 secciones:
+
+1. Funciones anotadas (`saludar`, `contar_letras`, `sumar`).
+2. Con valores por defecto.
+3. Variables anotadas (5 tipos distintos).
+4. Mezcla parcial.
+5. **Estructura tipo data class** (clase `Punto` con anotaciones).
+6. Demostración de NO-verificación runtime.
+7. **Patrón contrato legible** — clase `Cuenta` con métodos
+   completamente anotados como documentación pública.
+
+### Archivos
+
+- `src/parser.c` — detección de anotación en
+  `parsear_asignar_o_expr` (~15 líneas nuevas).
+- `tests/unit/test_bytecode_anotaciones.c` — 10 bloques,
+  15 asserts.
+- `examples/101_anotaciones.cor` — 7 secciones demo.
+- `README.md`, `docs/introduccion.md`, `docs/referencia.md`:
+  documentación nueva de la feature completa.
+
+### Estado
+
+293 tests verde, lint+fmt limpios. Compatibilidad total con
+código pre-v1.114.
+
+---
+
 ## [1.113.0] — 2026-06-03 — Walrus operator `:=` (asignación como expresión)
 
 Añade el walrus operator de Python (PEP 572): `nombre := valor`

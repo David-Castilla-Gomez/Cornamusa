@@ -139,6 +139,7 @@ Cornamusa es **estable** y maduro. Lenguaje completo con paridad sintáctica cer
 | FS modificadores: `archivo_mover` (rename atómico) + `archivo_set_mtime`/`tocar` + métodos `Ruta` | v1.111 | ✅ |
 | F-string debug format `f"{x=}"` — Python 3.8 style, sin ambigüedad con `==`/`!=`/`<=`/`>=` | v1.112 | ✅ |
 | Walrus operator `:=` — asignación en expresión (PEP 572), `si (n := f()) > 0:` | v1.113 | ✅ |
+| Tipos opcionales sintácticos (PEP 484): `funcion f(x: tipo) -> tipo:` + `nombre: tipo = valor`. Sin verificación runtime. | v1.114 | ✅ |
 
 ## Probar Cornamusa en 5 minutos
 

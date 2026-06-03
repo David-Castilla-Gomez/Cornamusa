@@ -1770,6 +1770,24 @@ static Sent *parsear_asignar_o_expr(Parser *p) {
     Expr *primero = parser_parsear_expr(p);
     if (primero == NULL) return NULL;
 
+    /* v1.114: anotacion de tipo en asignacion `nombre: tipo = valor`.
+     * Solo permitida cuando el destino es un IDENT puro. La anotacion
+     * se parsea pero se descarta (no se valida en runtime — sirve
+     * para documentacion y futuras herramientas de tipo). */
+    if (primero->tipo == EXPR_IDENT && check(p, TT_DOS_PUNTOS)) {
+        avanzar(p);  /* consume ':' */
+        Expr *anot = parser_parsear_expr(p);
+        if (anot == NULL) return NULL;
+        /* anot se ignora; debe seguir un `=` con valor. */
+        if (!consumir(p, TT_ASIGNAR,
+            "se esperaba '=' tras anotacion de tipo en asignacion")) {
+            return NULL;
+        }
+        Expr *valor = parser_parsear_expr(p);
+        if (valor == NULL) return NULL;
+        return sent_asignar(p->arena, primero, valor, linea, col);
+    }
+
     /* v1.21: destructuring `a, b = par` — si tras la primera expr viene
        coma + más exprs + `=`, formar tupla LHS sin paréntesis. */
     if (check(p, TT_COMA)) {

@@ -102,6 +102,28 @@ Solo el lado izquierdo IDENT — no se admite `obj.x := v` ni `xs[0] := v`. Se p
 
 **Limitación**: dentro de bucles, crear una variable **nueva** con `:=` falla porque el slot del compilador se fija en la primera iteración. La variable debe pre-existir antes del loop si va a usarse con walrus.
 
+### Anotaciones de tipo opcionales (v1.114)
+
+Cornamusa permite anotaciones de tipo en parámetros, retornos y asignaciones de variables (PEP 484-style). **Sin verificación runtime** — son puramente sintácticas, útiles para documentación y futuras herramientas de tipos.
+
+```cornamusa
+# Parametros y retorno
+funcion sumar(a: entero, b: entero = 0) -> entero:
+    retornar a + b
+fin funcion
+
+# Variables (top-level y locales)
+nombre: cadena = "Ana"
+edades: lista = [25, 30, 35]
+```
+
+Las **anotaciones pueden ser cualquier expresión**: identificador (`entero`, `cadena`), llamada (`Opcional(entero)`), índice (`lista[entero]`). El parser las consume pero el compilador las descarta.
+
+**Limitaciones**:
+- No se admite anotación en atributos (`yo.x: tipo = ...` no parsea).
+- No se admite anotación en destructuring (`a: tipo, b: tipo = par`).
+- Los identificadores usados como tipos NO se resuelven en runtime — `funcion f(x: TipoQueNoExiste)` parsea pero no falla aunque `TipoQueNoExiste` no esté definido.
+
 ---
 
 ## 2. Operadores
