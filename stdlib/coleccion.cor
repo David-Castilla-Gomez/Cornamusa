@@ -177,3 +177,221 @@ clase ColaDoble:
         retornar f"ColaDoble({longitud(yo._items)} elementos)"
     fin funcion
 fin clase
+
+
+# ─── Monticulo / Heap (min-heap) ────────────────────────────────
+# v1.116: Heap binario sobre lista. Operaciones O(log n) en agregar
+# y sacar; vista() es O(1). Por defecto es MIN-heap (sacar() devuelve
+# el menor). Para max-heap, insertar valores negados y negar al sacar.
+#
+# Uso:
+#   importar coleccion
+#   h = coleccion.Heap()
+#   h.poner(5); h.poner(1); h.poner(3); h.poner(2)
+#   imprimir(h.sacar())   # 1
+#   imprimir(h.vista())   # 2 (siguiente mas pequeno)
+#
+# Acepta valores comparables con `<` directamente: numeros y
+# cadenas. Las tuplas y listas NO son comparables nativamente
+# en Cornamusa, asi que para priority queue conviene usar dos
+# heaps (uno de prioridades, mapa de prioridad -> lista de tareas)
+# o tener el Heap solo de IDs y un diccionario aparte.
+
+clase Heap:
+    funcion __iniciar__(yo):
+        yo._items = []
+    fin funcion
+
+    funcion _hijo_izq(yo, i):
+        retornar 2 * i + 1
+    fin funcion
+
+    funcion _hijo_der(yo, i):
+        retornar 2 * i + 2
+    fin funcion
+
+    funcion _padre(yo, i):
+        retornar (i - 1) // 2
+    fin funcion
+
+    funcion _intercambiar(yo, i, j):
+        tmp = yo._items[i]
+        yo._items[i] = yo._items[j]
+        yo._items[j] = tmp
+    fin funcion
+
+    # Burbujear hacia arriba el elemento en `i`.
+    funcion _subir(yo, i):
+        mientras i > 0:
+            p = (i - 1) // 2
+            si yo._items[i] < yo._items[p]:
+                yo._intercambiar(i, p)
+                i = p
+            sino:
+                romper
+            fin si
+        fin mientras
+    fin funcion
+
+    # Hundir hacia abajo el elemento en `i`.
+    funcion _bajar(yo, i):
+        n = longitud(yo._items)
+        mientras verdadero:
+            izq = 2 * i + 1
+            der = 2 * i + 2
+            menor = i
+            si izq < n y yo._items[izq] < yo._items[menor]:
+                menor = izq
+            fin si
+            si der < n y yo._items[der] < yo._items[menor]:
+                menor = der
+            fin si
+            si menor == i:
+                romper
+            fin si
+            yo._intercambiar(i, menor)
+            i = menor
+        fin mientras
+    fin funcion
+
+    # Pone `x` al heap. O(log n). (Se llama `poner` por consistencia
+    # con Pila/Cola y para evitar shadow del built-in `agregar`).
+    funcion poner(yo, x):
+        agregar(yo._items, x)
+        yo._subir(longitud(yo._items) - 1)
+    fin funcion
+
+    # Saca y devuelve el menor. O(log n). Lanza ErrorDeValor si vacio.
+    funcion sacar(yo):
+        n = longitud(yo._items)
+        si n == 0:
+            lanzar ErrorDeValor("Heap vacio")
+        fin si
+        menor = yo._items[0]
+        si n == 1:
+            quitar(yo._items, 0)
+            retornar menor
+        fin si
+        # Mover el ultimo al frente y hundirlo.
+        yo._items[0] = yo._items[n - 1]
+        quitar(yo._items, n - 1)
+        yo._bajar(0)
+        retornar menor
+    fin funcion
+
+    # Devuelve el menor sin sacarlo. O(1). Lanza si vacio.
+    funcion vista(yo):
+        si longitud(yo._items) == 0:
+            lanzar ErrorDeValor("Heap vacio")
+        fin si
+        retornar yo._items[0]
+    fin funcion
+
+    funcion vacia(yo):
+        retornar longitud(yo._items) == 0
+    fin funcion
+
+    funcion __longitud__(yo):
+        retornar longitud(yo._items)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"Heap({longitud(yo._items)} elementos, min={yo._items[0] si longitud(yo._items) > 0 sino nulo})"
+    fin funcion
+fin clase
+
+
+# ─── Contador / multiset (estilo Python Counter) ────────────────
+# v1.116: cuenta apariciones de cada valor hashable. Soporta
+# operaciones tipo "frecuencia de palabras", "top-N mas comunes",
+# "total de eventos".
+#
+# Uso:
+#   importar coleccion
+#   c = coleccion.Contador()
+#   c.incrementar("rojo")
+#   c.incrementar("azul", 3)
+#   c.incrementar("rojo")
+#   imprimir(c.obtener("rojo"))    # 2
+#   imprimir(c.obtener("azul"))    # 3
+#   imprimir(c.obtener("verde"))   # 0 (defecto)
+#   imprimir(c.mas_comunes(2))     # [["azul", 3], ["rojo", 2]]
+#   imprimir(c.total())            # 5
+
+clase Contador:
+    funcion __iniciar__(yo, items: lista = nulo):
+        yo._cuentas = {}
+        si items != nulo:
+            para it en items:
+                yo.incrementar(it)
+            fin para
+        fin si
+    fin funcion
+
+    # Incrementa el contador de `x` en `cantidad` (default 1).
+    funcion incrementar(yo, x, cantidad: entero = 1):
+        si x en yo._cuentas:
+            yo._cuentas[x] = yo._cuentas[x] + cantidad
+        sino:
+            yo._cuentas[x] = cantidad
+        fin si
+    fin funcion
+
+    # Decrementa. Si llega a 0, elimina la entrada.
+    funcion decrementar(yo, x, cantidad: entero = 1):
+        si no (x en yo._cuentas):
+            retornar nulo
+        fin si
+        yo._cuentas[x] = yo._cuentas[x] - cantidad
+        si yo._cuentas[x] <= 0:
+            borrar yo._cuentas[x]
+        fin si
+    fin funcion
+
+    # Cuenta de `x`, o 0 si no esta presente.
+    funcion obtener(yo, x):
+        si x en yo._cuentas:
+            retornar yo._cuentas[x]
+        fin si
+        retornar 0
+    fin funcion
+
+    # Lista [valor, cuenta] ordenada por cuenta descendente. Si `n`
+    # es nulo, devuelve todos.
+    funcion mas_comunes(yo, n: entero = nulo):
+        importar funcionales
+        pares = []
+        para k en claves(yo._cuentas):
+            agregar(pares, [k, yo._cuentas[k]])
+        fin para
+        ordenado = funcionales.ordenar_por_inverso(pares, lambda p: p[1])
+        si n == nulo o n >= longitud(ordenado):
+            retornar ordenado
+        fin si
+        retornar ordenado[0:n]
+    fin funcion
+
+    # Suma de todas las cuentas.
+    funcion total(yo):
+        importar funcionales
+        retornar funcionales.suma(valores(yo._cuentas), 0)
+    fin funcion
+
+    # Itera (valor, cuenta) como lista para iteracion estilo `para`.
+    funcion items(yo):
+        pares = []
+        para k en claves(yo._cuentas):
+            agregar(pares, [k, yo._cuentas[k]])
+        fin para
+        retornar pares
+    fin funcion
+
+    # Numero de valores distintos.
+    funcion __longitud__(yo):
+        retornar longitud(yo._cuentas)
+    fin funcion
+
+    funcion __cadena__(yo):
+        retornar f"Contador({longitud(yo._cuentas)} valores distintos, total={yo.total()})"
+    fin funcion
+fin clase

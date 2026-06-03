@@ -6,6 +6,78 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.116.0] — 2026-06-03 — Stdlib `coleccion` extendida: `Heap` + `Contador`
+
+Dos estructuras de datos clásicas que faltaban en `stdlib/coleccion.cor`,
+implementadas en pure-Cornamusa sobre listas y diccionarios nativos.
+Cierran huecos visibles cada vez que se quería hacer un top-N por
+frecuencia o un priority queue.
+
+### `Heap` — min-heap binario
+
+Operaciones `poner(x)`/`sacar()` en O(log n), `vista()` en O(1). Por
+defecto extrae el menor; para max-heap, insertar valores negados.
+
+```cornamusa
+importar coleccion
+
+h = coleccion.Heap()
+para x en [5, 3, 8, 1, 9, 2, 7]:
+    h.poner(x)
+fin para
+
+mientras no h.vacia():
+    imprimir(h.sacar())   # 1, 2, 3, 5, 7, 8, 9
+fin mientras
+```
+
+API completa: `poner`, `sacar`, `vista`, `vacia`, `__longitud__`,
+`__cadena__`. Implementación binaria estándar con `_subir`/`_bajar`
+sobre lista; sin overhead de wrapper-de-nodo.
+
+**Limitación documentada**: solo valores comparables con `<` nativamente
+(números y cadenas). Para priority queues con tuplas, usar dos
+estructuras separadas (heap de prioridades + dict de payloads).
+
+### `Contador` — multiset estilo Counter
+
+Cuenta apariciones de cada valor hashable. API inspirada en
+`collections.Counter` de Python: `incrementar`, `decrementar`,
+`obtener` (con defecto 0), `mas_comunes(n)`, `total`, `items`.
+
+```cornamusa
+importar coleccion
+
+c = coleccion.Contador(["sol", "luna", "sol", "estrella", "sol"])
+imprimir(c.obtener("sol"))      # 3
+imprimir(c.mas_comunes(2))      # [["sol", 3], ["luna", 1]]
+imprimir(c.total())             # 5
+```
+
+`decrementar` elimina la entrada cuando llega a 0 — el multiset no
+queda con valores espurios. Acepta inicialización con lista para el
+patrón frecuente "contar frecuencias de tokens".
+
+### Por qué `Heap.poner` en lugar de `Heap.agregar`
+
+`agregar` es built-in nativo (`agregar(lista, x)`). Si la clase
+define un método con el mismo nombre, la resolución `agregar(yo._items, x)`
+dentro del método se ambigua: en Cornamusa, los nombres globales se
+resuelven antes que los locales-de-clase y por consistencia con
+`Pila.poner`/`Cola.poner`/`ColaDoble.poner_*` se eligió `poner`.
+
+### Tests y cookbook
+
+- `tests/unit/test_bytecode_heap_contador.c` — 11 bloques, 16 asserts
+  (Heap orden asc, vista no consume, cadenas lexicográfico, vacío
+  lanza, longitud; Contador incrementos, total, mas_comunes,
+  decrementar elimina, init con lista, items iter).
+- `examples/102_heap_contador.cor` — 7 secciones: heap sort,
+  top-N menores, heap de cadenas, contador básico, frecuencia de
+  letras, histograma textual, top-3 palabras con split.
+
+Suite total: **295 tests, 100% verde** (sin regresión).
+
 ## [1.115.0] — 2026-06-03 — Cookbook ampliado a 25 recetas
 
 Cinco recetas nuevas validadas contra el intérprete usando

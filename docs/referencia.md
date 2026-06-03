@@ -981,15 +981,17 @@ Built-ins subyacentes: `obtener_variable_entorno`, `establecer_variable_entorno`
 
 Built-ins subyacentes: `usuario_actual`, `hostname`, `directorio_temporal`.
 
-### `coleccion` (v1.88)
+### `coleccion` (v1.88, ampliado v1.116)
 
-Estructuras de datos clásicas implementadas con clases sobre listas mutables:
+Estructuras de datos clásicas implementadas con clases sobre listas y diccionarios nativos:
 
 - `Pila()` — LIFO. Métodos: `poner(x)`, `sacar()`, `vista()`, `vacia()`, `__longitud__`.
 - `Cola()` — FIFO. Métodos: `poner(x)`, `sacar()` (saca del frente), `vista()`, `vacia()`, `__longitud__`.
 - `ColaDoble()` — deque. Métodos: `poner_frente(x)`, `poner_final(x)`, `sacar_frente()`, `sacar_final()`, `vista_frente()`, `vista_final()`, `vacia()`, `__longitud__`.
+- `Heap()` (v1.116) — min-heap binario. Métodos: `poner(x)` y `sacar()` O(log n), `vista()` O(1), `vacia()`, `__longitud__`. Solo valores comparables con `<` nativamente (números y cadenas). Para max-heap, insertar valores negados; para priority queue con tuplas, usar dos estructuras.
+- `Contador(items?)` (v1.116) — multiset estilo Counter. Métodos: `incrementar(x, n=1)`, `decrementar(x, n=1)` (elimina al llegar a 0), `obtener(x)` (defecto 0), `mas_comunes(n=nulo)` (ordenado descendente), `total()`, `items()` (lista de `[k, v]`), `__longitud__` (claves distintas). Acepta lista de items en el constructor para contar frecuencias directamente.
 
-Todos lanzan `ErrorDeValor("X vacia")` al sacar de colección vacía.
+Pila/Cola/ColaDoble lanzan `ErrorDeValor("X vacia")` al sacar de colección vacía. `Heap` lanza `ErrorDeValor("Heap vacio")` en `sacar`/`vista`. `Contador` jamás lanza por clave ausente — usa `obtener` (devuelve 0) o el operador `en`.
 
 ### `inspeccion` (v1.91)
 

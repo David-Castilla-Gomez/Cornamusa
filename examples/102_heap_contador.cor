@@ -1,0 +1,140 @@
+# 102_heap_contador.cor — Heap y Contador (v1.116).
+#
+# Dos estructuras nuevas en stdlib/coleccion:
+#
+#   Heap: min-heap binario. Mantiene el menor en el frente.
+#         Operaciones poner/sacar O(log n), vista O(1).
+#         Util para top-N, priority queues simples, sorting.
+#
+#   Contador: multiset estilo Counter de Python. Cuenta apariciones
+#         de cada valor hashable. Operaciones top, total, mas_comunes.
+#         Util para frecuencias de palabras, eventos por categoria,
+#         estadisticas.
+
+importar coleccion
+importar funcionales
+
+# ─── 1. Heap basico ─────────────────────────────────────────────
+
+imprimir("--- 1. Heap: orden ascendente ---")
+
+h = coleccion.Heap()
+para x en [5, 3, 8, 1, 9, 2, 7, 4, 6]:
+    h.poner(x)
+fin para
+
+# Sacar uno por uno produce orden ascendente — heap sort
+imprimir(f"longitud inicial: {longitud(h)}")
+ordenado = []
+mientras no h.vacia():
+    agregar(ordenado, h.sacar())
+fin mientras
+imprimir(f"ordenado: {ordenado}")
+imprimir("")
+
+# ─── 2. Top-N elementos mas pequenos ────────────────────────────
+
+imprimir("--- 2. Top-3 menores ---")
+
+datos = [42, 17, 89, 23, 56, 91, 8, 73, 34, 65, 11, 95, 27]
+h2 = coleccion.Heap()
+para x en datos:
+    h2.poner(x)
+fin para
+
+top_3_menores = []
+para i en rango(0, 3):
+    agregar(top_3_menores, h2.sacar())
+fin para
+imprimir(f"Top 3 mas pequenos de {datos}: {top_3_menores}")
+imprimir("")
+
+# ─── 3. Heap con cadenas (orden lexicografico) ──────────────────
+
+imprimir("--- 3. Heap con cadenas ---")
+
+palabras = coleccion.Heap()
+para p en ["zorro", "abeja", "gato", "perro", "buho"]:
+    palabras.poner(p)
+fin para
+
+# Alfabetico ascendente
+mientras no palabras.vacia():
+    imprimir("  ", palabras.sacar())
+fin mientras
+imprimir("")
+
+# ─── 4. Contador basico ─────────────────────────────────────────
+
+imprimir("--- 4. Contador: incrementar y obtener ---")
+
+c = coleccion.Contador()
+c.incrementar("rojo")
+c.incrementar("azul", 3)
+c.incrementar("rojo")
+c.incrementar("verde", 2)
+c.incrementar("rojo")
+
+imprimir(f"{c.obtener('rojo')=}")
+imprimir(f"{c.obtener('azul')=}")
+imprimir(f"{c.obtener('verde')=}")
+imprimir(f"{c.obtener('naranja')=}")    # 0 (no presente)
+imprimir(f"{c.total()=}")                # 8 (3 + 3 + 2)
+imprimir(f"{longitud(c)=}")              # 3 (valores distintos)
+imprimir("")
+
+# ─── 5. Inicializar Contador con lista ──────────────────────────
+
+imprimir("--- 5. Frecuencia de letras ---")
+
+texto = "mississippi"
+chars: lista = []
+para ch en texto:
+    agregar(chars, ch)
+fin para
+
+freq = coleccion.Contador(chars)
+imprimir(f"Texto: {texto}")
+imprimir(f"Letras distintas: {longitud(freq)}")
+imprimir(f"Mas comunes:")
+para par en freq.mas_comunes(nulo):
+    imprimir(f"  {par[0]} -> {par[1]} veces")
+fin para
+imprimir("")
+
+# ─── 6. Patron: histograma textual ──────────────────────────────
+
+imprimir("--- 6. Histograma con barras ---")
+
+palabras = ["sol", "luna", "sol", "estrella", "sol", "luna", "cometa",
+            "sol", "estrella", "luna"]
+freq2 = coleccion.Contador(palabras)
+
+# Imprimir ordenado por frecuencia descendente
+para par en freq2.mas_comunes(nulo):
+    palabra = par[0]
+    cuenta = par[1]
+    barra: cadena = ""
+    para i en rango(0, cuenta):
+        barra = barra + "#"
+    fin para
+    imprimir(f"  {palabra:>10}  {barra} ({cuenta})")
+fin para
+imprimir("")
+
+# ─── 7. Patron: top-N elementos mas frecuentes ──────────────────
+
+importar cadenas
+
+imprimir("--- 7. Top-3 palabras mas frecuentes ---")
+
+texto2 = "el rapido zorro marron salta sobre el perro perezoso el rapido zorro escapa"
+tokens = cadenas.separar(texto2, " ")
+freq3 = coleccion.Contador(tokens)
+
+imprimir(f"Total palabras: {longitud(tokens)}")
+imprimir(f"Distintas:      {longitud(freq3)}")
+imprimir("Top 3:")
+para par en freq3.mas_comunes(3):
+    imprimir(f"  {par[0]:>10} -> {par[1]}")
+fin para
