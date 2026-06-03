@@ -6,6 +6,94 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.115.0] — 2026-06-03 — Cookbook ampliado a 25 recetas
+
+Cinco recetas nuevas validadas contra el intérprete usando
+features de v1.107-v1.114 que no tenían pattern documentado. El
+cookbook pasa de 20 a **25 recetas**. Release de pedagogía pura
+— sin cambios en runtime ni stdlib. Refleja que las últimas 8
+releases (typo sugg, sistema completo, OOP setter, distribuciones,
+FS modificadores, f-string debug, walrus, anotaciones) añadieron
+features útiles que ahora tienen pattern documentado.
+
+### Recetas nuevas (21-25)
+
+| # | Receta | Features que combina |
+|---|---|---|
+| 21 | Pipeline con walrus operator | `(item := f()) != "STOP"` (v1.113), `(n := longitud()) > 5` |
+| 22 | Print debugging con `f"{x=}"` | f-string debug (v1.112) + format specs (v1.45) |
+| 23 | Sandbox temporal con cleanup garantizado | `sistema.usuario/directorio_temp` (v1.108) + `crear_arbol`/`eliminar_arbol` (v1.102) + `tiempo.epoch_ms` (v1.73) + `intentar/atrapar` con re-lanzar |
+| 24 | Clase como contrato (anotaciones) | Anotaciones en parámetros/retorno/variables (v1.114) + clase con métodos públicos + `f"{x=}"` para debug |
+| 25 | Propiedad de solo lectura con `@propiedad` | `@propiedad`/`@escritor` (v1.78/v1.109) + `ErrorDeAtributo` atrapable + validación en setter |
+
+### Receta destacada: 21 (walrus pipeline)
+
+Muestra el contraste antes/después:
+
+```cornamusa
+# Antes (verboso):
+i = 0
+mientras i < longitud(fuente):
+    item = fuente[i]
+    si item == "STOP": romper fin si
+    procesar(item)
+    i = i + 1
+fin mientras
+
+# Con walrus (v1.113):
+i = 0
+mientras (item := fuente[i]) != "STOP":
+    procesar(item)
+    i = i + 1
+fin mientras
+```
+
+Plus el equivalente con `si (n := f()) > 5:` y la limitación
+documentada (la variable destino debe pre-existir si va a usarse
+en un bucle, mismo bug v0.11.5).
+
+### Receta destacada: 23 (sandbox temporal)
+
+Helper `en_sandbox(prefijo, accion)` que crea directorio temporal
+único con `usuario@timestamp`, ejecuta callback, y limpia
+SIEMPRE incluso si lanza excepción. Patrón clásico para tests
+aislados y procesamiento sin contaminar el FS.
+
+### Receta destacada: 25 (propiedad solo lectura)
+
+Clase `Rectangulo` con `base`/`altura` (read+write con
+`@escritor` y validación negativos) y `area`/`perimetro` (solo
+lectura sin `@escritor`). Asignar a `area` lanza
+`ErrorDeAtributo` atrapable.
+
+### Validación
+
+Las 5 recetas se ejecutaron en `cornamusa --bytecode` durante la
+redacción. Los outputs mostrados son los reales del intérprete:
+
+- Receta 22: `precio=100, porcentaje=15, descuento=15.0, final=85.0`
+- Receta 23: `Sandbox: C:/Users/.../ejemplo_david_1780497252091`
+- Receta 25: `r.base=5, r.altura=3, r.area=15, r.perimetro=16`
+
+### Sin cambios de código
+
+293 tests verde sin cambios desde v1.114. Bump por convención de
+release: el cookbook es parte del proyecto y merece versión propia
+cuando crece.
+
+### Archivos
+
+- `docs/cookbook.md` — 5 secciones nuevas + índice actualizado.
+  Pasó de ~720 líneas a ~990.
+- `README.md`, `docs/introduccion.md`: entrada de release.
+
+### Estado
+
+293 tests verde, lint+fmt limpios. **Cookbook: 25 recetas
+validadas contra el intérprete real.**
+
+---
+
 ## [1.114.0] — 2026-06-03 — Tipos opcionales sintácticos (PEP 484-style)
 
 Cornamusa permite anotaciones de tipo en parámetros, retornos y

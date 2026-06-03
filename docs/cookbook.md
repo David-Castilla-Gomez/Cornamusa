@@ -26,6 +26,11 @@ Este recetario complementa el [tutorial](tutorial.md) (que enseña el lenguaje) 
 18. [Backup incremental de un proyecto](#18-backup-incremental-de-un-proyecto)
 19. [Configuración desde variables de entorno](#19-configuración-desde-variables-de-entorno)
 20. [Estadística de muestras normales](#20-estadística-de-muestras-normales)
+21. [Pipeline con walrus operator](#21-pipeline-con-walrus-operator)
+22. [Print debugging con `f"{x=}"`](#22-print-debugging-con-fx)
+23. [Sandbox temporal con cleanup garantizado](#23-sandbox-temporal-con-cleanup-garantizado)
+24. [Clase como contrato (anotaciones)](#24-clase-como-contrato-anotaciones)
+25. [Propiedad de solo lectura con `@propiedad`](#25-propiedad-de-solo-lectura-con-propiedad)
 
 ---
 
@@ -827,6 +832,334 @@ Componentes:
 - `matematicas.redondear` para presentar resultados legibles.
 
 Para gráficos en consola, ver el histograma ASCII en `examples/92_matematicas.cor` que usa los mismos componentes + `funcionales.suelo` para binning.
+
+---
+
+## 21. Pipeline con walrus operator
+
+**Problema**: leer entradas de un iterable hasta encontrar un sentinela (`"STOP"`, `nulo`, etc.), procesando cada una. El patrón clásico requiere doble lectura: una para la condición y otra para usar el valor.
+
+```cornamusa
+# Sin walrus (verboso):
+fuente = ["dato1", "dato2", "STOP", "dato3"]
+i = 0
+mientras i < longitud(fuente):
+    item = fuente[i]
+    si item == "STOP":
+        romper
+    fin si
+    imprimir("procesando:", item)
+    i = i + 1
+fin mientras
+```
+
+**Con walrus (v1.113)**:
+
+```cornamusa
+fuente = ["dato1", "dato2", "STOP", "dato3"]
+i = 0
+mientras (item := fuente[i]) != "STOP":
+    imprimir("procesando:", item)
+    i = i + 1
+fin mientras
+```
+
+```
+procesando: dato1
+procesando: dato2
+```
+
+El walrus `(item := fuente[i])` asigna y devuelve el valor en una sola lectura. La condición usa el valor recién leído, y el cuerpo lo reusa.
+
+**Patrón equivalente con condiciones**:
+
+```cornamusa
+# Validar tamaño y dar mensaje informativo en una linea
+xs = [1, 2, 3, 4, 5, 6, 7, 8]
+si (n := longitud(xs)) > 5:
+    imprimir(f"lista grande con {n} elementos")
+fin si
+```
+
+`longitud(xs)` se llama UNA vez. Útil cuando el cálculo de la condición es costoso (acceso a FS, llamada a red, computación pesada).
+
+**Limitación**: dentro de bucles, una variable **nueva** creada con `:=` falla porque el slot del compilador se fija en la primera iteración. Para walrus en loops, la variable destino debe pre-existir (`item = nulo` antes del `mientras`).
+
+---
+
+## 22. Print debugging con `f"{x=}"`
+
+**Problema**: depurar una función imprimiendo valores intermedios. El patrón clásico es verboso porque hay que repetir el nombre de la variable como literal.
+
+```cornamusa
+# Antes (verboso):
+funcion calcular_descuento(precio, porcentaje):
+    descuento = precio * porcentaje / 100
+    final = precio - descuento
+    imprimir(f"precio={precio}, porcentaje={porcentaje}, descuento={descuento}, final={final}")
+    retornar final
+fin funcion
+```
+
+**Con `f"{x=}"` (v1.112)**:
+
+```cornamusa
+funcion calcular_descuento(precio, porcentaje):
+    descuento = precio * porcentaje / 100
+    final = precio - descuento
+    imprimir(f"{precio=}, {porcentaje=}, {descuento=}, {final=}")
+    retornar final
+fin funcion
+
+calcular_descuento(100, 15)
+calcular_descuento(250, 30)
+```
+
+```
+precio=100, porcentaje=15, descuento=15.0, final=85.0
+precio=250, porcentaje=30, descuento=75.0, final=175.0
+```
+
+Mucho menos verboso. El `=` dentro de la interpolación emite la expresión textual + `=` + valor. **Sin ambigüedad** con operadores: `f"{a == b}"` sigue siendo comparación booleana porque `==` no es debug.
+
+**Combinable con format specs** (v1.45):
+
+```cornamusa
+pi = 3.14159
+imprimir(f"{pi=:.2f}")     # "pi=3.14"
+
+x = 5
+imprimir(f"{x=:>5}")        # "x=    5" (padding derecha)
+```
+
+**Espacios preservados** literalmente:
+
+```cornamusa
+imprimir(f"{x=}")      # "x=5"
+imprimir(f"{x = }")    # "x = 5"
+```
+
+Patrón estándar de print debugging desde Python 3.8.
+
+---
+
+## 23. Sandbox temporal con cleanup garantizado
+
+**Problema**: necesitas un directorio temporal para procesar archivos. Quieres garantizar que se limpia al terminar, incluso si la acción lanza excepción.
+
+```cornamusa
+importar archivos
+importar ruta
+importar sistema
+importar tiempo
+
+funcion en_sandbox(prefijo, accion):
+    # Crea un directorio temporal unico con prefijo + usuario + timestamp.
+    # Ejecuta `accion(ruta_sandbox)`. Limpia SIEMPRE incluso si accion lanza.
+    nombre = prefijo + "_" + sistema.usuario() + "_" + cadena(tiempo.epoch_ms())
+    sandbox = ruta.Ruta(sistema.directorio_temp()).unir(nombre)
+    archivos.crear_arbol(sandbox.cadena())
+    error_cap = nulo
+    intentar:
+        accion(sandbox)
+    atrapar Excepcion como e:
+        error_cap = e
+    fin intentar
+    # Cleanup garantizado
+    si sandbox.es_directorio():
+        sandbox.eliminar_arbol()
+    fin si
+    si error_cap != nulo:
+        lanzar error_cap
+    fin si
+fin funcion
+
+# Uso: procesar archivos sin contaminar el sistema
+funcion procesar(dir):
+    archivos.escribir(dir.unir("input.txt").cadena(), "datos de prueba")
+    archivos.escribir(dir.unir("output.txt").cadena(), "resultado procesado")
+    imprimir("  Sandbox:", dir.cadena())
+    imprimir("  Archivos:", longitud(dir.listar()))
+fin funcion
+
+en_sandbox("ejemplo", procesar)
+```
+
+```
+  Sandbox: C:/Users/david/AppData/Local/Temp/ejemplo_david_1779528589577
+  Archivos: 2
+```
+
+Después de la llamada, el sandbox ya no existe — `eliminar_arbol` (v1.102) lo borró recursivamente. Si `accion` hubiera lanzado una excepción, el cleanup se ejecutaría igualmente antes de re-lanzar.
+
+Componentes:
+- `sistema.usuario()` (v1.108) + `sistema.directorio_temp()` (v1.108) → ruta temporal específica por usuario.
+- `tiempo.epoch_ms()` (v1.73) → sufijo único.
+- `archivos.crear_arbol` (v1.102) → mkdir -p implícito.
+- `archivos.eliminar_arbol` (v1.102) → rm -rf con guardrails.
+- `intentar/atrapar Excepcion como e` para capturar y re-lanzar.
+
+Patrón clásico de tests aislados y procesamiento de archivos intermedios. Útil cuando no quieres dejar rastros en el FS.
+
+---
+
+## 24. Clase como contrato (anotaciones)
+
+**Problema**: documentar la interfaz pública de una clase para que sea evidente cómo se usa, qué tipos espera, y qué devuelve cada método.
+
+**Con anotaciones de tipo (v1.114)**:
+
+```cornamusa
+clase Cuenta:
+    funcion __iniciar__(yo, titular: cadena, saldo_inicial: decimal = 0.0):
+        yo.titular = titular
+        yo._saldo = saldo_inicial
+        yo._operaciones = []
+    fin funcion
+
+    funcion depositar(yo, monto: decimal) -> nulo:
+        si monto <= 0:
+            lanzar ErrorDeValor("monto debe ser positivo")
+        fin si
+        yo._saldo = yo._saldo + monto
+        agregar(yo._operaciones, "+" + cadena(monto))
+    fin funcion
+
+    funcion retirar(yo, monto: decimal) -> booleano:
+        si monto > yo._saldo:
+            retornar falso
+        fin si
+        yo._saldo = yo._saldo - monto
+        agregar(yo._operaciones, "-" + cadena(monto))
+        retornar verdadero
+    fin funcion
+
+    funcion saldo(yo) -> decimal:
+        retornar yo._saldo
+    fin funcion
+
+    funcion historial(yo) -> lista:
+        # Copia defensiva: el caller no debe mutar el interno
+        copia: lista = []
+        para op en yo._operaciones:
+            agregar(copia, op)
+        fin para
+        retornar copia
+    fin funcion
+fin clase
+
+c = Cuenta("Ana", 100.0)
+c.depositar(50.0)
+c.retirar(30.0)
+imprimir(f"{c.titular=}, {c.saldo()=}")
+imprimir(f"historial: {c.historial()}")
+```
+
+```
+c.titular=Ana, c.saldo()=120.0
+historial: ["+50.0", "-30.0"]
+```
+
+Las anotaciones son **puramente sintácticas** — no se verifican en runtime. Pero un programador que lea el código entiende inmediatamente:
+
+- `depositar(monto: decimal) -> nulo`: recibe un número, no devuelve nada útil.
+- `retirar(monto: decimal) -> booleano`: devuelve si tuvo éxito.
+- `saldo() -> decimal`: devuelve el saldo.
+- `historial() -> lista`: devuelve una lista (en este caso, copia defensiva de strings).
+
+Las anotaciones complementan los **dunders** (`__iniciar__`, `__cadena__`) y los **decoradores** (`@propiedad`, `@escritor`) para hacer clases que se leen como contratos.
+
+Combinado con `f"{x=}"` (v1.112): el debug es trivial — `f"{c.saldo()=}"` muestra `c.saldo()=120.0`.
+
+---
+
+## 25. Propiedad de solo lectura con `@propiedad`
+
+**Problema**: exponer un atributo computado o derivado sin permitir su modificación directa.
+
+```cornamusa
+clase Rectangulo:
+    funcion __iniciar__(yo, base: decimal, altura: decimal):
+        si base < 0 o altura < 0:
+            lanzar ErrorDeValor("dimensiones deben ser >= 0")
+        fin si
+        yo._base = base
+        yo._altura = altura
+    fin funcion
+
+    @propiedad
+    funcion base(yo) -> decimal:
+        retornar yo._base
+    fin funcion
+
+    @escritor
+    funcion base(yo, nueva: decimal):
+        si nueva < 0:
+            lanzar ErrorDeValor("base debe ser >= 0")
+        fin si
+        yo._base = nueva
+    fin funcion
+
+    @propiedad
+    funcion altura(yo) -> decimal:
+        retornar yo._altura
+    fin funcion
+
+    @escritor
+    funcion altura(yo, nueva: decimal):
+        si nueva < 0:
+            lanzar ErrorDeValor("altura debe ser >= 0")
+        fin si
+        yo._altura = nueva
+    fin funcion
+
+    # Propiedad de SOLO LECTURA (sin @escritor)
+    @propiedad
+    funcion area(yo) -> decimal:
+        retornar yo._base * yo._altura
+    fin funcion
+
+    @propiedad
+    funcion perimetro(yo) -> decimal:
+        retornar 2 * (yo._base + yo._altura)
+    fin funcion
+fin clase
+
+r = Rectangulo(5, 3)
+imprimir(f"{r.base=}, {r.altura=}, {r.area=}, {r.perimetro=}")
+
+# Setter validado
+r.base = 10
+imprimir(f"Tras r.base = 10: {r.area=}")
+
+# Solo lectura: lanza ErrorDeAtributo
+intentar:
+    r.area = 100
+atrapar ErrorDeAtributo como e:
+    imprimir("rechazado:", e)
+fin intentar
+
+# Validacion en setter
+intentar:
+    r.base = -5
+atrapar ErrorDeValor como e:
+    imprimir("rechazado:", e)
+fin intentar
+```
+
+```
+r.base=5, r.altura=3, r.area=15, r.perimetro=16
+Tras r.base = 10: r.area=30
+rechazado: ErrorDeAtributo: 'area' es una propiedad de solo lectura
+rechazado: ErrorDeValor: base debe ser >= 0
+```
+
+Componentes (v1.78 → v1.109):
+- `@propiedad` define un **getter** invocado al leer el atributo.
+- `@escritor` (v1.109) añade un **setter** validador al asignar.
+- Sin `@escritor`, la propiedad es **solo lectura** — asignar lanza `ErrorDeAtributo` atrapable.
+
+`area` y `perimetro` se calculan al vuelo desde `_base` y `_altura` — siempre consistentes con el estado interno. No se puede asignar directamente porque eso violaría la invariante geométrica.
 
 ---
 
