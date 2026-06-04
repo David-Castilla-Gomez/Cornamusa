@@ -815,3 +815,29 @@ foreach(ej ${EJEMPLOS_DIFERENCIALES})
     )
     set_tests_properties(diff_${ej} PROPERTIES LABELS "diferencial")
 endforeach()
+
+
+# ───── v1.122: Golden tests — salida exacta de ejemplos ─────
+# Por cada examples/esperado/<nombre>.salida, registramos un test que
+# ejecuta el .cor correspondiente y compara stdout byte a byte (con
+# normalizacion CRLF -> LF). El comparador esta en cmake/golden_one.cmake.
+#
+# Diseño: glob automatico. Cuando se anade un .salida nuevo (validado a
+# mano), el siguiente cmake configure lo registra como test. Los ejemplos
+# sin .salida no tienen golden test — la red se va completando ejemplo
+# a ejemplo. La intencion es ir validando especialmente los ejemplos que
+# se sabe estan rotos para forzar a arreglarlos.
+file(GLOB GOLDEN_SALIDAS CONFIGURE_DEPENDS
+     "${CMAKE_SOURCE_DIR}/examples/esperado/*.salida")
+foreach(salida_path ${GOLDEN_SALIDAS})
+    get_filename_component(nombre ${salida_path} NAME_WE)
+    add_test(
+        NAME golden_${nombre}
+        COMMAND ${CMAKE_COMMAND}
+                -DEXE=$<TARGET_FILE:cornamusa>
+                -DSRC=${CMAKE_SOURCE_DIR}/examples/${nombre}.cor
+                -DEXPECTED=${salida_path}
+                -P ${CMAKE_SOURCE_DIR}/cmake/golden_one.cmake
+    )
+    set_tests_properties(golden_${nombre} PROPERTIES LABELS "golden")
+endforeach()

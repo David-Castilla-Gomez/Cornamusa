@@ -49,3 +49,4 @@ coverage/
 # Sanitizers
 *.asan
 *.tsan
+examples/esperado/*.salida.actual
