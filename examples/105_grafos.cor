@@ -1,0 +1,130 @@
+# 105_grafos.cor — Grafos con BFS, DFS, Dijkstra y topologico (v1.119).
+#
+# Modulo stdlib/grafos: clase Grafo (dirigido o no) sobre dict de
+# adyacencia + algoritmos clasicos pure-Cornamusa.
+
+importar grafos
+
+# ─── 1. Mapa de carreteras: camino mas corto ────────────────────
+
+imprimir("--- 1. Mapa de carreteras (no dirigido, con pesos en km) ---")
+
+mapa = grafos.Grafo(falso)
+mapa.agregar_arista("Madrid", "Toledo", 73)
+mapa.agregar_arista("Madrid", "Avila", 113)
+mapa.agregar_arista("Madrid", "Segovia", 87)
+mapa.agregar_arista("Toledo", "Talavera", 78)
+mapa.agregar_arista("Avila", "Salamanca", 100)
+mapa.agregar_arista("Segovia", "Valladolid", 117)
+mapa.agregar_arista("Valladolid", "Salamanca", 115)
+
+imprimir(f"   ciudades: {longitud(mapa)}")
+imprimir(f"   carreteras: {longitud(mapa.aristas())}")
+imprimir("")
+imprimir("   Distancias desde Madrid (km):")
+dist = grafos.dijkstra(mapa, "Madrid")
+para ciudad en claves(dist):
+    imprimir(f"     {ciudad:<12} {dist[ciudad]:>4} km")
+fin para
+imprimir("")
+camino = grafos.camino_mas_corto(mapa, "Madrid", "Salamanca")
+imprimir(f"   Mejor ruta Madrid -> Salamanca:")
+para c en camino:
+    imprimir(f"     - {c}")
+fin para
+imprimir("")
+
+
+# ─── 2. Red social: BFS de amigos de amigos ─────────────────────
+
+imprimir("--- 2. Red social: alcanzables en N pasos ---")
+
+red = grafos.Grafo(falso)
+red.agregar_arista("Ana", "Luis")
+red.agregar_arista("Ana", "Eva")
+red.agregar_arista("Luis", "Marco")
+red.agregar_arista("Eva", "Sofia")
+red.agregar_arista("Marco", "Diego")
+red.agregar_arista("Sofia", "Diego")
+red.agregar_arista("Diego", "Carmen")
+
+imprimir(f"   BFS desde Ana: {grafos.bfs(red, 'Ana')}")
+imprimir(f"   DFS desde Ana: {grafos.dfs(red, 'Ana')}")
+imprimir("")
+
+
+# ─── 3. Topologico: orden de tareas ─────────────────────────────
+
+imprimir("--- 3. Orden topologico para preparar un cafe ---")
+
+tareas = grafos.Grafo()
+tareas.agregar_arista("comprar cafe", "moler grano")
+tareas.agregar_arista("comprar cafe", "calentar agua")
+tareas.agregar_arista("moler grano", "preparar cafetera")
+tareas.agregar_arista("calentar agua", "preparar cafetera")
+tareas.agregar_arista("preparar cafetera", "servir")
+tareas.agregar_arista("servir", "anadir azucar")
+
+orden = grafos.topologico(tareas)
+para i en rango(0, longitud(orden)):
+    imprimir(f"   {i+1}. {orden[i]}")
+fin para
+imprimir("")
+
+
+# ─── 4. Deteccion de ciclo ──────────────────────────────────────
+
+imprimir("--- 4. Deteccion de ciclo ---")
+
+con_ciclo = grafos.Grafo()
+con_ciclo.agregar_arista("a", "b")
+con_ciclo.agregar_arista("b", "c")
+con_ciclo.agregar_arista("c", "a")
+
+sin_ciclo = grafos.Grafo()
+sin_ciclo.agregar_arista("x", "y")
+sin_ciclo.agregar_arista("y", "z")
+
+imprimir(f"   con_ciclo:  {grafos.tiene_ciclo(con_ciclo)}")
+imprimir(f"   sin_ciclo:  {grafos.tiene_ciclo(sin_ciclo)}")
+imprimir("")
+
+
+# ─── 5. Componentes conexas ─────────────────────────────────────
+
+imprimir("--- 5. Componentes conexas (cuantos grupos hay) ---")
+
+amigos = grafos.Grafo(falso)
+amigos.agregar_arista("Lola", "Pepe")
+amigos.agregar_arista("Pepe", "Rosa")
+
+amigos.agregar_arista("Hugo", "Iker")
+
+amigos.agregar_nodo("Solo")
+
+comps = grafos.componentes(amigos)
+imprimir(f"   {longitud(comps)} grupos:")
+para c en comps:
+    imprimir(f"     {c}")
+fin para
+imprimir("")
+
+
+# ─── 6. Manejo de errores: arista negativa, nodo ausente ────────
+
+imprimir("--- 6. Errores tipicos ---")
+
+neg = grafos.Grafo()
+neg.agregar_arista("A", "B", -5)
+
+intentar:
+    grafos.dijkstra(neg, "A")
+atrapar ErrorDeValor como e:
+    imprimir(f"   Dijkstra con peso negativo: {e}")
+fin intentar
+
+intentar:
+    grafos.bfs(mapa, "Tokio")
+atrapar ErrorDeValor como e:
+    imprimir(f"   Nodo ausente:               {e}")
+fin intentar

@@ -1,0 +1,489 @@
+# Cornamusa stdlib: grafos.cor (v1.119)
+#
+# Grafo dirigido / no dirigido con pesos, mas algoritmos clasicos:
+# BFS, DFS, Dijkstra (usa coleccion.Heap), ordenamiento topologico
+# y deteccion de ciclos. Implementado en pure-Cornamusa.
+#
+# Representacion interna: lista de adyacencia como `dict` de nodo
+# a `dict` de vecino -> peso. Permite recorrer aristas O(grado), y
+# tambien actualizar/quitar aristas con coste O(1).
+#
+# Uso tipico:
+#
+#   importar grafos
+#
+#   g = grafos.Grafo()                # dirigido por defecto
+#   g.agregar_arista("A", "B", 4)
+#   g.agregar_arista("A", "C", 2)
+#   g.agregar_arista("B", "C", 1)
+#   g.agregar_arista("C", "D", 5)
+#
+#   imprimir(grafos.dijkstra(g, "A"))
+#   # {"A": 0, "B": 4, "C": 2, "D": 7}
+#
+#   imprimir(grafos.camino_mas_corto(g, "A", "D"))
+#   # ["A", "C", "D"]
+#
+#   importar grafos
+#   g2 = grafos.Grafo(falso)          # no dirigido
+#   g2.agregar_arista("A", "B")       # peso 1 por defecto
+#   imprimir(g2.vecinos("B"))         # ["A"]  (arista bidireccional)
+#
+# Convenciones:
+#   - los nodos pueden ser cualquier valor hashable (cadena, entero, tupla).
+#   - peso por defecto = 1.
+#   - Dijkstra rechaza aristas con peso negativo (lanza ErrorDeValor).
+
+importar coleccion
+
+
+# ─── Clase Grafo ─────────────────────────────────────────────────
+
+clase Grafo:
+    # `dirigido` = verdadero por defecto. Si es falso, cada arista
+    # u->v automaticamente crea v->u con el mismo peso.
+    funcion __iniciar__(yo, dirigido: booleano = verdadero):
+        yo._ady = {}
+        yo._dirigido = dirigido
+    fin funcion
+
+    # Anade un nodo aislado (sin aristas). Si ya existe, no hace nada.
+    funcion agregar_nodo(yo, n):
+        si no (n en yo._ady):
+            yo._ady[n] = {}
+        fin si
+    fin funcion
+
+    # Anade arista de `u` a `v` con `peso` (1 por defecto). Crea los
+    # nodos si no existen. En grafos no dirigidos crea tambien la
+    # arista inversa.
+    funcion agregar_arista(yo, u, v, peso = 1):
+        yo.agregar_nodo(u)
+        yo.agregar_nodo(v)
+        yo._ady[u][v] = peso
+        si no yo._dirigido:
+            yo._ady[v][u] = peso
+        fin si
+    fin funcion
+
+    # Quita arista u->v (y la inversa si no dirigido). Sin error si
+    # no existe.
+    funcion quitar_arista(yo, u, v):
+        si u en yo._ady y v en yo._ady[u]:
+            borrar yo._ady[u][v]
+        fin si
+        si no yo._dirigido:
+            si v en yo._ady y u en yo._ady[v]:
+                borrar yo._ady[v][u]
+            fin si
+        fin si
+    fin funcion
+
+    # Lista de nodos (orden de insercion, gracias al dict ordenado).
+    funcion nodos(yo):
+        retornar claves(yo._ady)
+    fin funcion
+
+    # Lista de aristas [[u, v, peso], ...]. En no dirigidos cada par
+    # aparece una sola vez (orden lexicografico/insercion).
+    funcion aristas(yo):
+        resultado = []
+        vistos = {}
+        para u en claves(yo._ady):
+            para v en claves(yo._ady[u]):
+                si yo._dirigido:
+                    agregar(resultado, [u, v, yo._ady[u][v]])
+                sino:
+                    # Para no dirigido evitamos duplicados con un
+                    # marcador en `vistos`. Usamos cadena u+\0+v
+                    # como clave (los nodos pueden ser cualquier
+                    # hashable, asi que mapeamos a string canon).
+                    repr_u = cadena(u)
+                    repr_v = cadena(v)
+                    si repr_u < repr_v:
+                        clave = repr_u + "\x00" + repr_v
+                    sino:
+                        clave = repr_v + "\x00" + repr_u
+                    fin si
+                    si no (clave en vistos):
+                        vistos[clave] = verdadero
+                        agregar(resultado, [u, v, yo._ady[u][v]])
+                    fin si
+                fin si
+            fin para
+        fin para
+        retornar resultado
+    fin funcion
+
+    # Lista de vecinos directos de `n`. [] si no tiene.
+    funcion vecinos(yo, n):
+        si no (n en yo._ady):
+            retornar []
+        fin si
+        retornar claves(yo._ady[n])
+    fin funcion
+
+    # Peso de la arista u->v, o `nulo` si no existe.
+    funcion peso(yo, u, v):
+        si no (u en yo._ady):
+            retornar nulo
+        fin si
+        si no (v en yo._ady[u]):
+            retornar nulo
+        fin si
+        retornar yo._ady[u][v]
+    fin funcion
+
+    funcion contiene(yo, n):
+        retornar n en yo._ady
+    fin funcion
+
+    funcion __longitud__(yo):
+        retornar longitud(yo._ady)
+    fin funcion
+
+    funcion __cadena__(yo):
+        tipo: cadena = "dirigido"
+        si no yo._dirigido:
+            tipo = "no dirigido"
+        fin si
+        retornar f"Grafo {tipo}({longitud(yo._ady)} nodos, {longitud(yo.aristas())} aristas)"
+    fin funcion
+fin clase
+
+
+# ─── BFS — busqueda en anchura ──────────────────────────────────
+
+# Recorrido BFS desde `inicio`. Devuelve lista de nodos en el
+# orden en que se visitaron. Util para distancias en aristas
+# unitarias y para alcanzabilidad.
+funcion bfs(g, inicio):
+    si no g.contiene(inicio):
+        lanzar ErrorDeValor(f"nodo inicio no presente: {inicio}")
+    fin si
+    visitados = {}
+    visitados[inicio] = verdadero
+    cola = coleccion.Cola()
+    cola.poner(inicio)
+    orden = []
+    mientras no cola.vacia():
+        n = cola.sacar()
+        agregar(orden, n)
+        para vec en g.vecinos(n):
+            si no (vec en visitados):
+                visitados[vec] = verdadero
+                cola.poner(vec)
+            fin si
+        fin para
+    fin mientras
+    retornar orden
+fin funcion
+
+
+# ─── DFS — busqueda en profundidad ──────────────────────────────
+
+# Recorrido DFS desde `inicio`. Devuelve lista de nodos en el
+# orden en que se visitaron (preorden iterativo con pila).
+funcion dfs(g, inicio):
+    si no g.contiene(inicio):
+        lanzar ErrorDeValor(f"nodo inicio no presente: {inicio}")
+    fin si
+    visitados = {}
+    pila = coleccion.Pila()
+    pila.poner(inicio)
+    orden = []
+    mientras no pila.vacia():
+        n = pila.sacar()
+        si n en visitados:
+            continuar
+        fin si
+        visitados[n] = verdadero
+        agregar(orden, n)
+        # Apilamos vecinos en orden inverso para que el primer
+        # vecino se procese antes (preorden estandar).
+        vecs = g.vecinos(n)
+        para i en rango(longitud(vecs) - 1, -1, -1):
+            v = vecs[i]
+            si no (v en visitados):
+                pila.poner(v)
+            fin si
+        fin para
+    fin mientras
+    retornar orden
+fin funcion
+
+
+# ─── Dijkstra — caminos minimos ─────────────────────────────────
+
+# Distancias minimas desde `inicio` a todos los nodos alcanzables.
+# Devuelve dict nodo -> distancia. Nodos inalcanzables NO aparecen
+# en el dict (mas facil de iterar que sentinela INFINITO).
+#
+# Implementacion: O(V^2) lineal sobre dict de pendientes. Suficiente
+# para los grafos pedagogicos tipicos. La version con heap (O((V+E)
+# log V)) requeriria un heap de pares con comparador por primer
+# elemento — coleccion.Heap actual solo compara valores escalares
+# nativamente (numeros, cadenas). Para grafos grandes considerar
+# escribir un heap especializado o reescribir Dijkstra con cola de
+# prioridad nativa cuando exista.
+funcion dijkstra(g, inicio):
+    si no g.contiene(inicio):
+        lanzar ErrorDeValor(f"nodo inicio no presente: {inicio}")
+    fin si
+    distancias = {}
+    distancias[inicio] = 0
+    pendientes = {}
+    pendientes[inicio] = 0
+    mientras longitud(pendientes) > 0:
+        # Extraer el pendiente con distancia minima.
+        n = _argmin_dict(pendientes)
+        d = pendientes[n]
+        borrar pendientes[n]
+        para vec en g.vecinos(n):
+            peso = g.peso(n, vec)
+            si peso < 0:
+                lanzar ErrorDeValor(f"Dijkstra requiere pesos >= 0; arista {n}->{vec} tiene peso {peso}")
+            fin si
+            nueva = d + peso
+            si no (vec en distancias) o nueva < distancias[vec]:
+                distancias[vec] = nueva
+                pendientes[vec] = nueva
+            fin si
+        fin para
+    fin mientras
+    retornar distancias
+fin funcion
+
+# Camino mas corto de `inicio` a `finn`. Devuelve lista de nodos
+# [inicio, ..., finn] o lista vacia si no hay camino. Reconstruye
+# el camino guardando predecesores durante Dijkstra.
+funcion camino_mas_corto(g, inicio, finn):
+    si no g.contiene(inicio):
+        lanzar ErrorDeValor(f"nodo inicio no presente: {inicio}")
+    fin si
+    si no g.contiene(finn):
+        lanzar ErrorDeValor(f"nodo fin no presente: {finn}")
+    fin si
+    distancias = {}
+    distancias[inicio] = 0
+    previo = {}
+    pendientes = {}
+    pendientes[inicio] = 0
+    encontrado = falso
+    mientras longitud(pendientes) > 0:
+        n = _argmin_dict(pendientes)
+        si n == finn:
+            encontrado = verdadero
+            romper
+        fin si
+        d = pendientes[n]
+        borrar pendientes[n]
+        para vec en g.vecinos(n):
+            peso = g.peso(n, vec)
+            si peso < 0:
+                lanzar ErrorDeValor("camino_mas_corto requiere pesos >= 0")
+            fin si
+            nueva = d + peso
+            si no (vec en distancias) o nueva < distancias[vec]:
+                distancias[vec] = nueva
+                previo[vec] = n
+                pendientes[vec] = nueva
+            fin si
+        fin para
+    fin mientras
+    si no encontrado:
+        retornar []
+    fin si
+    # Reconstruir desde fin hacia inicio.
+    camino = []
+    cur = finn
+    mientras verdadero:
+        agregar(camino, cur)
+        si cur == inicio:
+            romper
+        fin si
+        cur = previo[cur]
+    fin mientras
+    # Invertir.
+    invertido = []
+    para i en rango(longitud(camino) - 1, -1, -1):
+        agregar(invertido, camino[i])
+    fin para
+    retornar invertido
+fin funcion
+
+# Helper: clave de dict con valor minimo (asume no vacio).
+funcion _argmin_dict(d):
+    mejor_clave = nulo
+    mejor_valor = nulo
+    primero = verdadero
+    para k en claves(d):
+        v = d[k]
+        si primero o v < mejor_valor:
+            mejor_clave = k
+            mejor_valor = v
+            primero = falso
+        fin si
+    fin para
+    retornar mejor_clave
+fin funcion
+
+
+# ─── Componentes conexas ────────────────────────────────────────
+
+# Lista de componentes conexas (cada una como lista de nodos).
+# En grafos dirigidos calcula componentes DEBILMENTE conexas:
+# trata las aristas como no dirigidas para el recorrido. Para
+# fuertemente conexas se necesita Tarjan/Kosaraju (futuro).
+funcion componentes(g):
+    visitados = {}
+    resultado = []
+    nodos_g = g.nodos()
+    i = 0
+    mientras i < longitud(nodos_g):
+        n = nodos_g[i]
+        i = i + 1
+        si n en visitados:
+            # ya tratado
+        sino:
+            # Recorrido BFS en lista plana con indice de cabecera.
+            comp = []
+            cola = [n]
+            cabeza = 0
+            visitados[n] = verdadero
+            mientras cabeza < longitud(cola):
+                cur = cola[cabeza]
+                cabeza = cabeza + 1
+                agregar(comp, cur)
+                # Vecinos hacia delante.
+                vecs = g.vecinos(cur)
+                j = 0
+                mientras j < longitud(vecs):
+                    vec = vecs[j]
+                    j = j + 1
+                    si no (vec en visitados):
+                        visitados[vec] = verdadero
+                        agregar(cola, vec)
+                    fin si
+                fin mientras
+                # Vecinos hacia atras (solo importa en dirigidos).
+                si g._dirigido:
+                    k = 0
+                    mientras k < longitud(nodos_g):
+                        otro = nodos_g[k]
+                        k = k + 1
+                        si no (otro en visitados) y (cur en g._ady[otro]):
+                            visitados[otro] = verdadero
+                            agregar(cola, otro)
+                        fin si
+                    fin mientras
+                fin si
+            fin mientras
+            agregar(resultado, comp)
+        fin si
+    fin mientras
+    retornar resultado
+fin funcion
+
+
+# ─── Topologico — orden de un DAG ───────────────────────────────
+
+# Orden topologico via Kahn (cola de nodos con grado entrante 0).
+# Devuelve lista de nodos en orden topologico. Lanza ErrorDeValor
+# si el grafo tiene ciclo (no es DAG) o si no es dirigido.
+funcion topologico(g):
+    si no g._dirigido:
+        lanzar ErrorDeValor("topologico requiere grafo dirigido")
+    fin si
+    grado_in = {}
+    para n en g.nodos():
+        grado_in[n] = 0
+    fin para
+    para u en g.nodos():
+        para v en g.vecinos(u):
+            grado_in[v] = grado_in[v] + 1
+        fin para
+    fin para
+    cola = coleccion.Cola()
+    para n en g.nodos():
+        si grado_in[n] == 0:
+            cola.poner(n)
+        fin si
+    fin para
+    orden = []
+    mientras no cola.vacia():
+        n = cola.sacar()
+        agregar(orden, n)
+        para v en g.vecinos(n):
+            grado_in[v] = grado_in[v] - 1
+            si grado_in[v] == 0:
+                cola.poner(v)
+            fin si
+        fin para
+    fin mientras
+    si longitud(orden) != longitud(g):
+        lanzar ErrorDeValor("topologico: el grafo tiene un ciclo")
+    fin si
+    retornar orden
+fin funcion
+
+# `verdadero` si el grafo dirigido tiene un ciclo, `falso` si es
+# un DAG. Para no dirigidos: hay ciclo si alguna componente tiene
+# mas aristas que (nodos - 1).
+funcion tiene_ciclo(g):
+    si no g._dirigido:
+        # Algoritmo simple: DFS con marca de padre.
+        visitados = {}
+        para inicio en g.nodos():
+            si inicio en visitados:
+                continuar
+            fin si
+            # DFS iterativo con pila de [nodo, padre].
+            pila = coleccion.Pila()
+            pila.poner([inicio, nulo])
+            mientras no pila.vacia():
+                par = pila.sacar()
+                n = par[0]
+                padre = par[1]
+                si n en visitados:
+                    retornar verdadero
+                fin si
+                visitados[n] = verdadero
+                para vec en g.vecinos(n):
+                    si vec != padre:
+                        pila.poner([vec, n])
+                    fin si
+                fin para
+            fin mientras
+        fin para
+        retornar falso
+    fin si
+    # Dirigido: hacemos Kahn y vemos si procesa todos.
+    grado_in = {}
+    para n en g.nodos():
+        grado_in[n] = 0
+    fin para
+    para u en g.nodos():
+        para v en g.vecinos(u):
+            grado_in[v] = grado_in[v] + 1
+        fin para
+    fin para
+    cola = coleccion.Cola()
+    para n en g.nodos():
+        si grado_in[n] == 0:
+            cola.poner(n)
+        fin si
+    fin para
+    procesados = 0
+    mientras no cola.vacia():
+        n = cola.sacar()
+        procesados = procesados + 1
+        para v en g.vecinos(n):
+            grado_in[v] = grado_in[v] - 1
+            si grado_in[v] == 0:
+                cola.poner(v)
+            fin si
+        fin para
+    fin mientras
+    retornar procesados != longitud(g)
+fin funcion

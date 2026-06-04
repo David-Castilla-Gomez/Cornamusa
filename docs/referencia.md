@@ -1046,6 +1046,25 @@ Combinatoria y herramientas de iteración inspiradas en `itertools` de Python. P
 - `comprimir(xs, selectores)` — filtra `xs[i]` cuando `selectores[i]` es verdadero, hasta agotar la más corta.
 - `dividir_en(xs, n)` — particiones consecutivas de tamaño `n`; la última puede ser más corta.
 
+### `grafos` (v1.119)
+
+Grafos dirigidos / no dirigidos con pesos + algoritmos clásicos. Pure-Cornamusa sobre `coleccion.Cola`/`Pila` y `dict` de adyacencia.
+
+**Clase `Grafo(dirigido=verdadero)`** — los nodos pueden ser cualquier valor hashable:
+- `agregar_nodo(n)`, `agregar_arista(u, v, peso=1)`, `quitar_arista(u, v)`.
+- `nodos()`, `aristas()` (lista de `[u, v, peso]`), `vecinos(n)`, `peso(u, v)` (devuelve `nulo` si no existe), `contiene(n)`, `__longitud__`, `__cadena__`.
+
+En grafos no dirigidos, agregar `u→v` crea automáticamente `v→u` con el mismo peso, y `aristas()` no duplica.
+
+**Algoritmos**:
+- `bfs(g, inicio)` → lista en orden de visita (`coleccion.Cola`).
+- `dfs(g, inicio)` → lista en preorden iterativo (`coleccion.Pila`).
+- `dijkstra(g, inicio)` → `dict` nodo→distancia. Solo nodos alcanzables aparecen. Lanza `ErrorDeValor` con peso negativo. O(V²) sobre dict de pendientes (heap especializado pendiente).
+- `camino_mas_corto(g, inicio, finn)` → lista `[inicio, ..., finn]` o `[]`.
+- `componentes(g)` → lista de listas. En dirigidos calcula débilmente conexas.
+- `topologico(g)` → orden topológico por Kahn. Lanza si hay ciclo o si el grafo no es dirigido.
+- `tiene_ciclo(g)` → booleano.
+
 ### `inspeccion` (v1.91)
 
 Introspección y reflexión sobre instancias, clases y módulos. Útil para serializadores genéricos, REPL helpers y debugging.

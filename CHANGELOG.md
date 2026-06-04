@@ -6,6 +6,52 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.119.0] — 2026-06-04 — Stdlib `grafos`
+
+Nuevo módulo `stdlib/grafos.cor` con clase `Grafo` (dirigido o no
+dirigido, con pesos) y los algoritmos clásicos: BFS, DFS, Dijkstra,
+camino más corto, orden topológico, detección de ciclos y
+componentes conexas. Pure-Cornamusa, sobre `coleccion.Cola` y
+`coleccion.Pila`.
+
+### `Grafo(dirigido=verdadero)`
+
+Representación interna: `dict` de adyacencia `nodo → dict(vecino → peso)`. Permite recorrer aristas en O(grado) y actualizar/quitar aristas en O(1). Nodos pueden ser cualquier valor hashable (cadena, entero, tupla).
+
+API:
+- `agregar_nodo(n)`, `agregar_arista(u, v, peso=1)`, `quitar_arista(u, v)`.
+- `nodos()` → lista (orden de inserción).
+- `aristas()` → lista de `[u, v, peso]`. En no dirigidos cada par aparece una sola vez.
+- `vecinos(n)`, `peso(u, v)` (devuelve `nulo` si no existe), `contiene(n)`.
+- `__longitud__`, `__cadena__`.
+
+En grafos no dirigidos, `agregar_arista(u, v, p)` crea automáticamente la arista inversa con el mismo peso.
+
+### Algoritmos
+
+- `bfs(g, inicio)` → lista de nodos en orden de visita. Usa `coleccion.Cola`.
+- `dfs(g, inicio)` → lista de nodos en preorden iterativo. Usa `coleccion.Pila`. Apila vecinos en orden inverso para que el primer vecino se procese antes.
+- `dijkstra(g, inicio)` → `dict` nodo→distancia. Solo nodos alcanzables aparecen (no se usa `INFINITO` como sentinela). Lanza `ErrorDeValor` si encuentra arista con peso negativo durante la exploración.
+- `camino_mas_corto(g, inicio, finn)` → lista `[inicio, ..., finn]` o `[]` si no hay camino. Reconstruye guardando predecesores.
+- `componentes(g)` → lista de listas de nodos. En grafos dirigidos calcula componentes **débilmente conexas** (trata aristas como no dirigidas). Para fuertemente conexas se necesitaría Tarjan/Kosaraju (pendiente).
+- `topologico(g)` → orden topológico por Kahn (cola de nodos con grado entrante 0). Lanza `ErrorDeValor` si el grafo tiene ciclo o no es dirigido.
+- `tiene_ciclo(g)` → booleano. En no dirigidos usa DFS con marca de padre; en dirigidos usa Kahn.
+
+### Decisión: Dijkstra O(V²) lineal, no O((V+E) log V) con heap
+
+`coleccion.Heap` solo compara valores escalares nativamente (números, cadenas). Para usar heap de pares `[distancia, nodo]` haría falta un comparador por primer elemento — funcionalidad que no existe todavía. La versión O(V²) sobre `dict` de pendientes es suficiente para grafos pedagógicos típicos (hasta ~1000 nodos cómodos). Documentado en el módulo como deuda técnica.
+
+### Tropezón conocido: `para` anidado en `coleccion.Cola`
+
+Una versión inicial de `componentes` con `coleccion.Cola()` + `para` anidado producía `"OP_ITER_SIGUIENTE sin iterador en slot N"`. El compilador del bytecode tiene un edge case con la interacción entre slots de iteradores y métodos de clases internos. Solución: reescribir `componentes` con lista plana + índice de cabecera (`mientras cabeza < longitud(cola)`). Posible bug del compilador para investigar más adelante; no bloquea esta release.
+
+### Tests y ejemplo
+
+- `tests/unit/test_bytecode_grafos.c` — 17 bloques, 22+ asserts. Cubre clase Grafo (dirigido y no dirigido), BFS/DFS orden, Dijkstra con camino indirecto más corto (`A→C→B = 3` vs `A→B = 4`), peso negativo lanza, camino_mas_corto reconstrucción, topológico DAG + ciclo lanza, tiene_ciclo, componentes (3 grupos), quitar_arista, contiene.
+- `examples/105_grafos.cor` — 6 secciones: mapa de carreteras de Castilla con Dijkstra real (Madrid→Salamanca por Ávila, 213 km), red social con BFS/DFS, orden topológico para preparar café, detección de ciclo, componentes en red de amigos, errores típicos (peso negativo, nodo ausente).
+
+Suite total: **301 tests, 100% verde**.
+
 ## [1.118.0] — 2026-06-04 — Stdlib `iteradores`
 
 Nuevo módulo `stdlib/iteradores.cor`: combinatoria y herramientas de
