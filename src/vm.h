@@ -234,6 +234,13 @@ typedef struct {
 /* Inicializa la VM. La pila empieza vacía, sin error. */
 void vm_iniciar(VM *vm);
 
+/* v1.122: registra el path absoluto (o relativo) del binario para que
+ * `cargar_modulo_desde_archivo` pueda buscar stdlib relativa al
+ * ejecutable y permitir `cornamusa X.cor` desde cualquier cwd. Llamar
+ * desde main() con argv[0]. Idempotente; reaccepta NULL/""  para
+ * limpiar. Independiente del estado de una VM concreta. */
+void vm_set_ruta_binario(const char *path);
+
 /*
  * Libera los Valores que queden en la pila si la ejecución fue
  * interrumpida (en éxito normal, el OP_RETORNAR ya las consume).

@@ -1354,6 +1354,29 @@ static int subcomando_nuevo(int argc, char **argv) {
 int main(int argc, char **argv) {
     configurar_consola_utf8();
 
+    /* v1.122: registrar ruta del binario para que la VM pueda buscar
+     * stdlib relativa al ejecutable. Permite `cornamusa X.cor` desde
+     * cualquier cwd. En Windows preferimos GetModuleFileNameA porque
+     * argv[0] puede ser solo el basename si vino del PATH. En POSIX
+     * argv[0] suele estar resuelto cuando se invoca via PATH; si
+     * fallamos resolver, vm_set_ruta_binario acepta "" y degrada a
+     * busqueda solo por cwd/$CORNAMUSA_RUTA. */
+#ifdef _WIN32
+    {
+        char modpath[512];
+        DWORD n = GetModuleFileNameA(NULL, modpath, sizeof(modpath));
+        if (n > 0 && n < sizeof(modpath)) {
+            vm_set_ruta_binario(modpath);
+        } else if (argc > 0) {
+            vm_set_ruta_binario(argv[0]);
+        }
+    }
+#else
+    if (argc > 0) {
+        vm_set_ruta_binario(argv[0]);
+    }
+#endif
+
     /* Subcomandos antes de flags planas (estilo `git`, `gofmt`). */
     if (argc >= 2 && strcmp(argv[1], "fmt") == 0) {
         return subcomando_fmt(argc, argv);

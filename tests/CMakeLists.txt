@@ -817,6 +817,19 @@ foreach(ej ${EJEMPLOS_DIFERENCIALES})
 endforeach()
 
 
+# ───── v1.122: stdlib relativa al binario (fase 4) ─────
+# Crea un .cor en un cwd temporal sin stdlib/ y comprueba que
+# `importar funcionales` se resuelve via la busqueda relativa al
+# ejecutable (vm_set_ruta_binario en main.c).
+add_test(
+    NAME stdlib_relativa_binario
+    COMMAND ${CMAKE_COMMAND}
+            -DCORNAMUSA_BIN=$<TARGET_FILE:cornamusa>
+            -DTEMP_DIR=${CMAKE_CURRENT_BINARY_DIR}
+            -P ${CMAKE_SOURCE_DIR}/tests/integracion/stdlib_relativa_binario.cmake
+)
+set_tests_properties(stdlib_relativa_binario PROPERTIES LABELS "integracion")
+
 # ───── v1.122: Golden tests — salida exacta de ejemplos ─────
 # Por cada examples/esperado/<nombre>.salida, registramos un test que
 # ejecuta el .cor correspondiente y compara stdout byte a byte (con

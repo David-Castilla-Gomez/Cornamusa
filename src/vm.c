@@ -220,16 +220,65 @@ static Chunk *compilar_fuente_a_chunk(const char *fuente,
     return ch;
 }
 
+/* v1.122: directorio del binario, resuelto en main() para soportar
+ * `importar X` desde cualquier cwd. Si esta vacio, la busqueda se
+ * limita al cwd y a $CORNAMUSA_RUTA. Lo establece vm_set_ruta_binario. */
+static char g_dir_binario[512] = {0};
+
+void vm_set_ruta_binario(const char *path) {
+    if (!path || !*path) { g_dir_binario[0] = '\0'; return; }
+    /* Extraer dirname: ultima ocurrencia de '/' o '\\'. */
+    const char *barra = NULL;
+    for (const char *p = path; *p; p++) {
+        if (*p == '/' || *p == '\\') barra = p;
+    }
+    if (!barra) {
+        g_dir_binario[0] = '\0';
+        return;
+    }
+    size_t n = (size_t)(barra - path);
+    if (n >= sizeof(g_dir_binario)) n = sizeof(g_dir_binario) - 1;
+    memcpy(g_dir_binario, path, n);
+    g_dir_binario[n] = '\0';
+}
+
+/* Intenta cargar `${base}/{sufijo}` (e.g. `${base}/stdlib/X.cor`).
+ * Devuelve buffer malloc'd o NULL. Si base es vacio, omite el slash. */
+static char *intentar_cargar(const char *base, const char *sufijo,
+                                char *path_out, size_t path_cap, size_t *flen) {
+    if (base && *base) {
+        snprintf(path_out, path_cap, "%s/%s", base, sufijo);
+    } else {
+        snprintf(path_out, path_cap, "%s", sufijo);
+    }
+    return leer_archivo_completo(path_out, flen);
+}
+
 /* Busca y carga el módulo `nombre`. Devuelve Chunk* (con malloc'd) o NULL.
- * Si el nombre contiene `.` (subsegmentos, v0.9.1), se traducen a `/` antes
- * del lookup: `mat.geometria` → busca `./mat/geometria.cor` y
- * `stdlib/mat/geometria.cor`. */
+ *
+ * Estrategia (v1.122):
+ *   1. ./{nombre}.cor                        (cwd)
+ *   2. ./stdlib/{nombre}.cor                 (cwd/stdlib)
+ *   3. Cada $CORNAMUSA_RUTA path:
+ *        ${path}/{nombre}.cor
+ *        ${path}/stdlib/{nombre}.cor
+ *      Separador: ';' en Windows, ':' en POSIX.
+ *   4. ${dir_del_binario}/stdlib/{nombre}.cor
+ *   5. ${dir_del_binario}/../stdlib/{nombre}.cor
+ *      (caso 'binario en bin/, stdlib al lado').
+ *
+ * Esto permite ejecutar `cornamusa X.cor` desde cualquier cwd sin que
+ * `importar funcionales` falle, siempre y cuando el binario fuera
+ * configurado con vm_set_ruta_binario (lo hace main.c).
+ */
 static Chunk *cargar_modulo_desde_archivo(const char *nombre, int len_nombre) {
     char path[512];
+    char sufijo[512];
+    char sufijo_stdlib[512];
     char *fuente = NULL;
     size_t flen = 0;
 
-    /* Construir el path traduciendo `.` a `/`. */
+    /* Construir nombre_path traduciendo `.` a `/`. */
     char nombre_path[256];
     int copy_len = len_nombre < (int)sizeof(nombre_path) - 1
                  ? len_nombre : (int)sizeof(nombre_path) - 1;
@@ -238,14 +287,57 @@ static Chunk *cargar_modulo_desde_archivo(const char *nombre, int len_nombre) {
     }
     nombre_path[copy_len] = '\0';
 
-    /* Intento 1: ./{nombre_path}.cor */
-    snprintf(path, sizeof(path), "%s.cor", nombre_path);
-    fuente = leer_archivo_completo(path, &flen);
+    snprintf(sufijo,        sizeof(sufijo),        "%s.cor", nombre_path);
+    snprintf(sufijo_stdlib, sizeof(sufijo_stdlib), "stdlib/%s.cor", nombre_path);
 
-    /* Intento 2: stdlib/{nombre_path}.cor */
+    /* Intento 1: ./{nombre}.cor */
+    fuente = intentar_cargar("", sufijo, path, sizeof(path), &flen);
+
+    /* Intento 2: ./stdlib/{nombre}.cor */
     if (!fuente) {
-        snprintf(path, sizeof(path), "stdlib/%s.cor", nombre_path);
-        fuente = leer_archivo_completo(path, &flen);
+        fuente = intentar_cargar("", sufijo_stdlib, path, sizeof(path), &flen);
+    }
+
+    /* Intento 3: $CORNAMUSA_RUTA (lista separada por ;/:) */
+    if (!fuente) {
+        const char *env = getenv("CORNAMUSA_RUTA");
+        if (env && *env) {
+#ifdef _WIN32
+            const char sep = ';';
+#else
+            const char sep = ':';
+#endif
+            char buf[1024];
+            strncpy(buf, env, sizeof(buf) - 1);
+            buf[sizeof(buf) - 1] = '\0';
+            char *ini = buf;
+            while (ini && *ini && !fuente) {
+                char *fin = strchr(ini, sep);
+                if (fin) *fin = '\0';
+                if (*ini) {
+                    fuente = intentar_cargar(ini, sufijo, path, sizeof(path), &flen);
+                    if (!fuente) {
+                        fuente = intentar_cargar(ini, sufijo_stdlib,
+                                                    path, sizeof(path), &flen);
+                    }
+                }
+                ini = fin ? fin + 1 : NULL;
+            }
+        }
+    }
+
+    /* Intento 4: ${dir_binario}/stdlib/{nombre}.cor */
+    if (!fuente && g_dir_binario[0] != '\0') {
+        fuente = intentar_cargar(g_dir_binario, sufijo_stdlib,
+                                    path, sizeof(path), &flen);
+    }
+
+    /* Intento 5: ${dir_binario}/../stdlib/{nombre}.cor */
+    if (!fuente && g_dir_binario[0] != '\0') {
+        char base_padre[512];
+        snprintf(base_padre, sizeof(base_padre), "%s/..", g_dir_binario);
+        fuente = intentar_cargar(base_padre, sufijo_stdlib,
+                                    path, sizeof(path), &flen);
     }
 
     if (!fuente) return NULL;
