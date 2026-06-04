@@ -1184,9 +1184,17 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
     /* v1.121: constructor con kwargs. Transformamos VAL_CLASE en su
        __iniciar__ insertando la instancia recien creada como primer
        posicional, y luego seguimos por el path BC habitual con el
-       frame marcado como `es_constructor`. */
+       frame marcado como `es_constructor`.
+       v1.124: capturamos el nombre de la clase ANTES de la
+       transformacion para que los mensajes de error digan
+       `Persona() no acepta keyword 'profesion'` en vez de
+       `__iniciar__() no acepta keyword 'profesion'`. */
     bool es_constructor_kw = false;
+    const char *err_nombre = NULL;
+    int err_long_nombre = 0;
     if (callee.tipo == VAL_CLASE) {
+        err_nombre = callee.como.clase->nombre;
+        err_long_nombre = callee.como.clase->longitud_nombre;
         Clase *cl_class = callee.como.clase;
         Instancia *inst = instancia_nueva(cl_class);
         if (!inst) {
@@ -1253,13 +1261,20 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
             "ErrorInterno: funcion sin metadata de nombres de parametros");
         return VM_ERROR_RUNTIME;
     }
+    /* v1.124: si no es constructor, los mensajes usan el nombre de la
+       funcion. Si es constructor, ya tenemos el nombre de la clase
+       capturado arriba. */
+    if (err_nombre == NULL) {
+        err_nombre = fn->nombre;
+        err_long_nombre = fn->longitud_nombre;
+    }
     int aridad_fija = fn->aridad
                       - (fn->tiene_estrella ? 1 : 0)
                       - (fn->tiene_doble_estrella ? 1 : 0);
     if (n_pos > aridad_fija && !fn->tiene_estrella) {
         llamar_set_error(vm, frame,
             "ErrorDeTipo: %.*s() recibio %d posicionales pero solo acepta %d",
-            fn->longitud_nombre, fn->nombre, n_pos, aridad_fija);
+            err_long_nombre, err_nombre, n_pos, aridad_fija);
         return VM_ERROR_RUNTIME;
     }
     int aridad = fn->aridad;
@@ -1329,7 +1344,7 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
             }
             snprintf(err_buf, sizeof(err_buf),
                 "ErrorDeTipo: %.*s() no acepta keyword '%.*s'",
-                fn->longitud_nombre, fn->nombre,
+                err_long_nombre, err_nombre,
                 key.como.cadena.longitud, key.como.cadena.texto);
             error_match = true;
             break;
@@ -1337,7 +1352,7 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         if (params_asignados[slot]) {
             snprintf(err_buf, sizeof(err_buf),
                 "ErrorDeTipo: %.*s() recibio multiple valor para '%.*s'",
-                fn->longitud_nombre, fn->nombre,
+                err_long_nombre, err_nombre,
                 key.como.cadena.longitud, key.como.cadena.texto);
             error_match = true;
             break;
@@ -1363,7 +1378,7 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         if (i < min_aridad_fija || !cl->defaults) {
             snprintf(err_buf, sizeof(err_buf),
                 "ErrorDeTipo: %.*s() falta argumento '%.*s'",
-                fn->longitud_nombre, fn->nombre,
+                err_long_nombre, err_nombre,
                 fn->long_nombres_params[i], fn->nombres_params[i]);
             error_match = true;
             break;

@@ -6,6 +6,45 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.124.0] — 2026-06-04 — Mensajes de error en kwargs de constructor
+
+Cierra el detalle de pulido documentado en v1.121: cuando un kwarg
+fallaba al construir una instancia, el mensaje decía `__iniciar__()`
+en vez del nombre de la clase.
+
+```
+# Antes:
+Persona(nombre="Ana", edad=30, profesion="ing")
+-> ErrorDeTipo: __iniciar__() no acepta keyword 'profesion'
+
+# Tras v1.124:
+Persona(nombre="Ana", edad=30, profesion="ing")
+-> ErrorDeTipo: Persona() no acepta keyword 'profesion'
+```
+
+### Fix
+
+En `src/vm.c:ejecutar_llamar_kw`, capturar `nombre`/`longitud_nombre`
+de la clase ANTES de la transformación `VAL_CLASE → __iniciar__`.
+Variables `err_nombre` / `err_long_nombre` se usan en los cuatro
+`snprintf` de error de matching kw. Si la llamada no es a un
+constructor, se inicializan al nombre de la función como antes.
+
+Errores cubiertos:
+- `%.*s() recibio %d posicionales pero solo acepta %d`
+- `%.*s() no acepta keyword 'X'`
+- `%.*s() recibio multiple valor para 'X'`
+- `%.*s() falta argumento 'X'`
+
+### Tests
+
+`tests/unit/test_bytecode_kwargs_clase_error_nombre.c` con 4 bloques:
+kwarg duplicado, kwarg desconocido, falta argumento, y regresión
+para funciones normales (siguen diciendo su nombre, no rompemos
+ese path).
+
+Suite: **321 tests verde**.
+
 ## [1.123.0] — 2026-06-04 — Destructuring de variables nuevas dentro de bucle
 
 Cierra el caso patológico residual documentado en v1.122 fase 1: cuando
