@@ -1047,6 +1047,65 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
                                        uint8_t n_pos, uint8_t n_kw) {
     CallFrame *frame = *frame_inout;
     Valor callee = *base_nuevo;
+    /* v1.121: constructor con kwargs. Transformamos VAL_CLASE en su
+       __iniciar__ insertando la instancia recien creada como primer
+       posicional, y luego seguimos por el path BC habitual con el
+       frame marcado como `es_constructor`. */
+    bool es_constructor_kw = false;
+    if (callee.tipo == VAL_CLASE) {
+        Clase *cl_class = callee.como.clase;
+        Instancia *inst = instancia_nueva(cl_class);
+        if (!inst) {
+            llamar_set_error(vm, frame,
+                "memoria insuficiente al crear instancia");
+            return VM_ERROR_RUNTIME;
+        }
+        Valor clave_init = valor_cadena_referencia("__iniciar__", 11);
+        Valor met_v;
+        bool tiene_init = dicc_obtener(cl_class->metodos, &clave_init, &met_v);
+        if (!tiene_init) {
+            if (n_pos != 0 || n_kw != 0) {
+                instancia_liberar(inst);
+                llamar_set_error(vm, frame,
+                    "ErrorDeTipo: %.*s() no acepta argumentos (sin __iniciar__)",
+                    cl_class->longitud_nombre, cl_class->nombre);
+                return VM_ERROR_RUNTIME;
+            }
+            /* Stack: [...|clase]. Sustituimos por la instancia. */
+            Valor cv = *(--vm->tope);
+            valor_destruir(&cv);
+            empujar(vm, valor_instancia(inst));
+            return VM_OK;
+        }
+        if (met_v.tipo != VAL_FUNCION_BC) {
+            valor_destruir(&met_v);
+            instancia_liberar(inst);
+            llamar_set_error(vm, frame,
+                "estado interno corrupto: __iniciar__ no es closure");
+            return VM_ERROR_RUNTIME;
+        }
+        /* Hacer espacio para `yo` como primer posicional: desplazamos
+           todos los args (pos + kw) un slot hacia arriba en la pila. */
+        int total_args_stack = n_pos + 2 * n_kw;
+        if (vm->tope - vm->pila >= VM_PILA_MAX) {
+            valor_destruir(&met_v);
+            instancia_liberar(inst);
+            llamar_set_error(vm, frame, "Desbordamiento de pila");
+            return VM_ERROR_RUNTIME;
+        }
+        if (total_args_stack > 0) {
+            memmove(base_nuevo + 2, base_nuevo + 1,
+                    sizeof(Valor) * (size_t)total_args_stack);
+        }
+        vm->tope++;
+        Valor old = *base_nuevo;     /* la clase */
+        *base_nuevo = met_v;          /* ahora la closure de __iniciar__ */
+        base_nuevo[1] = valor_instancia(inst);
+        valor_destruir(&old);
+        n_pos++;                      /* la instancia cuenta como pos0 */
+        es_constructor_kw = true;
+        callee = *base_nuevo;
+    }
     if (callee.tipo != VAL_FUNCION_BC) {
         llamar_set_error(vm, frame,
             "ErrorDeTipo: keyword args solo soportados para funciones bytecode (no '%s')",
@@ -1227,7 +1286,7 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
     nf->ip = fn->chunk.codigo;
     nf->base_pila = base_nuevo;
     nf->closure = cl;
-    nf->es_constructor = false;
+    nf->es_constructor = es_constructor_kw;
     nf->modulo_en_carga = NULL;
     nf->globales_pre_modulo = NULL;
     nf->chunk_modulo = NULL;

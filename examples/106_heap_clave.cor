@@ -11,7 +11,7 @@ importar coleccion
 
 imprimir("--- 1. Cola de prioridad ---")
 
-tareas = coleccion.Heap(lambda t: t["prioridad"])
+tareas = coleccion.Heap(clave=lambda t: t["prioridad"])
 tareas.poner({"prioridad": 3, "tarea": "limpiar"})
 tareas.poner({"prioridad": 1, "tarea": "incendio"})
 tareas.poner({"prioridad": 2, "tarea": "deadline"})

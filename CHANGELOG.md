@@ -6,6 +6,82 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.121.0] — 2026-06-04 — Kwargs en constructores de clase
+
+Cierra deuda técnica documentada en v1.120: hasta hoy
+`Persona(nombre="Ana", edad=30)` o `Heap(clave=lambda x: x)`
+lanzaban `ErrorDeTipo: keyword args solo soportados para
+funciones bytecode (no 'clase')`. La instanciación con kwargs
+era el único hueco que quedaba en la paridad de llamada
+posicional/keyword entre funciones y constructores.
+
+### Implementación
+
+En `src/vm.c`, el helper `ejecutar_llamar_kw` detecta `VAL_CLASE`
+antes de la verificación `VAL_FUNCION_BC`:
+
+1. Crea la instancia con `instancia_nueva`.
+2. Recupera `__iniciar__` del dict de métodos.
+3. Si no existe y se pasaron args (positionals o kwargs), lanza
+   `ErrorDeTipo: X() no acepta argumentos (sin __iniciar__)`.
+4. Si existe, hace espacio para `yo` desplazando los args en el
+   stack un slot hacia arriba, sustituye el callee `clase` por la
+   closure de `__iniciar__`, e inserta `yo = instancia` como pos0.
+5. Marca el frame nuevo como `es_constructor = true` para que el
+   retorno descarte el valor del cuerpo y devuelva la instancia
+   (semántica Python).
+
+A partir de ahí, el flujo es idéntico al de cualquier llamada con
+kwargs: matching nombre→slot, defaults para faltantes, errores
+por duplicados o kwargs desconocidos.
+
+### Patrones desbloqueados
+
+```cornamusa
+# Heap con clave nombrada (motivación original).
+h = coleccion.Heap(clave=lambda p: p[0])
+
+# Constructores con muchos parámetros legibles en su sitio:
+clase Persona:
+    funcion __iniciar__(yo, nombre, edad, ciudad="Madrid"):
+        ...
+    fin funcion
+fin clase
+
+p = Persona(nombre="Ana", edad=30)
+p = Persona("Luis", edad=25, ciudad="Sevilla")  # mezcla pos+kw
+```
+
+### Errores que sí lanza correctamente
+
+- `Vacia(x=1)` con clase sin `__iniciar__` → `X() no acepta argumentos`.
+- `Persona(1, nombre="Otro")` → kw duplicado.
+- `Persona(nombre="Ana", profesion="ing")` → kw desconocido (sin `**kw`).
+
+### Tests
+
+- `tests/unit/test_bytecode_kwargs_clase.c` — 10 bloques, 12+ asserts:
+  cubre construcción por kwargs, mezcla pos+kw, defaults
+  rellenados, override de default, clase sin `__iniciar__` (con
+  y sin args), kw duplicado, kw desconocido, `Heap(clave=lambda)`
+  como caso real, y la semántica de constructor que descarta
+  `retornar` del cuerpo y devuelve la instancia.
+
+Suite total: **304 tests, 100% verde**.
+
+### Nota sobre el mensaje de error
+
+Cuando el matching falla dentro del constructor, el mensaje dice
+`__iniciar__() recibio multiple valor para 'x'` y no `Persona()`.
+Es técnicamente honesto (la función que falla es `__iniciar__`)
+y se puede pulir en una release menor; no bloquea esta release.
+
+### Ejemplo actualizado
+
+`examples/106_heap_clave.cor` ahora usa `Heap(clave=lambda t: t["prioridad"])`
+en la sección 1 (cola de prioridad de tareas), demostrando el patrón
+directamente con kwargs en lugar de posicional.
+
 ## [1.120.0] — 2026-06-04 — `Heap` con clave + Dijkstra O((V+E) log V)
 
 Cierra deuda técnica documentada en v1.119: `coleccion.Heap` acepta
