@@ -1,5 +1,7 @@
 # Operaciones básicas con listas: indexación, slicing, métodos.
 
+importar funcionales
+
 numeros = [1, 2, 3, 4, 5]
 
 imprimir(f"Original: {numeros}")
@@ -17,5 +19,5 @@ imprimir(f"Tras añadir e insertar: {numeros}")
 cuadrados = [x * x para x en numeros si x % 2 == 0]
 imprimir(f"Cuadrados de pares: {cuadrados}")
 
-# Suma con built-in
-imprimir(f"Suma total: {suma(numeros)}")
+# Suma: `funcionales.suma(xs, inicial=0)` de la stdlib.
+imprimir(f"Suma total: {funcionales.suma(numeros, 0)}")

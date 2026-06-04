@@ -1,0 +1,8 @@
+Original: [1, 2, 3, 4, 5]
+Primero: 1
+Último: 5
+Subrango: [2, 3, 4]
+Longitud: 5
+Tras añadir e insertar: [0, 1, 2, 3, 4, 5, 6]
+Cuadrados de pares: [0, 4, 16, 36]
+Suma total: 21

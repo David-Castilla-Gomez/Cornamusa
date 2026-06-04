@@ -1,0 +1,125 @@
+# Smoke de docs/referencia-stdlib.md.
+# Invoca una funcion representativa de cada modulo. Cada bloque en
+# su propia funcion para no saturar la pool de constantes del chunk
+# top-level (limite 255 en bytecode v0.6).
+
+importar archivos
+importar azar
+importar base64
+importar cadenas
+importar coleccion
+importar csv
+importar estadisticas
+importar fechas
+importar formato
+importar funcionales
+importar grafos
+importar hashing
+importar inspeccion
+importar iteradores
+importar json
+importar matematicas
+importar pruebas
+importar regex
+importar ruta
+importar sistema
+importar tiempo
+importar validacion
+
+aseverar = pruebas.aseverar
+
+funcion test_strings():
+    aseverar(cadenas.mayusculas_ascii("hola") == "HOLA", "cadenas.mayusculas_ascii")
+    aseverar(cadenas.minusculas_ascii("HOLA") == "hola", "cadenas.minusculas_ascii")
+    aseverar(cadenas.separar("a,b,c", ",") == ["a", "b", "c"], "cadenas.separar")
+    aseverar(cadenas.unir(["a", "b"], "-") == "a-b", "cadenas.unir")
+    aseverar(cadenas.empieza_con("hola", "ho"), "cadenas.empieza_con")
+    aseverar(cadenas.termina_con("hola", "la"), "cadenas.termina_con")
+    aseverar(base64.decodificar(base64.codificar("ok")) == "ok", "base64")
+fin funcion
+
+funcion test_colecciones():
+    p = coleccion.Pila()
+    p.poner(1)
+    p.poner(2)
+    aseverar(p.sacar() == 2, "Pila LIFO")
+    c = coleccion.Contador(["x", "x", "y"])
+    aseverar(c.obtener("x") == 2, "Contador.obtener")
+    h = coleccion.Heap()
+    h.poner(3)
+    h.poner(1)
+    aseverar(h.sacar() == 1, "Heap min")
+fin funcion
+
+funcion test_funcionales():
+    aseverar(funcionales.suma([1, 2, 3], 0) == 6, "funcionales.suma")
+    aseverar(funcionales.mapear(lambda x: x * 2, [1, 2]) == [2, 4], "funcionales.mapear")
+    aseverar(funcionales.filtrar(lambda x: x > 1, [1, 2, 3]) == [2, 3], "funcionales.filtrar")
+    aseverar(funcionales.tomar(2, [10, 20, 30]) == [10, 20], "funcionales.tomar")
+fin funcion
+
+funcion test_iteradores():
+    aseverar(iteradores.combinaciones([1, 2, 3], 2) == [[1, 2], [1, 3], [2, 3]], "comb")
+    aseverar(iteradores.ventana([1, 2, 3, 4], 2) == [[1, 2], [2, 3], [3, 4]], "ventana")
+    aseverar(iteradores.concatenar([1, 2], [3]) == [1, 2, 3], "concatenar")
+fin funcion
+
+funcion test_matematicas():
+    aseverar(matematicas.cuadrado(5) == 25, "cuadrado")
+    aseverar(matematicas.raiz(16) == 4, "raiz")
+    aseverar(matematicas.PI > 3.14, "PI")
+    aseverar(matematicas.absoluto(matematicas.seno(0)) < 0.0001, "seno(0)")
+    aseverar(matematicas.absoluto(matematicas.coseno(0) - 1) < 0.0001, "coseno(0)")
+fin funcion
+
+funcion test_estadisticas_y_json():
+    aseverar(estadisticas.media([1, 2, 3]) == 2, "media")
+    aseverar(estadisticas.amplitud([1, 5]) == 4, "amplitud")
+    aseverar(json.parsear("[1, 2]") == [1, 2], "json.parsear")
+    aseverar(json.serializar([1]) == "[1]", "json.serializar")
+fin funcion
+
+funcion test_grafos():
+    g = grafos.Grafo()
+    g.agregar_arista("A", "B")
+    aseverar(grafos.bfs(g, "A") == ["A", "B"], "grafos.bfs")
+fin funcion
+
+funcion test_otros():
+    aseverar(archivos.existe("README.md"), "archivos.existe")
+    azar.semilla(42)
+    aseverar(azar.entero(1, 10) >= 1, "azar.entero")
+    aseverar(longitud(hashing.sha256("t")) == 64, "sha256")
+    aseverar(csv.serializar_linea(["a", "b"], ",") == "a,b", "csv")
+    aseverar(formato.con_decimales(3.14, 1) == "3.1", "formato")
+    aseverar(regex.coincide("[0-9]+", "123"), "regex.coincide full")
+    aseverar(regex.contiene("[0-9]+", "abc1"), "regex.contiene parcial")
+    aseverar(ruta.nombre("/a/b.txt") == "b.txt", "ruta.nombre")
+    aseverar(ruta.extension("a.txt") == ".txt", "ruta.extension")
+    aseverar(validacion.es_email("david@example.com"), "validacion.es_email")
+    aseverar(tiempo.monotonic() >= 0, "tiempo.monotonic")
+    _ = fechas.ahora()
+    aseverar(fechas.es_bisiesto(2024), "fechas.es_bisiesto")
+    _ = sistema.usuario()
+fin funcion
+
+clase Foo:
+    pasar
+fin clase
+
+funcion test_inspeccion():
+    aseverar(inspeccion.es_clase(Foo), "inspeccion.es_clase")
+    aseverar(inspeccion.es_instancia(Foo()), "inspeccion.es_instancia")
+fin funcion
+
+test_strings()
+test_colecciones()
+test_funcionales()
+test_iteradores()
+test_matematicas()
+test_estadisticas_y_json()
+test_grafos()
+test_otros()
+test_inspeccion()
+
+imprimir("OK")

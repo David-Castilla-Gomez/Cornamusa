@@ -1,10 +1,16 @@
 # Manejo de excepciones: división segura y lectura de archivo.
+#
+# Las excepciones built-in son: Excepcion, ErrorAritmetico, ErrorDeTipo,
+# ErrorDeValor, ErrorDeIndice, ErrorDeClave, ErrorDeNombre,
+# ErrorDeSistema, ErrorDeIO, ErrorDeIteracion, ErrorDeAtributo.
+
+importar archivos
 
 funcion dividir_seguro(a, b):
     intentar:
         retornar a / b
-    atrapar ErrorDivisiónPorCero:
-        imprimir(f"No se puede dividir {a} entre cero")
+    atrapar ErrorAritmetico como e:
+        imprimir(f"No se puede dividir {a} entre cero ({e})")
         retornar nulo
     fin intentar
 fin funcion
@@ -12,14 +18,10 @@ fin funcion
 imprimir(dividir_seguro(10, 2))
 imprimir(dividir_seguro(10, 0))
 
-# Lectura de archivo con cleanup en finalmente.
-archivo = nulo
+# Lectura de archivo: archivos.leer(ruta) lanza ErrorDeIO si no existe.
 intentar:
-    archivo = abrir("datos.txt")
-    contenido = archivo.leer()
+    contenido = archivos.leer("datos_inexistente.txt")
     imprimir(contenido)
 atrapar ErrorDeIO como e:
     imprimir(f"No se pudo leer: {e}")
-finalmente:
-    si archivo no es nulo: archivo.cerrar()
 fin intentar

@@ -817,6 +817,21 @@ foreach(ej ${EJEMPLOS_DIFERENCIALES})
 endforeach()
 
 
+# ───── v1.122: smoke de docs/referencia-stdlib.md (fase 5) ─────
+# Invoca una funcion representativa de cada modulo de la stdlib y
+# verifica el resultado. Si la doc cita un nombre que no existe (typo
+# o renombrado), este test falla con "aseveracion: <modulo.fn>".
+add_test(
+    NAME smoke_referencia_stdlib
+    COMMAND $<TARGET_FILE:cornamusa> --bytecode
+            ${CMAKE_SOURCE_DIR}/tests/integracion/smoke_referencia_stdlib.cor
+    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+)
+set_tests_properties(smoke_referencia_stdlib PROPERTIES
+    LABELS "integracion"
+    PASS_REGULAR_EXPRESSION "OK"
+)
+
 # ───── v1.122: stdlib relativa al binario (fase 4) ─────
 # Crea un .cor en un cwd temporal sin stdlib/ y comprueba que
 # `importar funcionales` se resuelve via la busqueda relativa al

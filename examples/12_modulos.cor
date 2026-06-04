@@ -1,19 +1,12 @@
 # Uso de módulos de la biblioteca estándar.
 
 importar matematicas
-desde cadenas importar mayusculas, dividir
-desde sistema importar argv
+desde cadenas importar mayusculas_ascii, separar
 
 imprimir(f"π = {matematicas.PI}")
 imprimir(f"√2 = {matematicas.raiz(2)}")
-imprimir(f"sen(π/2) = {matematicas.sen(matematicas.PI / 2)}")
+imprimir(f"seno(π/2) = {matematicas.seno(matematicas.PI / 2)}")
 
 frase = "hola mundo desde cornamusa"
-imprimir(mayusculas(frase))
-imprimir(dividir(frase, " "))
-
-si longitud(argv) > 1:
-    imprimir(f"Argumentos recibidos: {argv[1:]}")
-sino:
-    imprimir("Sin argumentos.")
-fin si
+imprimir(mayusculas_ascii(frase))
+imprimir(separar(frase, " "))
