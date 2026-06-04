@@ -6,6 +6,60 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.117.0] — 2026-06-04 — Stdlib `estadisticas`
+
+Nuevo módulo `stdlib/estadisticas.cor` con análisis estadístico
+descriptivo e inferencial básico sobre listas de números, en
+pure-Cornamusa. Reusa `funcionales` para agregaciones, `matematicas`
+para `raiz`/`ln`/`exp`/`suelo`/`techo`, y `coleccion.Contador` para
+las modas — es decir, no toca el runtime ni añade built-ins. Es el
+módulo `statistics` de Python pero en castellano.
+
+### Medidas de centralidad
+
+- `media(xs)` — promedio aritmético.
+- `mediana(xs)` — valor central; promedio de los dos centrales si `n` es par.
+- `mediana_baja(xs)` / `mediana_alta(xs)` — el menor / mayor de los dos centrales en listas pares. En impares coinciden con `mediana`.
+- `moda(xs)` — valor más frecuente (Contador interno; primero en empate).
+- `multimodal(xs)` — lista de todas las modas en caso de empate.
+- `media_armonica(xs)` — `n / Σ(1/xi)`. Útil para promediar tasas y velocidades. Lanza si algún `xi <= 0`.
+- `media_geometrica(xs)` — `(Π xi)^(1/n)`, calculada en espacio log para evitar overflow.
+
+### Medidas de dispersión
+
+- `varianza(xs)` — muestral (denominador `n-1`, estimador insesgado). Lanza si `n < 2`.
+- `varianza_pob(xs)` — poblacional (denominador `n`).
+- `desviacion(xs)` / `desviacion_pob(xs)` — raíces de las anteriores.
+- `amplitud(xs)` — `max - min`. Llamada así porque `rango` ya es built-in para iteración numérica.
+
+### Medidas de posición
+
+- `percentil(xs, p)` — interpolación lineal estilo numpy/Python. `0` → mín, `100` → máx, `50` → mediana.
+- `cuartiles(xs)` → `[Q1, Q2, Q3]`.
+
+### Relación entre dos series
+
+- `covarianza(xs, ys)` — muestral.
+- `correlacion(xs, ys)` — Pearson, valor en `[-1, 1]`.
+- `regresion_lineal(xs, ys)` → `{"pendiente": m, "intercepto": b}` por mínimos cuadrados.
+
+### Resumen rápido
+
+- `resumen(xs)` → `dict` con `n`, `min`, `max`, `media`, `mediana`, `Q1`, `Q3`, `desviacion`. Útil para REPL e inspección.
+
+### Por qué `amplitud` y no `rango`
+
+`rango(a, b)` es built-in para iteración numérica (`para i en rango(0, 10):`).
+Sobrecargarlo con la semántica estadística de `max - min` rompería todos
+los bucles. `amplitud` es término aceptado en estadística castellana.
+
+### Tests y ejemplo
+
+- `tests/unit/test_bytecode_estadisticas.c` — 19 bloques, 25+ asserts. Cubre cada función + 3 casos de error (lista vacía, `n=1` en varianza muestral, valores `<= 0` en media armónica).
+- `examples/103_estadisticas.cor` — 6 secciones: notas de examen, cuartiles con outliers, correlación estudio↔nota + regresión, muestra `azar.normal` con estimación de parámetros, multimodal sobre dado, resumen completo como dict.
+
+Suite total: **297 tests, 100% verde**.
+
 ## [1.116.0] — 2026-06-03 — Stdlib `coleccion` extendida: `Heap` + `Contador`
 
 Dos estructuras de datos clásicas que faltaban en `stdlib/coleccion.cor`,

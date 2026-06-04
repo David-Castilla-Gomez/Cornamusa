@@ -993,6 +993,38 @@ Estructuras de datos clásicas implementadas con clases sobre listas y diccionar
 
 Pila/Cola/ColaDoble lanzan `ErrorDeValor("X vacia")` al sacar de colección vacía. `Heap` lanza `ErrorDeValor("Heap vacio")` en `sacar`/`vista`. `Contador` jamás lanza por clave ausente — usa `obtener` (devuelve 0) o el operador `en`.
 
+### `estadisticas` (v1.117)
+
+Estadística descriptiva e inferencial básica sobre listas de números. Reusa `funcionales`, `matematicas` y `coleccion.Contador` — pure-Cornamusa.
+
+**Centralidad**:
+- `media(xs)` — promedio aritmético.
+- `mediana(xs)` — central; promedio de los dos centrales si `n` es par.
+- `mediana_baja(xs)` / `mediana_alta(xs)` — menor / mayor central en listas pares (en impares coinciden con `mediana`).
+- `moda(xs)` — más frecuente; en empate devuelve el primero.
+- `multimodal(xs)` — lista de modas con frecuencia máxima.
+- `media_armonica(xs)` — `n / Σ(1/xi)`. Lanza si algún valor es ≤ 0.
+- `media_geometrica(xs)` — `(Π xi)^(1/n)`, en espacio log.
+
+**Dispersión**:
+- `varianza(xs)` (muestral, `n-1`) / `varianza_pob(xs)` (poblacional, `n`).
+- `desviacion(xs)` / `desviacion_pob(xs)` — raíces de las anteriores.
+- `amplitud(xs)` — `max - min` (no se llama `rango` porque colisiona con el built-in de iteración).
+
+**Posición**:
+- `percentil(xs, p)` — interpolación lineal, `p ∈ [0, 100]`.
+- `cuartiles(xs)` → `[Q1, Q2, Q3]`.
+
+**Dos series**:
+- `covarianza(xs, ys)` (muestral).
+- `correlacion(xs, ys)` — Pearson, en `[-1, 1]`.
+- `regresion_lineal(xs, ys)` → `{"pendiente": m, "intercepto": b}` por mínimos cuadrados.
+
+**Resumen**:
+- `resumen(xs)` → dict con `n`, `min`, `max`, `media`, `mediana`, `Q1`, `Q3`, `desviacion`. Útil para REPL.
+
+Las funciones de varianza y correlación muestrales lanzan `ErrorDeValor` si `n < 2`; las que dividen por desviación o varianza lanzan si la serie tiene varianza cero.
+
 ### `inspeccion` (v1.91)
 
 Introspección y reflexión sobre instancias, clases y módulos. Útil para serializadores genéricos, REPL helpers y debugging.

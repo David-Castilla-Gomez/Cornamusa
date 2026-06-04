@@ -1,0 +1,105 @@
+# 103_estadisticas.cor — Estadistica descriptiva (v1.117).
+#
+# Modulo stdlib/estadisticas: centralidad, dispersion, posicion
+# y correlacion sobre listas de numeros. Conecta con coleccion.Contador
+# (para moda) y azar (para generar muestras).
+
+importar estadisticas como est
+importar azar
+
+# ─── 1. Descripcion de una muestra ──────────────────────────────
+
+imprimir("--- 1. Notas de un examen ---")
+
+notas = [7.5, 8.0, 6.5, 9.0, 5.5, 8.5, 7.0, 6.0, 9.5, 7.5, 8.0, 6.5]
+
+imprimir(f"   n = {longitud(notas)}")
+imprimir(f"   media   = {est.media(notas):.2f}")
+imprimir(f"   mediana = {est.mediana(notas):.2f}")
+imprimir(f"   moda    = {est.moda(notas)}")
+imprimir(f"   min/max = {est.amplitud(notas):.1f} de amplitud")
+imprimir(f"   desv    = {est.desviacion(notas):.3f} (muestral)")
+imprimir("")
+
+
+# ─── 2. Cuartiles + percentiles ─────────────────────────────────
+
+imprimir("--- 2. Cuartiles del salario mensual (mil EUR) ---")
+
+salarios = [1.5, 1.8, 1.6, 2.0, 1.9, 2.5, 3.0, 1.4, 2.1, 1.7,
+            5.5, 1.6, 2.3, 1.9, 2.0, 2.4, 4.0, 1.7, 2.2, 1.8]
+
+q = est.cuartiles(salarios)
+imprimir(f"   Q1 (25%) = {q[0]:.2f}")
+imprimir(f"   Q2 (50%) = {q[1]:.2f}  (mediana)")
+imprimir(f"   Q3 (75%) = {q[2]:.2f}")
+imprimir(f"   p90      = {est.percentil(salarios, 90):.2f}")
+imprimir(f"   p99      = {est.percentil(salarios, 99):.2f}")
+imprimir(f"   media    = {est.media(salarios):.2f}  (sesgada por los outliers)")
+imprimir("   -> mediana < media indica cola derecha (outliers altos)")
+imprimir("")
+
+
+# ─── 3. Correlacion entre dos series ────────────────────────────
+
+imprimir("--- 3. Estudio vs nota ---")
+
+horas = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10]
+nota  = [3.5, 4.0, 5.0, 5.5, 6.5, 7.0, 7.5, 8.5, 9.0, 9.5]
+
+r = est.correlacion(horas, nota)
+imprimir(f"   correlacion = {r:.4f}")
+imprimir(f"   (cerca de +1 => relacion lineal positiva fuerte)")
+
+reg = est.regresion_lineal(horas, nota)
+imprimir(f"   recta: nota = {reg['pendiente']:.3f} * horas + {reg['intercepto']:.3f}")
+imprimir(f"   prediccion para 12 horas: {reg['pendiente'] * 12 + reg['intercepto']:.2f}")
+imprimir("")
+
+
+# ─── 4. Muestreo aleatorio + estimacion ─────────────────────────
+
+imprimir("--- 4. Muestra normal: estimar media y desviacion ---")
+
+azar.semilla(42)
+muestra = []
+para i en rango(0, 500):
+    agregar(muestra, azar.normal(100, 15))
+fin para
+
+imprimir(f"   n muestra      = {longitud(muestra)}")
+imprimir(f"   media estimada = {est.media(muestra):.3f}  (real: 100.000)")
+imprimir(f"   desv estimada  = {est.desviacion(muestra):.3f}  (real: 15.000)")
+imprimir("")
+
+
+# ─── 5. Comparacion de modas ────────────────────────────────────
+
+imprimir("--- 5. Multimodal: dado de 6 caras con sesgo ---")
+
+azar.semilla(1)
+tiradas = []
+para i en rango(0, 60):
+    agregar(tiradas, azar.entero(1, 6))
+fin para
+
+modas = est.multimodal(tiradas)
+si longitud(modas) == 1:
+    imprimir(f"   unico mas frecuente: {modas[0]}")
+sino:
+    imprimir(f"   empate ({longitud(modas)} valores): {modas}")
+fin si
+imprimir("")
+
+
+# ─── 6. Resumen completo ────────────────────────────────────────
+
+imprimir("--- 6. Resumen como dict ---")
+
+datos = [4, 7, 9, 12, 15, 18, 22, 25, 30, 42]
+r = est.resumen(datos)
+
+para clave en claves(r):
+    valor = r[clave]
+    imprimir(f"   {clave:>10} = {valor}")
+fin para

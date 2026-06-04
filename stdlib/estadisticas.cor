@@ -1,0 +1,303 @@
+# Cornamusa stdlib: estadisticas.cor (v1.117)
+#
+# Estadistica descriptiva e inferencia basica sobre listas de
+# numeros: medidas de centralidad, dispersion, posicion y
+# correlacion. Implementado en pure-Cornamusa sobre funcionales,
+# matematicas y coleccion.
+#
+# Convencion: todas las funciones esperan listas no vacias de
+# numeros (entero o decimal). Lanzan ErrorDeValor si la lista
+# esta vacia o si los argumentos no cuadran (e.g. xs/ys de
+# distinta longitud en correlacion).
+#
+# Uso tipico:
+#
+#   importar estadisticas como est
+#
+#   datos = [12, 15, 14, 10, 18, 13, 14, 11, 15, 12]
+#   imprimir(est.media(datos))         # 13.4
+#   imprimir(est.mediana(datos))       # 13.5
+#   imprimir(est.desviacion(datos))    # ~2.41 (muestral)
+#   imprimir(est.cuartiles(datos))     # [12, 13.5, 15]
+#
+#   # Correlacion entre dos series:
+#   xs = [1, 2, 3, 4, 5]
+#   ys = [2, 4, 6, 8, 10]
+#   imprimir(est.correlacion(xs, ys))  # 1.0 (correlacion perfecta)
+#
+# Para distribuciones aleatorias y muestreos usar `azar`;
+# para frecuencias y conteos, `coleccion.Contador`.
+
+importar funcionales
+importar matematicas
+importar coleccion
+
+# ─── Helpers internos ────────────────────────────────────────────
+
+# Lanza si la lista esta vacia.
+funcion _exigir_no_vacia(xs, nombre: cadena):
+    si longitud(xs) == 0:
+        lanzar ErrorDeValor(nombre + " requiere lista no vacia")
+    fin si
+fin funcion
+
+# Devuelve copia ordenada (mergesort estable de funcionales).
+funcion _ordenado(xs):
+    retornar funcionales.ordenar_por(xs, lambda x: x)
+fin funcion
+
+
+# ─── Medidas de centralidad ─────────────────────────────────────
+
+# Media aritmetica.
+funcion media(xs):
+    _exigir_no_vacia(xs, "media")
+    retornar funcionales.suma(xs, 0) / longitud(xs)
+fin funcion
+
+# Mediana: valor central. Si la longitud es par, promedio de los
+# dos centrales. Si nos importa el sesgo (todos enteros), usar
+# mediana_baja o mediana_alta.
+funcion mediana(xs):
+    _exigir_no_vacia(xs, "mediana")
+    ord = _ordenado(xs)
+    n = longitud(ord)
+    medio = n // 2
+    si n % 2 == 1:
+        retornar ord[medio]
+    fin si
+    retornar (ord[medio - 1] + ord[medio]) / 2
+fin funcion
+
+# Mediana baja: el menor de los dos centrales en listas pares.
+# En listas impares coincide con mediana.
+funcion mediana_baja(xs):
+    _exigir_no_vacia(xs, "mediana_baja")
+    ord = _ordenado(xs)
+    n = longitud(ord)
+    si n % 2 == 1:
+        retornar ord[n // 2]
+    fin si
+    retornar ord[n // 2 - 1]
+fin funcion
+
+# Mediana alta: el mayor de los dos centrales en listas pares.
+funcion mediana_alta(xs):
+    _exigir_no_vacia(xs, "mediana_alta")
+    ord = _ordenado(xs)
+    retornar ord[longitud(ord) // 2]
+fin funcion
+
+# Moda: valor mas frecuente. Si hay empate, devuelve el primero
+# que aparezca con la maxima frecuencia. Para todas las modas
+# usar multimodal.
+funcion moda(xs):
+    _exigir_no_vacia(xs, "moda")
+    cnt = coleccion.Contador(xs)
+    top = cnt.mas_comunes(1)
+    retornar top[0][0]
+fin funcion
+
+# Todas las modas (puede haber empate). Devuelve lista de los
+# valores con frecuencia maxima.
+funcion multimodal(xs):
+    _exigir_no_vacia(xs, "multimodal")
+    cnt = coleccion.Contador(xs)
+    pares = cnt.mas_comunes(nulo)
+    max_freq = pares[0][1]
+    modas = []
+    para p en pares:
+        si p[1] == max_freq:
+            agregar(modas, p[0])
+        sino:
+            romper
+        fin si
+    fin para
+    retornar modas
+fin funcion
+
+# Media armonica: n / Σ(1/xi). Util para promediar tasas y
+# velocidades. Todos los xi deben ser > 0.
+funcion media_armonica(xs):
+    _exigir_no_vacia(xs, "media_armonica")
+    acc = 0
+    para x en xs:
+        si x <= 0:
+            lanzar ErrorDeValor("media_armonica requiere valores > 0")
+        fin si
+        acc = acc + 1 / x
+    fin para
+    retornar longitud(xs) / acc
+fin funcion
+
+# Media geometrica: (Π xi)^(1/n). Calculada en espacio log para
+# evitar overflow. Todos los xi deben ser > 0.
+funcion media_geometrica(xs):
+    _exigir_no_vacia(xs, "media_geometrica")
+    suma_log = 0
+    para x en xs:
+        si x <= 0:
+            lanzar ErrorDeValor("media_geometrica requiere valores > 0")
+        fin si
+        suma_log = suma_log + matematicas.ln(x)
+    fin para
+    retornar matematicas.exp(suma_log / longitud(xs))
+fin funcion
+
+
+# ─── Medidas de dispersion ──────────────────────────────────────
+
+# Varianza muestral (denominador n-1). Estimador insesgado
+# cuando los datos son una muestra de una poblacion mayor.
+funcion varianza(xs):
+    _exigir_no_vacia(xs, "varianza")
+    n = longitud(xs)
+    si n < 2:
+        lanzar ErrorDeValor("varianza muestral requiere al menos 2 valores")
+    fin si
+    m = media(xs)
+    acc = 0
+    para x en xs:
+        d = x - m
+        acc = acc + d * d
+    fin para
+    retornar acc / (n - 1)
+fin funcion
+
+# Varianza poblacional (denominador n). Usar cuando la lista ES
+# la poblacion completa, no una muestra.
+funcion varianza_pob(xs):
+    _exigir_no_vacia(xs, "varianza_pob")
+    m = media(xs)
+    acc = 0
+    para x en xs:
+        d = x - m
+        acc = acc + d * d
+    fin para
+    retornar acc / longitud(xs)
+fin funcion
+
+# Desviacion tipica muestral. raiz(varianza).
+funcion desviacion(xs):
+    retornar matematicas.raiz(varianza(xs))
+fin funcion
+
+# Desviacion tipica poblacional.
+funcion desviacion_pob(xs):
+    retornar matematicas.raiz(varianza_pob(xs))
+fin funcion
+
+# Amplitud (rango estadistico): max - min. Sensible a outliers.
+# Nombre "amplitud" porque "rango" colisiona con el built-in
+# para iteracion numerica.
+funcion amplitud(xs):
+    _exigir_no_vacia(xs, "amplitud")
+    retornar funcionales.maximo(xs) - funcionales.minimo(xs)
+fin funcion
+
+
+# ─── Medidas de posicion ────────────────────────────────────────
+
+# Percentil p (0-100). Metodo de interpolacion lineal entre los
+# dos vecinos mas cercanos (estilo numpy/Python). 0 -> minimo,
+# 100 -> maximo, 50 -> mediana.
+funcion percentil(xs, p):
+    _exigir_no_vacia(xs, "percentil")
+    si p < 0 o p > 100:
+        lanzar ErrorDeValor("percentil debe estar entre 0 y 100")
+    fin si
+    ord = _ordenado(xs)
+    n = longitud(ord)
+    si n == 1:
+        retornar ord[0]
+    fin si
+    # Posicion virtual en el rango [0, n-1].
+    pos = (p / 100) * (n - 1)
+    bajo = entero(matematicas.suelo(pos))
+    alto = entero(matematicas.techo(pos))
+    si bajo == alto:
+        retornar ord[bajo]
+    fin si
+    fraccion = pos - bajo
+    retornar ord[bajo] + (ord[alto] - ord[bajo]) * fraccion
+fin funcion
+
+# Cuartiles Q1, Q2, Q3 (25, 50, 75). Devuelve lista de tres
+# elementos.
+funcion cuartiles(xs):
+    retornar [percentil(xs, 25), percentil(xs, 50), percentil(xs, 75)]
+fin funcion
+
+
+# ─── Relacion entre dos series ──────────────────────────────────
+
+# Covarianza muestral entre xs e ys. Mide la tendencia de las
+# variables a moverse juntas. > 0 ascendente, < 0 descendente,
+# ~ 0 sin relacion lineal.
+funcion covarianza(xs, ys):
+    _exigir_no_vacia(xs, "covarianza")
+    si longitud(xs) != longitud(ys):
+        lanzar ErrorDeValor("covarianza requiere xs e ys de la misma longitud")
+    fin si
+    n = longitud(xs)
+    si n < 2:
+        lanzar ErrorDeValor("covarianza muestral requiere al menos 2 pares")
+    fin si
+    mx = media(xs)
+    my = media(ys)
+    acc = 0
+    para i en rango(0, n):
+        acc = acc + (xs[i] - mx) * (ys[i] - my)
+    fin para
+    retornar acc / (n - 1)
+fin funcion
+
+# Coeficiente de correlacion de Pearson entre xs e ys. Valor en
+# [-1, 1]. +1: lineal positiva perfecta; -1: negativa perfecta;
+# 0: sin relacion lineal.
+funcion correlacion(xs, ys):
+    sx = desviacion(xs)
+    sy = desviacion(ys)
+    si sx == 0 o sy == 0:
+        lanzar ErrorDeValor("correlacion indefinida: una de las series tiene varianza cero")
+    fin si
+    retornar covarianza(xs, ys) / (sx * sy)
+fin funcion
+
+# Regresion lineal simple por minimos cuadrados. Devuelve dict
+# {"pendiente": m, "intercepto": b} tal que y ≈ m*x + b.
+funcion regresion_lineal(xs, ys):
+    si longitud(xs) != longitud(ys):
+        lanzar ErrorDeValor("regresion_lineal requiere xs e ys de la misma longitud")
+    fin si
+    si longitud(xs) < 2:
+        lanzar ErrorDeValor("regresion_lineal requiere al menos 2 pares")
+    fin si
+    vx = varianza(xs)
+    si vx == 0:
+        lanzar ErrorDeValor("regresion_lineal indefinida: xs tiene varianza cero")
+    fin si
+    pendiente = covarianza(xs, ys) / vx
+    intercepto = media(ys) - pendiente * media(xs)
+    retornar {"pendiente": pendiente, "intercepto": intercepto}
+fin funcion
+
+
+# ─── Resumen rapido ─────────────────────────────────────────────
+
+# Dict con las medidas mas comunes. Util para REPL y para una
+# inspeccion rapida de una serie.
+funcion resumen(xs):
+    _exigir_no_vacia(xs, "resumen")
+    cuart = cuartiles(xs)
+    retornar {
+        "n": longitud(xs),
+        "min": funcionales.minimo(xs),
+        "max": funcionales.maximo(xs),
+        "media": media(xs),
+        "mediana": cuart[1],
+        "Q1": cuart[0],
+        "Q3": cuart[2],
+        "desviacion": desviacion(xs) si longitud(xs) >= 2 sino 0,
+    }
+fin funcion
