@@ -1657,18 +1657,45 @@ static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
     if (slot_iter < 0) { free(slots_destinos); return false; }
 
     /* v1.28: en función, ahora reservar slots para cada IDENT empujando
-       OP_NULO; anidados los gestionará la recursión. */
+       OP_NULO; anidados los gestionará la recursión.
+       v1.122 fix: si la variable YA es local del scope actual (o upvalue
+       capturado), NO crear un slot nuevo — reusar el existente. Antes
+       cada iteración de un bucle creaba slots locales fantasma y la
+       variable original (declarada fuera del bucle) quedaba congelada.
+       Convencion de codificacion en slots_destinos[]:
+         >= 0  : indice de slot LOCAL (nuevo pre-reservado o existente).
+         == -1 : destino anidado (TUPLA/LISTA), gestion recursiva.
+         <= -100 : indice de UPVALUE codificado como -100 - upv. */
+    int n_nuevos_slots = 0;  /* contador de slots nuevos por encima de slot_iter */
     if (en_funcion) {
         for (int i = 0; i < n; i++) {
-            if (elementos[i]->tipo == EXPR_IDENT) {
-                chunk_emitir_byte(c->actual->chunk, OP_NULO, linea);
-                int s = agregar_local(c, elementos[i]->como.ident.nombre,
-                                            elementos[i]->como.ident.longitud, linea);
-                if (s < 0) { free(slots_destinos); return false; }
-                slots_destinos[i] = s;
-            } else {
+            if (elementos[i]->tipo != EXPR_IDENT) {
                 slots_destinos[i] = -1;  /* anidado, no reserva aquí */
+                continue;
             }
+            int existente = buscar_local(c->actual,
+                                            elementos[i]->como.ident.nombre,
+                                            elementos[i]->como.ident.longitud);
+            if (existente >= 0) {
+                slots_destinos[i] = existente;
+                continue;
+            }
+            int upv = resolver_upvalue(c, c->actual,
+                                            elementos[i]->como.ident.nombre,
+                                            elementos[i]->como.ident.longitud,
+                                            linea);
+            if (upv >= 0) {
+                slots_destinos[i] = -100 - upv;
+                continue;
+            }
+            /* Variable nueva en este scope: pre-reservar slot con OP_NULO
+               para que despues OP_ASIGNAR_LOCAL pop el valor extraido. */
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, linea);
+            int s = agregar_local(c, elementos[i]->como.ident.nombre,
+                                        elementos[i]->como.ident.longitud, linea);
+            if (s < 0) { free(slots_destinos); return false; }
+            slots_destinos[i] = s;
+            n_nuevos_slots++;
         }
     }
 
@@ -1692,11 +1719,19 @@ static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
         chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
         if (dst_i->tipo == EXPR_IDENT) {
             if (en_funcion) {
-                /* Slot ya reservado: asignar al slot. OP_ASIGNAR_LOCAL
-                   sí hace pop (Cornamusa VM), por eso no hace falta
-                   DESCARTAR extra. */
-                chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
-                                    (uint8_t)slots_destinos[i], linea);
+                /* v1.122: decodificar slots_destinos[i]:
+                   - >= 0: slot LOCAL (nuevo pre-reservado o existente).
+                   - <= -100: upvalue codificado como -100 - upv. */
+                int marca = slots_destinos[i];
+                if (marca <= -100) {
+                    int upv = -100 - marca;
+                    chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
+                                        (uint8_t)upv, linea);
+                } else {
+                    /* OP_ASIGNAR_LOCAL hace pop, no hace falta DESCARTAR. */
+                    chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                        (uint8_t)marca, linea);
+                }
             } else {
                 /* Top-level: OP_DEFINIR_GLOBAL hace pop. */
                 if (!emitir_asignacion_ident(c, dst_i, linea)) {
@@ -1732,9 +1767,21 @@ static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
     if (!en_funcion) {
         chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);
         c->actual->n_locales--;
+    } else if (n_nuevos_slots == 0) {
+        /* v1.122 fix: si TODOS los destinos eran variables existentes
+           (no se agregaron slots nuevos sobre slot_iter), entonces
+           slot_iter ES el tope del stack ahora — descartarlo limpiamente.
+           Crítico para bucles: sin esto, slot_iter sobrevivía iteración
+           tras iteración y la lectura OP_OBTENER_LOCAL slot_iter siempre
+           leía la tupla de la PRIMERA iter, congelando el destructuring. */
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);
+        c->actual->n_locales--;
     }
-    /* En función no descartamos slot_iter del stack — se queda "muerto"
-       pero los locales destinos están por encima correctamente. */
+    /* En función con n_nuevos_slots > 0: slot_iter queda "muerto" debajo
+       de los nuevos locals. Limitación conocida — el caso patológico es
+       destructurar variables NUEVAS dentro de un bucle, que sigue
+       creciendo el stack. Caso pedagógico común (variables declaradas
+       fuera del bucle, swap dentro) ya queda resuelto. */
     free(slots_destinos);
     int salto_fin = emitir_salto(c, OP_SALTAR, linea);
 
