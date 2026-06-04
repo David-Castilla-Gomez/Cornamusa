@@ -5450,3 +5450,63 @@ void nativos_registrar_dicc(Diccionario *globales) {
         dicc_asignar(globales, clave, fn);
     }
 }
+
+/* ──────────────────────────────────────────────────────────────────
+ * v1.122: tabla de metodos sobre tipos nativos.
+ *
+ * Mapea `(TipoValor, nombre_metodo) -> FnNativa subyacente`. El
+ * usuario invoca `lista.añadir(x)` o `"hola".minusculas()` y la VM
+ * busca aqui — si encuentra match, crea un MetodoNativoLigado y al
+ * llamar la fn nativa se invoca con (receptor, args...).
+ *
+ * Solo registramos metodos cuya nativa global YA existe. Los nombres
+ * son los castellanos comunes (vs. los prefijados `cadena_*` que se
+ * exportan globalmente). Esto valida ejemplos como 05_listas
+ * (numeros.añadir(6) / numeros.insertar(0, 0)).
+ * ────────────────────────────────────────────────────────────────── */
+typedef struct {
+    TipoValor tipo;
+    const char *nombre;
+    int longitud;
+    FnNativa fn;
+} MetodoNativoEntrada;
+
+static const MetodoNativoEntrada METODOS_NATIVOS[] = {
+    /* Listas */
+    {VAL_LISTA,      "añadir",      7, nativa_agregar},   /* 7 bytes UTF-8 */
+    {VAL_LISTA,      "agregar",     7, nativa_agregar},
+    {VAL_LISTA,      "insertar",    8, nativa_insertar},
+    {VAL_LISTA,      "quitar",      6, nativa_quitar},
+    {VAL_LISTA,      "ordenar",     7, nativa_ordenar},
+    {VAL_LISTA,      "invertir",    8, nativa_invertir},
+    /* Cadenas */
+    {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas_ascii},
+    {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas_ascii},
+    {VAL_CADENA,     "empieza_con", 11, nativa_cadena_empieza_con},
+    {VAL_CADENA,     "termina_con", 11, nativa_cadena_termina_con},
+    {VAL_CADENA,     "indice_de",   9,  nativa_cadena_indice_de},
+    /* Diccionarios */
+    {VAL_DICCIONARIO, "claves",     6, nativa_claves},
+    {VAL_DICCIONARIO, "valores",    7, nativa_valores},
+};
+#define N_METODOS_NATIVOS \
+    (int)(sizeof(METODOS_NATIVOS) / sizeof(METODOS_NATIVOS[0]))
+
+/* Busca metodo nativo por (tipo del receptor, nombre). Devuelve NULL si
+ * no hay match. `nombre_out` se rellena con el puntero a la cadena
+ * estatica del nombre — util para mensajes de error y para que
+ * MetodoNativoLigado mantenga una referencia estable. */
+FnNativa nativos_buscar_metodo(TipoValor tipo, const char *nombre, int len,
+                                  const char **nombre_out) {
+    for (int i = 0; i < N_METODOS_NATIVOS; i++) {
+        const MetodoNativoEntrada *e = &METODOS_NATIVOS[i];
+        if (e->tipo == tipo
+            && e->longitud == len
+            && memcmp(e->nombre, nombre, (size_t)len) == 0) {
+            if (nombre_out) *nombre_out = e->nombre;
+            return e->fn;
+        }
+    }
+    if (nombre_out) *nombre_out = NULL;
+    return NULL;
+}

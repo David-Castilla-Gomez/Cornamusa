@@ -696,6 +696,48 @@ static bool intentar_atrapar_error_nativa(VM *vm, CallFrame **frame_inout) {
     return true;
 }
 
+/* Forward decl: definida mas abajo, necesaria aqui. */
+static void llamar_set_error(VM *vm, CallFrame *frame, const char *fmt, ...);
+
+/* v1.122: invoca un MetodoNativoLigado prependeando el receptor a los
+ * args. La fn nativa NO toma ownership de los args, asi que pasamos un
+ * array temporal en la pila C con (receptor, arg0, ..., arg(n-1)) sin
+ * clonar nada — el receptor sigue vivo via MNL hasta que se descarta
+ * el callee del stack al final. */
+static ResultadoVM ejecutar_llamar_metodo_nativo(VM *vm, CallFrame **frame_inout,
+                                                    Valor *base_nuevo, uint8_t n_args) {
+    CallFrame *frame = *frame_inout;
+    int linea = linea_actual_frame(frame);
+    if ((int)n_args + 1 > 255) {
+        llamar_set_error(vm, frame,
+            "ErrorDeValor: metodo nativo con >255 args incluido receptor");
+        return VM_ERROR_RUNTIME;
+    }
+    MetodoNativoLigado *mnl = base_nuevo->como.metodo_nativo_ligado;
+    Valor args_finales[256];
+    args_finales[0] = mnl->receptor;          /* shallow: refcount via MNL */
+    for (int i = 0; i < n_args; i++) {
+        args_finales[1 + i] = base_nuevo[1 + i];
+    }
+    Valor r = mnl->fn(&vm->error, n_args + 1, args_finales, linea, 0);
+    (void)valor_dunder_hubo_error_y_limpiar();
+    if (vm->error.tuvo_error) {
+        valor_destruir(&r);
+        if (intentar_atrapar_error_nativa(vm, frame_inout)) {
+            return VM_OK;
+        }
+        return VM_ERROR_RUNTIME;
+    }
+    for (int i = 0; i < n_args; i++) {
+        Valor v = *(--vm->tope);
+        valor_destruir(&v);
+    }
+    Valor cv = *(--vm->tope);
+    valor_destruir(&cv);
+    empujar(vm, r);
+    return VM_OK;
+}
+
 static ResultadoVM ejecutar_llamar_nativa(VM *vm, CallFrame **frame_inout,
                                             Valor *base_nuevo, uint8_t n_args) {
     CallFrame *frame = *frame_inout;
@@ -4828,6 +4870,29 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     break;
                 }
                 if (obj.tipo != VAL_INSTANCIA) {
+                    /* v1.122: metodos sobre tipos nativos (lista, cadena,
+                       dict, conjunto). Busca en la tabla `nativos_buscar_metodo`.
+                       Si encuentra, devuelve un MetodoNativoLigado que liga
+                       el receptor con la FnNativa subyacente. La invocacion
+                       posterior (OP_LLAMAR) hace prepend del receptor a los
+                       args y llama la nativa. */
+                    const char *fn_nombre = NULL;
+                    FnNativa fn = nativos_buscar_metodo(
+                        obj.tipo,
+                        nombre->como.cadena.texto,
+                        nombre->como.cadena.longitud,
+                        &fn_nombre);
+                    if (fn != NULL) {
+                        MetodoNativoLigado *mnl = metodo_nativo_ligado_nuevo(
+                            fn_nombre, fn, &obj);
+                        valor_destruir(&obj);
+                        if (!mnl) {
+                            VM_ERROR("memoria insuficiente al ligar metodo nativo");
+                            return VM_ERROR_RUNTIME;
+                        }
+                        empujar(vm, valor_metodo_nativo_ligado(mnl));
+                        break;
+                    }
                     VM_ERROR("ErrorDeTipo: '%s' no tiene atributos accesibles",
                              valor_nombre_tipo(&obj));
                     valor_destruir(&obj);
@@ -5961,6 +6026,11 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                                 base_nuevo, n_args) != VM_OK)
                             return VM_ERROR_RUNTIME;
                         break;
+                    case VAL_METODO_NATIVO_LIGADO:
+                        if (ejecutar_llamar_metodo_nativo(vm, &frame,
+                                base_nuevo, n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        break;
                     case VAL_INSTANCIA:
                         if (ejecutar_llamar_instancia(vm, &frame,
                                 base_nuevo, n_args) != VM_OK)
@@ -6019,6 +6089,12 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                                 base_nuevo, n_args) != VM_OK)
                             return VM_ERROR_RUNTIME;
                         promote = OP_LLAMAR_METODO_LIGADO;
+                        break;
+                    case VAL_METODO_NATIVO_LIGADO:
+                        if (ejecutar_llamar_metodo_nativo(vm, &frame,
+                                base_nuevo, n_args) != VM_OK)
+                            return VM_ERROR_RUNTIME;
+                        /* sin promote especializado: comparten OP_LLAMAR */
                         break;
                     case VAL_INSTANCIA:
                         /* v1.3: instancia callable via __llamar__. NO

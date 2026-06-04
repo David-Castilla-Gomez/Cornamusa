@@ -75,6 +75,7 @@ typedef enum {
     VAL_CLASE,         /* clase definida por el usuario (Fase 8) */
     VAL_INSTANCIA,     /* instancia de una clase (Fase 8) */
     VAL_METODO_LIGADO, /* método con receptor ligado (Fase 8 S2) */
+    VAL_METODO_NATIVO_LIGADO, /* v1.122: nativa C con receptor (lista.añadir...) */
     VAL_MODULO,        /* módulo cargado via `importar` (Fase 9) */
     VAL_GENERADOR,     /* v1.31: generador suspendible con frame congelado */
     VAL_PROPIEDAD,     /* v1.78: getter envuelto para `@propiedad` */
@@ -96,6 +97,7 @@ typedef struct Excepcion Excepcion;
 typedef struct Clase Clase;
 typedef struct Instancia Instancia;
 typedef struct MetodoLigado MetodoLigado;
+typedef struct MetodoNativoLigado MetodoNativoLigado;
 typedef struct Propiedad Propiedad;
 typedef struct MetodoEstatico MetodoEstatico;
 typedef struct MetodoDeClase MetodoDeClase;
@@ -181,6 +183,7 @@ typedef struct Valor {
         Clase *clase;       /* refcount; clase definida por el usuario */
         Instancia *instancia; /* refcount; instancia de una clase */
         MetodoLigado *metodo_ligado; /* refcount; método con receptor */
+        MetodoNativoLigado *metodo_nativo_ligado; /* v1.122 */
         Modulo *modulo;     /* refcount; módulo cargado */
         Generador *generador; /* v1.31; refcount; generador suspendible */
         Propiedad *propiedad; /* v1.78; refcount; getter para `@propiedad` */
@@ -571,6 +574,29 @@ void metodo_ligado_retener(MetodoLigado *m);
 void metodo_ligado_liberar(MetodoLigado *m);
 
 Valor valor_metodo_ligado(MetodoLigado *m);
+
+/*
+ * v1.122: MetodoNativoLigado. Devuelve `lista.añadir` o `"x".minusculas`
+ * como un valor invocable que retiene el receptor + el puntero a la
+ * funcion nativa C. Al invocar, la VM prepend el receptor a los args y
+ * llama la FnNativa. Sin GC header: el receptor ya tiene refcount propio
+ * (lista/dict/conjunto) o es inmutable (cadena/tupla); FnNativa es
+ * puntero a funcion C estatica.
+ */
+struct MetodoNativoLigado {
+    int refcount;
+    const char *nombre;   /* estatico, para mensajes de error */
+    FnNativa fn;
+    Valor receptor;       /* clonado en el constructor con valor_clonar */
+};
+
+MetodoNativoLigado *metodo_nativo_ligado_nuevo(const char *nombre,
+                                                 FnNativa fn,
+                                                 const Valor *receptor);
+void metodo_nativo_ligado_retener(MetodoNativoLigado *m);
+void metodo_nativo_ligado_liberar(MetodoNativoLigado *m);
+
+Valor valor_metodo_nativo_ligado(MetodoNativoLigado *m);
 
 /*
  * v1.78: Propiedad. Envuelve un Closure que actua como getter cuando

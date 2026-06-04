@@ -35,6 +35,14 @@ void nativos_registrar(Entorno *globales);
 void nativos_registrar_dicc(Diccionario *globales);
 
 /*
+ * v1.122: busca un metodo nativo sobre un tipo built-in (lista,
+ * cadena, dict, ...). Devuelve la FnNativa subyacente y, opcional,
+ * el puntero a la cadena estatica con el nombre. NULL si no hay match.
+ */
+FnNativa nativos_buscar_metodo(TipoValor tipo, const char *nombre, int len,
+                                  const char **nombre_out);
+
+/*
  * Configura los argumentos del proceso visibles desde Cornamusa via
  * `obtener_argv()` (y por tanto `sistema.argv`). Se llama desde main.c
  * antes de ejecutar el programa, pasándole los args ya filtrados (sin

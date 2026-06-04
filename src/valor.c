@@ -600,6 +600,7 @@ bool valor_es_hashable(const Valor *v) {
         case VAL_PLANTILLA_BC:
         case VAL_EXCEPCION:
         case VAL_METODO_LIGADO:
+        case VAL_METODO_NATIVO_LIGADO:
         case VAL_MODULO:
         case VAL_GENERADOR:
         case VAL_PROPIEDAD:
@@ -1433,6 +1434,47 @@ Valor valor_metodo_ligado(MetodoLigado *m) {
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * MetodoNativoLigado (v1.122) — funcion nativa C con receptor.
+ * Para soporte de `lista.añadir(x)`, `"hola".minusculas()`, etc.
+ * Sin GC header: el unico receptor con ciclos potenciales seria una
+ * lista/dict cuya VM ya gestiona refcount + GC, asi que aqui solo
+ * propagamos las llamadas a clonar/destruir del receptor.
+ * ────────────────────────────────────────────────────────────────── */
+
+MetodoNativoLigado *metodo_nativo_ligado_nuevo(const char *nombre,
+                                                  FnNativa fn,
+                                                  const Valor *receptor) {
+    if (!fn) return NULL;
+    MetodoNativoLigado *m = (MetodoNativoLigado *)malloc(sizeof(*m));
+    if (!m) return NULL;
+    m->refcount = 1;
+    m->nombre = nombre;
+    m->fn = fn;
+    m->receptor = receptor ? valor_clonar(receptor) : valor_nulo();
+    return m;
+}
+
+void metodo_nativo_ligado_retener(MetodoNativoLigado *m) {
+    if (m) m->refcount++;
+}
+
+void metodo_nativo_ligado_liberar(MetodoNativoLigado *m) {
+    if (!m) return;
+    m->refcount--;
+    if (m->refcount > 0) return;
+    valor_destruir(&m->receptor);
+    free(m);
+}
+
+Valor valor_metodo_nativo_ligado(MetodoNativoLigado *m) {
+    Valor v;
+    v.tipo = VAL_METODO_NATIVO_LIGADO;
+    v.dueno_cadena = false;
+    v.como.metodo_nativo_ligado = m;
+    return v;
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Propiedad (v1.78) — getter envuelto para `@propiedad`
  * ────────────────────────────────────────────────────────────────── */
 
@@ -1669,6 +1711,10 @@ void valor_destruir(Valor *v) {
             metodo_ligado_liberar(v->como.metodo_ligado);
             v->como.metodo_ligado = NULL;
             break;
+        case VAL_METODO_NATIVO_LIGADO:
+            metodo_nativo_ligado_liberar(v->como.metodo_nativo_ligado);
+            v->como.metodo_nativo_ligado = NULL;
+            break;
         case VAL_MODULO:
             modulo_liberar(v->como.modulo);
             v->como.modulo = NULL;
@@ -1799,6 +1845,9 @@ Valor valor_clonar(const Valor *v) {
         case VAL_METODO_LIGADO:
             metodo_ligado_retener(v->como.metodo_ligado);
             return valor_metodo_ligado(v->como.metodo_ligado);
+        case VAL_METODO_NATIVO_LIGADO:
+            metodo_nativo_ligado_retener(v->como.metodo_nativo_ligado);
+            return valor_metodo_nativo_ligado(v->como.metodo_nativo_ligado);
         case VAL_MODULO:
             modulo_retener(v->como.modulo);
             return valor_modulo(v->como.modulo);
@@ -2413,6 +2462,12 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
                 fn->longitud_nombre, fn->nombre);
             break;
         }
+        case VAL_METODO_NATIVO_LIGADO: {
+            const MetodoNativoLigado *m = v->como.metodo_nativo_ligado;
+            n = snprintf(buffer, (size_t)capacidad, "<metodo-nativo %s>",
+                m->nombre ? m->nombre : "?");
+            break;
+        }
         case VAL_MODULO: {
             const Modulo *m = v->como.modulo;
             n = snprintf(buffer, (size_t)capacidad, "<modulo %.*s>",
@@ -2519,6 +2574,7 @@ const char *valor_nombre_tipo(const Valor *v) {
         case VAL_CLASE:       return "clase";
         case VAL_INSTANCIA:   return "instancia";
         case VAL_METODO_LIGADO: return "funcion";  /* visible como funcion */
+        case VAL_METODO_NATIVO_LIGADO: return "funcion";  /* visible como funcion */
         case VAL_MODULO:        return "modulo";
         case VAL_GENERADOR:     return "generador";
         case VAL_PROPIEDAD:     return "propiedad";
@@ -2587,6 +2643,8 @@ bool valor_es_verdadero(const Valor *v) {
             return v->como.instancia != NULL;
         case VAL_METODO_LIGADO:
             return v->como.metodo_ligado != NULL;
+        case VAL_METODO_NATIVO_LIGADO:
+            return v->como.metodo_nativo_ligado != NULL;
         case VAL_MODULO:
             return v->como.modulo != NULL;
         case VAL_GENERADOR:
@@ -2740,6 +2798,8 @@ bool valor_iguales(const Valor *a, const Valor *b) {
         }
         case VAL_METODO_LIGADO:
             return a->como.metodo_ligado == b->como.metodo_ligado;
+        case VAL_METODO_NATIVO_LIGADO:
+            return a->como.metodo_nativo_ligado == b->como.metodo_nativo_ligado;
         case VAL_MODULO:
             return a->como.modulo == b->como.modulo;
         case VAL_GENERADOR:
