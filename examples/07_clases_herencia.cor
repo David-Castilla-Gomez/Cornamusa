@@ -11,7 +11,11 @@ clase Animal:
     fin funcion
 
     funcion __cadena__(yo):
-        retornar f"{tipo(yo).__nombre__}({yo.nombre}, {yo.edad} años)"
+        # nombre_clase(yo) devuelve "Perro"/"Gato" segun la clase concreta
+        # (polimorfismo del __cadena__ heredado). Alternativa equivalente:
+        # f"{clase_de(yo).nombre}(...)" — clase_de(yo) devuelve la VAL_CLASE
+        # y .nombre / .__nombre__ extraen el identificador.
+        retornar f"{nombre_clase(yo)}({yo.nombre}, {yo.edad} años)"
     fin funcion
 fin clase
 

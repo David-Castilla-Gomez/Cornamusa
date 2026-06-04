@@ -4816,6 +4816,28 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                  * - Si es VAL_PROPIEDAD: dejarlo pasar a error
                  *   (las propiedades no tienen sentido sin instancia). */
                 if (obj.tipo == VAL_CLASE) {
+                    /* v1.122: atributos sinteticos de clase. `nombre` y
+                     * `__nombre__` devuelven el nombre canonico de la
+                     * clase como cadena. Patron `tipo(yo).__nombre__`
+                     * para __cadena__ polimorfico. */
+                    if (nombre->como.cadena.longitud == 6
+                        && memcmp(nombre->como.cadena.texto, "nombre", 6) == 0) {
+                        Clase *c = obj.como.clase;
+                        Valor s = valor_cadena_duplicar(c->nombre,
+                                                          c->longitud_nombre);
+                        valor_destruir(&obj);
+                        empujar(vm, s);
+                        break;
+                    }
+                    if (nombre->como.cadena.longitud == 10
+                        && memcmp(nombre->como.cadena.texto, "__nombre__", 10) == 0) {
+                        Clase *c = obj.como.clase;
+                        Valor s = valor_cadena_duplicar(c->nombre,
+                                                          c->longitud_nombre);
+                        valor_destruir(&obj);
+                        empujar(vm, s);
+                        break;
+                    }
                     Valor mv;
                     if (dicc_obtener(obj.como.clase->metodos, nombre, &mv)) {
                         if (mv.tipo == VAL_METODO_ESTATICO) {
