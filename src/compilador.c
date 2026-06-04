@@ -2821,22 +2821,73 @@ static bool pre_reservar_locales(Compilador *c, const Sent *s, int linea_default
         }
         case SENT_ASIGNAR: {
             const Expr *destino = s->como.asignar.destino;
-            if (destino == NULL || destino->tipo != EXPR_IDENT) return true;
-            const char *nombre = destino->como.ident.nombre;
-            int len = destino->como.ident.longitud;
-            if (!c->actual->es_funcion) return true;  /* en top-level usa globales */
-            int existente = buscar_local(c->actual, nombre, len);
-            if (existente >= 0) return true;  /* ya reservado */
-            /* Reservar slot. */
-            chunk_emitir_byte(c->actual->chunk, OP_NULO, linea_default);
-            int slot = agregar_local(c, nombre, len, linea_default);
-            if (slot < 0) return false;
+            if (destino == NULL) return true;
+            if (!c->actual->es_funcion) return true;  /* top-level usa globales */
+            /* Caso 1: destino simple `x = ...` */
+            if (destino->tipo == EXPR_IDENT) {
+                const char *nombre = destino->como.ident.nombre;
+                int len = destino->como.ident.longitud;
+                int existente = buscar_local(c->actual, nombre, len);
+                if (existente >= 0) return true;
+                chunk_emitir_byte(c->actual->chunk, OP_NULO, linea_default);
+                int slot = agregar_local(c, nombre, len, linea_default);
+                if (slot < 0) return false;
+                return true;
+            }
+            /* Caso 2 (v1.123): destructuring `a, b = ...` o `[a, b] = ...`.
+             * Recorrer cada destino IDENT y pre-reservar slot si es nuevo.
+             * Si el destino es a su vez una tupla/lista anidada, recurrir.
+             * Asi, cuando emitir_destructuring se ejecute dentro del bucle,
+             * todas las variables seran "existentes" en el scope y reusara
+             * sus slots — evita los slots fantasma que crecian el stack. */
+            if (destino->tipo == EXPR_TUPLA || destino->tipo == EXPR_LISTA) {
+                int n_el = destino->como.secuencia.n_elementos;
+                Expr **elementos = destino->como.secuencia.elementos;
+                for (int i = 0; i < n_el; i++) {
+                    Expr *e = elementos[i];
+                    if (e->tipo == EXPR_IDENT) {
+                        int existente = buscar_local(c->actual,
+                                                       e->como.ident.nombre,
+                                                       e->como.ident.longitud);
+                        if (existente >= 0) continue;
+                        chunk_emitir_byte(c->actual->chunk, OP_NULO,
+                                            linea_default);
+                        int slot = agregar_local(c, e->como.ident.nombre,
+                                                       e->como.ident.longitud,
+                                                       linea_default);
+                        if (slot < 0) return false;
+                    } else if (e->tipo == EXPR_TUPLA || e->tipo == EXPR_LISTA) {
+                        /* Anidado: simular un SENT_ASIGNAR con este
+                         * destino para reusar la logica. Construimos un
+                         * SENT temporal en el stack. */
+                        Sent fake;
+                        fake.tipo = SENT_ASIGNAR;
+                        fake.como.asignar.destino = e;
+                        fake.como.asignar.valor = NULL;
+                        if (!pre_reservar_locales(c, &fake, linea_default))
+                            return false;
+                    }
+                    /* Otros tipos de destino (EXPR_INDICE, EXPR_ATRIBUTO):
+                     * no se pueden destructurar a ellos directamente; lo
+                     * detectara emitir_destructuring en su validacion. */
+                }
+                return true;
+            }
             return true;
         }
         default:
             /* SENT_MIENTRAS/SENT_PARA/SENT_INTENTAR/SENT_FUNCION/
                SENT_CLASE/etc. no descienden — manejan sus propios
-               locales cuando se compilen. */
+               locales cuando se compilen (compilar_mientras y
+               compilar_para llaman a pre_reservar_locales sobre su
+               cuerpo, lo cual cubre el caso interno).
+               Nota: una version anterior de v1.123 si descendia en
+               bucles, pero rompia `nolocal n` porque pre-reservaba
+               n como local de la funcion interna antes de procesar
+               la declaracion `nolocal`. Mantener el comportamiento
+               original es mas seguro; el caso destructuring de
+               variables nuevas dentro de un bucle se cubre con la
+               extension de SENT_ASIGNAR a EXPR_TUPLA/EXPR_LISTA. */
             return true;
     }
 }

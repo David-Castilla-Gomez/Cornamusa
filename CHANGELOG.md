@@ -6,6 +6,63 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.123.0] — 2026-06-04 — Destructuring de variables nuevas dentro de bucle
+
+Cierra el caso patológico residual documentado en v1.122 fase 1: cuando
+los destinos de un destructuring eran **nuevas** variables dentro de un
+bucle dentro de una función, cada iteración acumulaba `+(1 + n_destinos)`
+slots fantasma en el stack y la lectura `OP_OBTENER_LOCAL slot_iter`
+siempre devolvía la tupla de la PRIMERA iter. Síntoma observable:
+
+```cornamusa
+funcion f():
+    para i en rango(0, 5):
+        a, b = i, i * 2
+        imprimir(a, b)
+    fin para
+fin funcion
+```
+
+Antes de v1.123 imprimía `0 0` cinco veces (las nuevas asignaciones
+no surtían efecto). Tras v1.123 imprime `0 0`, `1 2`, `2 4`, `3 6`, `4 8`.
+
+### Fix
+
+Extender `pre_reservar_locales` (en `src/compilador.c`) para reconocer
+`SENT_ASIGNAR` con destino `EXPR_TUPLA` o `EXPR_LISTA`, no solo
+`EXPR_IDENT`. Recorre cada destino del patrón; si es `IDENT` y no es
+local existente, emite `OP_NULO + agregar_local`; si es a su vez una
+tupla anidada, recurre. Cuando `emitir_destructuring` se ejecuta dentro
+del bucle, ve los destinos como locales existentes, reusa sus slots y
+descarta `slot_iter` (la rama `n_nuevos_slots == 0` del fix de v1.122).
+
+### Tentativa descartada
+
+Una primera versión hacía que `pre_reservar_locales` descendiera en
+`SENT_PARA`/`SENT_MIENTRAS`/`SENT_INTENTAR` y se invocara desde el
+inicio de `compilar_funcion`. Eso movía las variables al scope de la
+función — incluyendo las simples — y hacía que `a` sobreviviera tras
+`para i: a = i fin para` (semántica Python). Pero rompió
+`bc_run_30_closures_nolocal`: `funcion inc(): nolocal n; n = n + 1
+fin funcion` lanzaba `'n' es local del scope actual` porque la
+pre-reserva creaba `n` como local antes de procesar `nolocal n`.
+
+Decisión: revertir esa parte y mantener el scoping clásico de Cornamusa
+(variables del cuerpo de un bucle/intentar no sobreviven al control de
+flujo). El bug específico de "stack crece dentro del bucle" se resuelve
+con el cambio mínimo en `SENT_ASIGNAR + EXPR_TUPLA`.
+
+### Tests
+
+`tests/unit/test_bytecode_destructuring_bucle_nuevas.c` con 5 bloques:
+- destructuring de nuevas en bucle, valores correctos por iter
+- 1000 iters retornando `[999, 1000]` (stack no acumula)
+- destructuring anidado `a, (b, c) = ...` dentro de bucle
+- regresión `nolocal n` (la tentativa descartada lo rompía)
+- destructuring dentro de `si`/`sino` dentro de `para`
+
+Suite: **320 tests verde**.
+
 ## [1.122.0] — 2026-06-04 — Plan corpus (fases 0-5) + métodos nativos extendidos
 
 Esta release agrupa dos bloques de trabajo simultáneos:
