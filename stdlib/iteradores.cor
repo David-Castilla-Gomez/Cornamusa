@@ -1,0 +1,330 @@
+# Cornamusa stdlib: iteradores.cor (v1.118)
+#
+# Combinatoria y herramientas de iteracion en pure-Cornamusa.
+# Inspirado en `itertools` de Python pero con nombres en castellano.
+# Complementa `funcionales` (mapear/filtrar/reducir) con producto
+# cartesiano, permutaciones, combinaciones, ventanas deslizantes y
+# agrupacion de consecutivos.
+#
+# Convencion: todas las funciones devuelven LISTA (eager). No son
+# generadores lazy, lo que es comodo para muestras pequenas pero
+# explota para `producto([0,1] x 30)` (mil millones). Para casos
+# masivos usar `funcion*` con `dar` directamente.
+#
+# Uso tipico:
+#
+#   importar iteradores como it
+#
+#   # Producto cartesiano:
+#   para par en it.producto([1,2], ["a","b"]):
+#       imprimir(par)            # [1,"a"], [1,"b"], [2,"a"], [2,"b"]
+#   fin para
+#
+#   # Permutaciones:
+#   it.permutaciones([1,2,3])    # 6 listas
+#
+#   # Combinaciones:
+#   it.combinaciones([1,2,3,4], 2)   # [[1,2],[1,3],[1,4],[2,3],[2,4],[3,4]]
+#
+#   # Ventana deslizante:
+#   it.ventana([1,2,3,4,5], 3)
+#   # -> [[1,2,3], [2,3,4], [3,4,5]]
+
+
+# ─── Producto cartesiano ────────────────────────────────────────
+
+# Producto de dos iterables. Devuelve lista de listas [a, b].
+funcion producto(xs, ys):
+    resultado = []
+    para a en xs:
+        para b en ys:
+            agregar(resultado, [a, b])
+        fin para
+    fin para
+    retornar resultado
+fin funcion
+
+# Producto de tres iterables. Devuelve lista de listas [a, b, c].
+funcion producto3(xs, ys, zs):
+    resultado = []
+    para a en xs:
+        para b en ys:
+            para c en zs:
+                agregar(resultado, [a, b, c])
+            fin para
+        fin para
+    fin para
+    retornar resultado
+fin funcion
+
+# Producto cartesiano de `xs` consigo mismo `r` veces.
+# producto_repeticion([0,1], 3) -> 8 tuplas binarias de longitud 3.
+funcion producto_repeticion(xs, r: entero):
+    si r <= 0:
+        retornar [[]]
+    fin si
+    # Iterativo: empieza con [[]], extiende r veces.
+    acc = [[]]
+    para i en rango(0, r):
+        siguiente = []
+        para tupla en acc:
+            para elem en xs:
+                nueva = []
+                para t en tupla:
+                    agregar(nueva, t)
+                fin para
+                agregar(nueva, elem)
+                agregar(siguiente, nueva)
+            fin para
+        fin para
+        acc = siguiente
+    fin para
+    retornar acc
+fin funcion
+
+
+# ─── Permutaciones ──────────────────────────────────────────────
+
+# Todas las permutaciones de longitud `r` (default: longitud(xs)).
+# Sin repeticion de indices. Orden lexicografico.
+funcion permutaciones(xs, r: entero = -1):
+    n = longitud(xs)
+    si r == -1:
+        r = n
+    fin si
+    si r > n o r < 0:
+        retornar []
+    fin si
+    indices = []
+    para i en rango(0, n):
+        agregar(indices, i)
+    fin para
+    resultado = []
+    _perm_aux(xs, indices, [], r, resultado)
+    retornar resultado
+fin funcion
+
+funcion _perm_aux(xs, indices, parcial, r: entero, resultado):
+    si longitud(parcial) == r:
+        agregar(resultado, parcial)
+        retornar nulo
+    fin si
+    para i en rango(0, longitud(indices)):
+        idx = indices[i]
+        # nueva lista parcial = parcial + [xs[idx]]
+        nueva_parcial = []
+        para p en parcial:
+            agregar(nueva_parcial, p)
+        fin para
+        agregar(nueva_parcial, xs[idx])
+        # indices restantes = indices sin el i-esimo
+        restantes = []
+        para j en rango(0, longitud(indices)):
+            si j != i:
+                agregar(restantes, indices[j])
+            fin si
+        fin para
+        _perm_aux(xs, restantes, nueva_parcial, r, resultado)
+    fin para
+fin funcion
+
+
+# ─── Combinaciones ──────────────────────────────────────────────
+
+# Combinaciones de longitud `r` sin repeticion. Orden lexicografico
+# por indices.
+funcion combinaciones(xs, r: entero):
+    n = longitud(xs)
+    si r < 0 o r > n:
+        retornar []
+    fin si
+    si r == 0:
+        retornar [[]]
+    fin si
+    resultado = []
+    _comb_aux(xs, 0, [], r, resultado)
+    retornar resultado
+fin funcion
+
+funcion _comb_aux(xs, inicio: entero, parcial, r: entero, resultado):
+    si longitud(parcial) == r:
+        agregar(resultado, parcial)
+        retornar nulo
+    fin si
+    n = longitud(xs)
+    faltan = r - longitud(parcial)
+    # i puede ir hasta n - faltan (deja espacio para los restantes).
+    para i en rango(inicio, n - faltan + 1):
+        nueva = []
+        para p en parcial:
+            agregar(nueva, p)
+        fin para
+        agregar(nueva, xs[i])
+        _comb_aux(xs, i + 1, nueva, r, resultado)
+    fin para
+fin funcion
+
+# Combinaciones con repeticion (multiconjuntos). Cada elemento puede
+# aparecer varias veces.
+funcion combinaciones_con_repeticion(xs, r: entero):
+    n = longitud(xs)
+    si n == 0 o r < 0:
+        retornar []
+    fin si
+    si r == 0:
+        retornar [[]]
+    fin si
+    resultado = []
+    _comb_rep_aux(xs, 0, [], r, resultado)
+    retornar resultado
+fin funcion
+
+funcion _comb_rep_aux(xs, inicio: entero, parcial, r: entero, resultado):
+    si longitud(parcial) == r:
+        agregar(resultado, parcial)
+        retornar nulo
+    fin si
+    para i en rango(inicio, longitud(xs)):
+        nueva = []
+        para p en parcial:
+            agregar(nueva, p)
+        fin para
+        agregar(nueva, xs[i])
+        # Misma posicion `i` permitida: con repeticion.
+        _comb_rep_aux(xs, i, nueva, r, resultado)
+    fin para
+fin funcion
+
+
+# ─── Cadena, repetir, ventana, pares ────────────────────────────
+
+# Concatena dos iterables en una sola lista. Para mas, encadenar
+# llamadas: concatenar(concatenar(xs, ys), zs).
+# (Nombre `concatenar` en vez de `cadena` para no sombrear el
+# built-in de conversion a texto.)
+funcion concatenar(xs, ys):
+    resultado = []
+    para a en xs:
+        agregar(resultado, a)
+    fin para
+    para b en ys:
+        agregar(resultado, b)
+    fin para
+    retornar resultado
+fin funcion
+
+# Lista con `valor` repetido `n` veces. Eager: para infinito, usar
+# bucle con `dar` directamente.
+funcion repetir(valor, n: entero):
+    resultado = []
+    para i en rango(0, n):
+        agregar(resultado, valor)
+    fin para
+    retornar resultado
+fin funcion
+
+# Ventana deslizante de tamano `n`. Devuelve lista de sub-listas
+# de longitud `n`, sin solapamiento de extremos: si len(xs) < n
+# devuelve [].
+funcion ventana(xs, n: entero):
+    si n <= 0:
+        lanzar ErrorDeValor("ventana requiere n > 0")
+    fin si
+    total = longitud(xs)
+    si total < n:
+        retornar []
+    fin si
+    resultado = []
+    para i en rango(0, total - n + 1):
+        v = []
+        para j en rango(i, i + n):
+            agregar(v, xs[j])
+        fin para
+        agregar(resultado, v)
+    fin para
+    retornar resultado
+fin funcion
+
+# Pares consecutivos: [[xs[0],xs[1]], [xs[1],xs[2]], ...].
+# Caso especial de ventana(xs, 2) con nombre claro.
+funcion pares_consecutivos(xs):
+    retornar ventana(xs, 2)
+fin funcion
+
+
+# ─── Agrupar consecutivos ───────────────────────────────────────
+
+# Agrupa elementos consecutivos por igualdad (no reordena). Devuelve
+# lista de [clave, sub-lista]. Util para run-length encoding.
+#
+# agrupar_consecutivos([1,1,2,3,3,3,1]) ->
+#   [[1,[1,1]], [2,[2]], [3,[3,3,3]], [1,[1]]]
+funcion agrupar_consecutivos(xs):
+    resultado = []
+    actual = []
+    clave = nulo
+    primero = verdadero
+    para elem en xs:
+        si primero o elem != clave:
+            si no primero:
+                agregar(resultado, [clave, actual])
+            fin si
+            clave = elem
+            actual = [elem]
+            primero = falso
+        sino:
+            agregar(actual, elem)
+        fin si
+    fin para
+    si no primero:
+        agregar(resultado, [clave, actual])
+    fin si
+    retornar resultado
+fin funcion
+
+
+# ─── Comprimir y dividir ────────────────────────────────────────
+
+# `comprimir(xs, selectores)` devuelve solo los xs[i] donde
+# selectores[i] es verdadero. Ambas listas se recorren en paralelo
+# hasta agotar la mas corta.
+funcion comprimir(xs, selectores):
+    resultado = []
+    n = funcionales_minimo_dos(longitud(xs), longitud(selectores))
+    para i en rango(0, n):
+        si selectores[i]:
+            agregar(resultado, xs[i])
+        fin si
+    fin para
+    retornar resultado
+fin funcion
+
+# Min privado (evita importar matematicas solo por esto).
+funcion funcionales_minimo_dos(a: entero, b: entero):
+    si a < b:
+        retornar a
+    fin si
+    retornar b
+fin funcion
+
+# Divide `xs` en sub-listas consecutivas de tamano `n`. La ultima
+# puede ser mas corta si la longitud no es multiplo.
+#
+# dividir_en([1,2,3,4,5,6,7], 3) -> [[1,2,3], [4,5,6], [7]]
+funcion dividir_en(xs, n: entero):
+    si n <= 0:
+        lanzar ErrorDeValor("dividir_en requiere n > 0")
+    fin si
+    resultado = []
+    total = longitud(xs)
+    i = 0
+    mientras i < total:
+        bloque = []
+        para j en rango(i, funcionales_minimo_dos(i + n, total)):
+            agregar(bloque, xs[j])
+        fin para
+        agregar(resultado, bloque)
+        i = i + n
+    fin mientras
+    retornar resultado
+fin funcion

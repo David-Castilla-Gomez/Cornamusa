@@ -6,6 +6,49 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.118.0] — 2026-06-04 — Stdlib `iteradores`
+
+Nuevo módulo `stdlib/iteradores.cor`: combinatoria y herramientas de
+iteración inspiradas en `itertools` de Python pero en castellano,
+pure-Cornamusa. Complementa `funcionales` (mapear/filtrar/reducir/
+agrupar_por/tomar/saltar) con las primitivas que faltaban para
+permutaciones, ventanas deslizantes y procesamiento por lotes.
+
+### Combinatoria
+
+- `producto(xs, ys)` — producto cartesiano de dos iterables → lista de `[a, b]`.
+- `producto3(xs, ys, zs)` — análogo para 3 iterables.
+- `producto_repeticion(xs, r)` — `xs^r` (todas las r-tuplas con repetición). Útil para enumerar todas las claves binarias / configuraciones.
+- `permutaciones(xs, r=-1)` — sin repetición; `r=-1` (default) usa `longitud(xs)`.
+- `combinaciones(xs, r)` — sin repetición, orden lexicográfico por índices. `r=0` → `[[]]`; `r>n` → `[]`.
+- `combinaciones_con_repeticion(xs, r)` — multiconjuntos.
+
+### Iteración
+
+- `concatenar(xs, ys)` — encadena dos iterables. (Nombre `concatenar` en vez de `cadena` para no sombrear el built-in de conversión a texto.)
+- `repetir(valor, n)` — lista con `valor` repetido `n` veces.
+- `ventana(xs, n)` — ventanas deslizantes de tamaño `n`. `n > longitud(xs)` → `[]`. `n <= 0` lanza `ErrorDeValor`.
+- `pares_consecutivos(xs)` — atajo para `ventana(xs, 2)`.
+- `agrupar_consecutivos(xs)` — `[[clave, sub-lista], ...]` por igualdad de adyacentes. Base para run-length encoding.
+- `comprimir(xs, selectores)` — `xs[i]` cuando `selectores[i]` es verdadero. Hasta agotar la lista más corta.
+- `dividir_en(xs, n)` — particiones consecutivas de tamaño `n`; la última puede ser más corta.
+
+### Por qué eager y no lazy
+
+Todas las funciones devuelven `lista`, no generadores. Decisión consciente
+para muestras pequeñas (anagramas, combinaciones de pocos elementos) — el
+caso 99%. Para casos masivos (`producto_repeticion([0,1], 30)` son mil
+millones de tuplas), el usuario puede escribir un `funcion*` con `dar`
+directamente. No queremos forzar la abstracción para el caso pedagógico
+común.
+
+### Tests y ejemplo
+
+- `tests/unit/test_bytecode_iteradores_stdlib.c` — 21 bloques, 30+ asserts. Cardinales conocidos (`2x3=6`, `2^4=16`, `3!=6`, `C(4,2)=6`, `P(4,2)=12`), primer/último elemento por orden lexicográfico, casos límite (`r=0`, `r>n`, lista vacía, n=0 lanza). Nombre con sufijo `_stdlib` porque ya existía `test_bytecode_iteradores.c` para el dunder `__iterar__`.
+- `examples/104_iteradores.cor` — 8 secciones: combinaciones prenda+color, anagramas, equipos de 2, claves binarias de 4 bits, media móvil de 3 días con `funcionales.suma`, run-length encoding (`aaabbcdddde → a3b2c1d4e1`), paginación en bloques, filtro por máscara.
+
+Suite total: **299 tests, 100% verde**.
+
 ## [1.117.0] — 2026-06-04 — Stdlib `estadisticas`
 
 Nuevo módulo `stdlib/estadisticas.cor` con análisis estadístico

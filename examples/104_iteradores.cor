@@ -1,0 +1,119 @@
+# 104_iteradores.cor — Combinatoria e iteracion (v1.118).
+#
+# Modulo stdlib/iteradores: producto cartesiano, permutaciones,
+# combinaciones, ventana deslizante, agrupar consecutivos.
+# Inspirado en `itertools` de Python.
+
+importar iteradores como it
+importar funcionales
+
+# ─── 1. Producto cartesiano ─────────────────────────────────────
+
+imprimir("--- 1. Combinaciones de prenda + color ---")
+
+prendas = ["camisa", "pantalon"]
+colores = ["negro", "azul", "verde"]
+
+para par en it.producto(prendas, colores):
+    imprimir(f"  {par[0]} {par[1]}")
+fin para
+imprimir(f"  total: {longitud(prendas)} x {longitud(colores)} = {longitud(it.producto(prendas, colores))}")
+imprimir("")
+
+
+# ─── 2. Permutaciones — anagramas ───────────────────────────────
+
+imprimir("--- 2. Anagramas de 'OSA' ---")
+
+letras = ["O", "S", "A"]
+para p en it.permutaciones(letras):
+    palabra = ""
+    para ch en p:
+        palabra = palabra + ch
+    fin para
+    imprimir(f"  {palabra}")
+fin para
+imprimir("")
+
+
+# ─── 3. Combinaciones — equipos ─────────────────────────────────
+
+imprimir("--- 3. Equipos de 2 a partir de 5 jugadores ---")
+
+jugadores = ["Ana", "Luis", "Eva", "Marco", "Sofia"]
+equipos = it.combinaciones(jugadores, 2)
+imprimir(f"  total: C(5, 2) = {longitud(equipos)}")
+para e en equipos:
+    imprimir(f"  {e[0]:<6} + {e[1]}")
+fin para
+imprimir("")
+
+
+# ─── 4. Producto repeticion — todas las claves binarias ─────────
+
+imprimir("--- 4. Todas las claves binarias de 4 bits ---")
+
+claves = it.producto_repeticion([0, 1], 4)
+imprimir(f"  total: 2^4 = {longitud(claves)}")
+para k en funcionales.tomar(5, claves):
+    imprimir(f"  {k}")
+fin para
+imprimir("  ...")
+imprimir("")
+
+
+# ─── 5. Ventana deslizante — media movil ────────────────────────
+
+imprimir("--- 5. Media movil de 3 dias ---")
+
+ventas = [10, 12, 15, 14, 18, 22, 25, 30, 28, 27]
+para v en it.ventana(ventas, 3):
+    suma = funcionales.suma(v, 0)
+    media = suma / 3
+    imprimir(f"  {v} -> media = {media:.2f}")
+fin para
+imprimir("")
+
+
+# ─── 6. Agrupar consecutivos — run-length encoding ──────────────
+
+imprimir("--- 6. Run-length encoding ---")
+
+mensaje = "aaabbcdddde"
+chars = []
+para ch en mensaje:
+    agregar(chars, ch)
+fin para
+
+rle = ""
+para grupo en it.agrupar_consecutivos(chars):
+    rle = rle + grupo[0] + cadena(longitud(grupo[1]))
+fin para
+imprimir(f"  '{mensaje}' -> '{rle}'")
+imprimir("")
+
+
+# ─── 7. Dividir en bloques ──────────────────────────────────────
+
+imprimir("--- 7. Paginar una lista en bloques de 4 ---")
+
+elementos = []
+para i en rango(1, 14):
+    agregar(elementos, i)
+fin para
+
+para p en it.dividir_en(elementos, 4):
+    imprimir(f"  pagina: {p}")
+fin para
+imprimir("")
+
+
+# ─── 8. Comprimir — filtrar por mascara ─────────────────────────
+
+imprimir("--- 8. Filtrar dias de la semana ---")
+
+dias = ["lun", "mar", "mie", "jue", "vie", "sab", "dom"]
+laborales = [verdadero, verdadero, verdadero, verdadero, verdadero, falso, falso]
+imprimir(f"  laborales: {it.comprimir(dias, laborales)}")
+finde = [falso, falso, falso, falso, falso, verdadero, verdadero]
+imprimir(f"  finde:     {it.comprimir(dias, finde)}")

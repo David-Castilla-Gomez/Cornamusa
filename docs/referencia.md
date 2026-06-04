@@ -1025,6 +1025,27 @@ Estadística descriptiva e inferencial básica sobre listas de números. Reusa `
 
 Las funciones de varianza y correlación muestrales lanzan `ErrorDeValor` si `n < 2`; las que dividen por desviación o varianza lanzan si la serie tiene varianza cero.
 
+### `iteradores` (v1.118)
+
+Combinatoria y herramientas de iteración inspiradas en `itertools` de Python. Pure-Cornamusa, eager (devuelve listas).
+
+**Combinatoria**:
+- `producto(xs, ys)` — producto cartesiano → lista de `[a, b]`.
+- `producto3(xs, ys, zs)` — análogo para 3 iterables.
+- `producto_repeticion(xs, r)` — `xs^r`, todas las r-tuplas con repetición.
+- `permutaciones(xs, r=-1)` — sin repetición, orden lexicográfico. `r=-1` usa `longitud(xs)`.
+- `combinaciones(xs, r)` — sin repetición; `r=0 → [[]]`, `r>n → []`.
+- `combinaciones_con_repeticion(xs, r)` — multiconjuntos.
+
+**Iteración**:
+- `concatenar(xs, ys)` — encadena dos iterables (nombre distinto de `cadena` para no sombrear el built-in de conversión a texto).
+- `repetir(valor, n)` — lista con `valor` repetido `n` veces.
+- `ventana(xs, n)` — ventanas deslizantes de tamaño `n`. `n > longitud(xs) → []`. `n <= 0` lanza `ErrorDeValor`.
+- `pares_consecutivos(xs)` — atajo para `ventana(xs, 2)`.
+- `agrupar_consecutivos(xs)` — `[[clave, sub-lista], ...]` por igualdad de adyacentes. Base de run-length encoding.
+- `comprimir(xs, selectores)` — filtra `xs[i]` cuando `selectores[i]` es verdadero, hasta agotar la más corta.
+- `dividir_en(xs, n)` — particiones consecutivas de tamaño `n`; la última puede ser más corta.
+
 ### `inspeccion` (v1.91)
 
 Introspección y reflexión sobre instancias, clases y módulos. Útil para serializadores genéricos, REPL helpers y debugging.
