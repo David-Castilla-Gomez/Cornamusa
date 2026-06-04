@@ -1,0 +1,97 @@
+# 107_metodos_nativos.cor — Metodos sobre tipos built-in (v1.122).
+#
+# Desde v1.122 los tipos nativos (cadena, lista, dict) exponen
+# metodos directamente. No requieren `importar`. Despachados a
+# nativas C via tabla METODOS_NATIVOS en src/nativos.c.
+
+# ─── 1. Cadena ──────────────────────────────────────────────────
+
+imprimir("--- 1. Cadena ---")
+
+linea = "Ana,30,Sevilla,Espana"
+campos = linea.separar(",")
+imprimir(f"campos: {campos}")
+
+frase = "el rapido zorro marron salta sobre el perro perezoso"
+imprimir(f"contiene 'zorro': {frase.contiene('zorro')}")
+imprimir(f"ocurrencias palabra 'el': {frase.separar(' ').contar('el')}")
+
+mensaje = "  hola mundo  \n"
+imprimir(f"|{mensaje.recortar()}|")
+
+plantilla = "Buenas {SALUDO}, {NOMBRE}!"
+saludo = plantilla.reemplazar("{SALUDO}", "noches").reemplazar("{NOMBRE}", "Ana")
+imprimir(saludo)
+
+partes = ["uno", "dos", "tres"]
+imprimir(" / ".unir(partes))
+imprimir("".unir(partes))
+imprimir("")
+
+
+# ─── 2. Lista ───────────────────────────────────────────────────
+
+imprimir("--- 2. Lista ---")
+
+votos = ["si", "si", "no", "si", "abstencion", "no", "si", "abstencion"]
+imprimir(f"si: {votos.contar('si')}")
+imprimir(f"no: {votos.contar('no')}")
+imprimir(f"abstencion: {votos.contar('abstencion')}")
+imprimir(f"hay algun 'tal vez'?: {votos.contiene('tal vez')}")
+
+base = [1, 2, 3]
+copia = base.copiar()
+base.agregar(99)
+imprimir(f"base: {base}, copia (independiente): {copia}")
+imprimir("")
+
+
+# ─── 3. Diccionario ─────────────────────────────────────────────
+
+imprimir("--- 3. Diccionario ---")
+
+inventario = {"manzanas": 12, "peras": 5, "uvas": 30, "naranjas": 8}
+
+# Iteracion por pares
+imprimir("Inventario:")
+total = 0
+para par en inventario.items():
+    fruta = par[0]
+    cantidad = par[1]
+    total = total + cantidad
+    imprimir(f"  {fruta:<10} {cantidad:>3}")
+fin para
+imprimir(f"  Total: {total}")
+
+# obtener con defecto evita ErrorDeClave
+para clave en ["manzanas", "cerezas"]:
+    imprimir(f"  {clave:<10} -> {inventario.obtener(clave, 0)}")
+fin para
+imprimir("")
+
+
+# ─── 4. Mini-CSV en pocas lineas ────────────────────────────────
+
+imprimir("--- 4. Parser CSV minimo ---")
+
+csv_texto = "nombre,edad,ciudad\nAna,30,Sevilla\nLuis,25,Madrid\nEva,28,Bilbao"
+
+lineas = csv_texto.separar("\n")
+cabeceras = lineas[0].separar(",")
+registros = []
+
+para i en rango(1, longitud(lineas)):
+    valores = lineas[i].separar(",")
+    reg = {}
+    para j en rango(0, longitud(cabeceras)):
+        reg[cabeceras[j]] = valores[j]
+    fin para
+    agregar(registros, reg)
+fin para
+
+para r en registros:
+    nombre = r.obtener("nombre", "?")
+    edad   = r.obtener("edad", "?")
+    ciudad = r.obtener("ciudad", "?")
+    imprimir(f"  {nombre:<6} ({edad} anos) - {ciudad}")
+fin para

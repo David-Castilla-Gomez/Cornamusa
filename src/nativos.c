@@ -4660,6 +4660,334 @@ static Valor nativa_cadena_unir(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * v1.122: nativas adicionales para cubrir metodos comunes sobre
+ * tipos built-in (cadena.separar, cadena.reemplazar, cadena.recortar,
+ * cadena.contiene, lista.contar, lista.contiene, lista.copiar,
+ * dict.items, dict.obtener). Diseñadas para encajar en la tabla
+ * METODOS_NATIVOS sin necesidad de wrappers en stdlib.
+ * ────────────────────────────────────────────────────────────────── */
+
+/* cadena_separar(s, sep) -> lista de cadenas.
+ *
+ * Si sep es vacio, devuelve lista de caracteres (cada code-point una
+ * cadena). En caso normal, busca sep como substring en s y particiona.
+ * Resultado consistente con cadenas.separar de la stdlib pure pero
+ * O(n) en bytes (la version pura es O(n^2) por la concatenacion). */
+static Valor nativa_cadena_separar(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_separar(s, sep) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_separar() requiere cadenas");
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    const char *sep = args[1].como.cadena.texto;
+    int sepl = args[1].como.cadena.longitud;
+
+    Lista *l = lista_nueva(0);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+
+    if (sepl == 0) {
+        /* sep vacio: separar por code-point. */
+        int p = 0;
+        while (p < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+            if (cons <= 0) { p++; continue; }
+            Valor v = valor_cadena_duplicar(s + p, (int)cons);
+            if (!lista_agregar(l, v)) {
+                lista_liberar(l);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            p += (int)cons;
+        }
+        return valor_lista(l);
+    }
+
+    int i = 0;
+    while (i <= sl) {
+        int j = i;
+        bool encontrado = false;
+        while (j <= sl - sepl) {
+            if (s[j] == sep[0] && memcmp(s + j, sep, (size_t)sepl) == 0) {
+                encontrado = true;
+                break;
+            }
+            j++;
+        }
+        int fin = encontrado ? j : sl;
+        Valor v = valor_cadena_duplicar(s + i, fin - i);
+        if (!lista_agregar(l, v)) {
+            lista_liberar(l);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        if (!encontrado) break;
+        i = j + sepl;
+        if (i == sl) {
+            /* sep al final: emit cadena vacia. */
+            Valor vacio = valor_cadena_duplicar("", 0);
+            if (!lista_agregar(l, vacio)) {
+                lista_liberar(l);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            break;
+        }
+    }
+    return valor_lista(l);
+}
+
+/* cadena_reemplazar(s, viejo, nuevo) -> cadena con todas las
+ * ocurrencias de `viejo` reemplazadas por `nuevo`. O(n). Si viejo es
+ * vacio devuelve s tal cual (evita bucle infinito). */
+static Valor nativa_cadena_reemplazar(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    if (n_args != 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_reemplazar(s, viejo, nuevo) requiere 3 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA
+        || args[2].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_reemplazar() requiere cadenas");
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    const char *viejo = args[1].como.cadena.texto;
+    int vl = args[1].como.cadena.longitud;
+    if (vl == 0) {
+        return valor_cadena_duplicar(s, sl);
+    }
+    const char *nuevo = args[2].como.cadena.texto;
+    int nl = args[2].como.cadena.longitud;
+
+    /* Pasada 1: contar ocurrencias para alocar el buffer una sola vez. */
+    int ocurr = 0;
+    int p = 0;
+    while (p <= sl - vl) {
+        if (s[p] == viejo[0] && memcmp(s + p, viejo, (size_t)vl) == 0) {
+            ocurr++;
+            p += vl;
+        } else {
+            p++;
+        }
+    }
+    long total = (long)sl + (long)ocurr * ((long)nl - (long)vl);
+    char *out = (char *)malloc((size_t)total + 1);
+    if (!out) return error_nativa(err, linea, columna, "memoria insuficiente");
+    long w = 0;
+    p = 0;
+    while (p < sl) {
+        if (p <= sl - vl && s[p] == viejo[0]
+            && memcmp(s + p, viejo, (size_t)vl) == 0) {
+            memcpy(out + w, nuevo, (size_t)nl);
+            w += nl;
+            p += vl;
+        } else {
+            out[w++] = s[p++];
+        }
+    }
+    out[w] = '\0';
+    Valor r = valor_cadena_duplicar(out, (int)w);
+    free(out);
+    return r;
+}
+
+/* cadena_recortar(s) -> cadena sin whitespace en los extremos.
+ * Whitespace: espacio, tab, \n, \r, \f, \v (ASCII). UTF-8 multibyte
+ * con bit 0x80 set no se considera whitespace. */
+static Valor nativa_cadena_recortar(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_recortar(s) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_recortar() requiere una cadena");
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    int ini = 0, fin = sl;
+    while (ini < fin) {
+        unsigned char c = (unsigned char)s[ini];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r'
+            || c == '\f' || c == '\v') ini++;
+        else break;
+    }
+    while (fin > ini) {
+        unsigned char c = (unsigned char)s[fin - 1];
+        if (c == ' ' || c == '\t' || c == '\n' || c == '\r'
+            || c == '\f' || c == '\v') fin--;
+        else break;
+    }
+    return valor_cadena_duplicar(s + ini, fin - ini);
+}
+
+/* cadena_contiene(s, sub) -> booleano. Wrapper de indice_de >= 0. */
+static Valor nativa_cadena_contiene(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_contiene(s, sub) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA || args[1].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena_contiene() requiere cadenas");
+    }
+    int sl = args[0].como.cadena.longitud;
+    const char *sub = args[1].como.cadena.texto;
+    int subl = args[1].como.cadena.longitud;
+    if (subl == 0) return valor_booleano(true);
+    if (subl > sl) return valor_booleano(false);
+    const char *s = args[0].como.cadena.texto;
+    int max_i = sl - subl;
+    for (int i = 0; i <= max_i; i++) {
+        if (s[i] == sub[0] && memcmp(s + i, sub, (size_t)subl) == 0) {
+            return valor_booleano(true);
+        }
+    }
+    return valor_booleano(false);
+}
+
+/* cadena_unir_metodo(sep, lista) -> cadena. Adapter del metodo
+ * `cadena.unir(lista)`. La nativa global cadena_unir(lista, sep)
+ * espera args invertidos; aqui reordenamos y delegamos. */
+static Valor nativa_cadena_unir_metodo(EvalError *err, int n_args, Valor *args,
+                                          int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cadena.unir(lista) requiere 1 argumento (mas el receptor)");
+    }
+    /* args[0] = sep (receptor), args[1] = lista. Reordenar a (lista, sep). */
+    Valor reord[2];
+    reord[0] = args[1];
+    reord[1] = args[0];
+    return nativa_cadena_unir(err, 2, reord, linea, columna);
+}
+
+/* lista_contar(xs, x) -> entero. Cuenta apariciones de `x` en `xs`
+ * usando valor_iguales (semantica de ==). */
+static Valor nativa_lista_contar(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_contar(xs, x) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_contar() requiere lista como primer arg");
+    }
+    Lista *l = args[0].como.lista;
+    long cnt = 0;
+    for (int i = 0; i < l->cuenta; i++) {
+        if (valor_iguales(&l->elementos[i], &args[1])) cnt++;
+    }
+    return valor_entero_de_i64(cnt);
+}
+
+/* lista_contiene(xs, x) -> booleano. Igual semantica que el operador
+ * `x en xs`. Wrapper explicito para usarse como metodo. */
+static Valor nativa_lista_contiene(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_contiene(xs, x) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_contiene() requiere lista como primer arg");
+    }
+    Lista *l = args[0].como.lista;
+    for (int i = 0; i < l->cuenta; i++) {
+        if (valor_iguales(&l->elementos[i], &args[1])) {
+            return valor_booleano(true);
+        }
+    }
+    return valor_booleano(false);
+}
+
+/* lista_copiar(xs) -> lista nueva con los mismos elementos (shallow
+ * copy). Equivalente a `xs[0:]`. */
+static Valor nativa_lista_copiar(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_copiar(xs) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_copiar() requiere una lista");
+    }
+    Lista *src = args[0].como.lista;
+    Lista *nueva = lista_nueva(src->cuenta);
+    if (!nueva) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < src->cuenta; i++) {
+        if (!lista_agregar(nueva, valor_clonar(&src->elementos[i]))) {
+            lista_liberar(nueva);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    return valor_lista(nueva);
+}
+
+/* dict_items(d) -> lista de [clave, valor] en orden de insercion.
+ * Patron canonico para iterar pares de un diccionario. */
+static Valor nativa_dict_items(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dict_items(d) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_DICCIONARIO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dict_items() requiere un diccionario");
+    }
+    Diccionario *d = args[0].como.dicc;
+    Lista *l = lista_nueva(d->cuenta);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < d->cuenta; i++) {
+        int slot = d->orden_insercion[i];
+        Lista *par = lista_nueva(2);
+        if (!par) { lista_liberar(l);
+            return error_nativa(err, linea, columna, "memoria insuficiente"); }
+        if (!lista_agregar(par, valor_clonar(&d->entradas[slot].clave))
+            || !lista_agregar(par, valor_clonar(&d->entradas[slot].valor))) {
+            lista_liberar(par); lista_liberar(l);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        if (!lista_agregar(l, valor_lista(par))) {
+            lista_liberar(par); lista_liberar(l);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    return valor_lista(l);
+}
+
+/* dict_obtener(d, k, defecto) -> valor en d[k], o defecto si no existe.
+ * NO lanza ErrorDeClave. */
+static Valor nativa_dict_obtener(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dict_obtener(d, k, defecto) requiere 3 argumentos");
+    }
+    if (args[0].tipo != VAL_DICCIONARIO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dict_obtener() requiere un diccionario");
+    }
+    Valor out;
+    if (dicc_obtener(args[0].como.dicc, &args[1], &out)) {
+        return out;
+    }
+    return valor_clonar(&args[2]);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Hashing (v1.60) — motor en src/hashing.c.
  *
  * Wrappers de SHA-256 y MD5. Ambos toman una cadena (los bytes
@@ -5479,15 +5807,25 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_LISTA,      "quitar",      6, nativa_quitar},
     {VAL_LISTA,      "ordenar",     7, nativa_ordenar},
     {VAL_LISTA,      "invertir",    8, nativa_invertir},
+    {VAL_LISTA,      "contar",      6, nativa_lista_contar},     /* v1.122 */
+    {VAL_LISTA,      "contiene",    8, nativa_lista_contiene},   /* v1.122 */
+    {VAL_LISTA,      "copiar",      6, nativa_lista_copiar},     /* v1.122 */
     /* Cadenas */
     {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas_ascii},
     {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas_ascii},
     {VAL_CADENA,     "empieza_con", 11, nativa_cadena_empieza_con},
     {VAL_CADENA,     "termina_con", 11, nativa_cadena_termina_con},
     {VAL_CADENA,     "indice_de",   9,  nativa_cadena_indice_de},
+    {VAL_CADENA,     "separar",     7,  nativa_cadena_separar},   /* v1.122 */
+    {VAL_CADENA,     "reemplazar",  10, nativa_cadena_reemplazar},/* v1.122 */
+    {VAL_CADENA,     "recortar",    8,  nativa_cadena_recortar},  /* v1.122 */
+    {VAL_CADENA,     "contiene",    8,  nativa_cadena_contiene},  /* v1.122 */
+    {VAL_CADENA,     "unir",        4,  nativa_cadena_unir_metodo},/* v1.122 */
     /* Diccionarios */
     {VAL_DICCIONARIO, "claves",     6, nativa_claves},
     {VAL_DICCIONARIO, "valores",    7, nativa_valores},
+    {VAL_DICCIONARIO, "items",      5, nativa_dict_items},        /* v1.122 */
+    {VAL_DICCIONARIO, "obtener",    7, nativa_dict_obtener},      /* v1.122 */
 };
 #define N_METODOS_NATIVOS \
     (int)(sizeof(METODOS_NATIVOS) / sizeof(METODOS_NATIVOS[0]))

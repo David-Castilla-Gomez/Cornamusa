@@ -6,6 +6,82 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.122.0] — 2026-06-04 — Plan corpus (fases 0-5) + métodos nativos extendidos
+
+Esta release agrupa dos bloques de trabajo simultáneos:
+
+### Plan de 6 fases sobre el corpus pedagógico
+
+Detectado al generar masivamente código Cornamusa: `examples/03_fibonacci`
+imprimía `fib(n)=0` para todo n; 4 ejemplos crasheaban con
+`ErrorDeTipo` por métodos sobre nativos; `examples/12_modulos`
+usaba nombres inexistentes de stdlib; ejecutar `cornamusa X.cor`
+desde otro cwd no resolvía `importar funcionales`.
+
+- **Fase 0** Golden tests: `cmake/golden_one.cmake` + GLOB sobre
+  `examples/esperado/*.salida`. Compara stdout byte a byte con
+  normalización CRLF→LF.
+- **Fase 1** Bug del destructuring `a, b = b, a + b` en bucle dentro
+  de función. Causa raíz: `slot_iter` (la tupla RHS) persistía en
+  el stack al final del destructuring cuando los destinos eran
+  variables existentes. En cada iteración se acumulaba un slot
+  fantasma y el bytecode leía siempre la tupla de la PRIMERA iter.
+  Fix en `src/compilador.c:emitir_destructuring`: reusar slot de
+  variables existentes (locales y upvalues), contar `n_nuevos_slots`,
+  y descartar `slot_iter` cuando todos los destinos preexistían.
+- **Fase 2** Métodos sobre tipos nativos: nuevo `VAL_METODO_NATIVO_LIGADO`
+  + tabla `METODOS_NATIVOS` en `nativos.c`. `xs.añadir(4)`,
+  `"hola".minusculas()`, `d.claves()` etc. funcionan. 13 métodos
+  iniciales sobre lista/cadena/dict.
+- **Fase 3** Atributos sintéticos `.nombre` y `.__nombre__` sobre
+  `VAL_CLASE`. Patrón `f"{clase_de(yo).nombre}(...)"` para
+  `__cadena__` polimórfico. (`tipo(instancia)` sigue devolviendo
+  la cadena "instancia" — cambiarlo rompía 8 tests.)
+- **Fase 4** stdlib resoluble relativa al binario y a `$CORNAMUSA_RUTA`.
+  `vm_set_ruta_binario` en `main.c` (Windows usa `GetModuleFileNameA`).
+  Cinco intentos: cwd, cwd/stdlib, `$CORNAMUSA_RUTA`,
+  `dir_binario/stdlib`, `dir_binario/../stdlib`.
+- **Fase 5** `docs/referencia-stdlib.md` verificado automáticamente
+  con `smoke_referencia_stdlib.cor`. 3 ejemplos arreglados (05, 08,
+  12) y validados con golden output.
+
+Resultado del plan: **105 de 106 ejemplos ejecutan correctamente**
+con `--bytecode` (el restante `26_leer_jugable` requiere stdin y
+su test diferencial inyectándolo sigue pasando).
+
+### Ampliación de métodos nativos (10 nuevos)
+
+Tras la fase 2 quedaban huecos visibles. Nuevas nativas y entradas
+en `METODOS_NATIVOS`:
+
+**Cadena**:
+- `cadena.separar(sep)` — O(n) (la versión pure-Cornamusa era O(n²)).
+  `sep=""` separa por code-point UTF-8.
+- `cadena.reemplazar(viejo, nuevo)` — O(n) replace all.
+- `cadena.recortar()` — trim ASCII espacios (` \t\n\r\f\v`).
+- `cadena.contiene(sub)` — booleano (wrapper de `indice_de >= 0`).
+- `cadena.unir(lista)` — receptor es el separador (Python `sep.join(lst)`).
+
+**Lista**:
+- `lista.contar(x)` — apariciones por igualdad.
+- `lista.contiene(x)` — booleano (igual semántica que `x en xs`).
+- `lista.copiar()` — shallow copy. Equivalente a `xs[0:]`.
+
+**Diccionario**:
+- `dict.items()` — lista de `[clave, valor]` en orden de inserción.
+  Permite `para par en d.items(): par[0]; par[1] fin para`.
+- `dict.obtener(clave, defecto)` — devuelve el valor o el defecto
+  sin lanzar `ErrorDeClave`. Patrón canónico de Python `dict.get`.
+
+Tests: `tests/unit/test_bytecode_metodos_nativos_v123.c` con 22+
+asserts. Las 13 entradas previas (v1.122 fase 2) tienen su test
+separado `test_bytecode_metodos_nativos.c`.
+
+### Suite
+
+**316 tests verde** (308 base + 8 nuevos golden/integración del
+plan + el unit test de las nativas extras).
+
 ## [1.121.0] — 2026-06-04 — Kwargs en constructores de clase
 
 Cierra deuda técnica documentada en v1.120: hasta hoy

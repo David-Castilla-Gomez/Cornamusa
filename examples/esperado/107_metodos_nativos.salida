@@ -1,0 +1,30 @@
+--- 1. Cadena ---
+campos: ["Ana", "30", "Sevilla", "Espana"]
+contiene 'zorro': verdadero
+ocurrencias palabra 'el': 2
+|hola mundo|
+Buenas noches, Ana!
+uno / dos / tres
+unodostres
+
+--- 2. Lista ---
+si: 4
+no: 2
+abstencion: 2
+hay algun 'tal vez'?: falso
+base: [1, 2, 3, 99], copia (independiente): [1, 2, 3]
+
+--- 3. Diccionario ---
+Inventario:
+  manzanas    12
+  peras        5
+  uvas        30
+  naranjas     8
+  Total: 55
+  manzanas   -> 12
+  cerezas    -> 0
+
+--- 4. Parser CSV minimo ---
+  Ana    (30 anos) - Sevilla
+  Luis   (25 anos) - Madrid
+  Eva    (28 anos) - Bilbao

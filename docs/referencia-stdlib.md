@@ -209,25 +209,33 @@ Framework de testing. `aseverar*` para asserts; clase `Suite` para agrupar.
 
 ---
 
-## Métodos sobre tipos nativos (v1.122, sin importar)
+## Métodos sobre tipos nativos (sin importar)
 
-Desde v1.122 los tipos built-in exponen métodos directamente. Despachados a las nativas globales subyacentes en la tabla `METODOS_NATIVOS` de `src/nativos.c`.
+Los tipos built-in exponen métodos directamente. Despachados a las nativas globales subyacentes en la tabla `METODOS_NATIVOS` de `src/nativos.c`.
 
 ### `lista`
 
-- `agregar(x)` / `añadir(x)` (aliases) — append.
+- `agregar(x)` / `añadir(x)` (alias) — append.
 - `insertar(i, x)`, `quitar(i=-1)`, `ordenar()`, `invertir()`.
+- (v1.122) `contar(x)` — cuenta apariciones por igualdad.
+- (v1.122) `contiene(x)` — booleano (equivalente al operador `x en xs`).
+- (v1.122) `copiar()` — shallow copy.
 
 ### `cadena`
 
 - `minusculas()` / `mayusculas()` — solo ASCII.
 - `empieza_con(s)`, `termina_con(s)`, `indice_de(s)`.
+- (v1.122) `separar(sep)` — split. `sep=""` separa por code-point.
+- (v1.122) `reemplazar(viejo, nuevo)` — replace all. O(n). `viejo=""` devuelve la cadena tal cual.
+- (v1.122) `recortar()` — trim de espacios ASCII en ambos extremos (` `, `\t`, `\n`, `\r`, `\f`, `\v`).
+- (v1.122) `contiene(sub)` — booleano.
+- (v1.122) `unir(lista)` — receptor es el separador: `",".unir(["a","b"]) == "a,b"`.
 
 ### `diccionario`
 
 - `claves()`, `valores()`.
-
-(El conjunto de métodos seguirá creciendo según se vayan validando con el corpus.)
+- (v1.122) `items()` — lista de `[clave, valor]` en orden de inserción. Iterable con `para par en d.items():`.
+- (v1.122) `obtener(clave, defecto)` — devuelve el valor o `defecto` si no existe. NO lanza `ErrorDeClave`.
 
 ---
 

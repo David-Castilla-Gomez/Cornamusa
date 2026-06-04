@@ -152,7 +152,10 @@ static void test_instanciar(void) {
         "x = p",
         "x", "<instancia de Punto>");
 
-    /* tipo(instancia) → "instancia". */
+    /* tipo(instancia) → "instancia". Para acceder al nombre concreto
+       de la clase de una instancia, usar nombre_clase(inst) o
+       clase_de(inst).nombre — v1.122 expone .nombre/.__nombre__ en
+       VAL_CLASE. */
     verificar_var(
         "clase Foo:\n"
         "    pasar\n"
