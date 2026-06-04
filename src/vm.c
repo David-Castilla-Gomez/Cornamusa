@@ -3557,7 +3557,20 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     if (!encontrado) {
                         char buf[128];
                         valor_a_repr(&key, buf, sizeof(buf));
-                        VM_ERROR("ErrorDeClave: %s", buf);
+                        /* v1.125: si la clave es cadena, sugerir una clave
+                         * cercana del dict. Reusa el escanner que ya
+                         * detecta typos de atributos/nombres. */
+                        char sug[80];
+                        if (key.tipo == VAL_CADENA
+                            && sugerir_nombre_cercano(obj.como.dicc,
+                                    key.como.cadena.texto,
+                                    key.como.cadena.longitud,
+                                    sug, sizeof(sug))) {
+                            VM_ERROR("ErrorDeClave: %s (¿quisiste decir '%s'?)",
+                                     buf, sug);
+                        } else {
+                            VM_ERROR("ErrorDeClave: %s", buf);
+                        }
                         valor_destruir(&key); valor_destruir(&obj);
                         /* v1.74 (auditoria): antes hacia `return
                          * VM_ERROR_RUNTIME` directo, asi que un
@@ -4481,7 +4494,17 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     if (!dicc_quitar(obj.como.dicc, &clave, &extraido)) {
                         char buf[256];
                         valor_a_repr(&clave, buf, sizeof(buf));
-                        VM_ERROR("ErrorDeClave: clave %s no presente en diccionario", buf);
+                        char sug[80];
+                        if (clave.tipo == VAL_CADENA
+                            && sugerir_nombre_cercano(obj.como.dicc,
+                                    clave.como.cadena.texto,
+                                    clave.como.cadena.longitud,
+                                    sug, sizeof(sug))) {
+                            VM_ERROR("ErrorDeClave: clave %s no presente en diccionario (¿quisiste decir '%s'?)",
+                                     buf, sug);
+                        } else {
+                            VM_ERROR("ErrorDeClave: clave %s no presente en diccionario", buf);
+                        }
                         valor_destruir(&clave); valor_destruir(&obj);
                         RAISE_OR_DIE();
                         break;

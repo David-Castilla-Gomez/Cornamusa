@@ -6,6 +6,54 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.125.0] — 2026-06-04 — Typo suggestions en ErrorDeClave
+
+Cierra un hueco detectado en la fase 5 del plan corpus:
+`ErrorDeAtributo` y `ErrorDeNombre` ya invocaban sugerencias estilo
+*"¿quisiste decir 'X'?"* con Levenshtein, pero `ErrorDeClave` (en
+`OP_INDICE` y `OP_BORRAR_INDICE` sobre diccionarios) solo imprimía la
+clave `repr` sin sugerencia. Los typos en claves de dict eran de los
+errores menos amigables.
+
+```cornamusa
+d = {"nombre": "Ana", "edad": 30, "ciudad": "Sevilla"}
+
+# Antes:
+d["nomre"]    # ErrorDeClave: "nomre"
+borrar d["ciuda"]  # ErrorDeClave: clave "ciuda" no presente en diccionario
+
+# Tras v1.125:
+d["nomre"]    # ErrorDeClave: "nomre" (¿quisiste decir 'nombre'?)
+borrar d["ciuda"]  # ErrorDeClave: clave "ciuda" no presente en diccionario (¿quisiste decir 'ciudad'?)
+```
+
+### Fix
+
+En `src/vm.c`, dos sitios — `OP_INDICE` sobre `VAL_DICCIONARIO` cuando
+`dicc_obtener` falla, y `OP_BORRAR_INDICE` cuando `dicc_quitar` falla.
+Si la clave es `VAL_CADENA`, invocar `sugerir_nombre_cercano` sobre
+`obj.como.dicc` (reusa la infra de Levenshtein adaptativo que ya cubría
+nombres globales). Si la clave no es cadena, fallback al mensaje
+clásico (las sugerencias de Levenshtein no aplican).
+
+### Detalles ya cubiertos por la infra existente
+
+- Umbral adaptativo: distancia ≤ 2 para claves ≥ 4 chars, ≤ 1 para más cortas.
+- Case-insensitive ASCII tiene prioridad alta: `d["NOMBRE"]` sugiere `nombre`.
+- No sugiere identidad: si la clave es exactamente igual a una clave existente, no se sugiere a sí misma.
+- Salta nombres internos `$...`.
+
+### Tests
+
+`tests/unit/test_bytecode_typo_clave.c` con 5 casos:
+- Levenshtein 1 (`nomre` → `nombre`)
+- Case-insensitive (`NOMBRE` → `nombre`)
+- Claves muy distintas (sin sugerencia)
+- `borrar d["ciuda"]` también sugiere
+- Clave no-cadena (`d[42]`): mensaje clásico, no crashea
+
+Suite: **322 tests verde**.
+
 ## [1.124.0] — 2026-06-04 — Mensajes de error en kwargs de constructor
 
 Cierra el detalle de pulido documentado en v1.121: cuando un kwarg
