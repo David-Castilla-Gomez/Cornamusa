@@ -219,37 +219,39 @@ fin funcion
 # Devuelve dict nodo -> distancia. Nodos inalcanzables NO aparecen
 # en el dict (mas facil de iterar que sentinela INFINITO).
 #
-# Implementacion: O(V^2) lineal sobre dict de pendientes. Suficiente
-# para los grafos pedagogicos tipicos. La version con heap (O((V+E)
-# log V)) requeriria un heap de pares con comparador por primer
-# elemento — coleccion.Heap actual solo compara valores escalares
-# nativamente (numeros, cadenas). Para grafos grandes considerar
-# escribir un heap especializado o reescribir Dijkstra con cola de
-# prioridad nativa cuando exista.
+# v1.120: implementacion O((V+E) log V) con coleccion.Heap usando
+# clave por la primera posicion de la lista [distancia, nodo].
+# Si encuentra entradas "obsoletas" (nodo ya tiene distancia
+# menor en el dict), las descarta — patron clasico de lazy
+# deletion para evitar tener que decrease-key en el heap.
 funcion dijkstra(g, inicio):
     si no g.contiene(inicio):
         lanzar ErrorDeValor(f"nodo inicio no presente: {inicio}")
     fin si
     distancias = {}
     distancias[inicio] = 0
-    pendientes = {}
-    pendientes[inicio] = 0
-    mientras longitud(pendientes) > 0:
-        # Extraer el pendiente con distancia minima.
-        n = _argmin_dict(pendientes)
-        d = pendientes[n]
-        borrar pendientes[n]
-        para vec en g.vecinos(n):
-            peso = g.peso(n, vec)
-            si peso < 0:
-                lanzar ErrorDeValor(f"Dijkstra requiere pesos >= 0; arista {n}->{vec} tiene peso {peso}")
-            fin si
-            nueva = d + peso
-            si no (vec en distancias) o nueva < distancias[vec]:
-                distancias[vec] = nueva
-                pendientes[vec] = nueva
-            fin si
-        fin para
+    h = coleccion.Heap(lambda par: par[0])
+    h.poner([0, inicio])
+    mientras no h.vacia():
+        actual = h.sacar()
+        d = actual[0]
+        n = actual[1]
+        # Entrada obsoleta (ya tenemos un camino mejor a n).
+        si d > distancias[n]:
+            # nada que hacer
+        sino:
+            para vec en g.vecinos(n):
+                peso = g.peso(n, vec)
+                si peso < 0:
+                    lanzar ErrorDeValor(f"Dijkstra requiere pesos >= 0; arista {n}->{vec} tiene peso {peso}")
+                fin si
+                nueva = d + peso
+                si no (vec en distancias) o nueva < distancias[vec]:
+                    distancias[vec] = nueva
+                    h.poner([nueva, vec])
+                fin si
+            fin para
+        fin si
     fin mientras
     retornar distancias
 fin funcion
@@ -267,29 +269,35 @@ funcion camino_mas_corto(g, inicio, finn):
     distancias = {}
     distancias[inicio] = 0
     previo = {}
-    pendientes = {}
-    pendientes[inicio] = 0
+    h = coleccion.Heap(lambda par: par[0])
+    h.poner([0, inicio])
     encontrado = falso
-    mientras longitud(pendientes) > 0:
-        n = _argmin_dict(pendientes)
+    mientras no h.vacia():
+        actual = h.sacar()
+        d = actual[0]
+        n = actual[1]
         si n == finn:
             encontrado = verdadero
+            # vaciar heap simbolicamente saltando
+        sino:
+            si no (d > distancias[n]):
+                para vec en g.vecinos(n):
+                    peso = g.peso(n, vec)
+                    si peso < 0:
+                        lanzar ErrorDeValor("camino_mas_corto requiere pesos >= 0")
+                    fin si
+                    nueva = d + peso
+                    si no (vec en distancias) o nueva < distancias[vec]:
+                        distancias[vec] = nueva
+                        previo[vec] = n
+                        h.poner([nueva, vec])
+                    fin si
+                fin para
+            fin si
+        fin si
+        si encontrado:
             romper
         fin si
-        d = pendientes[n]
-        borrar pendientes[n]
-        para vec en g.vecinos(n):
-            peso = g.peso(n, vec)
-            si peso < 0:
-                lanzar ErrorDeValor("camino_mas_corto requiere pesos >= 0")
-            fin si
-            nueva = d + peso
-            si no (vec en distancias) o nueva < distancias[vec]:
-                distancias[vec] = nueva
-                previo[vec] = n
-                pendientes[vec] = nueva
-            fin si
-        fin para
     fin mientras
     si no encontrado:
         retornar []
@@ -310,22 +318,6 @@ funcion camino_mas_corto(g, inicio, finn):
         agregar(invertido, camino[i])
     fin para
     retornar invertido
-fin funcion
-
-# Helper: clave de dict con valor minimo (asume no vacio).
-funcion _argmin_dict(d):
-    mejor_clave = nulo
-    mejor_valor = nulo
-    primero = verdadero
-    para k en claves(d):
-        v = d[k]
-        si primero o v < mejor_valor:
-            mejor_clave = k
-            mejor_valor = v
-            primero = falso
-        fin si
-    fin para
-    retornar mejor_clave
 fin funcion
 
 

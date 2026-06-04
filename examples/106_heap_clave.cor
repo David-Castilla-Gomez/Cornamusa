@@ -1,0 +1,111 @@
+# 106_heap_clave.cor — Heap con clave personalizada (v1.120).
+#
+# Desde v1.120, `coleccion.Heap` acepta un callable opcional como
+# segundo argumento (`clave`) que extrae el valor de comparacion.
+# Esto desbloquea heaps de listas, dicts, instancias — cualquier
+# cosa que no sea comparable directamente con `<`.
+
+importar coleccion
+
+# ─── 1. Cola de prioridad de tareas ─────────────────────────────
+
+imprimir("--- 1. Cola de prioridad ---")
+
+tareas = coleccion.Heap(lambda t: t["prioridad"])
+tareas.poner({"prioridad": 3, "tarea": "limpiar"})
+tareas.poner({"prioridad": 1, "tarea": "incendio"})
+tareas.poner({"prioridad": 2, "tarea": "deadline"})
+tareas.poner({"prioridad": 1, "tarea": "llamada urgente"})
+
+imprimir("Orden de atencion (prioridad 1 = max):")
+mientras no tareas.vacia():
+    t = tareas.sacar()
+    imprimir(f"   [{t['prioridad']}] {t['tarea']}")
+fin mientras
+imprimir("")
+
+
+# ─── 2. Top-K menores sin ordenar todo ──────────────────────────
+
+imprimir("--- 2. Top-3 alumnos con peor nota ---")
+
+alumnos = [
+    {"nombre": "Ana", "nota": 7.8},
+    {"nombre": "Luis", "nota": 4.5},
+    {"nombre": "Eva", "nota": 9.1},
+    {"nombre": "Marco", "nota": 3.2},
+    {"nombre": "Sofia", "nota": 6.7},
+    {"nombre": "Diego", "nota": 5.0},
+    {"nombre": "Carmen", "nota": 8.3},
+]
+
+h = coleccion.Heap(lambda a: a["nota"])
+para a en alumnos:
+    h.poner(a)
+fin para
+
+para i en rango(0, 3):
+    a = h.sacar()
+    imprimir(f"   {a['nombre']:<8} {a['nota']:.1f}")
+fin para
+imprimir("")
+
+
+# ─── 3. Max-heap negando la clave ───────────────────────────────
+
+imprimir("--- 3. Max-heap (ventas mas altas) ---")
+
+ventas = [
+    ["enero",   1450],
+    ["febrero", 1820],
+    ["marzo",   1675],
+    ["abril",   2010],
+    ["mayo",    1890],
+]
+
+# Negamos la clave para convertir min-heap en max-heap.
+maxh = coleccion.Heap(lambda v: -v[1])
+para v en ventas:
+    maxh.poner(v)
+fin para
+
+imprimir("Top 3 meses por ventas:")
+para i en rango(0, 3):
+    par = maxh.sacar()
+    imprimir(f"   {par[0]:<10} {par[1]} EUR")
+fin para
+imprimir("")
+
+
+# ─── 4. Mezclar listas ordenadas ────────────────────────────────
+
+imprimir("--- 4. Merge de 3 listas ordenadas ---")
+
+a = [1, 4, 7, 10]
+b = [2, 5, 8, 11]
+c = [3, 6, 9, 12]
+
+# Heap de [valor, indice_lista, indice_dentro_de_lista]
+# Clave = valor, pero asi evitamos comparar listas.
+fuentes = [a, b, c]
+heap = coleccion.Heap(lambda e: e[0])
+para i en rango(0, longitud(fuentes)):
+    si longitud(fuentes[i]) > 0:
+        heap.poner([fuentes[i][0], i, 0])
+    fin si
+fin para
+
+mezclado = []
+mientras no heap.vacia():
+    actual = heap.sacar()
+    valor = actual[0]
+    idx_lista = actual[1]
+    idx_dentro = actual[2]
+    agregar(mezclado, valor)
+    siguiente = idx_dentro + 1
+    si siguiente < longitud(fuentes[idx_lista]):
+        heap.poner([fuentes[idx_lista][siguiente], idx_lista, siguiente])
+    fin si
+fin mientras
+
+imprimir(f"   {mezclado}")

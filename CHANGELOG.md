@@ -6,6 +6,70 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.120.0] — 2026-06-04 — `Heap` con clave + Dijkstra O((V+E) log V)
+
+Cierra deuda técnica documentada en v1.119: `coleccion.Heap` acepta
+un callable opcional como `clave` que extrae el valor de comparación,
+y `grafos.dijkstra` / `camino_mas_corto` se refactorizan para usarlo.
+
+### `coleccion.Heap(clave=nulo)`
+
+Nuevo segundo parámetro opcional. Cuando se proporciona, las
+comparaciones internas usan `clave(a) < clave(b)` en vez de `a < b`.
+Compatible hacia atrás — sin clave el Heap se comporta exactamente
+igual que antes.
+
+```cornamusa
+# Cola de prioridad de tareas (prioridad 1 = más urgente):
+tareas = coleccion.Heap(lambda t: t["prioridad"])
+tareas.poner({"prioridad": 3, "tarea": "limpiar"})
+tareas.poner({"prioridad": 1, "tarea": "incendio"})
+tareas.poner({"prioridad": 2, "tarea": "deadline"})
+imprimir(tareas.sacar())   # {"prioridad": 1, "tarea": "incendio"}
+```
+
+Patrones desbloqueados:
+- Heap de listas/tuplas (`Heap(lambda p: p[0])`).
+- Heap de instancias o dicts por campo (`Heap(lambda x: x["nota"])`).
+- Max-heap negando la clave (`Heap(lambda x: -x)`).
+
+### `grafos.dijkstra` ahora es O((V+E) log V)
+
+Reescrito sobre `Heap(lambda par: par[0])` con entries `[distancia, nodo]`.
+Patrón clásico de **lazy deletion**: cuando sacamos una entrada cuyo
+nodo ya tiene mejor distancia en el dict, la descartamos sin
+explorar — evita tener que implementar `decrease-key` en el heap.
+
+Resultados verificados idénticos a la versión O(V²) sobre el mismo
+grafo (mapa de carreteras de Castilla: Madrid→Salamanca por Ávila,
+213 km).
+
+### Limitación que sigue: kwargs en constructores de clase
+
+`coleccion.Heap(clave=lambda x: x)` actualmente NO funciona — devuelve
+`ErrorDeTipo: keyword args solo soportados para funciones bytecode (no 'clase')`.
+Hay que usar posicional: `coleccion.Heap(lambda x: x)`. Es un hueco del
+runtime de clases, independiente de esta release. Documentado en el
+módulo y en el ejemplo.
+
+### Tests
+
+- `tests/unit/test_bytecode_heap_clave.c` — 8 bloques, 17+ asserts:
+  - Regresión: Heap sin clave sigue funcionando.
+  - Heap con clave sobre listas, dicts, negada (max-heap).
+  - `vista()` con clave, empates por clave.
+  - Regresión: `dijkstra` y `camino_mas_corto` con heap dan los
+    mismos resultados que la versión O(V²) anterior.
+
+Suite total: **303 tests, 100% verde**.
+
+### Ejemplo
+
+`examples/106_heap_clave.cor` — 4 secciones: cola de prioridad,
+top-K menores (peores notas), max-heap por ventas, merge de 3 listas
+ordenadas (algoritmo clásico que requiere comparar por valor pero
+mantener índices).
+
 ## [1.119.0] — 2026-06-04 — Stdlib `grafos`
 
 Nuevo módulo `stdlib/grafos.cor` con clase `Grafo` (dirigido o no

@@ -184,22 +184,28 @@ fin clase
 # y sacar; vista() es O(1). Por defecto es MIN-heap (sacar() devuelve
 # el menor). Para max-heap, insertar valores negados y negar al sacar.
 #
-# Uso:
+# v1.120: parametro opcional `clave` para comparar por una funcion
+# (estilo `key=` de Python). Permite heap de listas/tuplas/objetos
+# que no son comparables nativamente con `<`.
+#
+# Uso basico (comparacion directa: numeros, cadenas):
 #   importar coleccion
 #   h = coleccion.Heap()
 #   h.poner(5); h.poner(1); h.poner(3); h.poner(2)
 #   imprimir(h.sacar())   # 1
 #   imprimir(h.vista())   # 2 (siguiente mas pequeno)
 #
-# Acepta valores comparables con `<` directamente: numeros y
-# cadenas. Las tuplas y listas NO son comparables nativamente
-# en Cornamusa, asi que para priority queue conviene usar dos
-# heaps (uno de prioridades, mapa de prioridad -> lista de tareas)
-# o tener el Heap solo de IDs y un diccionario aparte.
+# Uso con clave (heap de pares [prioridad, dato]):
+#   tareas = coleccion.Heap(clave=lambda t: t[0])
+#   tareas.poner([3, "limpiar"])
+#   tareas.poner([1, "urgente"])
+#   tareas.poner([2, "media"])
+#   imprimir(tareas.sacar())   # [1, "urgente"]
 
 clase Heap:
-    funcion __iniciar__(yo):
+    funcion __iniciar__(yo, clave = nulo):
         yo._items = []
+        yo._clave = clave
     fin funcion
 
     funcion _hijo_izq(yo, i):
@@ -220,11 +226,21 @@ clase Heap:
         yo._items[j] = tmp
     fin funcion
 
+    # `verdadero` si _items[i] precede a _items[j] (i.e. i debe ir
+    # antes en el heap min). Centraliza la decision entre comparacion
+    # directa y comparacion por clave.
+    funcion _antes(yo, i, j):
+        si yo._clave == nulo:
+            retornar yo._items[i] < yo._items[j]
+        fin si
+        retornar yo._clave(yo._items[i]) < yo._clave(yo._items[j])
+    fin funcion
+
     # Burbujear hacia arriba el elemento en `i`.
     funcion _subir(yo, i):
         mientras i > 0:
             p = (i - 1) // 2
-            si yo._items[i] < yo._items[p]:
+            si yo._antes(i, p):
                 yo._intercambiar(i, p)
                 i = p
             sino:
@@ -240,10 +256,10 @@ clase Heap:
             izq = 2 * i + 1
             der = 2 * i + 2
             menor = i
-            si izq < n y yo._items[izq] < yo._items[menor]:
+            si izq < n y yo._antes(izq, menor):
                 menor = izq
             fin si
-            si der < n y yo._items[der] < yo._items[menor]:
+            si der < n y yo._antes(der, menor):
                 menor = der
             fin si
             si menor == i:

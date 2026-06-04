@@ -988,7 +988,7 @@ Estructuras de datos clásicas implementadas con clases sobre listas y diccionar
 - `Pila()` — LIFO. Métodos: `poner(x)`, `sacar()`, `vista()`, `vacia()`, `__longitud__`.
 - `Cola()` — FIFO. Métodos: `poner(x)`, `sacar()` (saca del frente), `vista()`, `vacia()`, `__longitud__`.
 - `ColaDoble()` — deque. Métodos: `poner_frente(x)`, `poner_final(x)`, `sacar_frente()`, `sacar_final()`, `vista_frente()`, `vista_final()`, `vacia()`, `__longitud__`.
-- `Heap()` (v1.116) — min-heap binario. Métodos: `poner(x)` y `sacar()` O(log n), `vista()` O(1), `vacia()`, `__longitud__`. Solo valores comparables con `<` nativamente (números y cadenas). Para max-heap, insertar valores negados; para priority queue con tuplas, usar dos estructuras.
+- `Heap(clave=nulo)` (v1.116, clave en v1.120) — min-heap binario. Métodos: `poner(x)` y `sacar()` O(log n), `vista()` O(1), `vacia()`, `__longitud__`. Sin `clave`, los elementos deben ser comparables con `<` nativamente (números, cadenas). Con `clave` (callable como `lambda p: p[0]`), compara `clave(a) < clave(b)` — desbloquea heaps de listas, tuplas, dicts o instancias por campo. Para max-heap, usar `Heap(lambda x: -x)`.
 - `Contador(items?)` (v1.116) — multiset estilo Counter. Métodos: `incrementar(x, n=1)`, `decrementar(x, n=1)` (elimina al llegar a 0), `obtener(x)` (defecto 0), `mas_comunes(n=nulo)` (ordenado descendente), `total()`, `items()` (lista de `[k, v]`), `__longitud__` (claves distintas). Acepta lista de items en el constructor para contar frecuencias directamente.
 
 Pila/Cola/ColaDoble lanzan `ErrorDeValor("X vacia")` al sacar de colección vacía. `Heap` lanza `ErrorDeValor("Heap vacio")` en `sacar`/`vista`. `Contador` jamás lanza por clave ausente — usa `obtener` (devuelve 0) o el operador `en`.
@@ -1059,7 +1059,7 @@ En grafos no dirigidos, agregar `u→v` crea automáticamente `v→u` con el mis
 **Algoritmos**:
 - `bfs(g, inicio)` → lista en orden de visita (`coleccion.Cola`).
 - `dfs(g, inicio)` → lista en preorden iterativo (`coleccion.Pila`).
-- `dijkstra(g, inicio)` → `dict` nodo→distancia. Solo nodos alcanzables aparecen. Lanza `ErrorDeValor` con peso negativo. O(V²) sobre dict de pendientes (heap especializado pendiente).
+- `dijkstra(g, inicio)` → `dict` nodo→distancia. Solo nodos alcanzables aparecen. Lanza `ErrorDeValor` con peso negativo. O((V+E) log V) usando `coleccion.Heap(clave=...)` con lazy deletion (desde v1.120).
 - `camino_mas_corto(g, inicio, finn)` → lista `[inicio, ..., finn]` o `[]`.
 - `componentes(g)` → lista de listas. En dirigidos calcula débilmente conexas.
 - `topologico(g)` → orden topológico por Kahn. Lanza si hay ciclo o si el grafo no es dirigido.
