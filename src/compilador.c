@@ -2956,7 +2956,6 @@ static bool compilar_mientras(Compilador *c, const Sent *s) {
         if (!pre_reservar_locales(c, s->como.mientras.cuerpo, s->linea))
             return false;
     }
-    (void)n_locales_entrada;  /* reservado por si hay que restaurar */
     int inicio_cond = c->actual->chunk->cuenta;
     if (!compilador_compilar_expr(c, s->como.mientras.condicion)) return false;
     int salto_salir = emitir_salto(c, OP_SALTAR_SI_FALSO, s->linea);
@@ -2980,6 +2979,26 @@ static bool compilar_mientras(Compilador *c, const Sent *s) {
     }
 
     cerrar_bucle(c, s->linea);
+
+    /* v1.130 fix: limpiar los locales pre-reservados al salir del while
+     * (mismo cleanup que compilar_para). Sin esto los slots quedaban
+     * vivos en el stack mientras el compilador creia que estaban
+     * libres, y un `para` interno colocado dentro de un `mientras`
+     * dentro de otro `para` exterior crasheaba con "OP_ITER_SIGUIENTE
+     * sin iterador en slot N" desde la segunda iteracion del exterior.
+     * Causa: el OP_NULO del pre_reservar se ejecutaba cada iteracion
+     * del exterior, creciendo el stack +N, y el slot calculado para
+     * $iter del `para` interno (en compile time) ya no apuntaba al
+     * iter en runtime. Workaround documentado en stdlib/grafos.cor:
+     * componentes (v1.119) usaba mientras+indice manual; eliminable
+     * tras este fix. */
+    {
+        int drops = c->actual->n_locales - n_locales_entrada;
+        for (int j = 0; j < drops; j++) {
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+        }
+    }
+    c->actual->n_locales = n_locales_entrada;
     return true;
 }
 

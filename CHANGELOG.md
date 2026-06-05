@@ -6,6 +6,101 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.130.0] — 2026-06-05 — Cierra el bug "OP_ITER_SIGUIENTE sin iterador en slot N"
+
+Bug documentado en v1.119 (`stdlib/grafos.cor:componentes`). La versión
+idiomática con `para` anidados crasheaba en la segunda iteración del
+exterior con:
+
+```
+estado interno corrupto
+OP_ITER_SIGUIENTE sin iterador en slot N
+```
+
+El workaround de v1.119 fue reescribir `componentes` y todos sus
+bucles internos como `mientras + índice manual` (`i = 0; mientras
+i < longitud(xs): ...; i = i + 1`), un patrón claramente no idiomático
+para un lenguaje cuyo selling point es la legibilidad. Documentado
+honestamente en el CHANGELOG de v1.119 como "bug del compilador para
+investigar más adelante".
+
+### Caso mínimo
+
+```cornamusa
+funcion f():
+    nodos = ["a", "b"]
+    para n en nodos:
+        cola = coleccion.Cola()
+        cola.poner(n)
+        mientras no cola.vacia():
+            cur = cola.sacar()       # asignacion NUEVA dentro del while
+            imprimir(cur)
+            para v en [1, 2]:        # `para` interno crashea aqui
+                imprimir(v)
+            fin para
+        fin mientras
+    fin para
+fin funcion
+```
+
+Antes de v1.130 imprimía `a, 1, 2, b` y crasheaba al entrar al `para v`
+de la segunda iteración. Tras v1.130 imprime `a, 1, 2, b, 1, 2`
+correctamente.
+
+### Root cause
+
+`compilar_mientras` en `src/compilador.c` llamaba a
+`pre_reservar_locales` para los locales del cuerpo (`cur`, etc.),
+emitiendo `OP_NULO + agregar_local` por cada uno — **pero nunca emitía
+los `OP_DESCARTAR` correspondientes al salir del bucle** (a diferencia
+de `compilar_para` que sí lo hace).
+
+Consecuencia: cuando el `mientras` está dentro de un `para` exterior,
+cada iteración del exterior re-ejecuta el `OP_NULO` del pre-reservado
+y el stack crece +N. El `compilar_para` interno calcula `slot` para su
+`$iter` en compile-time asumiendo `tope == n_locales`; en la segunda
+iteración del exterior ese slot apunta al `OP_NULO` del pre-reservado
+del while de iteraciones anteriores, no al iterador real.
+
+### Fix
+
+Añadir el mismo cleanup que `compilar_para` ya tenía al final de
+`compilar_mientras`:
+
+```c
+{
+    int drops = c->actual->n_locales - n_locales_entrada;
+    for (int j = 0; j < drops; j++) {
+        chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, s->linea);
+    }
+}
+c->actual->n_locales = n_locales_entrada;
+```
+
+Cuatro líneas. La constante `n_locales_entrada` ya se capturaba al
+inicio del helper pero nunca se usaba — solo había un `(void)
+n_locales_entrada` placeholder.
+
+### Limpieza posterior
+
+Restaurada la versión idiomática de `stdlib/grafos.cor:componentes`
+con `para n en g.nodos()`, `mientras no cola.vacia():`,
+`para vec en g.vecinos(cur):` y `para otro en g.nodos():` anidados.
+El código pasó de 47 líneas con índices manuales a 35 líneas con
+bucles `para` legibles.
+
+### Tests
+
+`tests/unit/test_bytecode_para_anidado_en_mientras.c` con 5 bloques:
+- Caso mínimo del bug (3 niveles de anidación).
+- Variante con tres niveles `para → mientras → para`, contando líneas
+  para verificar que NO hay crash silencioso.
+- Regresión: `mientras` simple sigue funcionando.
+- Regresión: `mientras` con `romper`.
+- Regresión: `grafos.componentes` (que ahora usa la versión idiomática).
+
+Suite: **327 tests verde**.
+
 ## [1.129.0] — 2026-06-05 — Star binding en destructuring (`a, *resto, c = lista`)
 
 El destructuring soportaba `a, b = par` y `a, b = b, a + b` desde v1.21,

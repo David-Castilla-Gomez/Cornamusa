@@ -327,53 +327,46 @@ fin funcion
 # En grafos dirigidos calcula componentes DEBILMENTE conexas:
 # trata las aristas como no dirigidas para el recorrido. Para
 # fuertemente conexas se necesita Tarjan/Kosaraju (futuro).
+#
+# v1.130: version original con `para` anidados. La version v1.119
+# usaba `mientras + indice manual` como workaround del bug
+# "OP_ITER_SIGUIENTE sin iterador en slot N"; el bug se cerro en
+# v1.130 (compilar_mientras ahora limpia sus locales pre-reservados
+# al salir, igual que compilar_para).
 funcion componentes(g):
     visitados = {}
     resultado = []
-    nodos_g = g.nodos()
-    i = 0
-    mientras i < longitud(nodos_g):
-        n = nodos_g[i]
-        i = i + 1
+    para n en g.nodos():
         si n en visitados:
             # ya tratado
         sino:
-            # Recorrido BFS en lista plana con indice de cabecera.
             comp = []
-            cola = [n]
-            cabeza = 0
+            cola = coleccion.Cola()
+            cola.poner(n)
             visitados[n] = verdadero
-            mientras cabeza < longitud(cola):
-                cur = cola[cabeza]
-                cabeza = cabeza + 1
+            mientras no cola.vacia():
+                cur = cola.sacar()
                 agregar(comp, cur)
                 # Vecinos hacia delante.
-                vecs = g.vecinos(cur)
-                j = 0
-                mientras j < longitud(vecs):
-                    vec = vecs[j]
-                    j = j + 1
+                para vec en g.vecinos(cur):
                     si no (vec en visitados):
                         visitados[vec] = verdadero
-                        agregar(cola, vec)
+                        cola.poner(vec)
                     fin si
-                fin mientras
+                fin para
                 # Vecinos hacia atras (solo importa en dirigidos).
                 si g._dirigido:
-                    k = 0
-                    mientras k < longitud(nodos_g):
-                        otro = nodos_g[k]
-                        k = k + 1
+                    para otro en g.nodos():
                         si no (otro en visitados) y (cur en g._ady[otro]):
                             visitados[otro] = verdadero
-                            agregar(cola, otro)
+                            cola.poner(otro)
                         fin si
-                    fin mientras
+                    fin para
                 fin si
             fin mientras
             agregar(resultado, comp)
         fin si
-    fin mientras
+    fin para
     retornar resultado
 fin funcion
 
