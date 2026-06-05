@@ -6,6 +6,69 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.128.0] — 2026-06-05 — Métodos sobre `conjunto`, `tupla` y `lista.indice_de`
+
+v1.122 introdujo la tabla `METODOS_NATIVOS` con 13 entradas iniciales
+(lista/cadena/dict). Pero **`conjunto` y `tupla` quedaron con 0
+entradas** — `{1, 2}.union({3})` fallaba con `'conjunto' no tiene
+atributos accesibles`. Esta release cierra esos huecos siguiendo el
+mismo patrón seguro: implementar nativas en C, registrarlas en la
+tabla, y un test unitario por método.
+
+### `conjunto` (9 entradas nuevas)
+
+- `agregar(x)` / `añadir(x)` (alias) — la nativa global `agregar` ya
+  soportaba conjuntos desde v1.16.1; ahora se expone como método.
+- `quitar(x)` — la nativa global `quitar` ya soportaba conjuntos.
+- `union(otro)` — conjunto nuevo con todos los elementos de ambos.
+- `interseccion(otro)` — conjunto nuevo con los elementos comunes,
+  iterando sobre el más pequeño (O(min)).
+- `diferencia(otro)` — conjunto nuevo con elementos en `self` pero no en `otro`.
+- `es_subconjunto(otro)` — booleano `self ⊆ otro`. Early-out si `|self| > |otro|`.
+- `contiene(x)` — booleano. Si `x` no es hashable devuelve `falso` (no lanza).
+- `copiar()` — shallow copy.
+
+### `tupla` (3 entradas nuevas)
+
+Las tuplas son inmutables, así que el set se limita a métodos de
+secuencia de consulta:
+
+- `contar(x)` — apariciones por igualdad.
+- `contiene(x)` — booleano (equivale a `x en t`).
+- `indice_de(x)` — primer índice o `-1`.
+
+### `lista.indice_de(x)` (bonus)
+
+Faltaba complemento a `lista.contar(x)` / `lista.contiene(x)` de
+v1.122 — para paridad con `cadena.indice_de` y la nueva
+`tupla.indice_de`. Devuelve la posición de la primera aparición o `-1`.
+
+### Implementación
+
+Las nativas nuevas (`nativa_conjunto_*`, `nativa_tupla_*`,
+`nativa_lista_indice_de`) están en `src/nativos.c` con un helper
+interno `_conj_copiar_todos` que clona todos los elementos de un
+conjunto en otro. `union`/`copiar` usan ese helper; `interseccion` y
+`diferencia` iteran y filtran con `conj_contiene`. Las tuplas y listas
+usan `valor_iguales` (mismo despachador de igualdad por dunder
+`__igual__` que el operador `==`).
+
+Tabla `METODOS_NATIVOS` pasa de **24 entradas a 37**.
+
+### Tests
+
+`tests/unit/test_bytecode_metodos_conjunto_tupla.c` con 12 bloques,
+~25 asserts:
+- Cardinalidad y pertenencia post-`union`/`interseccion`/`diferencia`.
+- `es_subconjunto` con casos verdadero/falso y conjunto vacío.
+- `copiar` es independiente (mutar el original no afecta a la copia).
+- `agregar`/`quitar` vía método (no solo global).
+- `tupla.contar` / `contiene` / `indice_de` con casos hit y miss.
+- `lista.indice_de` con cadenas.
+- Método no existente sobre conjunto sigue lanzando `ErrorDeTipo` atrapable.
+
+Suite: **325 tests verde**.
+
 ## [1.127.0] — 2026-06-05 — Completion en el LSP
 
 El LSP de Cornamusa ya implementaba `diagnostics`, `hover`, `definition`

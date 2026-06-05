@@ -4988,6 +4988,258 @@ static Valor nativa_dict_obtener(EvalError *err, int n_args, Valor *args,
 }
 
 /* ──────────────────────────────────────────────────────────────────
+ * v1.128: nativas adicionales para metodos sobre conjunto y tupla.
+ *
+ * Antes de v1.128 la tabla METODOS_NATIVOS no tenia entradas para
+ * VAL_CONJUNTO ni VAL_TUPLA. Esta release completa las operaciones
+ * canonicas de conjunto (union/interseccion/diferencia/es_subconjunto)
+ * mas un wrapper de pertenencia, y para tupla los tres metodos comunes
+ * de secuencia inmutable (contar/contiene/indice_de).
+ * ────────────────────────────────────────────────────────────────── */
+
+/* Helper privado: itera todos los elementos de `c` y los agrega a
+ * `dst`. Toma cada elemento con valor_clonar. */
+static bool _conj_copiar_todos(Conjunto *dst, const Conjunto *c,
+                                 EvalError *err, int linea, int columna) {
+    for (int i = 0; i < c->capacidad; i++) {
+        const EntradaConjunto *e = &c->entradas[i];
+        if (!e->ocupada) continue;
+        if (!conj_agregar(dst, valor_clonar(&e->elemento))) {
+            error_nativa(err, linea, columna, "memoria insuficiente");
+            return false;
+        }
+    }
+    return true;
+}
+
+/* conjunto_union(a, b) -> conjunto nuevo con todos los elementos de
+ * a y b. */
+static Valor nativa_conjunto_union(EvalError *err, int n_args, Valor *args,
+                                      int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_union(a, b) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CONJUNTO || args[1].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_union() requiere dos conjuntos");
+    }
+    Conjunto *r = conj_nuevo();
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+    if (!_conj_copiar_todos(r, args[0].como.conjunto, err, linea, columna)
+        || !_conj_copiar_todos(r, args[1].como.conjunto, err, linea, columna)) {
+        conj_liberar(r);
+        return valor_nulo();
+    }
+    return valor_conjunto(r);
+}
+
+/* conjunto_interseccion(a, b) -> conjunto nuevo con elementos en a Y b. */
+static Valor nativa_conjunto_interseccion(EvalError *err, int n_args,
+                                              Valor *args,
+                                              int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_interseccion(a, b) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CONJUNTO || args[1].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_interseccion() requiere dos conjuntos");
+    }
+    Conjunto *a = args[0].como.conjunto;
+    Conjunto *b = args[1].como.conjunto;
+    /* Iterar sobre el mas pequeno para minimizar trabajo (O(min)). */
+    Conjunto *menor = a, *mayor = b;
+    if (b->cuenta < a->cuenta) { menor = b; mayor = a; }
+    Conjunto *r = conj_nuevo();
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < menor->capacidad; i++) {
+        const EntradaConjunto *e = &menor->entradas[i];
+        if (!e->ocupada) continue;
+        if (conj_contiene(mayor, &e->elemento)) {
+            if (!conj_agregar(r, valor_clonar(&e->elemento))) {
+                conj_liberar(r);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+    }
+    return valor_conjunto(r);
+}
+
+/* conjunto_diferencia(a, b) -> conjunto nuevo con elementos en a pero NO en b. */
+static Valor nativa_conjunto_diferencia(EvalError *err, int n_args,
+                                            Valor *args,
+                                            int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_diferencia(a, b) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CONJUNTO || args[1].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_diferencia() requiere dos conjuntos");
+    }
+    Conjunto *a = args[0].como.conjunto;
+    Conjunto *b = args[1].como.conjunto;
+    Conjunto *r = conj_nuevo();
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+    for (int i = 0; i < a->capacidad; i++) {
+        const EntradaConjunto *e = &a->entradas[i];
+        if (!e->ocupada) continue;
+        if (!conj_contiene(b, &e->elemento)) {
+            if (!conj_agregar(r, valor_clonar(&e->elemento))) {
+                conj_liberar(r);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+    }
+    return valor_conjunto(r);
+}
+
+/* conjunto_es_subconjunto(a, b) -> verdadero si a ⊆ b. */
+static Valor nativa_conjunto_es_subconjunto(EvalError *err, int n_args,
+                                                Valor *args,
+                                                int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_es_subconjunto(a, b) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CONJUNTO || args[1].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_es_subconjunto() requiere dos conjuntos");
+    }
+    Conjunto *a = args[0].como.conjunto;
+    Conjunto *b = args[1].como.conjunto;
+    if (a->cuenta > b->cuenta) return valor_booleano(false);
+    for (int i = 0; i < a->capacidad; i++) {
+        const EntradaConjunto *e = &a->entradas[i];
+        if (!e->ocupada) continue;
+        if (!conj_contiene(b, &e->elemento)) return valor_booleano(false);
+    }
+    return valor_booleano(true);
+}
+
+/* conjunto_contiene(s, x) -> booleano. Wrapper de conj_contiene. */
+static Valor nativa_conjunto_contiene(EvalError *err, int n_args, Valor *args,
+                                          int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_contiene(s, x) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_contiene() requiere un conjunto");
+    }
+    if (!valor_es_hashable(&args[1])) {
+        return valor_booleano(false);
+    }
+    return valor_booleano(conj_contiene(args[0].como.conjunto, &args[1]));
+}
+
+/* conjunto_copiar(s) -> conjunto nuevo con los mismos elementos (shallow). */
+static Valor nativa_conjunto_copiar(EvalError *err, int n_args, Valor *args,
+                                        int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_copiar(s) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: conjunto_copiar() requiere un conjunto");
+    }
+    Conjunto *r = conj_nuevo();
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+    if (!_conj_copiar_todos(r, args[0].como.conjunto, err, linea, columna)) {
+        conj_liberar(r);
+        return valor_nulo();
+    }
+    return valor_conjunto(r);
+}
+
+/* tupla_contar(t, x) -> entero con apariciones por igualdad. */
+static Valor nativa_tupla_contar(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla_contar(t, x) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_TUPLA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla_contar() requiere una tupla");
+    }
+    Tupla *t = args[0].como.tupla;
+    long cnt = 0;
+    for (int i = 0; i < t->cuenta; i++) {
+        if (valor_iguales(&t->elementos[i], &args[1])) cnt++;
+    }
+    return valor_entero_de_i64(cnt);
+}
+
+/* tupla_contiene(t, x) -> booleano. Igual semantica que `x en t`. */
+static Valor nativa_tupla_contiene(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla_contiene(t, x) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_TUPLA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla_contiene() requiere una tupla");
+    }
+    Tupla *t = args[0].como.tupla;
+    for (int i = 0; i < t->cuenta; i++) {
+        if (valor_iguales(&t->elementos[i], &args[1])) {
+            return valor_booleano(true);
+        }
+    }
+    return valor_booleano(false);
+}
+
+/* tupla_indice_de(t, x) -> entero con el indice de la primera aparicion,
+ * o -1 si no esta. */
+static Valor nativa_tupla_indice_de(EvalError *err, int n_args, Valor *args,
+                                        int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla_indice_de(t, x) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_TUPLA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: tupla_indice_de() requiere una tupla");
+    }
+    Tupla *t = args[0].como.tupla;
+    for (int i = 0; i < t->cuenta; i++) {
+        if (valor_iguales(&t->elementos[i], &args[1])) {
+            return valor_entero_de_i64(i);
+        }
+    }
+    return valor_entero_de_i64(-1);
+}
+
+/* lista_indice_de(xs, x) -> entero con el indice de la primera aparicion,
+ * o -1 si no esta. v1.128: completa lista.contar/contiene de v1.122 con
+ * indice_de para paridad con cadena.indice_de y tupla.indice_de. */
+static Valor nativa_lista_indice_de(EvalError *err, int n_args, Valor *args,
+                                        int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_indice_de(xs, x) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: lista_indice_de() requiere una lista");
+    }
+    Lista *l = args[0].como.lista;
+    for (int i = 0; i < l->cuenta; i++) {
+        if (valor_iguales(&l->elementos[i], &args[1])) {
+            return valor_entero_de_i64(i);
+        }
+    }
+    return valor_entero_de_i64(-1);
+}
+
+/* ──────────────────────────────────────────────────────────────────
  * Hashing (v1.60) — motor en src/hashing.c.
  *
  * Wrappers de SHA-256 y MD5. Ambos toman una cadena (los bytes
@@ -5828,11 +6080,26 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_CADENA,     "recortar",    8,  nativa_cadena_recortar},  /* v1.122 */
     {VAL_CADENA,     "contiene",    8,  nativa_cadena_contiene},  /* v1.122 */
     {VAL_CADENA,     "unir",        4,  nativa_cadena_unir_metodo},/* v1.122 */
+    {VAL_LISTA,      "indice_de",   9, nativa_lista_indice_de},   /* v1.128 */
     /* Diccionarios */
     {VAL_DICCIONARIO, "claves",     6, nativa_claves},
     {VAL_DICCIONARIO, "valores",    7, nativa_valores},
     {VAL_DICCIONARIO, "items",      5, nativa_dict_items},        /* v1.122 */
     {VAL_DICCIONARIO, "obtener",    7, nativa_dict_obtener},      /* v1.122 */
+    /* Conjuntos (v1.128) */
+    {VAL_CONJUNTO, "agregar",        7, nativa_agregar},  /* nativa global ya acepta conj */
+    {VAL_CONJUNTO, "añadir",         7, nativa_agregar},  /* 7 bytes UTF-8 */
+    {VAL_CONJUNTO, "quitar",         6, nativa_quitar},
+    {VAL_CONJUNTO, "union",          5, nativa_conjunto_union},
+    {VAL_CONJUNTO, "interseccion",  12, nativa_conjunto_interseccion},
+    {VAL_CONJUNTO, "diferencia",    10, nativa_conjunto_diferencia},
+    {VAL_CONJUNTO, "es_subconjunto",14, nativa_conjunto_es_subconjunto},
+    {VAL_CONJUNTO, "contiene",       8, nativa_conjunto_contiene},
+    {VAL_CONJUNTO, "copiar",         6, nativa_conjunto_copiar},
+    /* Tuplas (v1.128) */
+    {VAL_TUPLA,    "contar",         6, nativa_tupla_contar},
+    {VAL_TUPLA,    "contiene",       8, nativa_tupla_contiene},
+    {VAL_TUPLA,    "indice_de",      9, nativa_tupla_indice_de},
 };
 #define N_METODOS_NATIVOS \
     (int)(sizeof(METODOS_NATIVOS) / sizeof(METODOS_NATIVOS[0]))

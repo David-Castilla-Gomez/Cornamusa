@@ -220,6 +220,7 @@ Los tipos built-in exponen métodos directamente. Despachados a las nativas glob
 - (v1.122) `contar(x)` — cuenta apariciones por igualdad.
 - (v1.122) `contiene(x)` — booleano (equivalente al operador `x en xs`).
 - (v1.122) `copiar()` — shallow copy.
+- (v1.128) `indice_de(x)` — devuelve el índice de la primera aparición o `-1`.
 
 ### `cadena`
 
@@ -236,6 +237,23 @@ Los tipos built-in exponen métodos directamente. Despachados a las nativas glob
 - `claves()`, `valores()`.
 - (v1.122) `items()` — lista de `[clave, valor]` en orden de inserción. Iterable con `para par en d.items():`.
 - (v1.122) `obtener(clave, defecto)` — devuelve el valor o `defecto` si no existe. NO lanza `ErrorDeClave`.
+
+### `conjunto` (v1.128)
+
+- `agregar(x)` / `añadir(x)` (alias) — añade elemento (sin duplicar).
+- `quitar(x)` — elimina; lanza `ErrorDeValor` si no estaba.
+- `union(otro)` — conjunto nuevo con todos los elementos de ambos.
+- `interseccion(otro)` — conjunto nuevo con los elementos comunes. O(min).
+- `diferencia(otro)` — conjunto nuevo con los elementos en `self` pero no en `otro`.
+- `es_subconjunto(otro)` — booleano, `self ⊆ otro`.
+- `contiene(x)` — booleano. Si `x` no es hashable devuelve `falso` sin lanzar.
+- `copiar()` — shallow copy.
+
+### `tupla` (v1.128)
+
+- `contar(x)` — apariciones por igualdad.
+- `contiene(x)` — booleano (equivalente al operador `x en t`).
+- `indice_de(x)` — índice de la primera aparición o `-1`.
 
 ---
 
