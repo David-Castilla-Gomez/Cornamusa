@@ -3648,6 +3648,54 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         return VM_ERROR_RUNTIME;
                     }
                     r = valor_cadena_duplicar(texto + p, (int)cons);
+                } else if (obj.tipo == VAL_RANGO) {
+                    /* v1.131: indexar un rango lazy. inicio + i * paso
+                     * con indices negativos desde el final. Restriccion:
+                     * inicio, fin y paso deben caber en int64 (el caso
+                     * comun; si no, error claro). */
+                    if (!valor_es_entero(&key) && key.tipo != VAL_BOOLEANO) {
+                        VM_ERROR("ErrorDeTipo: indice de rango debe ser entero, no '%s'",
+                                 valor_nombre_tipo(&key));
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    int64_t key_i64;
+                    if (key.tipo == VAL_BOOLEANO) key_i64 = key.como.booleano ? 1 : 0;
+                    else if (!valor_entero_a_i64(&key, &key_i64)) {
+                        VM_ERROR("ErrorDeValor: indice de rango fuera de int64");
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    /* Extraer inicio/fin/paso como int64. */
+                    if (mp_count_bits(obj.como.rango.inicio) > 62
+                        || mp_count_bits(obj.como.rango.fin) > 62
+                        || mp_count_bits(obj.como.rango.paso) > 62) {
+                        VM_ERROR("ErrorDeValor: rango bignum no indexable directamente");
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    int64_t ini = mp_get_i64(obj.como.rango.inicio);
+                    int64_t fin = mp_get_i64(obj.como.rango.fin);
+                    int64_t paso = mp_get_i64(obj.como.rango.paso);
+                    /* Calcular total de elementos del rango. */
+                    int64_t total;
+                    if (paso > 0) {
+                        total = (fin > ini) ? ((fin - ini + paso - 1) / paso) : 0;
+                    } else {
+                        /* paso < 0 (paso == 0 imposible: detectado al construir). */
+                        total = (ini > fin) ? ((ini - fin + (-paso) - 1) / (-paso)) : 0;
+                    }
+                    /* Indice negativo cuenta desde el final. */
+                    int64_t idx = key_i64;
+                    if (idx < 0) idx += total;
+                    if (idx < 0 || idx >= total) {
+                        VM_ERROR("ErrorDeIndice: indice fuera de rango (rango de %lld)",
+                                 (long long)total);
+                        valor_destruir(&key); valor_destruir(&obj);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    int64_t valor_i = ini + idx * paso;
+                    r = valor_entero_de_i64(valor_i);
                 } else {
                     VM_ERROR("ErrorDeTipo: '%s' no es indexable",
                              valor_nombre_tipo(&obj));
@@ -3733,13 +3781,57 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 Valor obj      = sacar(vm);
 
                 if (obj.tipo != VAL_LISTA && obj.tipo != VAL_CADENA
-                    && obj.tipo != VAL_TUPLA) {
+                    && obj.tipo != VAL_TUPLA && obj.tipo != VAL_RANGO) {
                     VM_ERROR("ErrorDeTipo: '%s' no soporta slicing",
                              valor_nombre_tipo(&obj));
                     valor_destruir(&obj); valor_destruir(&inicio_v);
                     valor_destruir(&fin_v); valor_destruir(&paso_v);
                     RAISE_OR_DIE();
                     break;
+                }
+                /* v1.131: materializar rango -> lista para reusar el
+                 * codigo existente. La conversion solo funciona si
+                 * inicio/fin/paso caben en int64; rangos bignum
+                 * masivos se rechazan con error claro. */
+                if (obj.tipo == VAL_RANGO) {
+                    if (mp_count_bits(obj.como.rango.inicio) > 62
+                        || mp_count_bits(obj.como.rango.fin) > 62
+                        || mp_count_bits(obj.como.rango.paso) > 62) {
+                        VM_ERROR("ErrorDeValor: rango bignum no es slice-able directamente");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    int64_t ini = mp_get_i64(obj.como.rango.inicio);
+                    int64_t fr = mp_get_i64(obj.como.rango.fin);
+                    int64_t ps = mp_get_i64(obj.como.rango.paso);
+                    int64_t cuenta;
+                    if (ps > 0) {
+                        cuenta = (fr > ini) ? ((fr - ini + ps - 1) / ps) : 0;
+                    } else {
+                        cuenta = (ini > fr) ? ((ini - fr + (-ps) - 1) / (-ps)) : 0;
+                    }
+                    if (cuenta < 0 || cuenta > INT_MAX) {
+                        VM_ERROR("ErrorDeValor: rango demasiado grande para materializar (%lld elementos)",
+                                 (long long)cuenta);
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    Lista *materializada = lista_nueva((int)cuenta);
+                    if (!materializada) {
+                        VM_ERROR("memoria insuficiente al materializar rango");
+                        valor_destruir(&obj); valor_destruir(&inicio_v);
+                        valor_destruir(&fin_v); valor_destruir(&paso_v);
+                        return VM_ERROR_RUNTIME;
+                    }
+                    int64_t v = ini;
+                    for (int64_t k = 0; k < cuenta; k++) {
+                        lista_agregar(materializada, valor_entero_de_i64(v));
+                        v += ps;
+                    }
+                    valor_destruir(&obj);
+                    obj = valor_lista(materializada);
                 }
 
                 long paso = 1;

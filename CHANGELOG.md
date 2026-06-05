@@ -6,6 +6,62 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.131.0] — 2026-06-05 — `OP_INDICE` y `OP_REBANADA` sobre `rango`
+
+Cierra la limitación que documenté honestamente en v1.129: el
+destructuring star sobre rango (`a, *m, b = rango(0, 5)`) fallaba con
+`'rango' no soporta slicing`, obligando a envolver en
+`lista(rango(...))`. También `rango(0, 10)[3]` daba `'rango' no es
+indexable`.
+
+```cornamusa
+r = rango(0, 10)
+imprimir(r[3])         # 3
+imprimir(r[-1])        # 9
+imprimir(r[2:5])       # [2, 3, 4]
+imprimir(r[::2])       # [0, 2, 4, 6, 8]
+imprimir(r[::-1])      # [9, 8, 7, 6, 5, 4, 3, 2, 1, 0]
+
+# Con paso > 1:
+imprimir(rango(0, 20, 3)[2])   # 6 (valores: 0, 3, 6, 9, ...)
+
+# Destructuring star directo, sin envolver en lista():
+a, *m, b = rango(0, 5)         # a=0, m=[1, 2, 3], b=4
+```
+
+### Implementación
+
+**`OP_INDICE` sobre `VAL_RANGO`** (`src/vm.c`): extrae `inicio`,
+`fin`, `paso` como `int64` usando `mp_get_i64`. Calcula
+`total = ceil((fin - inicio) / paso)` con cuidado del signo del paso.
+Si el índice es negativo suma `total`. Devuelve `inicio + idx * paso`
+como entero (normalizado a `VAL_ENTERO_SMALL` si cabe).
+
+**`OP_REBANADA` sobre `VAL_RANGO`**: materializa el rango en una
+`Lista` temporal con `valor_entero_de_i64` por cada valor, luego
+reusa el código existente de slicing de listas (devuelve una nueva
+lista con los elementos seleccionados). Más simple que duplicar la
+lógica de clamp e iteración.
+
+### Limitaciones
+
+Solo funciona si `inicio`, `fin` y `paso` caben en `int64`
+(`mp_count_bits <= 62`). Rangos bignum masivos
+(`rango(0, 2**100, 1)`) rechazados con error claro:
+`ErrorDeValor: rango bignum no es slice-able directamente`. Para
+rangos así, materializar antes con `lista(rango(...))` (que también
+fallaría por OOM en el caso real).
+
+### Tests
+
+`tests/unit/test_bytecode_rango_indexable.c` con 10 bloques:
+índice positivo/negativo, con paso > 1, descendente, slice básico,
+slice con paso, slice invertido `[::-1]`, destructuring star sobre
+rango (la motivación), destructuring sin star, regresión de
+`longitud(rango)`.
+
+Suite: **328 tests verde**.
+
 ## [1.130.0] — 2026-06-05 — Cierra el bug "OP_ITER_SIGUIENTE sin iterador en slot N"
 
 Bug documentado en v1.119 (`stdlib/grafos.cor:componentes`). La versión

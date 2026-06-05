@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.130.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.131.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -235,6 +235,7 @@ Hoja de ruta resumida:
 | **v1.128** | **Métodos nativos sobre `conjunto` (union/interseccion/diferencia/...) y `tupla` (contar/contiene/indice_de) + `lista.indice_de`** | ✅ |
 | **v1.129** | **Star binding en destructuring: `a, *resto, c = lista`. OP_REBANADA acepta tuplas (devuelve lista)** | ✅ |
 | **v1.130** | **Cierra bug `OP_ITER_SIGUIENTE sin iterador en slot N` con `para` en `mientras` en `para`. Limpia workaround en `stdlib/grafos.cor`** | ✅ |
+| **v1.131** | **`OP_INDICE` y `OP_REBANADA` sobre `rango`: `rango(0, 10)[3]`, `r[2:5]`, `a, *m, b = rango(0, 5)`** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.
