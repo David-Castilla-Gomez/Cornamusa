@@ -5779,6 +5779,13 @@ void nativos_registrar_dicc(Diccionario *globales) {
     }
 }
 
+void nativos_iterar_nombres(void (*cb)(const char *, int, void *), void *ctx) {
+    if (!cb) return;
+    for (int i = 0; i < N_NATIVAS; i++) {
+        cb(NATIVAS[i].nombre, NATIVAS[i].longitud, ctx);
+    }
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * v1.122: tabla de metodos sobre tipos nativos.
  *

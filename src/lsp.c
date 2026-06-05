@@ -10,6 +10,7 @@
 #include "json_min.h"
 #include "lexer.h"
 #include "linter.h"
+#include "nativos.h"
 #include "parser.h"
 
 /* ──────────────────────────────────────────────────────────────────
@@ -281,11 +282,17 @@ static void responder_initialize(long id) {
                 json_buf_key(&b, "definitionProvider"); json_buf_bool(&b, true);
                 /* v1.54: formatting via formateador integrado. */
                 json_buf_key(&b, "documentFormattingProvider"); json_buf_bool(&b, true);
+                /* v1.127: completion sobre nativas, keywords y top-level del doc. */
+                json_buf_key(&b, "completionProvider");
+                json_buf_obj_start(&b);
+                    /* No triggerCharacters: solo se dispara con ctrl-space / API. */
+                    json_buf_key(&b, "resolveProvider"); json_buf_bool(&b, false);
+                json_buf_obj_end(&b);
             json_buf_obj_end(&b);
             json_buf_key(&b, "serverInfo");
             json_buf_obj_start(&b);
                 json_buf_key(&b, "name");    json_buf_string(&b, "cornamusa-lsp");
-                json_buf_key(&b, "version"); json_buf_string(&b, "1.54.0");
+                json_buf_key(&b, "version"); json_buf_string(&b, "1.127.0");
             json_buf_obj_end(&b);
         json_buf_obj_end(&b);
     json_buf_obj_end(&b);
@@ -883,6 +890,125 @@ static void responder_formatting(DocStore *store, long id, JsonValue *params) {
     formato_resultado_destruir(&r);
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * Completion (v1.127).
+ *
+ * Devuelve CompletionList con:
+ *  - todas las nativas globales (iterando `nativos_iterar_nombres`)
+ *  - keywords del lenguaje (lista alineada con buscar_keyword en lexer.c)
+ *  - funciones y clases top-level del documento abierto
+ *
+ * `isIncomplete = false` — devolvemos todo, el cliente filtra por prefijo.
+ * LSP CompletionItemKind: 3=Function, 7=Class, 14=Keyword.
+ * ────────────────────────────────────────────────────────────────── */
+
+static const char *KEYWORDS_LSP[] = {
+    "asincrono","atrapar","borrar","clase","coincidir","como","con",
+    "continuar","cuando","desde","en","es","esperar","extiende","falso",
+    "fin","finalmente","funcion","global","importar","intentar","lambda",
+    "lanzar","mientras","no","nolocal","nulo","para","pasar","producir",
+    "retornar","romper","si","sino","super","verdadero", NULL
+};
+
+typedef struct {
+    JsonBuf *b;
+} ColectorLSP;
+
+/* json_buf ya emite comas entre objetos del mismo array via su stack
+ * interno (buf_emit_comma_if_needed). No hace falta tracking manual. */
+static void emit_item(ColectorLSP *col, const char *label, int label_len,
+                        int kind, const char *detail) {
+    (void)label_len;  /* las fuentes son NUL-terminadas */
+    json_buf_obj_start(col->b);
+        json_buf_key(col->b, "label");
+        json_buf_string(col->b, label);
+        json_buf_key(col->b, "kind"); json_buf_int(col->b, kind);
+        if (detail) {
+            json_buf_key(col->b, "detail"); json_buf_string(col->b, detail);
+        }
+    json_buf_obj_end(col->b);
+}
+
+typedef struct {
+    ColectorLSP *col;
+} CallbackCtx;
+
+static void cb_nativa(const char *nombre, int longitud, void *ctx) {
+    CallbackCtx *cc = (CallbackCtx *)ctx;
+    emit_item(cc->col, nombre, longitud, 3, "funcion nativa");
+}
+
+static void responder_completion(DocStore *store, long id, JsonValue *params) {
+    JsonBuf b; json_buf_init(&b);
+    json_buf_obj_start(&b);
+        json_buf_key(&b, "jsonrpc"); json_buf_string(&b, "2.0");
+        json_buf_key(&b, "id");      json_buf_int(&b, id);
+        json_buf_key(&b, "result");
+        json_buf_obj_start(&b);
+            json_buf_key(&b, "isIncomplete"); json_buf_bool(&b, false);
+            json_buf_key(&b, "items");
+            json_buf_arr_start(&b);
+
+            ColectorLSP col = { .b = &b };
+
+            /* 1. Nativas globales. */
+            CallbackCtx cc = { .col = &col };
+            nativos_iterar_nombres(cb_nativa, &cc);
+
+            /* 2. Keywords del lenguaje. */
+            for (const char **kw = KEYWORDS_LSP; *kw; kw++) {
+                emit_item(&col, *kw, (int)strlen(*kw), 14, "keyword");
+            }
+
+            /* 3. Top-level del documento abierto: funcion/clase. */
+            JsonValue *td = params ? json_obj_get(params, "textDocument") : NULL;
+            if (td) {
+                const char *uri = json_string(json_obj_get(td, "uri"));
+                int idx = uri ? docstore_find(store, uri) : -1;
+                if (idx >= 0) {
+                    const char *texto = store->docs[idx].text;
+                    Lexer l;  lexer_iniciar(&l, texto, uri);
+                    Arena a;  arena_iniciar(&a, 16384);
+                    Parser p; parser_iniciar(&p, &l, &a, texto, uri);
+                    ErroresParser perrs = {0};
+                    p.capturar_errores = true;
+                    p.errores_capturados = &perrs;
+                    int n = 0;
+                    Sent **sents = parser_parsear_programa(&p, &n);
+                    if (!p.tuvo_error) {
+                        for (int i = 0; i < n; i++) {
+                            Sent *s = sents[i];
+                            if (!s) continue;
+                            if (s->tipo == SENT_FUNCION) {
+                                /* Nombres no NUL-terminados — copiamos. */
+                                char buf[128];
+                                int len = s->como.funcion.longitud_nombre;
+                                if (len > 127) len = 127;
+                                memcpy(buf, s->como.funcion.nombre, (size_t)len);
+                                buf[len] = '\0';
+                                emit_item(&col, buf, len, 3, "funcion (este archivo)");
+                            } else if (s->tipo == SENT_CLASE) {
+                                char buf[128];
+                                int len = s->como.clase.longitud_nombre;
+                                if (len > 127) len = 127;
+                                memcpy(buf, s->como.clase.nombre, (size_t)len);
+                                buf[len] = '\0';
+                                emit_item(&col, buf, len, 7, "clase (este archivo)");
+                            }
+                        }
+                    }
+                    parser_errores_liberar(&perrs);
+                    arena_destruir(&a);
+                }
+            }
+
+            json_buf_arr_end(&b);
+        json_buf_obj_end(&b);
+    json_buf_obj_end(&b);
+    if (b.data) enviar_mensaje(b.data, b.len);
+    json_buf_free(&b);
+}
+
 int lsp_run(void) {
     DocStore store = { .n = 0 };
     bool shutdown_recibido = false;
@@ -930,6 +1056,8 @@ int lsp_run(void) {
             if (tiene_id) responder_definition(&store, id, params_v);
         } else if (strcmp(method, "textDocument/formatting") == 0) {
             if (tiene_id) responder_formatting(&store, id, params_v);
+        } else if (strcmp(method, "textDocument/completion") == 0) {
+            if (tiene_id) responder_completion(&store, id, params_v);
         }
         /* Otros metodos: ignorados silenciosamente (LSP permite que el
          * servidor no implemente todo). Para requests deberiamos

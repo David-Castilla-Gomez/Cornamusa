@@ -43,6 +43,15 @@ FnNativa nativos_buscar_metodo(TipoValor tipo, const char *nombre, int len,
                                   const char **nombre_out);
 
 /*
+ * v1.127: itera los nombres de TODAS las nativas globales registradas.
+ * Llama `cb(nombre, longitud, ctx)` por cada entrada. Util para
+ * autocompletado de editores (LSP) cuando no hay Entorno disponible.
+ */
+void nativos_iterar_nombres(void (*cb)(const char *nombre, int longitud,
+                                          void *ctx),
+                              void *ctx);
+
+/*
  * Configura los argumentos del proceso visibles desde Cornamusa via
  * `obtener_argv()` (y por tanto `sistema.argv`). Se llama desde main.c
  * antes de ejecutar el programa, pasándole los args ya filtrados (sin

@@ -6,6 +6,56 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.127.0] — 2026-06-05 — Completion en el LSP
+
+El LSP de Cornamusa ya implementaba `diagnostics`, `hover`, `definition`
+y `formatting`. Faltaba `completion` — la pieza más usada del LSP por
+los editores.
+
+### Capabilities
+
+`initialize` ahora anuncia:
+
+```json
+{ "completionProvider": { "resolveProvider": false } }
+```
+
+Sin `triggerCharacters`: la completion se dispara con Ctrl-Space o
+cuando el cliente la pide explícitamente.
+
+### Items devueltos
+
+`textDocument/completion` responde con una `CompletionList`
+(`isIncomplete: false`) que incluye:
+
+1. **Todas las nativas globales** (~119) con `kind: 3` (Function) y
+   `detail: "funcion nativa"`. Se itera con la nueva API pública
+   `nativos_iterar_nombres` en `src/nativos.h`.
+2. **36 keywords del lenguaje** (`si`, `sino`, `mientras`, `funcion`,
+   `clase`, etc.) con `kind: 14` (Keyword). Lista alineada con
+   `buscar_keyword` en `src/lexer.c`.
+3. **Funciones y clases top-level** del documento abierto, parseando
+   el texto on-demand con el mismo arena + parser que ya usan `hover`
+   y `definition`. `kind: 3` para funciones, `kind: 7` para clases,
+   `detail: "funcion/clase (este archivo)"`.
+
+`isIncomplete = false` significa que devolvemos toda la lista; el
+cliente filtra por prefijo. Es el approach simple y barato que funciona
+bien para corpus pequeño/medio — ~160 items por completion request.
+
+### Tests
+
+`tests/integracion/lsp_completion.py` lanza el LSP como subproceso,
+hace `initialize` + `didOpen` con un .cor que define `funcion saludar`
+y `clase Persona`, pide completion, verifica que la respuesta incluye
+nativas conocidas (`imprimir`, `longitud`), keywords (`si`, `funcion`)
+y los símbolos top-level (`saludar`, `Persona`).
+
+Registrado en CMake con `find_package(Python3 ... QUIET)`; si Python
+no está disponible el test se omite silenciosamente.
+
+Suite: **324 tests verde**.
+
 ## [1.126.0] — 2026-06-05 — Autocompletado con TAB en el REPL
 
 El REPL ya tenía historial persistente, edición de línea con cursores

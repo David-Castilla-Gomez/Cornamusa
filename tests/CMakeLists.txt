@@ -817,6 +817,22 @@ foreach(ej ${EJEMPLOS_DIFERENCIALES})
 endforeach()
 
 
+# ───── v1.127: LSP completion smoke ─────
+# Lanza el LSP con un .cor de prueba y comprueba que la respuesta a
+# textDocument/completion incluye nativas, keywords y los simbolos
+# top-level del documento abierto. Requiere Python; si no esta
+# disponible, el test se omite silenciosamente.
+find_package(Python3 COMPONENTS Interpreter QUIET)
+if(Python3_FOUND)
+    add_test(
+        NAME lsp_completion
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_SOURCE_DIR}/tests/integracion/lsp_completion.py
+                $<TARGET_FILE:cornamusa>
+    )
+    set_tests_properties(lsp_completion PROPERTIES LABELS "integracion")
+endif()
+
 # ───── v1.122: smoke de docs/referencia-stdlib.md (fase 5) ─────
 # Invoca una funcion representativa de cada modulo de la stdlib y
 # verifica el resultado. Si la doc cita un nombre que no existe (typo
