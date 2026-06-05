@@ -95,6 +95,13 @@ typedef enum {
        `si (n := f()) > 0:` y patrones similares. Solo IDENT como
        destino (no atributos ni indices). */
     EXPR_WALRUS,
+
+    /* v1.129: star binding en destructuring — `*nombre` en
+       `a, *resto, b = iterable`. Solo válido como destino en una
+       asignacion tupla; solo puede haber UNO por destructuring. El
+       compilador (emitir_destructuring) reconoce este nodo y emite
+       slicing en runtime para recolectar los elementos centrales. */
+    EXPR_STAR_BIND,
 } TipoExpr;
 
 struct Expr {
@@ -233,6 +240,14 @@ struct Expr {
             Expr *valor;
         } walrus;
 
+        /* v1.129: star binding en destructuring `a, *resto, b = it`.
+         * Solo se reconoce como destino dentro de una asignacion tupla;
+         * en cualquier otro contexto el compilador rechaza. */
+        struct {
+            const char *nombre;
+            int longitud;
+        } star_bind;
+
         /*
          * F-cadena descompuesta en partes (v1.1).
          *
@@ -318,6 +333,7 @@ Expr *expr_logica(Arena *a, Expr *izq, bool es_y, Expr *der, int linea, int col)
 Expr *expr_ternaria(Arena *a, Expr *si_si, Expr *cond, Expr *si_no, int linea, int col);
 /* v1.113 */
 Expr *expr_walrus(Arena *a, const char *nombre, int longitud, Expr *valor, int linea, int col);
+Expr *expr_star_bind(Arena *a, const char *nombre, int longitud, int linea, int col);
 Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, int col);
 Expr *expr_atributo(Arena *a, Expr *objeto, const char *nombre, int len, int linea, int col);
 Expr *expr_grupo(Arena *a, Expr *interna, int linea, int col);

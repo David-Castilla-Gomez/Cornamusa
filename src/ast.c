@@ -110,6 +110,17 @@ Expr *expr_walrus(Arena *a, const char *nombre, int longitud, Expr *valor,
     return e;
 }
 
+/* v1.129: star binding `*nombre` en destructuring. */
+Expr *expr_star_bind(Arena *a, const char *nombre, int longitud,
+                       int linea, int col) {
+    Expr *e = nuevo_expr(a, EXPR_STAR_BIND, linea, col);
+    if (e) {
+        e->como.star_bind.nombre = nombre;
+        e->como.star_bind.longitud = longitud;
+    }
+    return e;
+}
+
 Expr *expr_llamada(Arena *a, Expr *callee, Expr **args, int n_args, int linea, int col) {
     Expr *e = nuevo_expr(a, EXPR_LLAMADA, linea, col);
     if (e) {

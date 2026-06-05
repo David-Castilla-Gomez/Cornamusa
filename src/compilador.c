@@ -1666,75 +1666,129 @@ static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
          >= 0  : indice de slot LOCAL (nuevo pre-reservado o existente).
          == -1 : destino anidado (TUPLA/LISTA), gestion recursiva.
          <= -100 : indice de UPVALUE codificado como -100 - upv. */
+    /* v1.129: detectar star binding `*nombre` entre los destinos. Solo
+       UNO permitido. Su presencia cambia la check de aridad (>= n-1 en
+       vez de == n) y el extractor del i-esimo elemento. */
+    int star_idx = -1;
+    for (int i = 0; i < n; i++) {
+        if (elementos[i]->tipo == EXPR_STAR_BIND) {
+            if (star_idx >= 0) {
+                error_compilacion(c, linea, 0,
+                    "ErrorDeSintaxis: solo se permite un '*' en destructuring");
+                free(slots_destinos);
+                return false;
+            }
+            star_idx = i;
+        }
+    }
+
     int n_nuevos_slots = 0;  /* contador de slots nuevos por encima de slot_iter */
     if (en_funcion) {
         for (int i = 0; i < n; i++) {
-            if (elementos[i]->tipo != EXPR_IDENT) {
-                slots_destinos[i] = -1;  /* anidado, no reserva aquí */
+            const Expr *dst = elementos[i];
+            const char *nm; int nm_len;
+            if (dst->tipo == EXPR_IDENT) {
+                nm = dst->como.ident.nombre;
+                nm_len = dst->como.ident.longitud;
+            } else if (dst->tipo == EXPR_STAR_BIND) {
+                nm = dst->como.star_bind.nombre;
+                nm_len = dst->como.star_bind.longitud;
+            } else {
+                slots_destinos[i] = -1;  /* anidado, recursion */
                 continue;
             }
-            int existente = buscar_local(c->actual,
-                                            elementos[i]->como.ident.nombre,
-                                            elementos[i]->como.ident.longitud);
+            int existente = buscar_local(c->actual, nm, nm_len);
             if (existente >= 0) {
                 slots_destinos[i] = existente;
                 continue;
             }
-            int upv = resolver_upvalue(c, c->actual,
-                                            elementos[i]->como.ident.nombre,
-                                            elementos[i]->como.ident.longitud,
-                                            linea);
+            int upv = resolver_upvalue(c, c->actual, nm, nm_len, linea);
             if (upv >= 0) {
                 slots_destinos[i] = -100 - upv;
                 continue;
             }
-            /* Variable nueva en este scope: pre-reservar slot con OP_NULO
-               para que despues OP_ASIGNAR_LOCAL pop el valor extraido. */
             chunk_emitir_byte(c->actual->chunk, OP_NULO, linea);
-            int s = agregar_local(c, elementos[i]->como.ident.nombre,
-                                        elementos[i]->como.ident.longitud, linea);
+            int s = agregar_local(c, nm, nm_len, linea);
             if (s < 0) { free(slots_destinos); return false; }
             slots_destinos[i] = s;
             n_nuevos_slots++;
         }
     }
 
-    /* 2. Verify longitud == n. */
+    /* 2. Verify aridad. Sin star: == n. Con star: >= n - 1. */
     chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                         (uint8_t)slot_iter, linea);
     chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, linea);
     chunk_emitir_constante(c->actual->chunk,
-                             valor_entero_de_long((long)n), linea);
-    chunk_emitir_byte(c->actual->chunk, OP_IGUAL, linea);
+                             valor_entero_de_long((long)(star_idx >= 0 ? n - 1 : n)),
+                             linea);
+    chunk_emitir_byte(c->actual->chunk,
+                       star_idx >= 0 ? OP_MAYOR_IGUAL : OP_IGUAL, linea);
     int salto_mala_aridad = emitir_salto(c, OP_SALTAR_SI_FALSO, linea);
     chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, linea);  /* bool true */
 
-    /* 3. Por cada elemento i: extraer V[i] y asignar. */
+    /* 3. Por cada elemento i: extraer V[i] (o slice para el star) y asignar.
+     *
+     * Con star_idx == k, n total destinos:
+     *   i < k     -> V[i]                       (positivo)
+     *   i == k    -> V[k : longitud(V) - (n-1-k)] (rebanada como lista)
+     *   i > k     -> V[i - n]                   (negativo desde el final)
+     */
     for (int i = 0; i < n; i++) {
         const Expr *dst_i = elementos[i];
-        chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                            (uint8_t)slot_iter, linea);
-        chunk_emitir_constante(c->actual->chunk,
-                                 valor_entero_de_long((long)i), linea);
-        chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
-        if (dst_i->tipo == EXPR_IDENT) {
+        if (i == star_idx) {
+            /* Stack: [..., obj, inicio, fin, paso] -> OP_REBANADA. */
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_iter, linea);
+            chunk_emitir_constante(c->actual->chunk,
+                                     valor_entero_de_long((long)star_idx),
+                                     linea);
+            /* fin = longitud(iter) - (n - 1 - star_idx). */
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_iter, linea);
+            chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, linea);
+            int tail = n - 1 - star_idx;
+            if (tail > 0) {
+                chunk_emitir_constante(c->actual->chunk,
+                                         valor_entero_de_long((long)tail),
+                                         linea);
+                chunk_emitir_byte(c->actual->chunk, OP_RESTAR, linea);
+            }
+            chunk_emitir_byte(c->actual->chunk, OP_NULO, linea);  /* paso = default */
+            chunk_emitir_byte(c->actual->chunk, OP_REBANADA, linea);
+        } else {
+            long idx_real = (star_idx >= 0 && i > star_idx) ? (long)(i - n)
+                                                              : (long)i;
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_iter, linea);
+            chunk_emitir_constante(c->actual->chunk,
+                                     valor_entero_de_long(idx_real), linea);
+            chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
+        }
+        if (dst_i->tipo == EXPR_IDENT || dst_i->tipo == EXPR_STAR_BIND) {
             if (en_funcion) {
-                /* v1.122: decodificar slots_destinos[i]:
-                   - >= 0: slot LOCAL (nuevo pre-reservado o existente).
-                   - <= -100: upvalue codificado como -100 - upv. */
                 int marca = slots_destinos[i];
                 if (marca <= -100) {
                     int upv = -100 - marca;
                     chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_UPVALUE,
                                         (uint8_t)upv, linea);
                 } else {
-                    /* OP_ASIGNAR_LOCAL hace pop, no hace falta DESCARTAR. */
                     chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                         (uint8_t)marca, linea);
                 }
             } else {
-                /* Top-level: OP_DEFINIR_GLOBAL hace pop. */
-                if (!emitir_asignacion_ident(c, dst_i, linea)) {
+                /* Top-level: tratar STAR como IDENT para emitir_asignacion. */
+                Expr ident_fake;
+                Expr *destino_efectivo = (Expr *)dst_i;
+                if (dst_i->tipo == EXPR_STAR_BIND) {
+                    ident_fake.tipo = EXPR_IDENT;
+                    ident_fake.linea = dst_i->linea;
+                    ident_fake.columna = dst_i->columna;
+                    ident_fake.como.ident.nombre = dst_i->como.star_bind.nombre;
+                    ident_fake.como.ident.longitud = dst_i->como.star_bind.longitud;
+                    destino_efectivo = &ident_fake;
+                }
+                if (!emitir_asignacion_ident(c, destino_efectivo, linea)) {
                     free(slots_destinos); return false;
                 }
             }
@@ -1745,7 +1799,7 @@ static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea) {
         } else {
             error_compilacion(c, linea, 0,
                 "ErrorDeSintaxis: destino de destructuring debe ser "
-                "identificador o tupla/lista anidada");
+                "identificador, '*ident' o tupla/lista anidada");
             free(slots_destinos);
             return false;
         }

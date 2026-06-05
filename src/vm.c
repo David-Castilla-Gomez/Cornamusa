@@ -3732,7 +3732,8 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 Valor inicio_v = sacar(vm);
                 Valor obj      = sacar(vm);
 
-                if (obj.tipo != VAL_LISTA && obj.tipo != VAL_CADENA) {
+                if (obj.tipo != VAL_LISTA && obj.tipo != VAL_CADENA
+                    && obj.tipo != VAL_TUPLA) {
                     VM_ERROR("ErrorDeTipo: '%s' no soporta slicing",
                              valor_nombre_tipo(&obj));
                     valor_destruir(&obj); valor_destruir(&inicio_v);
@@ -3803,6 +3804,8 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     }
                     offsets_cp[n_cp] = slen;
                     total = n_cp;
+                } else if (obj.tipo == VAL_TUPLA) {
+                    total = obj.como.tupla->cuenta;
                 } else {
                     total = obj.como.lista->cuenta;
                 }
@@ -3913,14 +3916,21 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     valor_destruir(&fin_v); valor_destruir(&paso_v);
                     return VM_ERROR_RUNTIME;
                 }
-                Lista *src = obj.como.lista;
+                /* v1.129: lista o tupla. La tupla devuelve LISTA tambien
+                 * para que sea util como destino del star binding. */
+                const Valor *src_elems;
+                if (obj.tipo == VAL_TUPLA) {
+                    src_elems = obj.como.tupla->elementos;
+                } else {
+                    src_elems = obj.como.lista->elementos;
+                }
                 if (paso > 0) {
                     for (long i = inicio; i < fin; i += paso) {
-                        lista_agregar(resultado, valor_clonar(&src->elementos[i]));
+                        lista_agregar(resultado, valor_clonar(&src_elems[i]));
                     }
                 } else {
                     for (long i = inicio; i > fin; i += paso) {
-                        lista_agregar(resultado, valor_clonar(&src->elementos[i]));
+                        lista_agregar(resultado, valor_clonar(&src_elems[i]));
                     }
                 }
                 valor_destruir(&obj); valor_destruir(&inicio_v);

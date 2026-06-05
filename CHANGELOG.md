@@ -6,6 +6,79 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.129.0] — 2026-06-05 — Star binding en destructuring (`a, *resto, c = lista`)
+
+El destructuring soportaba `a, b = par` y `a, b = b, a + b` desde v1.21,
+incluyendo el caso patológico de v1.122/v1.123 (variables nuevas en bucle).
+La pieza que faltaba para paridad con Python era el **star binding**:
+`a, *resto, c = lista`, idiomático para *primero, intermedios y último*.
+
+Curiosidad: la sintaxis YA existía en pattern matching (`cuando [a, *r, b]:`)
+desde v1.16.2, pero no en destructuring de asignación.
+
+```cornamusa
+a, *r, c = [1, 2, 3, 4, 5]       # a=1, r=[2, 3, 4], c=5
+a, b, *r = [1, 2, 3, 4, 5]       # a=1, b=2, r=[3, 4, 5]
+a, *r, c = [1, 2]                # a=1, r=[], c=2  (star vacío)
+a, b, *r, c, d = [1, 2, 3, 4]    # a=1, b=2, r=[], c=3, d=4
+
+# Sobre tupla:
+a, *r, c = (10, 20, 30, 40)      # r es lista, no tupla
+
+# Sobre cadena (slice de code points):
+a, *r, c = "hola"                # a='h', r='ol', c='a'
+```
+
+### Implementación
+
+`src/ast.h`/`src/ast.c`: nuevo nodo `EXPR_STAR_BIND { nombre, longitud }`
++ helper `expr_star_bind`. Solo válido como destino dentro de un
+destructuring; cualquier otro uso lo rechaza el compilador.
+
+`src/parser.c` (`parsear_asignar_o_expr`): dentro del bucle que recolecta
+destinos tras `,`, si el siguiente token es `*` lo consume y exige un
+`IDENT` después. Construye un `EXPR_STAR_BIND`. Restricción
+documentada: el primer destino sí pasa por `parser_parsear_expr`
+normal, así que `*r, a = it` (star en posición inicial) no se reconoce
+— sólo `a, *r, b = it`.
+
+`src/compilador.c` (`emitir_destructuring`):
+- Detecta `star_idx` en una primera pasada. Si hay más de uno → error.
+- Pre-reserva slots para destinos `EXPR_IDENT` **y** `EXPR_STAR_BIND` (mismo
+  manejo: reusa locales existentes, marca upvalues con `-100 - upv`).
+- Verificación de aridad: sin star → `==` n; con star → `>=` n - 1
+  (emite `OP_MAYOR_IGUAL` en vez de `OP_IGUAL`).
+- En el loop de extracción:
+  - `i < star_idx`: `OP_INDICE` con i positivo.
+  - `i == star_idx`: emite `OP_REBANADA [star_idx : longitud(it) - tail]`
+    con `tail = n - 1 - star_idx`. El resultado se asigna al slot del star.
+  - `i > star_idx`: `OP_INDICE` con `i - n` (índice negativo) — desde el
+    final de la lista.
+
+`src/vm.c` (`OP_REBANADA`):
+- Antes solo aceptaba `VAL_LISTA` y `VAL_CADENA`. Ahora también `VAL_TUPLA`:
+  `total = tupla->cuenta`, mismas operaciones de clamp e iteración, pero
+  el resultado es **siempre una lista** (no una tupla nueva) porque el
+  star binding lo necesita así.
+
+### Limitaciones
+
+- **Star solo en posición no-inicial** (`a, *r, b = it` sí; `*r, a = it`
+  no). El parser empieza por una expresión normal antes del primer `,`.
+- **Iterable debe soportar `OP_LONGITUD` y `OP_INDICE`**: lista, tupla
+  y cadena. Rango no porque `OP_INDICE` no lo acepta — para usar rango,
+  envolver en `lista(rango(...))`.
+- Sólo un star por destructuring (validado en `emitir_destructuring`).
+
+### Tests
+
+`tests/unit/test_bytecode_star_destructuring.c` con 13 bloques:
+star en medio/final, vacío, dos lados, aridad insuficiente lanza,
+sobre tupla/cadena, reasignar variables existentes, dentro de función,
+múltiples stars rechazado, regresión sin star.
+
+Suite: **326 tests verde**.
+
 ## [1.128.0] — 2026-06-05 — Métodos sobre `conjunto`, `tupla` y `lista.indice_de`
 
 v1.122 introdujo la tabla `METODOS_NATIVOS` con 13 entradas iniciales

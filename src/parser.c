@@ -1800,7 +1800,25 @@ static Sent *parsear_asignar_o_expr(Parser *p) {
         while (consumir_si(p, TT_COMA)) {
             /* Coma final → permitido si después viene `=`. */
             if (check(p, TT_ASIGNAR)) break;
-            Expr *e = parser_parsear_expr(p);
+            Expr *e;
+            /* v1.129: `*nombre` star binding en posicion de target.
+             * Solo valido aqui dentro de un destructuring. */
+            if (check(p, TT_ASTERISCO)) {
+                int s_lin = p->actual.linea;
+                int s_col = p->actual.columna;
+                avanzar(p);  /* consume '*' */
+                if (!check(p, TT_IDENT)) {
+                    error_en(p, &p->actual,
+                        "se esperaba un nombre tras '*' en destructuring");
+                    return NULL;
+                }
+                Token tok_id = p->actual;
+                avanzar(p);
+                e = expr_star_bind(p->arena, tok_id.inicio,
+                                       tok_id.longitud, s_lin, s_col);
+            } else {
+                e = parser_parsear_expr(p);
+            }
             if (e == NULL) return NULL;
             if (n >= cap) {
                 int nuevo_cap = cap * 2;
