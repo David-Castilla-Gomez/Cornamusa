@@ -538,6 +538,42 @@ static bool linea_cierra_bloque(const char *linea) {
  * antes referenciarían punteros colgantes. Las cadenas duplicadas se
  * "filtran" deliberadamente — viven hasta que termine el proceso.
  */
+/* v1.126: keywords reservadas del lenguaje (para el autocompletado).
+ * Lista alineada con la tabla de buscar_keyword en src/lexer.c. */
+static const char *KEYWORDS_AUTOCOMPLETAR[] = {
+    "asincrono", "atrapar", "borrar", "clase", "coincidir", "como",
+    "con", "continuar", "cuando", "desde", "en", "es", "esperar",
+    "extiende", "falso", "fin", "finalmente", "funcion", "global",
+    "importar", "intentar", "lambda", "lanzar", "mientras", "no",
+    "nolocal", "nulo", "para", "pasar", "producir", "retornar",
+    "romper", "si", "sino", "super", "verdadero",
+    NULL
+};
+
+/* Callback para el autocompletado del REPL. Itera el Entorno global y
+ * las keywords; emite las que empiezan por `prefijo` (case-sensitive). */
+static void repl_completar_globales(const char *prefijo, int prefijo_len,
+                                       void *ctx,
+                                       ReplEmitirCandidatoFn emitir,
+                                       void *emit_ctx) {
+    Entorno *e = (Entorno *)ctx;
+    if (e) {
+        for (size_t i = 0; i < e->capacidad; i++) {
+            EntradaEntorno *ee = &e->entradas[i];
+            if (!ee->ocupada || !ee->clave) continue;
+            if (ee->longitud_clave < prefijo_len) continue;
+            if (memcmp(ee->clave, prefijo, (size_t)prefijo_len) != 0) continue;
+            emitir(ee->clave, ee->longitud_clave, emit_ctx);
+        }
+    }
+    for (const char **kw = KEYWORDS_AUTOCOMPLETAR; *kw; kw++) {
+        int len = (int)strlen(*kw);
+        if (len < prefijo_len) continue;
+        if (memcmp(*kw, prefijo, (size_t)prefijo_len) != 0) continue;
+        emitir(*kw, len, emit_ctx);
+    }
+}
+
 static int correr_repl(void) {
     imprimir_banner_repl();
 
@@ -553,6 +589,9 @@ static int correr_repl(void) {
        `.cornamusa_historial`) y se guarda al salir. */
     ReplHistorial *historial = repl_historial_nuevo();
     if (historial) repl_historial_cargar(historial);
+
+    /* v1.126: registrar callback de autocompletado con TAB. */
+    repl_set_completar(repl_completar_globales, &globales);
 
     char buffer[BUFFER_REPL_MAX] = "";
     int profundidad = 0;

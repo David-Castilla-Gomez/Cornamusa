@@ -6,6 +6,70 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.126.0] — 2026-06-05 — Autocompletado con TAB en el REPL
+
+El REPL ya tenía historial persistente, edición de línea con cursores
+y multilínea. Faltaba el clásico TAB para autocompletar — uno de los
+quality-of-life más visibles desde el primer segundo de uso.
+
+```
+>>> impr<TAB>
+imprimir  imprimir_error
+>>> imprimi<TAB>
+>>> imprimir
+>>> imp<TAB><TAB>
+imprimir  imprimir_error  importar
+>>> imp
+```
+
+### Comportamiento
+
+- **0 candidatos**: silencio (sin beep).
+- **1 candidato**: el sufijo restante se inserta directamente.
+- **N candidatos**: se inserta el **prefijo común más largo**; si no
+  extiende lo escrito, los candidatos se listan en una línea debajo
+  separados por dos espacios y la línea actual se reimprime.
+- **Cursor al principio o tras un espacio**: TAB inserta 4 espacios
+  (comodidad para identar dentro de bloques en multilínea).
+
+### Implementación
+
+`src/repl_line.{h,c}` expone una API minimalista de autocompletado:
+
+```c
+typedef void (*ReplEmitirCandidatoFn)(const char *cand, int cand_len,
+                                          void *emit_ctx);
+typedef void (*ReplCompletarFn)(const char *prefijo, int prefijo_len,
+                                   void *ctx,
+                                   ReplEmitirCandidatoFn emitir,
+                                   void *emit_ctx);
+
+void repl_set_completar(ReplCompletarFn fn, void *ctx);
+```
+
+El editor de línea detecta TAB y extrae el token de identificador antes
+del cursor (`prefijo_token_len`). `es_char_ident` reconoce ASCII
+alfanumérico, `_` y todo byte `>= 0x80` — preserva identificadores con
+tildes/eñes (`añadir`, `función`). El callback es idempotente y puede
+llamarse varias veces por sesión.
+
+En `src/main.c:correr_repl` se registra un callback que itera el
+`Entorno` global (todos los nativos + variables definidas por el
+usuario) y filtra por prefijo. Adicionalmente añade las 36 keywords
+del lenguaje (`si`, `sino`, `mientras`, etc.) — la lista está alineada
+con `buscar_keyword` en `src/lexer.c`.
+
+### Tests
+
+`tests/unit/test_repl_completar.c` valida la API pública + un callback
+de ejemplo con 5 casos: prefijo `imp` → 3 candidatos, `long` → 1,
+`l` → 3, `xyz` → 0, prefijo vacío → todos. La rama TAB del editor de
+línea requiere TTY interactivo y queda cubierta solo por verificación
+manual; las funciones internas `prefijo_token_len` y `prefijo_comun`
+son aritmética trivial sobre arrays.
+
+Suite: **323 tests verde**.
+
 ## [1.125.0] — 2026-06-04 — Typo suggestions en ErrorDeClave
 
 Cierra un hueco detectado en la fase 5 del plan corpus:

@@ -34,6 +34,84 @@ struct ReplHistorial {
 
 #define HISTORIAL_MAX 1000  /* recorta entradas más viejas */
 
+/* ──────────────────────────────────────────────────────────────────
+ * v1.126: Autocompletado (callback global)
+ * ────────────────────────────────────────────────────────────────── */
+
+#define COMPLETAR_MAX_CAND 128
+
+static ReplCompletarFn g_completar_fn = NULL;
+static void *g_completar_ctx = NULL;
+
+void repl_set_completar(ReplCompletarFn fn, void *ctx) {
+    g_completar_fn = fn;
+    g_completar_ctx = ctx;
+}
+
+/* Estado temporal mientras el editor recoge candidatos. */
+typedef struct {
+    char *cands[COMPLETAR_MAX_CAND];
+    int   cand_lens[COMPLETAR_MAX_CAND];
+    int   n;
+    bool  overflow;
+} ColectorCandidatos;
+
+static void colector_emit(const char *cand, int cand_len, void *emit_ctx) {
+    ColectorCandidatos *col = (ColectorCandidatos *)emit_ctx;
+    if (col->n >= COMPLETAR_MAX_CAND) { col->overflow = true; return; }
+    char *copia = (char *)malloc((size_t)cand_len + 1);
+    if (!copia) return;
+    memcpy(copia, cand, (size_t)cand_len);
+    copia[cand_len] = '\0';
+    col->cands[col->n] = copia;
+    col->cand_lens[col->n] = cand_len;
+    col->n++;
+}
+
+static void colector_liberar(ColectorCandidatos *col) {
+    for (int i = 0; i < col->n; i++) free(col->cands[i]);
+}
+
+/* Char es valido como continuacion de un identificador Cornamusa:
+ * ASCII letra/digito/underscore o byte >= 0x80 (UTF-8 multibyte).
+ * Mantiene los identificadores con tildes/eñes (`añadir`, `función`). */
+static bool es_char_ident(unsigned char c) {
+    if (c == '_') return true;
+    if (c >= 'A' && c <= 'Z') return true;
+    if (c >= 'a' && c <= 'z') return true;
+    if (c >= '0' && c <= '9') return true;
+    if (c >= 0x80) return true;
+    return false;
+}
+
+/* Devuelve el largo en bytes del prefijo del token que termina justo
+ * antes del cursor. El token empieza tras el byte no-identificador
+ * mas reciente o al principio del buffer. */
+static int prefijo_token_len(const char *buf, int cursor) {
+    int i = cursor;
+    while (i > 0 && es_char_ident((unsigned char)buf[i - 1])) i--;
+    return cursor - i;
+}
+
+/* Calcula el largo del prefijo comun (en bytes) de N cadenas.
+ * Asume al menos 1 cadena. */
+static int prefijo_comun(char **cands, const int *lens, int n) {
+    if (n <= 0) return 0;
+    int min_len = lens[0];
+    for (int i = 1; i < n; i++) if (lens[i] < min_len) min_len = lens[i];
+    int p = 0;
+    while (p < min_len) {
+        char c = cands[0][p];
+        bool ok = true;
+        for (int i = 1; i < n; i++) {
+            if (cands[i][p] != c) { ok = false; break; }
+        }
+        if (!ok) break;
+        p++;
+    }
+    return p;
+}
+
 ReplHistorial *repl_historial_nuevo(void) {
     ReplHistorial *h = (ReplHistorial *)calloc(1, sizeof(ReplHistorial));
     return h;
@@ -187,6 +265,7 @@ typedef enum {
     TECLA_CTRL_C,
     TECLA_CTRL_D,    /* EOF en POSIX */
     TECLA_CTRL_Z,    /* EOF en Windows */
+    TECLA_TAB,       /* v1.126: autocompletado */
     TECLA_OTRO,
 } TipoTecla;
 
@@ -218,6 +297,7 @@ static Tecla leer_tecla(void) {
     if (c == 26)                 return (Tecla){TECLA_CTRL_Z, 0};
     if (c == 1)                  return (Tecla){TECLA_INICIO, 0};   /* Ctrl-A */
     if (c == 5)                  return (Tecla){TECLA_FIN, 0};      /* Ctrl-E */
+    if (c == '\t' || c == 9)     return (Tecla){TECLA_TAB, 0};      /* v1.126 */
     return (Tecla){TECLA_CHAR, c};
 }
 #else
@@ -236,6 +316,7 @@ static Tecla leer_tecla(void) {
     if (c == 4)                  return (Tecla){TECLA_CTRL_D, 0};
     if (c == 1)                  return (Tecla){TECLA_INICIO, 0};   /* Ctrl-A */
     if (c == 5)                  return (Tecla){TECLA_FIN, 0};      /* Ctrl-E */
+    if (c == '\t' || c == 9)     return (Tecla){TECLA_TAB, 0};      /* v1.126 */
     if (c == 0x1B) {
         /* Secuencia escape: lee siguiente. */
         int b1 = leer_byte();
@@ -492,6 +573,68 @@ char *repl_leer_linea(const char *prompt, ReplHistorial *historial) {
                 }
                 /* Otros chars de control no manejados se ignoran. */
                 break;
+
+            case TECLA_TAB: {
+                /* v1.126: autocompletado. Si no hay callback, TAB
+                 * inserta espacios (4) como comodidad para identar. */
+                if (!g_completar_fn) {
+                    for (int i = 0; i < 4; i++) linea_insertar_char(&l, ' ');
+                    repintar(prompt, &l);
+                    break;
+                }
+                int pref_len = prefijo_token_len(l.buf, l.cursor);
+                if (pref_len == 0) {
+                    /* Cursor al inicio o tras espacio: identar. */
+                    for (int i = 0; i < 4; i++) linea_insertar_char(&l, ' ');
+                    repintar(prompt, &l);
+                    break;
+                }
+                const char *prefijo = l.buf + l.cursor - pref_len;
+                ColectorCandidatos col = {0};
+                g_completar_fn(prefijo, pref_len, g_completar_ctx,
+                                colector_emit, &col);
+                if (col.n == 0) {
+                    /* Beep silencioso: no hacer nada. */
+                    break;
+                }
+                if (col.n == 1) {
+                    /* Un solo candidato: insertar el sufijo. */
+                    const char *sufijo = col.cands[0] + pref_len;
+                    int sufijo_len = col.cand_lens[0] - pref_len;
+                    for (int i = 0; i < sufijo_len; i++) {
+                        linea_insertar_char(&l, (unsigned char)sufijo[i]);
+                    }
+                    repintar(prompt, &l);
+                    colector_liberar(&col);
+                    break;
+                }
+                /* Varios candidatos: insertar prefijo comun mas largo.
+                 * Si no extiende (ya estaba todo escrito), listar abajo. */
+                int comun_len = prefijo_comun(col.cands, col.cand_lens, col.n);
+                if (comun_len > pref_len) {
+                    int extra = comun_len - pref_len;
+                    const char *extra_txt = col.cands[0] + pref_len;
+                    for (int i = 0; i < extra; i++) {
+                        linea_insertar_char(&l, (unsigned char)extra_txt[i]);
+                    }
+                    repintar(prompt, &l);
+                } else {
+                    /* Listar candidatos. Bajamos linea, imprimimos
+                     * separados por dos espacios, y reimprimimos
+                     * el prompt + buffer. */
+                    fputs("\r\n", stdout);
+                    for (int i = 0; i < col.n; i++) {
+                        fputs(col.cands[i], stdout);
+                        if (i + 1 < col.n) fputs("  ", stdout);
+                    }
+                    if (col.overflow) fputs("  ...", stdout);
+                    fputs("\r\n", stdout);
+                    fflush(stdout);
+                    repintar(prompt, &l);
+                }
+                colector_liberar(&col);
+                break;
+            }
 
             case TECLA_OTRO:
                 break;

@@ -48,4 +48,31 @@ void repl_historial_guardar(const ReplHistorial *h);
  */
 char *repl_leer_linea(const char *prompt, ReplHistorial *historial);
 
+/*
+ * v1.126: autocompletado con TAB.
+ *
+ * El cliente registra un callback que, dado el prefijo del token actual,
+ * emite cero o mas candidatos. El REPL recoge los candidatos via la
+ * funcion `emitir` y:
+ *   - 0 candidatos     -> beep / nada.
+ *   - 1 candidato      -> inserta el sufijo restante.
+ *   - N > 1 candidatos -> inserta el prefijo comun mas largo. Si el
+ *     prefijo comun ya esta totalmente escrito, lista los candidatos
+ *     en lineas debajo y reimprime la linea actual.
+ *
+ * El callback debe ser idempotente: el REPL puede llamarlo varias veces
+ * por sesion. Tipicamente apunta al Entorno global del REPL para
+ * iterarlo y agregar sus claves.
+ *
+ * Llamar `repl_set_completar(NULL, NULL)` desactiva el autocompletado.
+ */
+typedef void (*ReplEmitirCandidatoFn)(const char *cand, int cand_len,
+                                          void *emit_ctx);
+typedef void (*ReplCompletarFn)(const char *prefijo, int prefijo_len,
+                                   void *ctx,
+                                   ReplEmitirCandidatoFn emitir,
+                                   void *emit_ctx);
+
+void repl_set_completar(ReplCompletarFn fn, void *ctx);
+
 #endif /* CORNAMUSA_REPL_LINE_H */
