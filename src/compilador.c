@@ -1217,12 +1217,55 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             int saltos_continuar[16];
 
             slots_iter[0] = slot_iter;
+            /* v1.135: si la clausula i tiene patron destructuring,
+             * patrones_i[i] guarda el EXPR_TUPLA con los destinos.
+             * slots_var[i] sera un slot anonimo $comp_item; los slots
+             * de los destinos del patron se pre-reservan tambien fuera
+             * del loop, justo despues del slot anonimo. star_idx_i[i]
+             * marca la posicion del star (-1 si no hay). */
+            Expr *patrones[16];
+            int star_idx_clausula[16];
+            for (int i = 0; i < 16; i++) {
+                patrones[i] = NULL;
+                star_idx_clausula[i] = -1;
+            }
+            patrones[0] = e->como.comprehension.patron;
+            for (int i = 1; i < n_clausulas; i++) {
+                patrones[i] = extras[i - 1].patron;
+            }
+            /* Validar el patron (cuerpo de cada uno debe ser IDENT o
+             * STAR_BIND; max un STAR por clausula). */
+            for (int i = 0; i < n_clausulas; i++) {
+                if (patrones[i] == NULL) continue;
+                Expr *pat = patrones[i];
+                int n_dst = pat->como.secuencia.n_elementos;
+                Expr **dst = pat->como.secuencia.elementos;
+                for (int j = 0; j < n_dst; j++) {
+                    if (dst[j]->tipo == EXPR_IDENT) continue;
+                    if (dst[j]->tipo == EXPR_STAR_BIND) {
+                        if (star_idx_clausula[i] >= 0) {
+                            error_compilacion(c, e->linea, e->columna,
+                                "ErrorDeSintaxis: solo se permite un '*' por clausula");
+                            return false;
+                        }
+                        star_idx_clausula[i] = j;
+                        continue;
+                    }
+                    error_compilacion(c, e->linea, e->columna,
+                        "ErrorDeSintaxis: destino de comprehension debe "
+                        "ser IDENT o '*IDENT'");
+                    return false;
+                }
+            }
+
             /* Pre-empujar OP_NULO + agregar_local para TODOS los slots
              * (var de clausula 0, y iter+var de las extras) ANTES del
              * primer inicio_loop. Asi sus OP_NULO no estan dentro de
              * ningun bucle, evitando que el stack crezca por iteracion.
              * Las cláusulas extra escriben sus iters con OP_ASIGNAR_LOCAL
-             * dentro del cuerpo del loop padre. */
+             * dentro del cuerpo del loop padre.
+             * v1.135: si la clausula tiene patron, ademas pre-reservar
+             * slots para cada destino IDENT/STAR_BIND. */
             for (int i = 0; i < n_clausulas; i++) {
                 saltos_continuar[i] = -1;
                 if (i > 0) {
@@ -1233,7 +1276,10 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
                 const char *vn;
                 int vl;
-                if (i == 0) {
+                if (patrones[i] != NULL) {
+                    vn = "$comp_item";
+                    vl = 10;
+                } else if (i == 0) {
                     vn = e->como.comprehension.nombre_var;
                     vl = e->como.comprehension.longitud_var;
                 } else {
@@ -1242,6 +1288,27 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
                 slots_var[i] = agregar_local(c, vn, vl, e->linea);
                 if (slots_var[i] < 0) return false;
+
+                /* Si hay patron, pre-reservar slots de los destinos. */
+                if (patrones[i] != NULL) {
+                    Expr *pat = patrones[i];
+                    int n_dst = pat->como.secuencia.n_elementos;
+                    Expr **dst = pat->como.secuencia.elementos;
+                    for (int j = 0; j < n_dst; j++) {
+                        const char *nm;
+                        int nm_len;
+                        if (dst[j]->tipo == EXPR_IDENT) {
+                            nm = dst[j]->como.ident.nombre;
+                            nm_len = dst[j]->como.ident.longitud;
+                        } else {  /* EXPR_STAR_BIND */
+                            nm = dst[j]->como.star_bind.nombre;
+                            nm_len = dst[j]->como.star_bind.longitud;
+                        }
+                        chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
+                        int sd = agregar_local(c, nm, nm_len, e->linea);
+                        if (sd < 0) return false;
+                    }
+                }
             }
 
             /* Emitir los inicios_loop y los SIGUIENTE/ASIGNAR de cada
@@ -1266,6 +1333,110 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
 
                 chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                     (uint8_t)slots_var[i], e->linea);
+
+                /* v1.135: si la clausula tiene patron, hacer el
+                 * destructuring inline. El item esta en el slot
+                 * anonimo slots_var[i]; los slots de los destinos ya
+                 * fueron pre-reservados — solo extraer y asignar. */
+                if (patrones[i] != NULL) {
+                    Expr *pat = patrones[i];
+                    int n_dst = pat->como.secuencia.n_elementos;
+                    Expr **dst = pat->como.secuencia.elementos;
+                    int star_idx = star_idx_clausula[i];
+                    /* El slot del primer destino del patron esta justo
+                     * despues de slots_var[i] (en compile time se
+                     * agregaron consecutivos). */
+                    int slot_destino_base = slots_var[i] + 1;
+
+                    /* Verificar aridad: longitud(item) == n_dst (sin
+                     * star) o >= n_dst - 1 (con star). */
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                        (uint8_t)slots_var[i], e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, e->linea);
+                    chunk_emitir_constante(c->actual->chunk,
+                        valor_entero_de_long(
+                            (long)(star_idx >= 0 ? n_dst - 1 : n_dst)),
+                        e->linea);
+                    chunk_emitir_byte(c->actual->chunk,
+                        star_idx >= 0 ? OP_MAYOR_IGUAL : OP_IGUAL, e->linea);
+                    int salto_mal_aridad =
+                        emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
+                                        e->linea);  /* descarta bool true */
+
+                    /* Por cada destino, extraer y asignar a slot. */
+                    for (int j = 0; j < n_dst; j++) {
+                        if (j == star_idx) {
+                            chunk_emitir_byte2(c->actual->chunk,
+                                OP_OBTENER_LOCAL, (uint8_t)slots_var[i],
+                                e->linea);
+                            chunk_emitir_constante(c->actual->chunk,
+                                valor_entero_de_long((long)star_idx),
+                                e->linea);
+                            chunk_emitir_byte2(c->actual->chunk,
+                                OP_OBTENER_LOCAL, (uint8_t)slots_var[i],
+                                e->linea);
+                            chunk_emitir_byte(c->actual->chunk,
+                                OP_LONGITUD, e->linea);
+                            int tail = n_dst - 1 - star_idx;
+                            if (tail > 0) {
+                                chunk_emitir_constante(c->actual->chunk,
+                                    valor_entero_de_long((long)tail),
+                                    e->linea);
+                                chunk_emitir_byte(c->actual->chunk,
+                                    OP_RESTAR, e->linea);
+                            }
+                            chunk_emitir_byte(c->actual->chunk, OP_NULO,
+                                e->linea);
+                            chunk_emitir_byte(c->actual->chunk,
+                                OP_REBANADA, e->linea);
+                        } else {
+                            long idx_real = (star_idx >= 0 && j > star_idx)
+                                ? (long)(j - n_dst)
+                                : (long)j;
+                            chunk_emitir_byte2(c->actual->chunk,
+                                OP_OBTENER_LOCAL, (uint8_t)slots_var[i],
+                                e->linea);
+                            chunk_emitir_constante(c->actual->chunk,
+                                valor_entero_de_long(idx_real), e->linea);
+                            chunk_emitir_byte(c->actual->chunk,
+                                OP_INDICE, e->linea);
+                        }
+                        chunk_emitir_byte2(c->actual->chunk,
+                            OP_ASIGNAR_LOCAL,
+                            (uint8_t)(slot_destino_base + j), e->linea);
+                    }
+                    int salto_fin_destr =
+                        emitir_salto(c, OP_SALTAR, e->linea);
+
+                    /* Aterrizaje aridad mala: descartar bool false +
+                     * lanzar ErrorDeValor. */
+                    parchear_salto(c, salto_mal_aridad, e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
+                                        e->linea);
+                    int idx_err =
+                        agregar_nombre_global(c, "ErrorDeValor", 12);
+                    if (idx_err < 0 || idx_err > 255) {
+                        error_compilacion(c, e->linea, 0,
+                            "demasiadas constantes (>255)");
+                        return false;
+                    }
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
+                                        (uint8_t)idx_err, e->linea);
+                    chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
+                    chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
+                    chunk_emitir_constante(c->actual->chunk,
+                        valor_cadena_duplicar(
+                            "aridad incorrecta en destructuring de comprehension",
+                            strlen("aridad incorrecta en destructuring de comprehension")),
+                        e->linea);
+                    chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1,
+                                        e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_LANZAR,
+                                        e->linea);
+
+                    parchear_salto(c, salto_fin_destr, e->linea);
+                }
 
                 Expr *guarda_i = (i == 0)
                     ? e->como.comprehension.guarda
@@ -1311,15 +1482,24 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
 
             /* Limpieza: dejar el acumulador como TOS y liberar slots
              * temporales ($comp_acc, y por cada clausula su $comp_iter
-             * y su var). 1 + 2 * n_clausulas. */
+             * y su var). 1 + 2 * n_clausulas slots base.
+             * v1.135: cada clausula con patron anade n_dst slots
+             * extra (uno por destino del destructuring). */
+            int extras_patron = 0;
+            for (int i = 0; i < n_clausulas; i++) {
+                if (patrones[i] != NULL) {
+                    extras_patron += patrones[i]->como.secuencia.n_elementos;
+                }
+            }
             chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                                 (uint8_t)slot_acc, e->linea);
             chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                 (uint8_t)slot_acc, e->linea);
-            for (int i = 0; i < 2 * n_clausulas; i++) {
+            int n_desc = 2 * n_clausulas + extras_patron;
+            for (int i = 0; i < n_desc; i++) {
                 chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
             }
-            c->actual->n_locales -= (1 + 2 * n_clausulas);
+            c->actual->n_locales -= (1 + n_desc);
             return true;
         }
         case EXPR_INDICE: {

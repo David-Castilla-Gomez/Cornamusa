@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
 project(cornamusa
-    VERSION 1.134.0
+    VERSION 1.135.0
     DESCRIPTION "Lenguaje de programación dinámico en castellano"
     LANGUAGES C
 )

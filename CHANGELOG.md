@@ -6,6 +6,137 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.135.0] — 2026-06-05 — Destructuring en comprehensions
+
+v1.134 cerró el destructuring del bucle `para`. La pieza simétrica
+faltaba: la cabecera de la comprehension. Hasta ahora la cláusula
+`para X en Y` solo aceptaba un IDENT.
+
+### Lo que ahora funciona
+
+```cornamusa
+pares = [(1, 10), (2, 20), (3, 30)]
+
+# Suma de cada par
+sumas = [a + b para a, b en pares]
+# [11, 22, 33]
+
+# Filtrar con guarda usando los destinos
+positivos = [a para a, b en pares si b > 15]
+# [2, 3]
+
+# Star en cualquier posicion
+filas = [[1, 2, 3], [10, 20, 30, 40]]
+restos = [resto para primero, *resto en filas]
+# [[2, 3], [20, 30, 40]]
+
+ultimos = [u para *_, u en filas]
+# [3, 40]
+
+# Tambien en dict comprehension
+parejas = [("uno", 1), ("dos", 2)]
+d = {k: v * 2 para k, v en parejas}
+# {"uno": 2, "dos": 4}
+
+# Y en set comprehension
+s = {a - b para a, b en [(5, 1), (5, 3), (5, 5)]}
+# {4, 2, 0}
+
+# Combina con multi-`para` (v1.132) — destructuring por cada clausula
+xs = [(1, 10), (2, 20)]
+ys = [("a", "A"), ("b", "B")]
+prod = [(i, k) para i, _ en xs para k, _ en ys]
+# [(1, "a"), (1, "b"), (2, "a"), (2, "b")]
+```
+
+### Implementación
+
+**AST** (`src/ast.{h,c}`): nuevo campo `Expr *patron` en
+`ClausulaComp` y en `comprehension`. Si `patron != NULL` es
+`EXPR_TUPLA` cuyos elementos son `EXPR_IDENT` o `EXPR_STAR_BIND`
+(un solo nivel; sin tuplas anidadas en cabeceras). `patron == NULL`
+mantiene el path legacy.
+
+**Parser** (`src/parser.c`): nuevo helper `parsear_destinos_compr`
+que recolecta destinos separados por coma. Si solo hay un IDENT,
+devuelve por los campos legacy. Si hay más o hay `*IDENT`,
+construye `EXPR_TUPLA` en `patron_out`. `parsear_comprehension_cola`
+acepta un parámetro adicional `Expr **patron_out`; los 4 call
+sites (list/dict/set/genex) actualizados. Generator expressions
+con destructuring se rechazan con error claro — el path de `genex`
+es bastante distinto (función sintética con `OP_PRODUCIR`) y queda
+para más adelante.
+
+**Compilador** (`src/compilador.c::EXPR_COMPREHENSION`): cuando
+una cláusula tiene patrón, el `slot_var[i]` pasa a ser anónimo
+`$comp_item` y los slots de cada destino del patrón se pre-reservan
+también en el bloque pre-loop (igual estrategia que las vars de
+las extras en v1.132 — todos los `OP_NULO` ocurren ANTES del
+primer `inicio_loop`, evitando que el stack crezca por iteración
+del loop padre — bug que ya arregló v1.130 en otro contexto).
+
+Dentro del loop, tras `OP_ASIGNAR_LOCAL slots_var[i]` (que guarda
+el ítem en el slot anónimo), se emite el destructuring inline:
+
+```
+OP_OBTENER_LOCAL slots_var[i]; OP_LONGITUD; CONST n; OP_IGUAL
+   (o OP_MAYOR_IGUAL si hay star, contra n-1)
+OP_SALTAR_SI_FALSO salto_mal_aridad
+OP_DESCARTAR                ; descarta bool true
+
+Por cada destino j:
+  Si j == star_idx:
+    OP_OBTENER_LOCAL item; CONST star_idx;
+    OP_OBTENER_LOCAL item; OP_LONGITUD; CONST tail; OP_RESTAR;
+    OP_NULO; OP_REBANADA
+  Si no:
+    idx_real = (j > star_idx) ? j - n : j
+    OP_OBTENER_LOCAL item; CONST idx_real; OP_INDICE
+  OP_ASIGNAR_LOCAL slot_destino_base + j
+
+OP_SALTAR fin_destructuring
+[salto_mal_aridad]:
+  OP_DESCARTAR; OP_OBTENER_GLOBAL ErrorDeValor;
+  CONST "aridad..."; OP_LLAMAR 1; OP_LANZAR
+[fin_destructuring]:
+```
+
+La limpieza al final del comprehension descarta los slots extra
+del patrón además de los `$comp_iter`/`$comp_var` clásicos.
+
+### Limitaciones
+
+- **Solo un nivel** en el patrón: `[expr para (a, (b, c)) en xs]`
+  con tupla anidada como destino aún no se acepta. Para casos
+  reales se puede desempaquetar dentro de la expresión.
+- **Solo un `*`** por cláusula (igual que asignación).
+- **Generator expressions** (`(expr para a, b en xs)`) con
+  destructuring se rechazan con error claro. La función sintética
+  que construye el genex tiene una rama distinta del compilador;
+  queda para una release futura junto con otras mejoras de genex
+  (multi-para tampoco está en genex).
+
+### Cobertura
+
+Nuevo fichero
+`tests/unit/test_bytecode_comprehension_destructuring.c` con 14
+casos:
+
+- List comprehension con par.
+- Con guarda que usa destinos.
+- Star inicial / final / medio.
+- Dict y set comprehension con destructuring.
+- Multi-`para` con destructuring en cada cláusula.
+- Dentro de función.
+- Star dentro de función.
+- Aridad incorrecta lanza `ErrorDeValor` atrapable.
+- Regresiones: comprehension simple y multi-`para` sin
+  destructuring siguen funcionando.
+- Generator expression con destructuring rechazado con error
+  claro.
+
+Suite: **331 tests verde** (330 + el nuevo).
+
 ## [1.134.0] — 2026-06-05 — Destructuring en el bucle `para`
 
 Limitación documentada desde el principio del proyecto: el bucle

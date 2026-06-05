@@ -106,12 +106,18 @@ typedef enum {
 
 /* v1.132: una clausula adicional `para x en xs [si cond]` en una
    comprehension con multiples para/si encadenados. La primera clausula
-   se sigue almacenando en los campos legacy de la union. */
+   se sigue almacenando en los campos legacy de la union.
+   v1.135: si `patron` != NULL, la cláusula es destructuring:
+   `para a, b en xs` o `para *r, ult en xs`. El patron es EXPR_TUPLA
+   cuyos elementos son EXPR_IDENT o EXPR_STAR_BIND (solo un nivel,
+   sin anidados). En ese caso `nombre_var`/`longitud_var` se ignoran.
+*/
 struct ClausulaComp {
     const char *nombre_var;
     int longitud_var;
+    struct Expr *patron;   /* v1.135: NULL si var simple */
     struct Expr *iterable;
-    struct Expr *guarda;  /* NULL si no hay `si ...` */
+    struct Expr *guarda;   /* NULL si no hay `si ...` */
 };
 
 struct Expr {
@@ -213,6 +219,7 @@ struct Expr {
             Expr *expr_valor;    /* solo dict: valor */
             const char *nombre_var;
             int longitud_var;
+            Expr *patron;        /* v1.135: destructuring; NULL = legacy */
             Expr *iterable;
             Expr *guarda;        /* NULL si no hay `si ...` */
             struct ClausulaComp *clausulas_extra;  /* v1.132 */

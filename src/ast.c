@@ -210,6 +210,7 @@ Expr *expr_comprehension(Arena *a, int tipo_destino,
         e->como.comprehension.longitud_var = longitud_var;
         e->como.comprehension.iterable = iterable;
         e->como.comprehension.guarda = guarda;
+        e->como.comprehension.patron = NULL;
         e->como.comprehension.clausulas_extra = NULL;
         e->como.comprehension.n_extras = 0;
     }
