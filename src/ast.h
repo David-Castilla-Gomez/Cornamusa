@@ -104,6 +104,16 @@ typedef enum {
     EXPR_STAR_BIND,
 } TipoExpr;
 
+/* v1.132: una clausula adicional `para x en xs [si cond]` en una
+   comprehension con multiples para/si encadenados. La primera clausula
+   se sigue almacenando en los campos legacy de la union. */
+struct ClausulaComp {
+    const char *nombre_var;
+    int longitud_var;
+    struct Expr *iterable;
+    struct Expr *guarda;  /* NULL si no hay `si ...` */
+};
+
 struct Expr {
     TipoExpr tipo;
     int linea;                  /* del primer token del nodo */
@@ -190,8 +200,13 @@ struct Expr {
 
         /* v1.30: comprehension. tipo_destino determina si list/dict/set.
            Para list/set: solo `expr_elem`. Para dict: ambos `expr_elem`
-           (clave) y `expr_valor`. `nombre_var` es el ident del bucle,
-           `iterable` la expresión a iterar, `guarda` opcional. */
+           (clave) y `expr_valor`. `nombre_var` es el ident del primer
+           bucle, `iterable` la expresión a iterar, `guarda` opcional.
+           v1.132: `clausulas_extra` lleva las cláusulas adicionales
+           para comprehensions con múltiples `para` y `si` anidados
+           (e.g. `[(x, y) para x en xs para y en ys si x != y]`). La
+           primera cláusula sigue usando los campos legacy; si
+           `n_extras == 0` el comportamiento es idéntico al previo. */
         struct {
             int tipo_destino;    /* 0=lista, 1=dict, 2=conjunto */
             Expr *expr_elem;     /* expr/clave generado por iteración */
@@ -200,6 +215,8 @@ struct Expr {
             int longitud_var;
             Expr *iterable;
             Expr *guarda;        /* NULL si no hay `si ...` */
+            struct ClausulaComp *clausulas_extra;  /* v1.132 */
+            int n_extras;                          /* v1.132 */
         } comprehension;
 
         /* Indexación obj[k]. */

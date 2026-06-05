@@ -69,7 +69,9 @@ static bool parsear_comprehension_cola(Parser *p,
                                           const char **nombre_var_out,
                                           int *longitud_var_out,
                                           Expr **iterable_out,
-                                          Expr **guarda_out);
+                                          Expr **guarda_out,
+                                          struct ClausulaComp **clausulas_extra_out,
+                                          int *n_extras_out);
 static Expr *parsear_unario(Parser *p);
 static Expr *parsear_no(Parser *p);
 static Expr *parsear_lambda(Parser *p);
@@ -662,10 +664,13 @@ static Expr *parsear_grupo(Parser *p) {
     if (primero == NULL) return NULL;
 
     /* v1.34: generator expression `(expr para v en iter [si guarda])`.
-       Produce un generador lazy en lugar de una lista materializada. */
+       Produce un generador lazy en lugar de una lista materializada.
+       v1.132: NO acepta multiples para encadenados — el compilador de
+       generators no soporta clausulas extra todavia. */
     if (check(p, TT_PARA)) {
         const char *vn; int vl; Expr *iter; Expr *guarda;
-        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda,
+                                            NULL, NULL)) return NULL;
         if (!consumir(p, TT_PARENT_DER,
             "se esperaba ')' al final de la generator expression")) return NULL;
         return expr_comprehension(p->arena, /*tipo=genex*/3,
@@ -722,14 +727,24 @@ static Expr *parsear_grupo(Parser *p) {
  * Avanza hasta el token de cierre (`]`, `}` o `)`). Retorna los
  * componentes en los out-params.
  *
- * Sintaxis soportada (v1.30): un solo `para...en...` con un `si` opcional.
- * No soporta nested `para...para...` (v1.30.1).
+ * Sintaxis soportada:
+ *   v1.30: un solo `para...en...` con un `si` opcional.
+ *   v1.132: cero o mas clausulas adicionales `para X en Y [si Z]`.
+ *     `[(x, y) para x en xs para y en ys si x != y]` — bucles
+ *     anidados desugarados por el compilador.
+ *
+ * Salida (primera clausula): nombre_var, longitud_var, iterable, guarda.
+ * Salida (clausulas extra): puntero a array alocado en arena y conteo.
+ * Si `clausulas_extra_out` o `n_extras_out` son NULL, no se aceptan
+ * clausulas extra (callers viejos).
  */
 static bool parsear_comprehension_cola(Parser *p,
                                           const char **nombre_var_out,
                                           int *longitud_var_out,
                                           Expr **iterable_out,
-                                          Expr **guarda_out) {
+                                          Expr **guarda_out,
+                                          struct ClausulaComp **clausulas_extra_out,
+                                          int *n_extras_out) {
     if (!consumir(p, TT_PARA, "se esperaba 'para' en comprehension")) return false;
     if (!check(p, TT_IDENT)) {
         error_en(p, &p->actual,
@@ -754,6 +769,48 @@ static bool parsear_comprehension_cola(Parser *p,
         if (g == NULL) return false;
         *guarda_out = g;
     }
+    /* v1.132: clausulas adicionales `para X en Y [si Z]`. */
+    if (clausulas_extra_out != NULL && n_extras_out != NULL) {
+        *clausulas_extra_out = NULL;
+        *n_extras_out = 0;
+        int cap = 0;
+        while (check(p, TT_PARA)) {
+            avanzar(p);  /* consume PARA */
+            if (!check(p, TT_IDENT)) {
+                error_en(p, &p->actual,
+                    "se esperaba un nombre de variable tras 'para'");
+                return false;
+            }
+            Token tx = p->actual;
+            avanzar(p);
+            if (!consumir(p, TT_EN, "se esperaba 'en' tras la variable")) return false;
+            Expr *it2 = parsear_precedencia(p, PREC_O);
+            if (it2 == NULL) return false;
+            Expr *g2 = NULL;
+            if (consumir_si(p, TT_SI)) {
+                g2 = parsear_expresion(p);
+                if (g2 == NULL) return false;
+            }
+            if (*n_extras_out >= cap) {
+                int nuevo_cap = cap ? cap * 2 : 2;
+                struct ClausulaComp *nuevo =
+                    (struct ClausulaComp *)arena_alocar(
+                        p->arena, sizeof(struct ClausulaComp) * (size_t)nuevo_cap);
+                if (!nuevo) return false;
+                if (*n_extras_out > 0) {
+                    memcpy(nuevo, *clausulas_extra_out,
+                           sizeof(struct ClausulaComp) * (size_t)(*n_extras_out));
+                }
+                *clausulas_extra_out = nuevo;
+                cap = nuevo_cap;
+            }
+            (*clausulas_extra_out)[*n_extras_out].nombre_var = tx.inicio;
+            (*clausulas_extra_out)[*n_extras_out].longitud_var = tx.longitud;
+            (*clausulas_extra_out)[*n_extras_out].iterable = it2;
+            (*clausulas_extra_out)[*n_extras_out].guarda = g2;
+            (*n_extras_out)++;
+        }
+    }
     return true;
 }
 
@@ -776,15 +833,23 @@ static Expr *parsear_lista_literal(Parser *p) {
     Expr *primero = parsear_expresion(p);
     if (primero == NULL) return NULL;
 
-    /* v1.30: comprehension `[expr para ...]`. */
+    /* v1.30: comprehension `[expr para ...]`.
+     * v1.132: soporta multiples para/si encadenados. */
     if (check(p, TT_PARA)) {
         const char *vn; int vl; Expr *iter; Expr *guarda;
-        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+        struct ClausulaComp *extras; int n_extras;
+        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda,
+                                            &extras, &n_extras)) return NULL;
         if (!consumir(p, TT_CORCH_DER,
             "se esperaba ']' al final de la comprehension")) return NULL;
-        return expr_comprehension(p->arena, /*tipo=lista*/0,
+        Expr *e = expr_comprehension(p->arena, /*tipo=lista*/0,
                                     primero, NULL, vn, vl, iter, guarda,
                                     apertura.linea, apertura.columna);
+        if (e && n_extras > 0) {
+            e->como.comprehension.clausulas_extra = extras;
+            e->como.comprehension.n_extras = n_extras;
+        }
+        return e;
     }
 
     /* Lista literal con más elementos. */
@@ -844,15 +909,23 @@ static Expr *parsear_llaves(Parser *p) {
         Expr *valor = parsear_expresion(p);
         if (valor == NULL) return NULL;
 
-        /* v1.30: `{k: v para ...}` → dict comprehension. */
+        /* v1.30: `{k: v para ...}` → dict comprehension.
+         * v1.132: soporta multiples para/si encadenados. */
         if (check(p, TT_PARA)) {
             const char *vn; int vl; Expr *iter; Expr *guarda;
-            if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+            struct ClausulaComp *extras; int n_extras;
+            if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda,
+                                                &extras, &n_extras)) return NULL;
             if (!consumir(p, TT_LLAVE_DER,
                 "se esperaba '}' al final de la comprehension dict")) return NULL;
-            return expr_comprehension(p->arena, /*tipo=dict*/1,
+            Expr *e = expr_comprehension(p->arena, /*tipo=dict*/1,
                                         primero, valor, vn, vl, iter, guarda,
                                         apertura.linea, apertura.columna);
+            if (e && n_extras > 0) {
+                e->como.comprehension.clausulas_extra = extras;
+                e->como.comprehension.n_extras = n_extras;
+            }
+            return e;
         }
 
         Expr **claves = NULL;
@@ -896,15 +969,23 @@ static Expr *parsear_llaves(Parser *p) {
                                 apertura.linea, apertura.columna);
     }
 
-    /* v1.30: `{expr para ...}` → set comprehension. */
+    /* v1.30: `{expr para ...}` → set comprehension.
+     * v1.132: soporta multiples para/si encadenados. */
     if (check(p, TT_PARA)) {
         const char *vn; int vl; Expr *iter; Expr *guarda;
-        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda)) return NULL;
+        struct ClausulaComp *extras; int n_extras;
+        if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda,
+                                            &extras, &n_extras)) return NULL;
         if (!consumir(p, TT_LLAVE_DER,
             "se esperaba '}' al final de la comprehension conjunto")) return NULL;
-        return expr_comprehension(p->arena, /*tipo=conjunto*/2,
+        Expr *e = expr_comprehension(p->arena, /*tipo=conjunto*/2,
                                     primero, NULL, vn, vl, iter, guarda,
                                     apertura.linea, apertura.columna);
+        if (e && n_extras > 0) {
+            e->como.comprehension.clausulas_extra = extras;
+            e->como.comprehension.n_extras = n_extras;
+        }
+        return e;
     }
 
     /* Sino, es conjunto literal. */

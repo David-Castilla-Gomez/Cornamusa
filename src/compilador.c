@@ -1179,38 +1179,107 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             int slot_iter = agregar_local(c, "$comp_iter", 10, e->linea);
             if (slot_iter < 0) return false;
 
-            /* 3. Reservar slot para la variable de iteración con OP_NULO. */
-            chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
-            int slot_var = agregar_local(c, e->como.comprehension.nombre_var,
-                                            e->como.comprehension.longitud_var,
-                                            e->linea);
-            if (slot_var < 0) return false;
+            /* v1.132: soportar multiples clausulas anidadas. La primera
+             * vive en los campos legacy; las extras en `clausulas_extra`.
+             * Estrategia: para cada clausula i en orden:
+             *   - Si i == 0: el iter de la primera ya esta en slot_iter
+             *     (compilado arriba antes de este bloque) y el var aun
+             *     no se ha reservado.
+             *   - Si i > 0: compilar iterable_i, OP_ITER_INICIAR,
+             *     agregar slot_iter_i.
+             *   - En todos: OP_NULO + agregar slot_var_i, inicio_loop_i,
+             *     OP_ITER_SIGUIENTE slot_iter_i offset_ph_i,
+             *     OP_ASIGNAR_LOCAL slot_var_i, eval guarda con
+             *     OP_SALTAR_SI_FALSO salto_continuar_i si la hay.
+             *
+             * Tras la ultima clausula se hace el agregado al acumulador.
+             * Luego, en orden inverso, se cierra cada clausula:
+             * OP_BUCLE al inicio_loop_i, aterrizaje del continuar (si
+             * habia guarda) con OP_DESCARTAR + OP_BUCLE, y patcheo del
+             * offset_fin del OP_ITER_SIGUIENTE. Por cada clausula se
+             * eliminan los 2 slots locales ($iter_i, var_i) al final.
+             */
+            int n_extras = e->como.comprehension.n_extras;
+            struct ClausulaComp *extras = e->como.comprehension.clausulas_extra;
+            int n_clausulas = 1 + n_extras;
 
-            /* 4. Loop. */
-            int inicio_loop = c->actual->chunk->cuenta;
-            chunk_emitir_byte2(c->actual->chunk, OP_ITER_SIGUIENTE,
-                                (uint8_t)slot_iter, e->linea);
-            chunk_emitir_byte(c->actual->chunk, 0xff, e->linea);
-            chunk_emitir_byte(c->actual->chunk, 0xff, e->linea);
-            int offset_fin_placeholder = c->actual->chunk->cuenta - 2;
-
-            /* Asignar el valor producido a la variable de iteración. */
-            chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
-                                (uint8_t)slot_var, e->linea);
-
-            /* Eval guarda si existe. */
-            int salto_continuar = -1;
-            if (e->como.comprehension.guarda) {
-                if (!compilador_compilar_expr(c, e->como.comprehension.guarda)) return false;
-                salto_continuar = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
-                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* bool true */
+            /* Limite practico: el bytecode v0.6 indexa locales con u8. */
+            if (n_clausulas > 16) {
+                error_compilacion(c, e->linea, e->columna,
+                    "demasiadas clausulas en comprehension (max 16)");
+                return false;
             }
 
-            /* Empujar el acumulador para agregar al él. */
+            int slots_iter[16];
+            int slots_var[16];
+            int inicios_loop[16];
+            int offsets_ph[16];
+            int saltos_continuar[16];
+
+            slots_iter[0] = slot_iter;
+            /* Pre-empujar OP_NULO + agregar_local para TODOS los slots
+             * (var de clausula 0, y iter+var de las extras) ANTES del
+             * primer inicio_loop. Asi sus OP_NULO no estan dentro de
+             * ningun bucle, evitando que el stack crezca por iteracion.
+             * Las cláusulas extra escriben sus iters con OP_ASIGNAR_LOCAL
+             * dentro del cuerpo del loop padre. */
+            for (int i = 0; i < n_clausulas; i++) {
+                saltos_continuar[i] = -1;
+                if (i > 0) {
+                    chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
+                    slots_iter[i] = agregar_local(c, "$comp_iter", 10, e->linea);
+                    if (slots_iter[i] < 0) return false;
+                }
+                chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
+                const char *vn;
+                int vl;
+                if (i == 0) {
+                    vn = e->como.comprehension.nombre_var;
+                    vl = e->como.comprehension.longitud_var;
+                } else {
+                    vn = extras[i - 1].nombre_var;
+                    vl = extras[i - 1].longitud_var;
+                }
+                slots_var[i] = agregar_local(c, vn, vl, e->linea);
+                if (slots_var[i] < 0) return false;
+            }
+
+            /* Emitir los inicios_loop y los SIGUIENTE/ASIGNAR de cada
+             * clausula. Para clausulas i > 0, antes del inicio_loop[i]
+             * eval iterable_i + ITER_INICIAR + OP_ASIGNAR_LOCAL al slot
+             * pre-reservado — asi se ejecuta UNA vez por entrada al
+             * loop padre, no en cada iter. */
+            for (int i = 0; i < n_clausulas; i++) {
+                if (i > 0) {
+                    if (!compilador_compilar_expr(c, extras[i - 1].iterable))
+                        return false;
+                    chunk_emitir_byte(c->actual->chunk, OP_ITER_INICIAR, e->linea);
+                    chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                        (uint8_t)slots_iter[i], e->linea);
+                }
+                inicios_loop[i] = c->actual->chunk->cuenta;
+                chunk_emitir_byte2(c->actual->chunk, OP_ITER_SIGUIENTE,
+                                    (uint8_t)slots_iter[i], e->linea);
+                chunk_emitir_byte(c->actual->chunk, 0xff, e->linea);
+                chunk_emitir_byte(c->actual->chunk, 0xff, e->linea);
+                offsets_ph[i] = c->actual->chunk->cuenta - 2;
+
+                chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
+                                    (uint8_t)slots_var[i], e->linea);
+
+                Expr *guarda_i = (i == 0)
+                    ? e->como.comprehension.guarda
+                    : extras[i - 1].guarda;
+                if (guarda_i) {
+                    if (!compilador_compilar_expr(c, guarda_i)) return false;
+                    saltos_continuar[i] = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                }
+            }
+
+            /* Cuerpo: agregar al acumulador. */
             chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                                 (uint8_t)slot_acc, e->linea);
-
-            /* Eval expr_elem (+ expr_valor para dict) y agregar. */
             if (tipo_destino == 1) {
                 if (!compilador_compilar_expr(c, e->como.comprehension.expr_elem)) return false;
                 if (!compilador_compilar_expr(c, e->como.comprehension.expr_valor)) return false;
@@ -1223,39 +1292,34 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     chunk_emitir_byte(c->actual->chunk, OP_CONJUNTO_AGREGAR, e->linea);
                 }
             }
-            /* Los opcodes AGREGAR dejan el acumulador en TOS — descartar
-               esa copia (el original sigue en slot_acc). */
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
 
-            /* Salta de vuelta al inicio. */
-            emitir_bucle(c, inicio_loop, e->linea);
-
-            /* Aterrizaje de "continuar" (guarda falsa). */
-            if (salto_continuar >= 0) {
-                parchear_salto(c, salto_continuar, e->linea);
-                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* bool false */
-                emitir_bucle(c, inicio_loop, e->linea);
+            /* Cerrar clausulas en orden inverso. */
+            for (int i = n_clausulas - 1; i >= 0; i--) {
+                emitir_bucle(c, inicios_loop[i], e->linea);
+                if (saltos_continuar[i] >= 0) {
+                    parchear_salto(c, saltos_continuar[i], e->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                    emitir_bucle(c, inicios_loop[i], e->linea);
+                }
+                int offset_fin = c->actual->chunk->cuenta - offsets_ph[i] - 2;
+                c->actual->chunk->codigo[offsets_ph[i]] =
+                    (uint8_t)((offset_fin >> 8) & 0xff);
+                c->actual->chunk->codigo[offsets_ph[i] + 1] =
+                    (uint8_t)(offset_fin & 0xff);
             }
 
-            /* Aterrizaje de fin (OP_ITER_SIGUIENTE no había). */
-            int offset_fin = c->actual->chunk->cuenta - offset_fin_placeholder - 2;
-            c->actual->chunk->codigo[offset_fin_placeholder] = (uint8_t)((offset_fin >> 8) & 0xff);
-            c->actual->chunk->codigo[offset_fin_placeholder + 1] = (uint8_t)(offset_fin & 0xff);
-
-            /* Limpieza: dejar el acumulador como TOS y liberar los 3
-               slots temporales ($comp_acc, $comp_iter, $comp_var).
-                 1. OP_OBTENER_LOCAL slot_acc — push acc al TOS.
-                 2. OP_ASIGNAR_LOCAL slot_acc — pop, escribe slot_acc
-                    con sí mismo. Tope -1.
-                 3. OP_DESCARTAR x2 — descartar var, iter.
-                 4. El TOS queda en slot_acc (el acumulador). */
+            /* Limpieza: dejar el acumulador como TOS y liberar slots
+             * temporales ($comp_acc, y por cada clausula su $comp_iter
+             * y su var). 1 + 2 * n_clausulas. */
             chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                                 (uint8_t)slot_acc, e->linea);
             chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                 (uint8_t)slot_acc, e->linea);
-            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* var */
-            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea); /* iter */
-            c->actual->n_locales -= 3;
+            for (int i = 0; i < 2 * n_clausulas; i++) {
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+            }
+            c->actual->n_locales -= (1 + 2 * n_clausulas);
             return true;
         }
         case EXPR_INDICE: {

@@ -6,6 +6,95 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.132.0] — 2026-06-05 — Comprehensions con múltiples `para` y `si`
+
+Antes de v1.132, `[(x, y) para x en xs para y en ys]` daba
+`ErrorDeSintaxis: se esperaba ']' al final de la comprehension`.
+Solo se aceptaba **una** cláusula `para X en Y [si Z]`. Esta release
+añade soporte para N cláusulas anidadas (producto cartesiano).
+
+```cornamusa
+# Producto cartesiano
+xs = [1, 2, 3]; letras = ["a", "b"]
+pares = [(x, l) para x en xs para l en letras]
+# [(1, "a"), (1, "b"), (2, "a"), (2, "b"), (3, "a"), (3, "b")]
+
+# Guarda en la 2ª cláusula
+sin_diagonal = [(i, j) para i en rango(0, 3) para j en rango(0, 3) si i != j]
+
+# Guarda en la 1ª cláusula (filtra antes del 2º bucle)
+m = [(a, b) para a en rango(0, 3) si a > 0 para b en rango(0, 2)]
+
+# Dict y set comprehension multi-para
+d = {f"{i}-{j}": i + j para i en [1, 2] para j en [10, 20]}
+s = {i * j para i en [1, 2] para j en [3, 4]}
+
+# Tres clausulas anidadas
+tres = [(a, b, c) para a en [1, 2] para b en [3, 4] para c en [5, 6]]
+# 8 tuplas
+```
+
+### Implementación
+
+**AST** (`src/ast.h`/`src/ast.c`): nueva struct `ClausulaComp` con
+`{nombre_var, longitud_var, iterable, guarda}`. La struct
+`comprehension` añade `clausulas_extra: ClausulaComp *` y
+`n_extras: int`. La PRIMERA cláusula sigue en los campos legacy
+(`nombre_var`, `iterable`, `guarda`); si `n_extras == 0` el
+comportamiento es idéntico al previo, sin cambios de compatibilidad.
+
+**Parser** (`src/parser.c`): `parsear_comprehension_cola` ahora
+acepta dos parámetros adicionales (out-only) para devolver las
+cláusulas extra. Después de procesar la primera cláusula y su `si`
+opcional, entra en un bucle `while (check(p, TT_PARA))` que recolecta
+más `para X en Y [si Z]` en el array. Los 4 call sites (genex `()`,
+list `[]`, dict `{k:v}`, set `{x}`) pasan `&extras, &n_extras` excepto
+el genex (paréntesis) que pasa `NULL, NULL` — los generators no
+soportan extras todavía.
+
+**Compilador** (`src/compilador.c`): refactor completo del case
+`EXPR_COMPREHENSION`. Para N cláusulas:
+
+1. Pre-emit `OP_NULO` + `agregar_local` para TODOS los slots (var
+   de cláusula 0, y iter+var de cada extra) **antes del primer
+   `inicio_loop`**.
+2. Para cada cláusula `i`:
+   - Si `i > 0`: emit `iterable_i`, `OP_ITER_INICIAR`,
+     `OP_ASIGNAR_LOCAL slot_iter[i]` — sobrescribe el slot
+     pre-reservado.
+   - `inicio_loop[i] = chunk->cuenta`.
+   - `OP_ITER_SIGUIENTE slot_iter[i]`, `OP_ASIGNAR_LOCAL slot_var[i]`.
+   - Si hay guarda: eval + `OP_SALTAR_SI_FALSO continuar[i]`.
+3. Cuerpo: agregar al acumulador.
+4. Cleanup en orden inverso: `OP_BUCLE inicio_loop[i]`, aterrizaje
+   del `continuar`, patch del `offset_fin[i]`.
+
+El patrón "pre-emit todos los slots ANTES del loop padre" es el
+mismo que arregló v1.130 para `compilar_mientras`: evita que las
+cláusulas internas hagan `OP_NULO + agregar_local` dentro del bucle
+padre (lo que crecería el stack +N por iter). Sin esto, dos
+cláusulas anidadas crasheaban silenciosamente con resultados raros
+(la primera iteración del bug original imprimía solo el último
+valor del var más interno).
+
+### Limitaciones
+
+- **Máximo 16 cláusulas anidadas** (`para` x16). El bytecode indexa
+  locales con `u8`; arrays C de tamaño fijo en el compilador.
+  Más allá → `ErrorDeCompilacion: demasiadas clausulas en comprehension`.
+- **Generator expressions** `(expr para v en it)` aún no aceptan
+  cláusulas extra. Es un refactor adicional del path de generators.
+
+### Tests
+
+`tests/unit/test_bytecode_comprehension_multi_para.c` con 9 bloques:
+producto cartesiano, guarda en 2ª cláusula, guarda en 1ª cláusula
+(filtra antes del segundo bucle), dict y set multi-para, tres
+cláusulas anidadas con cardinalidad 8, y 3 regresiones de
+comprehension simple (lista, guarda, dict).
+
+Suite: **329 tests verde**.
+
 ## [1.131.0] — 2026-06-05 — `OP_INDICE` y `OP_REBANADA` sobre `rango`
 
 Cierra la limitación que documenté honestamente en v1.129: el
