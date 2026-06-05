@@ -1899,8 +1899,14 @@ static Sent *parsear_mientras(Parser *p) {
 }
 
 /*
- * v1.134: parsea un destino de `para` — un IDENT o `*IDENT`. Devuelve
- * NULL en error. Establece *fue_star si era `*IDENT`.
+ * v1.134: parsea un destino de `para` — un IDENT o `*IDENT`.
+ * v1.137: tambien acepta sub-patrones `(...)` que se anidan
+ * recursivamente. Ejemplo:
+ *   para (mm, (n, o)) en triples:
+ *   para mm, (n, o) en pares_de_pares:
+ * El nodo devuelto puede ser EXPR_IDENT, EXPR_STAR_BIND o
+ * EXPR_TUPLA (anidada). La maquinaria de SENT_ASIGNAR ya soporta
+ * destructuring recursivo (desde v1.123).
  */
 static Expr *parsear_destino_para(Parser *p) {
     if (check(p, TT_ASTERISCO)) {
@@ -1915,6 +1921,34 @@ static Expr *parsear_destino_para(Parser *p) {
         Token tid = p->actual;
         avanzar(p);
         return expr_star_bind(p->arena, tid.inicio, tid.longitud, sl, sc);
+    }
+    if (check(p, TT_PARENT_IZQ)) {
+        int sl = p->actual.linea;
+        int sc = p->actual.columna;
+        avanzar(p);  /* consume '(' */
+        Expr **elementos = (Expr **)arena_alocar(p->arena,
+            sizeof(Expr *) * 4);
+        if (elementos == NULL) return NULL;
+        int n = 0, cap = 4;
+        if (!check(p, TT_PARENT_DER)) {
+            do {
+                Expr *e = parsear_destino_para(p);
+                if (e == NULL) return NULL;
+                if (n >= cap) {
+                    int nuevo_cap = cap * 2;
+                    Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                        sizeof(Expr *) * (size_t)nuevo_cap);
+                    if (nuevo == NULL) return NULL;
+                    memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+                    elementos = nuevo;
+                    cap = nuevo_cap;
+                }
+                elementos[n++] = e;
+            } while (consumir_si(p, TT_COMA) && !check(p, TT_PARENT_DER));
+        }
+        if (!consumir(p, TT_PARENT_DER,
+            "se esperaba ')' al cerrar sub-patron de 'para'")) return NULL;
+        return expr_tupla(p->arena, elementos, n, sl, sc);
     }
     if (!check(p, TT_IDENT)) {
         error_en(p, &p->actual,
@@ -1948,6 +1982,7 @@ static Sent *parsear_para(Parser *p) {
     if (primer_destino == NULL) return NULL;
 
     bool es_destructuring = (primer_destino->tipo == EXPR_STAR_BIND)
+                              || (primer_destino->tipo == EXPR_TUPLA)
                               || check(p, TT_COMA);
 
     Expr *patron = NULL;       /* solo si es_destructuring */
@@ -1976,7 +2011,14 @@ static Sent *parsear_para(Parser *p) {
             }
             elementos[n++] = e;
         }
-        patron = expr_tupla(p->arena, elementos, n, linea, col);
+        /* v1.137: si solo hay un elemento Y es ya EXPR_TUPLA (sub-patron
+         * con parentesis), evitar envolverlo en otra tupla. Asi
+         * `para (a, b) en pares:` produce patron = (a, b), no ((a, b),). */
+        if (n == 1 && elementos[0]->tipo == EXPR_TUPLA) {
+            patron = elementos[0];
+        } else {
+            patron = expr_tupla(p->arena, elementos, n, linea, col);
+        }
         if (patron == NULL) return NULL;
 
         /* Nombre temporal unico por posicion textual del `para`. Asi

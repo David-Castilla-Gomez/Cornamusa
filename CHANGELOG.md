@@ -6,6 +6,94 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.137.0] — 2026-06-05 — Patrones anidados en el bucle `para`
+
+v1.134 abrió el destructuring del bucle `para`. v1.135 y v1.136
+lo extendieron a list/dict/set comprehensions y a generators.
+Quedaba documentada como TODO la última pieza: **tuplas dentro
+de tuplas** como destino.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Patron anidado clasico
+para (a, (b, c)) en [(1, (10, 100)), (2, (20, 200))]:
+    imprimir(a, b, c)
+fin para
+
+# Mezcla — plano fuera, anidado dentro (sin envolver el primero)
+para a, (b, c) en [(1, (10, 100)), (2, (20, 200))]:
+    ...
+fin para
+
+# Profundidad arbitraria
+para (a, (b, (c, d))) en cuadruples_jerarquicos:
+    ...
+fin para
+
+# Star dentro del sub-patron
+para (a, (*r, ult)) en [(1, (10, 20, 30))]:
+    # r = [10, 20], ult = 30
+    ...
+fin para
+```
+
+### Implementación
+
+Cambio mínimo, solo en `src/parser.c::parsear_destino_para`:
+extender el helper para aceptar `(...)` como **sub-patrón**,
+parseado recursivamente. El nodo devuelto puede ahora ser
+`EXPR_IDENT`, `EXPR_STAR_BIND` o `EXPR_TUPLA` (con elementos
+que pueden ser cualquiera de los tres → recursión).
+
+El **compilador no se tocó**. La reescritura del AST que v1.134
+introdujo —`para $item en it: <patron> = $item; cuerpo`—
+delega el destructuring a `SENT_ASIGNAR`, y
+`emitir_destructuring` ya soporta destinos anidados desde v1.123
+con la recursión:
+
+```c
+} else if (dst_i->tipo == EXPR_TUPLA || dst_i->tipo == EXPR_LISTA) {
+    if (!emitir_destructuring(c, dst_i, linea)) { ... }
+}
+```
+
+Lo mismo `pre_reservar_locales` que recurre sobre `EXPR_TUPLA` en
+patrones de asignación. Así que el feature funciona "gratis"
+sobre la maquinaria existente, sin tocar bytecode ni VM.
+
+Detalle pequeño en el parser: si tras el primer destino TUPLA no
+viene coma (caso `para (a, b) en pares:`), NO se envuelve en otra
+tupla — el patrón es directamente `(a, b)` en lugar de `((a, b),)`.
+Eso evita un nivel de unwrapping innecesario y mensajes de aridad
+correctos (espera 2, no 1).
+
+### Limitación
+
+**Comprehensions y generator expressions** con patrones
+anidados — `[expr para (a, (b, c)) en triples]` — siguen
+rechazándose con error claro ("se esperaba un nombre de variable
+tras 'para'"). Cerrarlas también requiere refactorizar el
+destructuring inline del compilador de comprehensions (escrito
+manualmente en v1.135/v1.136) a una versión recursiva. Queda
+para una release futura cuando la pieza valga el esfuerzo. El
+patrón anidado en `para` cubre el caso de uso más frecuente.
+
+### Cobertura
+
+Nuevo fichero `tests/unit/test_bytecode_para_anidado.c` con 9
+casos:
+
+- Patrón anidado simple.
+- Mezcla plano + anidado sin envolver.
+- Triple anidado profundo (3 niveles de tupla).
+- Star binding dentro del sub-patrón.
+- Dentro de función (slots locales).
+- Aridad incorrecta del sub-patrón lanza `ErrorDeValor` atrapable.
+- Regresión: `para` clásico, plano y con star.
+
+Suite: **333 tests verde** (332 + el nuevo).
+
 ## [1.136.0] — 2026-06-05 — Generator expressions con multi-`para` y destructuring
 
 v1.132 trajo multi-`para` para list/dict/set comprehensions; v1.135
