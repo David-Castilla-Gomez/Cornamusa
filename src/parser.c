@@ -672,23 +672,27 @@ static Expr *parsear_grupo(Parser *p) {
 
     /* v1.34: generator expression `(expr para v en iter [si guarda])`.
        Produce un generador lazy en lugar de una lista materializada.
-       v1.132: NO acepta multiples para encadenados — el compilador de
-       generators no soporta clausulas extra todavia. */
+       v1.136: acepta multiples `para` encadenados y destructuring en
+       cualquier clausula (paridad con list/dict/set comprehensions). */
     if (check(p, TT_PARA)) {
         const char *vn; int vl; Expr *iter; Expr *guarda;
         Expr *patron = NULL;
+        struct ClausulaComp *extras; int n_extras;
         if (!parsear_comprehension_cola(p, &vn, &vl, &iter, &guarda,
-                                            &patron, NULL, NULL)) return NULL;
-        if (patron != NULL) {
-            error_en(p, &p->actual,
-                "destructuring en cabecera de generator expression no soportado todavia");
-            return NULL;
-        }
+                                            &patron, &extras, &n_extras)) return NULL;
         if (!consumir(p, TT_PARENT_DER,
             "se esperaba ')' al final de la generator expression")) return NULL;
-        return expr_comprehension(p->arena, /*tipo=genex*/3,
+        Expr *e = expr_comprehension(p->arena, /*tipo=genex*/3,
                                     primero, NULL, vn, vl, iter, guarda,
                                     apertura.linea, apertura.columna);
+        if (e) {
+            e->como.comprehension.patron = patron;
+            if (n_extras > 0) {
+                e->como.comprehension.clausulas_extra = extras;
+                e->como.comprehension.n_extras = n_extras;
+            }
+        }
+        return e;
     }
 
     /* Sin coma: es grupo. */

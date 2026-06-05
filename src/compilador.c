@@ -1049,6 +1049,16 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                upvalues — gracias al scope hijo. Lazy de verdad: cada
                `iter_siguiente` reanuda el frame del generador. */
             if (tipo_destino == 3) {
+                /* v1.136: genex con multiples `para` y/o destructuring.
+                 * El primer iterable se pasa como parametro $gx_param; los
+                 * extras se evaluan dentro del scope del generador (pueden
+                 * referenciar variables anteriores como locales/upvalues).
+                 *
+                 * Mismo patron que list/dict/set: pre-reservar slots
+                 * (iter, var, destinos del patron) ANTES del primer
+                 * inicio_loop para evitar crecimiento del stack.
+                 * El cuerpo, en lugar de agregar a un acumulador, hace
+                 * OP_PRODUCIR. */
                 FuncionBC *fn = funcion_bc_nueva("$genex", 6, 1);
                 if (!fn) {
                     return error_compilacion(c, e->linea, e->columna,
@@ -1059,7 +1069,6 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 scope_gx.funcion = fn;
                 scope_gx.locales[0].nombre = "$genex";
                 scope_gx.locales[0].longitud_nombre = 6;
-                /* Param 0 (slot 1): el iterable. */
                 scope_gx.locales[1].nombre = "$gx_param";
                 scope_gx.locales[1].longitud_nombre = 9;
                 scope_gx.locales[1].capturado = false;
@@ -1068,43 +1077,217 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 ScopeCompilador *prev = c->actual;
                 c->actual = &scope_gx;
 
-                /* Cuerpo: emitir el bucle `para v en $gx_param`. */
                 bool gx_ok = true;
-                /* OP_OBTENER_LOCAL 1 ($gx_param) + OP_ITER_INICIAR. */
+                int gx_n_extras = e->como.comprehension.n_extras;
+                struct ClausulaComp *gx_extras =
+                    e->como.comprehension.clausulas_extra;
+                int gx_n_clausulas = 1 + gx_n_extras;
+
+                if (gx_n_clausulas > 16) {
+                    c->actual = prev;
+                    funcion_bc_liberar(fn);
+                    error_compilacion(c, e->linea, e->columna,
+                        "demasiadas clausulas en comprehension (max 16)");
+                    return false;
+                }
+
+                Expr *gx_patrones[16];
+                int gx_star_idx[16];
+                int gx_slots_iter[16];
+                int gx_slots_var[16];
+                int gx_inicios[16];
+                int gx_offsets_ph[16];
+                int gx_saltos_cont[16];
+                for (int i = 0; i < 16; i++) {
+                    gx_patrones[i] = NULL;
+                    gx_star_idx[i] = -1;
+                    gx_saltos_cont[i] = -1;
+                }
+                gx_patrones[0] = e->como.comprehension.patron;
+                for (int i = 1; i < gx_n_clausulas; i++) {
+                    gx_patrones[i] = gx_extras[i - 1].patron;
+                }
+                /* Validar patrones. */
+                for (int i = 0; i < gx_n_clausulas && gx_ok; i++) {
+                    if (gx_patrones[i] == NULL) continue;
+                    Expr *pat = gx_patrones[i];
+                    int n_dst = pat->como.secuencia.n_elementos;
+                    Expr **dst = pat->como.secuencia.elementos;
+                    for (int j = 0; j < n_dst; j++) {
+                        if (dst[j]->tipo == EXPR_IDENT) continue;
+                        if (dst[j]->tipo == EXPR_STAR_BIND) {
+                            if (gx_star_idx[i] >= 0) {
+                                c->actual = prev;
+                                funcion_bc_liberar(fn);
+                                error_compilacion(c, e->linea, e->columna,
+                                    "ErrorDeSintaxis: solo se permite un '*' por clausula");
+                                return false;
+                            }
+                            gx_star_idx[i] = j;
+                            continue;
+                        }
+                        c->actual = prev;
+                        funcion_bc_liberar(fn);
+                        error_compilacion(c, e->linea, e->columna,
+                            "ErrorDeSintaxis: destino de comprehension debe "
+                            "ser IDENT o '*IDENT'");
+                        return false;
+                    }
+                }
+
+                /* Primera clausula: iterar sobre $gx_param. */
                 chunk_emitir_byte2(&fn->chunk, OP_OBTENER_LOCAL, 1, e->linea);
                 chunk_emitir_byte(&fn->chunk, OP_ITER_INICIAR, e->linea);
-                int gx_slot_iter = agregar_local(c, "$gx_iter", 8, e->linea);
-                if (gx_slot_iter < 0) { gx_ok = false; }
-                /* OP_NULO + reservar slot para la variable de iteración. */
-                if (gx_ok) {
+                gx_slots_iter[0] = agregar_local(c, "$gx_iter", 8, e->linea);
+                if (gx_slots_iter[0] < 0) gx_ok = false;
+
+                /* Pre-reservar slots de var/patron de TODAS las clausulas
+                 * antes del primer inicio_loop. */
+                for (int i = 0; i < gx_n_clausulas && gx_ok; i++) {
+                    if (i > 0) {
+                        chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
+                        gx_slots_iter[i] = agregar_local(c, "$gx_iter", 8, e->linea);
+                        if (gx_slots_iter[i] < 0) { gx_ok = false; break; }
+                    }
                     chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
-                }
-                int gx_slot_var = gx_ok
-                    ? agregar_local(c, e->como.comprehension.nombre_var,
-                                       e->como.comprehension.longitud_var, e->linea)
-                    : -1;
-                if (gx_slot_var < 0) { gx_ok = false; }
-                int gx_inicio = fn->chunk.cuenta;
-                if (gx_ok) {
-                    chunk_emitir_byte2(&fn->chunk, OP_ITER_SIGUIENTE,
-                                        (uint8_t)gx_slot_iter, e->linea);
-                    chunk_emitir_byte(&fn->chunk, 0xff, e->linea);
-                    chunk_emitir_byte(&fn->chunk, 0xff, e->linea);
-                }
-                int gx_off_ph = fn->chunk.cuenta - 2;
-                int gx_salto_cont = -1;
-                if (gx_ok) {
-                    chunk_emitir_byte2(&fn->chunk, OP_ASIGNAR_LOCAL,
-                                        (uint8_t)gx_slot_var, e->linea);
-                    if (e->como.comprehension.guarda) {
-                        if (!compilador_compilar_expr(c, e->como.comprehension.guarda)) {
-                            gx_ok = false;
-                        } else {
-                            gx_salto_cont = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
-                            chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
+                    const char *vn; int vl;
+                    if (gx_patrones[i] != NULL) {
+                        vn = "$gx_item";
+                        vl = 8;
+                    } else if (i == 0) {
+                        vn = e->como.comprehension.nombre_var;
+                        vl = e->como.comprehension.longitud_var;
+                    } else {
+                        vn = gx_extras[i - 1].nombre_var;
+                        vl = gx_extras[i - 1].longitud_var;
+                    }
+                    gx_slots_var[i] = agregar_local(c, vn, vl, e->linea);
+                    if (gx_slots_var[i] < 0) { gx_ok = false; break; }
+                    if (gx_patrones[i] != NULL) {
+                        Expr *pat = gx_patrones[i];
+                        int n_dst = pat->como.secuencia.n_elementos;
+                        Expr **dst = pat->como.secuencia.elementos;
+                        for (int j = 0; j < n_dst; j++) {
+                            const char *nm; int nm_len;
+                            if (dst[j]->tipo == EXPR_IDENT) {
+                                nm = dst[j]->como.ident.nombre;
+                                nm_len = dst[j]->como.ident.longitud;
+                            } else {
+                                nm = dst[j]->como.star_bind.nombre;
+                                nm_len = dst[j]->como.star_bind.longitud;
+                            }
+                            chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
+                            int sd = agregar_local(c, nm, nm_len, e->linea);
+                            if (sd < 0) { gx_ok = false; break; }
                         }
                     }
                 }
+
+                /* Por cada clausula: inicio_loop, SIGUIENTE, ASIGNAR,
+                 * destructuring opcional, guarda opcional. */
+                for (int i = 0; i < gx_n_clausulas && gx_ok; i++) {
+                    if (i > 0) {
+                        if (!compilador_compilar_expr(c, gx_extras[i - 1].iterable)) {
+                            gx_ok = false; break;
+                        }
+                        chunk_emitir_byte(&fn->chunk, OP_ITER_INICIAR, e->linea);
+                        chunk_emitir_byte2(&fn->chunk, OP_ASIGNAR_LOCAL,
+                                            (uint8_t)gx_slots_iter[i], e->linea);
+                    }
+                    gx_inicios[i] = fn->chunk.cuenta;
+                    chunk_emitir_byte2(&fn->chunk, OP_ITER_SIGUIENTE,
+                                        (uint8_t)gx_slots_iter[i], e->linea);
+                    chunk_emitir_byte(&fn->chunk, 0xff, e->linea);
+                    chunk_emitir_byte(&fn->chunk, 0xff, e->linea);
+                    gx_offsets_ph[i] = fn->chunk.cuenta - 2;
+                    chunk_emitir_byte2(&fn->chunk, OP_ASIGNAR_LOCAL,
+                                        (uint8_t)gx_slots_var[i], e->linea);
+
+                    /* Destructuring inline si hay patron. */
+                    if (gx_patrones[i] != NULL) {
+                        Expr *pat = gx_patrones[i];
+                        int n_dst = pat->como.secuencia.n_elementos;
+                        Expr **dst = pat->como.secuencia.elementos;
+                        int star_idx = gx_star_idx[i];
+                        int slot_destino_base = gx_slots_var[i] + 1;
+                        chunk_emitir_byte2(&fn->chunk, OP_OBTENER_LOCAL,
+                                            (uint8_t)gx_slots_var[i], e->linea);
+                        chunk_emitir_byte(&fn->chunk, OP_LONGITUD, e->linea);
+                        chunk_emitir_constante(&fn->chunk,
+                            valor_entero_de_long(
+                                (long)(star_idx >= 0 ? n_dst - 1 : n_dst)),
+                            e->linea);
+                        chunk_emitir_byte(&fn->chunk,
+                            star_idx >= 0 ? OP_MAYOR_IGUAL : OP_IGUAL, e->linea);
+                        int salto_mal = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
+                        chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
+                        for (int j = 0; j < n_dst; j++) {
+                            if (j == star_idx) {
+                                chunk_emitir_byte2(&fn->chunk,
+                                    OP_OBTENER_LOCAL, (uint8_t)gx_slots_var[i], e->linea);
+                                chunk_emitir_constante(&fn->chunk,
+                                    valor_entero_de_long((long)star_idx), e->linea);
+                                chunk_emitir_byte2(&fn->chunk,
+                                    OP_OBTENER_LOCAL, (uint8_t)gx_slots_var[i], e->linea);
+                                chunk_emitir_byte(&fn->chunk, OP_LONGITUD, e->linea);
+                                int tail = n_dst - 1 - star_idx;
+                                if (tail > 0) {
+                                    chunk_emitir_constante(&fn->chunk,
+                                        valor_entero_de_long((long)tail), e->linea);
+                                    chunk_emitir_byte(&fn->chunk, OP_RESTAR, e->linea);
+                                }
+                                chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
+                                chunk_emitir_byte(&fn->chunk, OP_REBANADA, e->linea);
+                            } else {
+                                long idx_real = (star_idx >= 0 && j > star_idx)
+                                    ? (long)(j - n_dst) : (long)j;
+                                chunk_emitir_byte2(&fn->chunk,
+                                    OP_OBTENER_LOCAL, (uint8_t)gx_slots_var[i], e->linea);
+                                chunk_emitir_constante(&fn->chunk,
+                                    valor_entero_de_long(idx_real), e->linea);
+                                chunk_emitir_byte(&fn->chunk, OP_INDICE, e->linea);
+                            }
+                            chunk_emitir_byte2(&fn->chunk, OP_ASIGNAR_LOCAL,
+                                (uint8_t)(slot_destino_base + j), e->linea);
+                        }
+                        int salto_fin_destr = emitir_salto(c, OP_SALTAR, e->linea);
+                        parchear_salto(c, salto_mal, e->linea);
+                        chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
+                        int idx_err = agregar_nombre_global(c, "ErrorDeValor", 12);
+                        if (idx_err < 0 || idx_err > 255) {
+                            c->actual = prev;
+                            funcion_bc_liberar(fn);
+                            error_compilacion(c, e->linea, 0,
+                                "demasiadas constantes (>255)");
+                            return false;
+                        }
+                        chunk_emitir_byte2(&fn->chunk, OP_OBTENER_GLOBAL,
+                                            (uint8_t)idx_err, e->linea);
+                        chunk_emitir_byte2(&fn->chunk, 0, 0, e->linea);
+                        chunk_emitir_byte2(&fn->chunk, 0, 0, e->linea);
+                        chunk_emitir_constante(&fn->chunk,
+                            valor_cadena_duplicar(
+                                "aridad incorrecta en destructuring de comprehension",
+                                strlen("aridad incorrecta en destructuring de comprehension")),
+                            e->linea);
+                        chunk_emitir_byte2(&fn->chunk, OP_LLAMAR, 1, e->linea);
+                        chunk_emitir_byte(&fn->chunk, OP_LANZAR, e->linea);
+                        parchear_salto(c, salto_fin_destr, e->linea);
+                    }
+
+                    Expr *guarda_i = (i == 0)
+                        ? e->como.comprehension.guarda
+                        : gx_extras[i - 1].guarda;
+                    if (guarda_i) {
+                        if (!compilador_compilar_expr(c, guarda_i)) {
+                            gx_ok = false; break;
+                        }
+                        gx_saltos_cont[i] = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
+                        chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
+                    }
+                }
+
+                /* Cuerpo: producir el elemento. */
                 if (gx_ok) {
                     if (!compilador_compilar_expr(c, e->como.comprehension.expr_elem)) {
                         gx_ok = false;
@@ -1112,20 +1295,24 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
                 if (gx_ok) {
                     chunk_emitir_byte(&fn->chunk, OP_PRODUCIR, e->linea);
-                    emitir_bucle(c, gx_inicio, e->linea);
-                    if (gx_salto_cont >= 0) {
-                        parchear_salto(c, gx_salto_cont, e->linea);
-                        chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
-                        emitir_bucle(c, gx_inicio, e->linea);
+                    /* Cerrar clausulas en orden inverso. */
+                    for (int i = gx_n_clausulas - 1; i >= 0; i--) {
+                        emitir_bucle(c, gx_inicios[i], e->linea);
+                        if (gx_saltos_cont[i] >= 0) {
+                            parchear_salto(c, gx_saltos_cont[i], e->linea);
+                            chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
+                            emitir_bucle(c, gx_inicios[i], e->linea);
+                        }
+                        int offset_fin = fn->chunk.cuenta - gx_offsets_ph[i] - 2;
+                        fn->chunk.codigo[gx_offsets_ph[i]] =
+                            (uint8_t)((offset_fin >> 8) & 0xff);
+                        fn->chunk.codigo[gx_offsets_ph[i] + 1] =
+                            (uint8_t)(offset_fin & 0xff);
                     }
-                    /* Patchear offset_fin del OP_ITER_SIGUIENTE. */
-                    int gx_off = fn->chunk.cuenta - gx_off_ph - 2;
-                    fn->chunk.codigo[gx_off_ph] = (uint8_t)((gx_off >> 8) & 0xff);
-                    fn->chunk.codigo[gx_off_ph + 1] = (uint8_t)(gx_off & 0xff);
-                    /* Fin del cuerpo: OP_NULO + OP_RETORNAR. */
                     chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
                     chunk_emitir_byte(&fn->chunk, OP_RETORNAR, e->linea);
                 }
+
                 c->actual = prev;
                 if (!gx_ok) {
                     funcion_bc_liberar(fn);
@@ -1148,7 +1335,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     chunk_emitir_byte(c->actual->chunk,
                         scope_gx.upvalues[i].indice, e->linea);
                 }
-                /* Compilar el iterable en el scope padre y llamar con 1 arg. */
+                /* Compilar el iterable de la primera clausula en el scope
+                 * padre y llamar el genex con 1 arg. */
                 if (!compilador_compilar_expr(c, e->como.comprehension.iterable)) return false;
                 chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1, e->linea);
                 return true;

@@ -6,6 +6,97 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.136.0] — 2026-06-05 — Generator expressions con multi-`para` y destructuring
+
+v1.132 trajo multi-`para` para list/dict/set comprehensions; v1.135
+trajo destructuring en la cabecera. Ambos casos quedaron rechazados
+explícitamente en **generator expressions** `(expr para v en it)`
+porque el path del genex era un compilador aparte —función sintética
+con `OP_PRODUCIR` en lugar de acumulador. v1.136 cierra la
+asimetría: paridad completa de features con las comprehensions.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Multi-`para` lazy
+g = (x + j para x en [1, 2] para j en [10, 20])
+para v en g: imprimir(v)
+# 11, 21, 12, 22 — uno a uno, sin materializar lista
+
+# Destructuring lazy
+g = (a + b para a, b en [(1, 10), (2, 20), (3, 30)])
+para v en g: imprimir(v)
+# 11, 22, 33
+
+# Star
+g = (ult para *_, ult en [[1, 2, 3], [10, 20]])
+
+# Multi-para + destructuring + guarda combinados
+g = ((a, c) para a, _ en [(1, 10), (2, 20)]
+              para c, _ en [(100, "x"), (200, "x")]
+              si a < c)
+
+# Dentro de funciones, devuelto como generador
+funcion sumas(pares):
+    retornar (a + b para a, b en pares)
+fin funcion
+```
+
+### Implementación
+
+**Parser**: el call site del genex en `parsear_grupo_o_genex` ya
+no pasa `NULL, NULL` para las cláusulas extra — recolecta `extras`
+y `n_extras` igual que list/dict/set. El patron también se
+captura. El comentario que decía *"NO acepta múltiples `para`
+encadenados — el compilador de generators no soporta cláusulas
+extra todavía"* (heredado de v1.132) se actualiza.
+
+**Compilador** (`src/compilador.c`, rama `tipo_destino == 3`):
+expansión completa del bloque genex, replicando el esquema de
+list/dict/set adaptado a la función sintética:
+
+- Pre-reservar slots de `iter[i]`, `var[i]` y destinos del patrón
+  de TODAS las cláusulas ANTES del primer `inicio_loop` (mismo
+  truco que arregló stack growth en v1.130/v1.132/v1.135).
+- Para cada cláusula `i`:
+  - Si `i == 0`: el iterable viene como parámetro `$gx_param` y
+    `OP_ITER_INICIAR` se hace al entrar al genex.
+  - Si `i > 0`: el iterable se compila DENTRO del scope del
+    genex (puede referenciar vars de cláusulas anteriores como
+    locales/upvalues), `OP_ITER_INICIAR` y `OP_ASIGNAR_LOCAL` al
+    slot pre-reservado.
+  - `inicio_loop`, `OP_ITER_SIGUIENTE`, `OP_ASIGNAR_LOCAL` al
+    slot var (anónimo `$gx_item` si hay patrón).
+  - Destructuring inline con verificación de aridad si hay
+    patrón.
+  - Guarda con `OP_SALTAR_SI_FALSO` al continuar.
+- Cuerpo: compilar `expr_elem` + `OP_PRODUCIR` (en lugar del
+  `OP_LISTA_AGREGAR` de list comprehensions).
+- Cerrar cláusulas en orden inverso (`OP_BUCLE`, patcheo de
+  `offset_fin`).
+
+La lazy semantics se preserva: cada `OP_PRODUCIR` cede control al
+caller. El `OP_BUCLE` que sigue se ejecutará en la siguiente
+`iter_siguiente()` sobre el generador.
+
+### Limitación pendiente
+
+- Max 16 cláusulas anidadas por genex (mismo límite práctico del
+  bytecode v0.6 que para list comprehensions).
+- Tuplas anidadas como destino del patrón (`(a, (b, c))`) siguen
+  sin soportarse — paridad con list/dict/set.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_genex_multi_destr.c` con 10 casos:
+multi-para básico, destructuring, star inicial/final, guarda con
+destructuring, multi-para + destructuring + guarda combinados,
+genex dentro de función, lazy (verificado con `romper` desde el
+caller — solo 2 elementos consumidos), regresión simple, aridad
+incorrecta atrapable.
+
+Suite: **332 tests verde**.
+
 ## [1.135.0] — 2026-06-05 — Destructuring en comprehensions
 
 v1.134 cerró el destructuring del bucle `para`. La pieza simétrica
