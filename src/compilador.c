@@ -2974,6 +2974,24 @@ static bool pre_reservar_locales(Compilador *c, const Sent *s, int linea_default
                                                        e->como.ident.longitud,
                                                        linea_default);
                         if (slot < 0) return false;
+                    } else if (e->tipo == EXPR_STAR_BIND) {
+                        /* v1.134: star_bind tambien necesita pre-reserva.
+                         * Sin esto, cuando el SENT_ASIGNAR sintetico que
+                         * envuelve `para *previos, x en it:` se compile
+                         * DENTRO del loop, emitir_destructuring crearia
+                         * un slot nuevo cada iteracion (el OP_NULO se
+                         * reejecuta en cada vuelta), creciendo el stack. */
+                        int existente = buscar_local(c->actual,
+                                                       e->como.star_bind.nombre,
+                                                       e->como.star_bind.longitud);
+                        if (existente >= 0) continue;
+                        chunk_emitir_byte(c->actual->chunk, OP_NULO,
+                                            linea_default);
+                        int slot = agregar_local(c,
+                                                  e->como.star_bind.nombre,
+                                                  e->como.star_bind.longitud,
+                                                  linea_default);
+                        if (slot < 0) return false;
                     } else if (e->tipo == EXPR_TUPLA || e->tipo == EXPR_LISTA) {
                         /* Anidado: simular un SENT_ASIGNAR con este
                          * destino para reusar la logica. Construimos un

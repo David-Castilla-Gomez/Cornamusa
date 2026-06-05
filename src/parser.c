@@ -1793,22 +1793,105 @@ static Sent *parsear_mientras(Parser *p) {
     return sent_mientras(p->arena, cond, cuerpo, sino, linea, col);
 }
 
-static Sent *parsear_para(Parser *p) {
-    int linea = p->actual.linea;
-    int col = p->actual.columna;
-    avanzar(p); /* 'para' */
-
-    /* Objetivo: por ahora un único identificador. Multi-objetivo
-       (`a, b en pares`) llega en sesión 5. */
+/*
+ * v1.134: parsea un destino de `para` — un IDENT o `*IDENT`. Devuelve
+ * NULL en error. Establece *fue_star si era `*IDENT`.
+ */
+static Expr *parsear_destino_para(Parser *p) {
+    if (check(p, TT_ASTERISCO)) {
+        int sl = p->actual.linea;
+        int sc = p->actual.columna;
+        avanzar(p);  /* consume '*' */
+        if (!check(p, TT_IDENT)) {
+            error_en(p, &p->actual,
+                "se esperaba un nombre tras '*' en destructuring de 'para'");
+            return NULL;
+        }
+        Token tid = p->actual;
+        avanzar(p);
+        return expr_star_bind(p->arena, tid.inicio, tid.longitud, sl, sc);
+    }
     if (!check(p, TT_IDENT)) {
         error_en(p, &p->actual,
             "se esperaba un nombre de variable tras 'para'");
         return NULL;
     }
-    Token t_obj = p->actual;
+    Token t = p->actual;
     avanzar(p);
-    Expr *objetivo = expr_ident(p->arena, t_obj.inicio, t_obj.longitud,
-                                 t_obj.linea, t_obj.columna);
+    return expr_ident(p->arena, t.inicio, t.longitud, t.linea, t.columna);
+}
+
+static Sent *parsear_para(Parser *p) {
+    int linea = p->actual.linea;
+    int col = p->actual.columna;
+    avanzar(p); /* 'para' */
+
+    /* v1.134: acepta multi-destino con star opcional:
+     *   para a en xs:                  (clasico, un IDENT)
+     *   para a, b en pares:            (tupla destructuring)
+     *   para *previos, ultimo en xs:   (star en cualquier posicion)
+     *
+     * Cuando hay mas de un destino, el AST se reescribe como:
+     *   para $item_L_C en iterable:
+     *       (a, b) = $item_L_C
+     *       <cuerpo original>
+     *   fin para
+     * Esto reusa la maquinaria de destructuring de SENT_ASIGNAR
+     * (incluyendo pre_reservar_locales que reconoce IDENT y, desde
+     * v1.134, STAR_BIND en patrones tupla). */
+    Expr *primer_destino = parsear_destino_para(p);
+    if (primer_destino == NULL) return NULL;
+
+    bool es_destructuring = (primer_destino->tipo == EXPR_STAR_BIND)
+                              || check(p, TT_COMA);
+
+    Expr *patron = NULL;       /* solo si es_destructuring */
+    Expr *objetivo;            /* IDENT que va al SENT_PARA */
+    const char *nombre_tmp_arena = NULL;
+    int nombre_tmp_long = 0;
+
+    if (es_destructuring) {
+        Expr **elementos = (Expr **)arena_alocar(p->arena,
+            sizeof(Expr *) * 4);
+        if (elementos == NULL) return NULL;
+        int n = 1, cap = 4;
+        elementos[0] = primer_destino;
+        while (consumir_si(p, TT_COMA)) {
+            if (check(p, TT_EN)) break;  /* coma final permitida */
+            Expr *e = parsear_destino_para(p);
+            if (e == NULL) return NULL;
+            if (n >= cap) {
+                int nuevo_cap = cap * 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)nuevo_cap);
+                if (nuevo == NULL) return NULL;
+                memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+                elementos = nuevo;
+                cap = nuevo_cap;
+            }
+            elementos[n++] = e;
+        }
+        patron = expr_tupla(p->arena, elementos, n, linea, col);
+        if (patron == NULL) return NULL;
+
+        /* Nombre temporal unico por posicion textual del `para`. Asi
+         * dos `para` anidados con destructuring no colisionan. */
+        char buf[40];
+        int len = snprintf(buf, sizeof(buf), "$item_%d_%d", linea, col);
+        if (len <= 0 || len >= (int)sizeof(buf)) {
+            error_en(p, &p->actual, "nombre temporal de 'para' demasiado largo");
+            return NULL;
+        }
+        char *dst = (char *)arena_alocar(p->arena, (size_t)len + 1);
+        if (dst == NULL) return NULL;
+        memcpy(dst, buf, (size_t)len + 1);
+        nombre_tmp_arena = dst;
+        nombre_tmp_long = len;
+        objetivo = expr_ident(p->arena, dst, len, linea, col);
+        if (objetivo == NULL) return NULL;
+    } else {
+        objetivo = primer_destino;
+    }
 
     if (!consumir(p, TT_EN, "se esperaba 'en' tras la variable de 'para'")) {
         return NULL;
@@ -1820,28 +1903,49 @@ static Sent *parsear_para(Parser *p) {
     }
 
     bool one_liner = (p->previo.linea == p->actual.linea);
-    if (one_liner) {
-        Sent *cuerpo = parsear_cuerpo_tras_dospuntos(p, BLOQUE_PARA, false, linea);
-        if (cuerpo == NULL) return NULL;
-        return sent_para(p->arena, objetivo, iterable, cuerpo, NULL, linea, col);
-    }
-
-    if (!empujar_bloque(p, BLOQUE_PARA, linea)) return NULL;
-    Sent *cuerpo = parsear_cuerpo_bloque(p);
-    if (cuerpo == NULL) { salir_bloque(p); return NULL; }
-
+    Sent *cuerpo;
     Sent *sino = NULL;
-    if (consumir_si(p, TT_SINO)) {
-        if (!consumir(p, TT_DOS_PUNTOS, "se esperaba ':' tras 'sino' del 'para'")) {
-            salir_bloque(p);
-            return NULL;
+    if (one_liner) {
+        cuerpo = parsear_cuerpo_tras_dospuntos(p, BLOQUE_PARA, false, linea);
+        if (cuerpo == NULL) return NULL;
+    } else {
+        if (!empujar_bloque(p, BLOQUE_PARA, linea)) return NULL;
+        cuerpo = parsear_cuerpo_bloque(p);
+        if (cuerpo == NULL) { salir_bloque(p); return NULL; }
+
+        if (consumir_si(p, TT_SINO)) {
+            if (!consumir(p, TT_DOS_PUNTOS,
+                "se esperaba ':' tras 'sino' del 'para'")) {
+                salir_bloque(p);
+                return NULL;
+            }
+            sino = parsear_cuerpo_bloque(p);
+            if (sino == NULL) { salir_bloque(p); return NULL; }
         }
-        sino = parsear_cuerpo_bloque(p);
-        if (sino == NULL) { salir_bloque(p); return NULL; }
+
+        salir_bloque(p);
+        if (!consumir_fin(p, BLOQUE_PARA, linea)) return NULL;
     }
 
-    salir_bloque(p);
-    if (!consumir_fin(p, BLOQUE_PARA, linea)) return NULL;
+    /* v1.134: si es destructuring, envolver cuerpo en
+     *   { $item_L_C_patron = $item_L_C; <cuerpo original> }
+     * El SENT_ASIGNAR usa una NUEVA copia del ident $item como valor
+     * (no compartimos punteros entre dos posiciones del AST por si
+     * algun consumidor anota el nodo). */
+    if (es_destructuring) {
+        Expr *valor_ref = expr_ident(p->arena,
+            nombre_tmp_arena, nombre_tmp_long, linea, col);
+        if (valor_ref == NULL) return NULL;
+        Sent *destructurar = sent_asignar(p->arena, patron, valor_ref,
+                                          linea, col);
+        if (destructurar == NULL) return NULL;
+        Sent **sents = (Sent **)arena_alocar(p->arena, sizeof(Sent *) * 2);
+        if (sents == NULL) return NULL;
+        sents[0] = destructurar;
+        sents[1] = cuerpo;
+        cuerpo = sent_bloque(p->arena, sents, 2, linea, col);
+        if (cuerpo == NULL) return NULL;
+    }
 
     return sent_para(p->arena, objetivo, iterable, cuerpo, sino, linea, col);
 }

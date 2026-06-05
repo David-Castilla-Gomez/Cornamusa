@@ -6,6 +6,118 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.134.0] — 2026-06-05 — Destructuring en el bucle `para`
+
+Limitación documentada desde el principio del proyecto: el bucle
+`para` solo aceptaba **un único identificador** como variable de
+iteración. El propio parser lo decía:
+
+```c
+/* Objetivo: por ahora un único identificador. Multi-objetivo
+   (`a, b en pares`) llega en sesión 5. */
+```
+
+Sesión 5 nunca llegó. Hasta v1.134.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Multi-destino clasico (tupla de pares)
+para a, b en [(1, 10), (2, 20), (3, 30)]:
+    imprimir(a, "->", b)
+fin para
+
+# Star al final — primero + resto
+para primero, *resto en filas:
+    imprimir(primero, "tiene", longitud(resto), "amigos")
+fin para
+
+# Star al inicio — todo menos el ultimo
+para *previos, ultimo en historial:
+    imprimir("ultimo:", ultimo)
+fin para
+
+# Star en medio
+para apertura, *cuerpo, cierre en lineas:
+    procesar(cuerpo)
+fin para
+
+# Dentro de funciones, anidado, etc.
+funcion sumar_pares(lst):
+    total = 0
+    para mm, n en lst:
+        total = total + mm + n
+    fin para
+    retornar total
+fin funcion
+```
+
+### Implementación
+
+Refactor del parser sin tocar el compilador de `para`. Si el
+encabezado tiene más de un destino, se reescribe el AST a:
+
+```
+para $item_L_C en iterable:
+    (destinos) = $item_L_C
+    <cuerpo original>
+fin para
+```
+
+donde `$item_L_C` es un identificador temporal único por posición
+textual del `para` (línea + columna) para evitar colisiones entre
+bucles anidados. El bucle exterior queda como un `SENT_PARA`
+clásico con objetivo `EXPR_IDENT`. El destructuring vive como una
+`SENT_ASIGNAR` adicional al inicio del cuerpo y se compila
+exactamente como cualquier otra asignación con LHS tupla — toda la
+maquinaria de `emitir_destructuring` (validación de aridad, star
+binding, slots locales) se aplica sin cambios.
+
+**Cambios concretos**:
+
+- `src/parser.c::parsear_para`: detecta `*` o coma tras el primer
+  destino y entra a la rama de destructuring. Construye
+  `EXPR_TUPLA` con los destinos y envuelve el cuerpo en
+  `SENT_BLOQUE([SENT_ASIGNAR(patron = $item), cuerpo])`. Nuevo
+  helper `parsear_destino_para` para parsear un `IDENT` o `*IDENT`.
+
+- `src/compilador.c::pre_reservar_locales`: en la rama de
+  destructuring tupla, extendida para reconocer `EXPR_STAR_BIND`
+  además de `EXPR_IDENT`. Sin esto el slot del star se creaba
+  dentro del loop (el `OP_NULO` se reejecutaría en cada iteración,
+  creciendo el stack — mismo bug que arregló v1.130 en
+  `compilar_mientras`).
+
+Sin tocar `compilar_para` ni `emitir_destructuring`.
+
+### Cobertura
+
+Nuevo fichero `tests/unit/test_bytecode_para_destructuring.c` con
+9 casos:
+
+- Multi-destino clásico (tupla de pares).
+- Star al inicio, al final y en medio sobre listas de listas.
+- Dentro de función (slots locales sin colisión).
+- Star dentro de función con varios `_` ignorados.
+- Loop largo (100 iteraciones) que verifica que no hay crecimiento
+  del stack — patrón de bug pasado al destructuring en loops.
+- Aridad incorrecta lanza `ErrorDeValor` atrapable.
+- Regresión: single ident y one-liner clásicos.
+- Anidados: `para` externo con destructuring + `para` interno
+  clásico.
+
+Suite: **330 tests verde** (329 + el nuevo).
+
+### Notas
+
+- El nombre temporal `$item_LINEA_COLUMNA` empieza con `$` para no
+  colisionar con identificadores válidos en Cornamusa (que no
+  permiten `$`). Aparece en pilas de traza si una excepción ocurre
+  durante el destructuring; se documenta como detalle conocido.
+- `_` no es un identificador especial en Cornamusa — funciona como
+  cualquier nombre regular. Si lo usas en dos posiciones del mismo
+  destructuring, la segunda asignación pisa la primera (esperado).
+
 ## [1.133.0] — 2026-06-05 — Star binding en primera posición del destructuring
 
 v1.129 introdujo `*nombre` en destructuring pero solo aceptaba el star
