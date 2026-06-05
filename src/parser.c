@@ -239,11 +239,17 @@ static Expr *parsear_precedencia(Parser *p, Precedencia min_prec) {
            v1.44: extendemos la heurística a `si` por la misma razón —
            la ternaria `A si C sino B` debe vivir en una sola línea;
            un `si` que abre línea es siempre el comienzo de una
-           sentencia `si`. */
+           sentencia `si`.
+           v1.133: extendemos a `*` para soportar destructuring inicial
+           `*r, x = it`. Sin esto, una línea anterior que termine en
+           expresión + `*` al comienzo de la siguiente se parsearía como
+           multiplicación, escondiendo el destructuring. La multiplicación
+           que cruza líneas siempre se puede forzar con paréntesis. */
         if (p->actual.linea != p->previo.linea
             && (p->actual.tipo == TT_CORCH_IZQ
                 || p->actual.tipo == TT_PARENT_IZQ
-                || p->actual.tipo == TT_SI)) {
+                || p->actual.tipo == TT_SI
+                || p->actual.tipo == TT_ASTERISCO)) {
             break;
         }
         izq = r->infijo(p, izq);
@@ -1848,8 +1854,36 @@ static Sent *parsear_asignar_o_expr(Parser *p) {
     int linea = p->actual.linea;
     int col = p->actual.columna;
 
-    Expr *primero = parser_parsear_expr(p);
-    if (primero == NULL) return NULL;
+    Expr *primero;
+    /* v1.133: star binding en posicion inicial de destructuring:
+     * `*r, x = it`. El asterisco no tiene regla prefix de expresion,
+     * asi que sin este atajo el parser falla con "se esperaba una
+     * expresion". Solo se acepta si lo que sigue es `* IDENT ,`
+     * (forma rigurosa de destructuring inicial). */
+    if (check(p, TT_ASTERISCO)) {
+        Token tok_aster = p->actual;
+        avanzar(p);  /* consume '*' */
+        if (!check(p, TT_IDENT)) {
+            error_en(p, &p->actual,
+                "se esperaba un nombre tras '*' en destructuring inicial");
+            return NULL;
+        }
+        Token tok_id = p->actual;
+        avanzar(p);
+        primero = expr_star_bind(p->arena, tok_id.inicio,
+                                 tok_id.longitud,
+                                 tok_aster.linea, tok_aster.columna);
+        if (primero == NULL) return NULL;
+        if (!check(p, TT_COMA)) {
+            error_en(p, &p->actual,
+                "'*nombre' solo es valido en destructuring "
+                "(se esperaba ',')");
+            return NULL;
+        }
+    } else {
+        primero = parser_parsear_expr(p);
+        if (primero == NULL) return NULL;
+    }
 
     /* v1.114: anotacion de tipo en asignacion `nombre: tipo = valor`.
      * Solo permitida cuando el destino es un IDENT puro. La anotacion

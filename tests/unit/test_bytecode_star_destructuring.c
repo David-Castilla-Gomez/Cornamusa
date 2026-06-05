@@ -15,14 +15,20 @@
  *   - OP_REBANADA extendido para aceptar VAL_TUPLA (devuelve LISTA;
  *     la semantica es la misma que para lista).
  *
+ * v1.133: anadido soporte para star en PRIMERA posicion
+ *   (`*r, x = it`). El parser detecta `*` al inicio de sentencia
+ *   antes de invocar parser_parsear_expr (que falla porque '*' no
+ *   tiene regla prefix). Tambien se anade TT_ASTERISCO a la
+ *   heuristica de fin-de-sentencia para que `expr\n*r, x = it`
+ *   no se parsee como multiplicacion cruzando lineas.
+ *
  * Limitaciones documentadas:
  *   - Solo UN star por destructuring.
  *   - El iterable debe ser indexable y soportar OP_LONGITUD; lista,
  *     tupla y cadena funcionan. Rango no porque OP_INDICE no lo
  *     soporta (es generador puro).
- *   - Star en primera posicion (`*r, a = it`) no se reconoce porque
- *     el parser empieza llamando a parser_parsear_expr; el `*` se
- *     interpreta como factor.
+ *   - En `para X en it` el star inicial aun no se reconoce — el
+ *     parser de para tiene una rama distinta.
  */
 
 #include <stdio.h>
@@ -241,6 +247,115 @@ int main(void) {
             "fin intentar\n",
             out, sizeof(out));
         AFIRMAR(strstr(out, "err") != NULL, "sin_star_aridad");
+    }
+
+    /* v1.133: star en PRIMERA posicion sobre lista */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "*r, z = [1, 2, 3, 4]\n"
+            "imprimir(r, z)\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "[1, 2, 3] 4") != NULL, "inicial");
+    }
+
+    /* v1.133: star inicial con dos finales */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "*r, x, z = [1, 2, 3, 4, 5]\n"
+            "imprimir(r, x, z)\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "[1, 2, 3] 4 5") != NULL, "inicial_dos_finales");
+    }
+
+    /* v1.133: star inicial vacio (aridad minima) */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "*vacio, ult = [10]\n"
+            "imprimir(vacio, ult)\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "[] 10") != NULL, "inicial_vacio");
+    }
+
+    /* v1.133: star inicial sobre tupla */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "*r, c = (10, 20, 30, 40)\n"
+            "imprimir(r, c)\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "[10, 20, 30] 40") != NULL, "inicial_tupla");
+    }
+
+    /* v1.133: star inicial dentro de funcion */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "funcion f():\n"
+            "    *r, c = [10, 20, 30, 40]\n"
+            "    imprimir(r, c)\n"
+            "fin funcion\n"
+            "f()\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "[10, 20, 30] 40") != NULL,
+                "inicial_en_funcion");
+    }
+
+    /* v1.133: heuristica de fin-de-sentencia — multiplicacion al
+     * cruzar lineas NO debe robarse el `*` del destructuring. */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "x = 1\n"
+            "*r, z = [10, 20, 30]\n"
+            "imprimir(x, r, z)\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "1 [10, 20] 30") != NULL,
+                "heuristica_no_multiplicacion");
+    }
+
+    /* v1.133: multiplicacion en la misma linea sigue funcionando */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "x = 2 * 3\n"
+            "imprimir(x)\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "6") != NULL, "mult_misma_linea");
+    }
+
+    /* v1.133: error si tras `*` no hay identificador */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "*, x = [1, 2]\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "1") == NULL, "star_sin_ident_rechaza");
+    }
+
+    /* v1.133: error si tras `*ident` no hay coma (no es destructuring) */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "*r = [1, 2]\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "1") == NULL, "star_sin_coma_rechaza");
+    }
+
+    /* v1.133: aridad insuficiente con star inicial sigue siendo
+     * ErrorDeValor atrapable */
+    {
+        char out[256];
+        ejecutar_capturando(
+            "intentar:\n"
+            "    *r, x, z = [1]\n"
+            "atrapar ErrorDeValor:\n"
+            "    imprimir(\"err\")\n"
+            "fin intentar\n",
+            out, sizeof(out));
+        AFIRMAR(strstr(out, "err") != NULL, "inicial_aridad_atrap");
     }
 
     if (fallos == 0) {

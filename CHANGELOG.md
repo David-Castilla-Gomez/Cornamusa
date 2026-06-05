@@ -6,6 +6,96 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.133.0] — 2026-06-05 — Star binding en primera posición del destructuring
+
+v1.129 introdujo `*nombre` en destructuring pero solo aceptaba el star
+en posiciones media y final:
+
+```cornamusa
+a, *r = it           # ✅ desde v1.129
+a, *m, z = it        # ✅ desde v1.129
+*r, z = it           # ❌ ErrorDeSintaxis: "se esperaba una expresión"
+```
+
+La limitación se documentó explícitamente en el header del test
+`test_bytecode_star_destructuring.c`:
+
+> *Star en primera posición (`*r, a = it`) no se reconoce porque
+> el parser empieza llamando a `parser_parsear_expr`; el `*` se
+> interpreta como factor.*
+
+v1.133 cierra ese caso. Ahora todos los formatos funcionan:
+
+```cornamusa
+*previos, ultimo = [1, 2, 3, 4]
+# previos = [1, 2, 3], ultimo = 4
+
+*todo_menos_dos, penultimo, ultimo = "abcde"
+# todo_menos_dos = "abc", penultimo = "d", ultimo = "e"
+
+# Tambien dentro de funciones, sobre tuplas, etc.
+funcion procesar(it):
+    *iniciales, marca = it
+    ...
+fin funcion
+```
+
+### Implementación
+
+Dos cambios pequeños en `src/parser.c` — el compilador ya soportaba
+`star_idx == 0` desde v1.129 (el cálculo de índices reales
+`i - n` para `i > star_idx` da `-n+1, -n+2, ...` que apuntan
+correctamente al final del iterable).
+
+**1. `parsear_asignar_o_expr` (sentencia de asignación)**: detectar
+`TT_ASTERISCO` antes de invocar `parser_parsear_expr`. Si la
+sentencia empieza con `*`, validar que sea `* IDENT ,` (forma
+rigurosa de destructuring inicial) y construir el primer destino
+como `EXPR_STAR_BIND`. Cualquier otro uso (`*r = ...` sin coma, o
+`* sin identificador`) emite error claro.
+
+**2. Heurística de fin-de-sentencia (`parsear_precedencia`)**:
+añadir `TT_ASTERISCO` a la lista de tokens que rompen la
+continuación cuando arrancan línea distinta a la anterior. Sin esto:
+
+```cornamusa
+x = 1
+*r, z = [10, 20, 30]
+```
+
+se parseaba como `x = 1 * r` (multiplicación que cruza líneas) y
+explotaba en la coma. La heurística ya cubría `[`, `(`, `si` por
+razones equivalentes (v1.21 + v1.44); `*` se suma a la lista.
+
+Caso límite: una multiplicación legítima que cruce líneas
+(`x = a` + `* b` en línea aparte) deja de parsearse, pero nunca
+fue idiomática — siempre se puede forzar con paréntesis o llevando
+el `*` al final de la línea anterior.
+
+### Tests
+
+Se añadieron 9 casos al fichero `test_bytecode_star_destructuring.c`
+(ya existente desde v1.129):
+
+- Star inicial sobre lista con uno y con dos finales.
+- Star inicial vacío (aridad mínima exacta).
+- Star inicial sobre tupla.
+- Star inicial dentro de función.
+- Heurística: `x = 1` + `*r, z = ...` no roba el asterisco.
+- Multiplicación en misma línea sigue funcionando.
+- `*` sin identificador y `*r` sin coma rechazados.
+- Aridad insuficiente con star inicial sigue siendo `ErrorDeValor`
+  atrapable.
+
+### Limitación pendiente
+
+El `para` loop con star inicial (`para *previos, ultimo en it:`)
+aún no funciona — el parser de `para` tiene una rama distinta que
+no comparte código con `parsear_asignar_o_expr`. Queda para una
+release futura junto con otras mejoras del bucle `para`.
+
+Suite: **329 tests verde**.
+
 ## [1.132.0] — 2026-06-05 — Comprehensions con múltiples `para` y `si`
 
 Antes de v1.132, `[(x, y) para x en xs para y en ys]` daba
