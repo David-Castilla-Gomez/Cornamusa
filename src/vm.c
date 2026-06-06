@@ -1248,6 +1248,37 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         es_constructor_kw = true;
         callee = *base_nuevo;
     }
+    /* v1.143: kwargs sobre metodo ligado (`obj.m(x=1)`). Similar al
+     * path de constructor: extraemos la closure y el receptor del
+     * MetodoLigado, hacemos shift de los args+kwargs, insertamos
+     * receptor como pos0 (`yo`), reemplazamos callee con la closure
+     * y caemos al path BC normal. */
+    if (callee.tipo == VAL_METODO_LIGADO) {
+        MetodoLigado *bm = callee.como.metodo_ligado;
+        Closure *cl_metodo = bm->metodo;
+        if (err_nombre == NULL) {
+            err_nombre = cl_metodo->plantilla->nombre;
+            err_long_nombre = cl_metodo->plantilla->longitud_nombre;
+        }
+        int total_args_stack = (int)n_pos + 2 * (int)n_kw;
+        if (vm->tope - vm->pila >= VM_PILA_MAX) {
+            llamar_set_error(vm, frame, "Desbordamiento de pila");
+            return VM_ERROR_RUNTIME;
+        }
+        if (total_args_stack > 0) {
+            memmove(base_nuevo + 2, base_nuevo + 1,
+                    sizeof(Valor) * (size_t)total_args_stack);
+        }
+        vm->tope++;
+        closure_retener(cl_metodo);
+        Valor receptor = valor_clonar(&bm->receptor);
+        Valor bound_old = *base_nuevo;
+        *base_nuevo = valor_closure(cl_metodo);
+        base_nuevo[1] = receptor;
+        valor_destruir(&bound_old);
+        n_pos++;
+        callee = *base_nuevo;
+    }
     if (callee.tipo != VAL_FUNCION_BC) {
         llamar_set_error(vm, frame,
             "ErrorDeTipo: keyword args solo soportados para funciones bytecode (no '%s')",

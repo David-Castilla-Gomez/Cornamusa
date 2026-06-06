@@ -6,6 +6,120 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.143.0] — 2026-06-06 — Kwargs reales en métodos de clase
+
+v1.142 cerró la mitad firma: `*args`/`**kw` en la **declaración**
+del método. Quedaba la otra mitad: kwargs en el **sitio de
+llamada** — `obj.m(x=1, y=2)`. El path `ejecutar_llamar_kw`
+aceptaba `VAL_FUNCION_BC` y `VAL_CLASE` (constructor con kwargs
+desde v1.121) pero rechazaba `VAL_METODO_LIGADO` con
+
+> `ErrorDeTipo: keyword args solo soportados para funciones bytecode (no 'metodo')`
+
+v1.143 cierra la asimetría. Combinado con v1.142, todos los
+patrones idiomáticos de Python para métodos funcionan.
+
+### Lo que ahora funciona
+
+```cornamusa
+clase Conector:
+    funcion __iniciar__(yo, host, puerto=80):
+        yo.host = host
+        yo.puerto = puerto
+    fin funcion
+
+    funcion enviar(yo, datos, *, timeout=30, retries=3):
+        # Defaults completados por nombre o por kwarg.
+        ...
+    fin funcion
+
+    funcion absorber(yo, **opciones):
+        # Captura cualquier kwarg pasado.
+        ...
+    fin funcion
+
+    funcion mezcla(yo, a, b, *resto, **kw):
+        ...
+    fin funcion
+fin clase
+
+c = Conector("localhost")
+c.enviar(b"hola", timeout=5)              # kwarg sobre default
+c.enviar(b"hola", retries=10, timeout=1)  # orden libre
+c.absorber(modo="rapido", nivel=3)        # **kw absorbe
+c.mezcla(1, 2, 3, 4, opcion="x")          # mezcla completa
+
+# Decorador que reenvia *args, **kw a metodo decorado
+funcion deco(f):
+    funcion envuelto(*args, **kw):
+        antes()
+        r = f(*args, **kw)
+        despues()
+        retornar r
+    fin funcion
+    retornar envuelto
+fin funcion
+
+clase Foo:
+    @deco
+    funcion saludar(yo, nombre, mensaje="Hola"):
+        ...
+    fin funcion
+fin clase
+Foo().saludar("David", mensaje="Hey")
+```
+
+### Implementación
+
+`src/vm.c::ejecutar_llamar_kw`: nueva rama para `VAL_METODO_LIGADO`
+que se ejecuta antes del check final `callee.tipo != VAL_FUNCION_BC`.
+Misma estrategia que la rama de `VAL_CLASE` (constructor con
+kwargs):
+
+1. Extrae la `Closure` y el `receptor` del `MetodoLigado`.
+2. Shift de args+kwargs un slot arriba (`total_args_stack = n_pos
+   + 2*n_kw`).
+3. Reemplaza `callee` con `valor_closure(cl_metodo)`.
+4. Inserta `valor_clonar(receptor)` en posición 1.
+5. `n_pos++` (la instancia cuenta como pos0).
+6. Cae al path BC normal que ya sabe procesar kwargs, defaults
+   y variádicos (la lógica que v1.142 expandió en
+   `ejecutar_llamar_metodo_ligado` no se duplica aquí — el path
+   BC la cubre completa).
+
+Sin cambios a AST, parser, compilador ni bytecode.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_metodo_kwargs.c` con 8 bloques
+(15+ asserts):
+
+- Posicionales pasados por nombre (orden natural y libre).
+- Defaults completados por kwarg.
+- `**kw` absorbe kwargs no declarados.
+- Mezcla `*args + **kw` con args fijos previos.
+- Decorador que reenvía `*args, **kw` a método decorado.
+- Errores: kwarg duplicado con posicional, kwarg desconocido —
+  ambos `ErrorDeTipo` atrapable.
+- Regresión: posicionales clásicos.
+- Regresión: constructor con kwargs (v1.121).
+
+Suite: **339 tests verde**.
+
+### Cierre del lote OOP
+
+Tres releases consecutivas (v1.141 → v1.142 → v1.143) cerraron
+gaps documentados desde v1.13:
+
+| Feature | Cerrado en |
+|---|---|
+| `con` invoca `__salir__(yo, tipo, valor, traza)` | v1.141 |
+| `*args` y `**kw` en firma de método | v1.142 |
+| `obj.m(x=1, y=2)` en sitio de llamada | v1.143 |
+
+Los context managers Pythonicos y los decoradores universales
+ya funcionan sin sorpresas.
+
 ## [1.142.0] — 2026-06-06 — `*args` y `**kw` en métodos de clase
 
 v1.141 sacó a la luz una asimetría: las funciones libres soportaban
