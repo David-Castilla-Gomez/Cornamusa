@@ -4654,6 +4654,84 @@ static Valor nativa_cadena_mayusculas_ascii(EvalError *err, int n_args, Valor *a
     return cadena_caso_ascii(err, &args[0], false, linea, columna);
 }
 
+/* v1.153: case conversion Unicode-aware via utf8proc_toupper/tolower.
+ * Recorre code-points con utf8proc_iterate, aplica el mapping y
+ * re-encode con utf8proc_encode_char. El buffer crece dinamicamente
+ * porque algunos mappings (e.g. SS -> ß en aleman) cambian la longitud
+ * en bytes. */
+static Valor cadena_caso_unicode(EvalError *err, const Valor *v, bool a_minus,
+                                    int linea, int columna) {
+    if (v->tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: requiere una cadena, no '%s'",
+            valor_nombre_tipo(v));
+    }
+    const char *s = v->como.cadena.texto;
+    int sl = v->como.cadena.longitud;
+    int cap = sl * 2 + 8;
+    uint8_t *buf = (uint8_t *)malloc((size_t)cap);
+    if (!buf) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    int w = 0;
+    int i = 0;
+    while (i < sl) {
+        utf8proc_int32_t cp;
+        utf8proc_ssize_t cons = utf8proc_iterate(
+            (const utf8proc_uint8_t *)(s + i), sl - i, &cp);
+        if (cons <= 0) {
+            /* Byte invalido — copiar tal cual y avanzar 1. */
+            if (w + 1 > cap) {
+                cap *= 2;
+                uint8_t *nb = (uint8_t *)realloc(buf, (size_t)cap);
+                if (!nb) { free(buf); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+                buf = nb;
+            }
+            buf[w++] = (uint8_t)s[i++];
+            continue;
+        }
+        utf8proc_int32_t mapped = a_minus
+            ? utf8proc_tolower(cp)
+            : utf8proc_toupper(cp);
+        if (w + 4 > cap) {
+            cap = cap * 2 + 4;
+            uint8_t *nb = (uint8_t *)realloc(buf, (size_t)cap);
+            if (!nb) { free(buf); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+            buf = nb;
+        }
+        utf8proc_ssize_t n = utf8proc_encode_char(mapped, &buf[w]);
+        if (n <= 0) {
+            /* Imposible si mapped esta en rango Unicode; copiar el
+             * original como fallback. */
+            n = utf8proc_encode_char(cp, &buf[w]);
+            if (n <= 0) n = 0;
+        }
+        w += (int)n;
+        i += (int)cons;
+    }
+    Valor r = valor_cadena_duplicar((const char *)buf, w);
+    free(buf);
+    return r;
+}
+
+static Valor nativa_cadena_minusculas(EvalError *err, int n_args, Valor *args,
+                                          int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: minusculas() no acepta argumentos");
+    }
+    return cadena_caso_unicode(err, &args[0], true, linea, columna);
+}
+
+static Valor nativa_cadena_mayusculas(EvalError *err, int n_args, Valor *args,
+                                          int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: mayusculas() no acepta argumentos");
+    }
+    return cadena_caso_unicode(err, &args[0], false, linea, columna);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * cadena_unir (v1.61): nativa O(n) para concatenar lista de cadenas.
  *
@@ -6394,8 +6472,8 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_LISTA,      "contiene",    8, nativa_lista_contiene},   /* v1.122 */
     {VAL_LISTA,      "copiar",      6, nativa_lista_copiar},     /* v1.122 */
     /* Cadenas */
-    {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas_ascii},
-    {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas_ascii},
+    {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas},      /* v1.153 Unicode */
+    {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas},      /* v1.153 Unicode */
     {VAL_CADENA,     "empieza_con", 11, nativa_cadena_empieza_con},
     {VAL_CADENA,     "termina_con", 11, nativa_cadena_termina_con},
     {VAL_CADENA,     "indice_de",   9,  nativa_cadena_indice_de},

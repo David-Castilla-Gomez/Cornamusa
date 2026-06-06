@@ -6,6 +6,71 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.153.0] — 2026-06-06 — `mayusculas`/`minusculas` Unicode
+
+Cierra la limitación documentada en v1.152: las nativas
+`mayusculas()` y `minusculas()` ya manejan Unicode (`ñ`, vocales
+acentuadas, etc.) en lugar de ser ASCII-only. **Bug embarazoso
+para hablantes de castellano**: hasta v1.152
+
+```cornamusa
+"ñoño".mayusculas()   # → "ñOñO"   solo el 'o' cambia
+"CAFÉ".minusculas()   # → "cafÉ"   la 'É' queda intacta
+```
+
+v1.153 lo arregla — paridad con Python `str.upper()` / `str.lower()`:
+
+```cornamusa
+"ñoño".mayusculas()         # → "ÑOÑO"
+"CAFÉ".minusculas()         # → "café"
+"España".mayusculas()       # → "ESPAÑA"
+"ÁÉÍÓÚÑÜ".minusculas()      # → "áéíóúñü"
+"Año".mayusculas()          # → "AÑO"
+
+# Otros idiomas
+"αβγ".mayusculas()          # → "ΑΒΓ"   (griego)
+"MÜNCHEN".minusculas()      # → "münchen" (alemán)
+```
+
+### Implementación
+
+`src/nativos.c::cadena_caso_unicode(s, a_minus)`: recorre
+code-points con `utf8proc_iterate`, aplica `utf8proc_toupper(cp)`
+o `utf8proc_tolower(cp)` según la operación, y re-encode el
+resultado con `utf8proc_encode_char` en un buffer dinámico. El
+buffer crece porque algunos mappings cambian el número de bytes
+UTF-8 (e.g. `ß` → `SS` en alemán, aunque ß ya está en lowercase
+así que no se aplicaría aquí).
+
+Bytes inválidos del input se copian tal cual y se avanza 1 byte
+(política de "best effort" en lugar de error). Errores de
+encode imposibles caen al fallback de copiar el code-point
+original.
+
+Las antiguas nativas `nativa_cadena_mayusculas_ascii` /
+`nativa_cadena_minusculas_ascii` siguen disponibles bajo sus
+nombres explícitos por compatibilidad. Solo los métodos
+`s.mayusculas()` / `s.minusculas()` (que es lo que el usuario
+final ve) se redirigen a las versiones Unicode.
+
+Sin cambios a bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_cadena_caso_unicode.c` con 8
+bloques:
+
+- Castellano: `ñoño`, `CAFÉ`, `España`, `Año`.
+- Vocales acentuadas a minúsculas (las 7 frecuentes).
+- ASCII regresión: `hola`/`HOLA`/`abc123XYZ`.
+- Mezcla ASCII + signos + acentos: `"Hola, ¿cómo estás?"`.
+- Cadena vacía.
+- Griego (`αβγ` → `ΑΒΓ`) y alemán (`MÜNCHEN` → `münchen`).
+- Longitud preservada (no cambia en code-points).
+- Idempotencia: ya mayúscula sigue mayúscula.
+
+Suite: **349 tests verde**.
+
 ## [1.152.0] — 2026-06-06 — `s.dividir_lineas()` y alineación de cadenas
 
 Cambio de superficie de cadena tras dos releases de diccionario.
