@@ -6,6 +6,84 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.148.0] — 2026-06-06 — `escribir` (sin `\n`) y `imprimir_error` (a stderr)
+
+Cambio de área tras 4 releases stdlib. Dos nativas pequeñas que
+faltaban para CLIs idiomáticas:
+
+`imprimir` siempre añade `\n` y va a stdout. Para barras de
+progreso interactivas, prompts y mensajes de aviso/error
+faltaban las dos variantes obvias.
+
+### Lo que ahora funciona
+
+```cornamusa
+# escribir: como imprimir SIN salto de linea final
+escribir("Procesando")
+para i en rango(0, 5):
+    escribir(".")
+fin para
+imprimir(" done!")
+# → "Procesando..... done!" en UNA línea
+
+# Barra de progreso simulada
+para n en [10, 25, 50, 75, 100]:
+    escribir(f"\r{n}%")
+fin para
+imprimir()
+
+# imprimir_error: como imprimir pero a stderr
+imprimir("resultado en stdout")
+imprimir_error("aviso a stderr")
+# Los pipes que consuman stdout no ven el aviso.
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`nativa_escribir(args)`**: bucle idéntico a `nativa_imprimir`
+  separando args con espacio, pero SIN `fputc('\n', stdout)` al
+  final. Sigue haciendo `fflush(stdout)` para que el output sea
+  visible inmediatamente en uso interactivo.
+
+- **`nativa_imprimir_error(args)`**: idéntico a `nativa_imprimir`
+  pero contra `stderr`. Mantiene el `\n` final y el `fflush`.
+
+Ambas registradas en la tabla `nombres_nativos`. Aceptan número
+variable de argumentos posicionales (cualquiera, incluyendo
+cero). Convierten cada uno con `valor_a_cadena`.
+
+### Limitación: sin kwargs
+
+Python: `print(*args, sep=" ", end="\n", file=sys.stdout, flush=False)`.
+
+Cornamusa: las nativas reciben solo args posicionales — el path
+de kwargs (v1.143) solo cubre funciones bytecode, constructores
+y métodos ligados. Extenderlo a nativas requiere refactor mayor.
+Por ahora `sep` y `fin`/`end` no se pueden personalizar. Si
+necesitas separador custom, construye la cadena con `unir`
+primero y luego llama `escribir(s)`.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_escribir.c` con 8 bloques:
+
+- `escribir` sin newline (3 llamadas concatenadas).
+- `escribir` con múltiples args (separador espacio).
+- `escribir + imprimir` formando una línea con prefijo + cierre.
+- `imprimir_error` va a stderr y NO contamina stdout.
+- `imprimir_error` con varios args (separador espacio).
+- `escribir()` sin args no emite nada.
+- Regresión: `imprimir()` sin args sigue emitiendo solo `\n`.
+- `escribir` con tipos no-cadena usa representación canónica.
+
+El test usa captura dual (stdout + stderr a archivos separados)
+porque verificar el reparto entre canales es el punto de
+`imprimir_error`.
+
+Suite: **344 tests verde**.
+
 ## [1.147.0] — 2026-06-06 — `tomar_mientras`, `descartar_mientras`, `particionar`
 
 Sigue la racha de stdlib funcional (v1.144 → v1.147). Cornamusa

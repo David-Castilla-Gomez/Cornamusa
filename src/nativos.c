@@ -54,6 +54,40 @@ static Valor nativa_imprimir(EvalError *err, int n_args, Valor *args,
     return valor_nulo();
 }
 
+/* v1.148: como `imprimir` pero SIN salto de linea final. Util para
+ * construir lineas por trozos (progreso interactivo, prompts) y
+ * para CLIs que quieren manejar el formato. Separa args por
+ * espacio igual que imprimir. */
+static Valor nativa_escribir(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    (void)err; (void)linea; (void)columna;
+    char buffer[1024];
+    for (int i = 0; i < n_args; i++) {
+        if (i > 0) fputc(' ', stdout);
+        valor_a_cadena(&args[i], buffer, sizeof(buffer));
+        fputs(buffer, stdout);
+    }
+    fflush(stdout);
+    return valor_nulo();
+}
+
+/* v1.148: como `imprimir` pero a stderr en vez de stdout. Util para
+ * separar mensajes de progreso/errores del resultado del programa
+ * (idiomatico en CLIs). Anade salto de linea final. */
+static Valor nativa_imprimir_error(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    (void)err; (void)linea; (void)columna;
+    char buffer[1024];
+    for (int i = 0; i < n_args; i++) {
+        if (i > 0) fputc(' ', stderr);
+        valor_a_cadena(&args[i], buffer, sizeof(buffer));
+        fputs(buffer, stderr);
+    }
+    fputc('\n', stderr);
+    fflush(stderr);
+    return valor_nulo();
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * longitud(x)
  *
@@ -5882,6 +5916,8 @@ typedef struct {
 
 static const EntradaNativa NATIVAS[] = {
     {"imprimir", 8, nativa_imprimir},
+    {"escribir", 8, nativa_escribir},
+    {"imprimir_error", 14, nativa_imprimir_error},
     {"longitud", 8, nativa_longitud},
     {"tipo",     4, nativa_tipo},
     {"rango",    5, nativa_rango},
