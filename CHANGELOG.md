@@ -6,6 +6,117 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.138.0] — 2026-06-06 — Patrones anidados en comprehensions y genex
+
+v1.137 cerró las tuplas anidadas en `para`. Quedaba documentada
+como TODO la pieza simétrica: anidados en comprehensions y genex.
+v1.138 la cierra — paridad completa de destructuring en TODOS los
+sitios donde existe el patrón `para X en it`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# List comprehension con patron anidado
+r = [a + b + c para (a, (b, c)) en [(1, (10, 100)), (2, (20, 200))]]
+# [111, 222]
+
+# Mezcla plano + anidado (sin envolver el primero)
+r = [(a, b, c) para a, (b, c) en triples]
+
+# Star dentro del sub-patron
+r = [(a, ult, mid) para (a, (*mid, ult)) en filas_jerarquicas]
+
+# Dict y set comprehension igual
+d = {k: v + w para (k, (v, w)) en mapeo_anidado}
+s = {a + b para (a, (b, c)) en triples}
+
+# Generator expression con patron anidado
+g = (a + b + c para (a, (b, c)) en triples)
+
+# Profundidad arbitraria
+r = [(a, b, c, d) para (a, (b, (c, d))) en cuadruples_jerarquicos]
+
+# Anidados en distintas clausulas de multi-para
+r = [(a, b, x, w) para (a, b) en pares para (x, w) en otros_pares]
+```
+
+### Implementación
+
+**Parser** (`src/parser.c`): `parsear_destino_compr` extendido
+con la rama `TT_PARENT_IZQ` que parsea un sub-patrón
+recursivamente. El nodo devuelto ahora puede ser `EXPR_IDENT`,
+`EXPR_STAR_BIND` o `EXPR_TUPLA` (recursivo). Además
+`parsear_destinos_compr` reconoce como destructuring el caso en
+que el primer destino sea ya `EXPR_TUPLA` (`[expr para (a, b)
+en ...]`), evitando envolver en una tupla extra cuando solo hay
+un elemento.
+
+**Compilador** (`src/compilador.c`): refactor del destructuring
+inline en `EXPR_COMPREHENSION` (rama común para list/dict/set y
+rama dedicada para genex) a tres helpers recursivos:
+
+- `validar_patron_compr` — DFS sobre el patrón; cada elemento
+  debe ser `IDENT`, `*IDENT` o `TUPLA`; máximo un `*` por nivel.
+- `contar_slots_patron` — DFS; cuenta los slots necesarios
+  (hojas + un slot anónimo por sub-tupla).
+- `prereservar_slots_patron_compr` — DFS; emite `OP_NULO` +
+  `agregar_local` por cada slot, con el nombre real para hojas
+  IDENT/STAR_BIND y `$compsub` para sub-tuplas anónimas. Garantiza
+  que TODO el espacio se reserva antes del primer `inicio_loop`
+  para que el stack no crezca por iteración.
+- `emitir_destruct_patron_compr` — DFS; emite la verificación
+  de aridad del nivel y extrae cada destino (OP_INDICE para
+  hojas, OP_REBANADA para `*`, recursión para sub-tupla). Usa un
+  `int *cursor` global que avanza monotonamente para alinearse
+  con el orden DFS de la pre-reserva.
+
+Sin cambios a bytecode ni VM. El bug clásico de stack growth en
+bucles (arreglado en v1.130/v1.132/v1.135) sigue evitado: todos
+los slots se pre-reservan **antes** de entrar al loop padre.
+
+El cleanup final que descarta slots ahora usa `contar_slots_patron`
+en lugar de `n_elementos` para que la decremento de
+`c->actual->n_locales` cuadre con los slots realmente creados
+(antes asumía solo hojas — pasaba con la limitación de v1.135).
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_comprehension_anidada.c` con 13
+casos:
+
+- List comprehension anidado.
+- Mezcla plano + anidado (sin envolver el primero).
+- Star dentro del sub-patrón.
+- Dict y set comprehension anidados.
+- Generator expression anidado.
+- Profundidad triple (3 niveles).
+- Dentro de función.
+- Multi-`para` con anidados en distintas cláusulas.
+- Aridad incorrecta del sub-patrón lanza `ErrorDeValor`
+  atrapable.
+- Regresiones: simple, plano y star.
+
+Suite: **334 tests verde** (333 + el nuevo).
+
+### Cierre de la saga destructuring
+
+Con v1.138 queda completa la familia que arrancó en v1.129:
+
+- v1.129 — `*resto` en asignación.
+- v1.131 — `OP_INDICE/REBANADA` sobre rango.
+- v1.132 — multi-`para` en comprehensions.
+- v1.133 — `*r, x = it` (star inicial).
+- v1.134 — destructuring en bucle `para`.
+- v1.135 — destructuring en comprehensions (un nivel).
+- v1.136 — multi-`para` y destructuring en genex.
+- v1.137 — patrones anidados en `para`.
+- v1.138 — patrones anidados en comprehensions y genex.
+
+Cualquier patrón con `IDENT`, `*IDENT` y tuplas anidadas
+arbitrariamente profundas funciona ahora de forma uniforme en
+asignación, bucle `para`, list/dict/set comprehensions y
+generator expressions.
+
 ## [1.137.0] — 2026-06-05 — Patrones anidados en el bucle `para`
 
 v1.134 abrió el destructuring del bucle `para`. v1.135 y v1.136

@@ -758,6 +758,10 @@ static Expr *parsear_grupo(Parser *p) {
 /*
  * v1.135: parsea un destino de cabecera de cláusula de comprehension:
  * IDENT o `*IDENT`. Devuelve la Expr (EXPR_IDENT o EXPR_STAR_BIND).
+ * v1.138: tambien acepta sub-patrones `(...)` que se anidan
+ * recursivamente. Ejemplo: `[expr para (a, (b, c)) en triples]`.
+ * El nodo devuelto puede ser EXPR_IDENT, EXPR_STAR_BIND o
+ * EXPR_TUPLA (anidada).
  * NULL en error.
  */
 static Expr *parsear_destino_compr(Parser *p) {
@@ -773,6 +777,34 @@ static Expr *parsear_destino_compr(Parser *p) {
         Token tid = p->actual;
         avanzar(p);
         return expr_star_bind(p->arena, tid.inicio, tid.longitud, sl, sc);
+    }
+    if (check(p, TT_PARENT_IZQ)) {
+        int sl = p->actual.linea;
+        int sc = p->actual.columna;
+        avanzar(p);  /* consume '(' */
+        Expr **elementos = (Expr **)arena_alocar(p->arena,
+            sizeof(Expr *) * 4);
+        if (elementos == NULL) return NULL;
+        int n = 0, cap = 4;
+        if (!check(p, TT_PARENT_DER)) {
+            do {
+                Expr *e = parsear_destino_compr(p);
+                if (e == NULL) return NULL;
+                if (n >= cap) {
+                    int nuevo_cap = cap * 2;
+                    Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                        sizeof(Expr *) * (size_t)nuevo_cap);
+                    if (nuevo == NULL) return NULL;
+                    memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+                    elementos = nuevo;
+                    cap = nuevo_cap;
+                }
+                elementos[n++] = e;
+            } while (consumir_si(p, TT_COMA) && !check(p, TT_PARENT_DER));
+        }
+        if (!consumir(p, TT_PARENT_DER,
+            "se esperaba ')' al cerrar sub-patron de comprehension")) return NULL;
+        return expr_tupla(p->arena, elementos, n, sl, sc);
     }
     if (!check(p, TT_IDENT)) {
         error_en(p, &p->actual,
@@ -802,7 +834,9 @@ static bool parsear_destinos_compr(Parser *p,
     Expr *primero = parsear_destino_compr(p);
     if (primero == NULL) return false;
 
-    bool es_destr = (primero->tipo == EXPR_STAR_BIND) || check(p, TT_COMA);
+    bool es_destr = (primero->tipo == EXPR_STAR_BIND)
+                      || (primero->tipo == EXPR_TUPLA)
+                      || check(p, TT_COMA);
     if (!es_destr) {
         /* Var simple: IDENT puro. */
         *nombre_var_out = primero->como.ident.nombre;
@@ -829,7 +863,15 @@ static bool parsear_destinos_compr(Parser *p,
         }
         elementos[n++] = e;
     }
-    *patron_out = expr_tupla(p->arena, elementos, n, linea, col);
+    /* v1.138: si solo hay un elemento Y ya es EXPR_TUPLA (sub-patron
+     * con parentesis), no envolver — el patron es directamente esa
+     * tupla. Asi `[expr para (a, b) en pares]` produce patron=(a,b),
+     * no ((a,b),). */
+    if (n == 1 && elementos[0]->tipo == EXPR_TUPLA) {
+        *patron_out = elementos[0];
+    } else {
+        *patron_out = expr_tupla(p->arena, elementos, n, linea, col);
+    }
     return (*patron_out != NULL);
 }
 

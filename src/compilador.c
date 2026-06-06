@@ -440,6 +440,18 @@ static int agregar_nombre_global(Compilador *c, const char *texto, int len) {
     return idx;
 }
 
+/* v1.138: helpers de destructuring con patrones anidados para
+ * comprehensions y genex. Definicion mas abajo; forward para usar
+ * desde EXPR_COMPREHENSION en compilador_compilar_expr. */
+static bool validar_patron_compr(Compilador *c, const Expr *patron,
+                                  int linea, int col);
+static int contar_slots_patron(const Expr *patron);
+static bool prereservar_slots_patron_compr(Compilador *c, const Expr *patron,
+                                              int linea);
+static bool emitir_destruct_patron_compr(Compilador *c, int slot_item,
+                                            const Expr *patron, int *cursor,
+                                            int linea);
+
 bool compilador_compilar_expr(Compilador *c, const Expr *e) {
     if (c->error.tuvo_error) return false;
 
@@ -1107,30 +1119,14 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 for (int i = 1; i < gx_n_clausulas; i++) {
                     gx_patrones[i] = gx_extras[i - 1].patron;
                 }
-                /* Validar patrones. */
-                for (int i = 0; i < gx_n_clausulas && gx_ok; i++) {
+                /* v1.138: validar patrones recursivamente (acepta
+                 * tuplas anidadas; max un STAR por nivel). */
+                for (int i = 0; i < gx_n_clausulas; i++) {
                     if (gx_patrones[i] == NULL) continue;
-                    Expr *pat = gx_patrones[i];
-                    int n_dst = pat->como.secuencia.n_elementos;
-                    Expr **dst = pat->como.secuencia.elementos;
-                    for (int j = 0; j < n_dst; j++) {
-                        if (dst[j]->tipo == EXPR_IDENT) continue;
-                        if (dst[j]->tipo == EXPR_STAR_BIND) {
-                            if (gx_star_idx[i] >= 0) {
-                                c->actual = prev;
-                                funcion_bc_liberar(fn);
-                                error_compilacion(c, e->linea, e->columna,
-                                    "ErrorDeSintaxis: solo se permite un '*' por clausula");
-                                return false;
-                            }
-                            gx_star_idx[i] = j;
-                            continue;
-                        }
+                    if (!validar_patron_compr(c, gx_patrones[i],
+                                                e->linea, e->columna)) {
                         c->actual = prev;
                         funcion_bc_liberar(fn);
-                        error_compilacion(c, e->linea, e->columna,
-                            "ErrorDeSintaxis: destino de comprehension debe "
-                            "ser IDENT o '*IDENT'");
                         return false;
                     }
                 }
@@ -1163,22 +1159,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     }
                     gx_slots_var[i] = agregar_local(c, vn, vl, e->linea);
                     if (gx_slots_var[i] < 0) { gx_ok = false; break; }
+                    /* v1.138: pre-reservar slots del patron (hojas
+                     * + sub-tuplas) recursivamente. */
                     if (gx_patrones[i] != NULL) {
-                        Expr *pat = gx_patrones[i];
-                        int n_dst = pat->como.secuencia.n_elementos;
-                        Expr **dst = pat->como.secuencia.elementos;
-                        for (int j = 0; j < n_dst; j++) {
-                            const char *nm; int nm_len;
-                            if (dst[j]->tipo == EXPR_IDENT) {
-                                nm = dst[j]->como.ident.nombre;
-                                nm_len = dst[j]->como.ident.longitud;
-                            } else {
-                                nm = dst[j]->como.star_bind.nombre;
-                                nm_len = dst[j]->como.star_bind.longitud;
-                            }
-                            chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
-                            int sd = agregar_local(c, nm, nm_len, e->linea);
-                            if (sd < 0) { gx_ok = false; break; }
+                        if (!prereservar_slots_patron_compr(c, gx_patrones[i],
+                                                              e->linea)) {
+                            gx_ok = false; break;
                         }
                     }
                 }
@@ -1203,76 +1189,16 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     chunk_emitir_byte2(&fn->chunk, OP_ASIGNAR_LOCAL,
                                         (uint8_t)gx_slots_var[i], e->linea);
 
-                    /* Destructuring inline si hay patron. */
+                    /* v1.135/v1.138: destructuring inline si hay
+                     * patron, ahora con soporte anidado via helper
+                     * recursivo. */
                     if (gx_patrones[i] != NULL) {
-                        Expr *pat = gx_patrones[i];
-                        int n_dst = pat->como.secuencia.n_elementos;
-                        Expr **dst = pat->como.secuencia.elementos;
-                        int star_idx = gx_star_idx[i];
-                        int slot_destino_base = gx_slots_var[i] + 1;
-                        chunk_emitir_byte2(&fn->chunk, OP_OBTENER_LOCAL,
-                                            (uint8_t)gx_slots_var[i], e->linea);
-                        chunk_emitir_byte(&fn->chunk, OP_LONGITUD, e->linea);
-                        chunk_emitir_constante(&fn->chunk,
-                            valor_entero_de_long(
-                                (long)(star_idx >= 0 ? n_dst - 1 : n_dst)),
-                            e->linea);
-                        chunk_emitir_byte(&fn->chunk,
-                            star_idx >= 0 ? OP_MAYOR_IGUAL : OP_IGUAL, e->linea);
-                        int salto_mal = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
-                        chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
-                        for (int j = 0; j < n_dst; j++) {
-                            if (j == star_idx) {
-                                chunk_emitir_byte2(&fn->chunk,
-                                    OP_OBTENER_LOCAL, (uint8_t)gx_slots_var[i], e->linea);
-                                chunk_emitir_constante(&fn->chunk,
-                                    valor_entero_de_long((long)star_idx), e->linea);
-                                chunk_emitir_byte2(&fn->chunk,
-                                    OP_OBTENER_LOCAL, (uint8_t)gx_slots_var[i], e->linea);
-                                chunk_emitir_byte(&fn->chunk, OP_LONGITUD, e->linea);
-                                int tail = n_dst - 1 - star_idx;
-                                if (tail > 0) {
-                                    chunk_emitir_constante(&fn->chunk,
-                                        valor_entero_de_long((long)tail), e->linea);
-                                    chunk_emitir_byte(&fn->chunk, OP_RESTAR, e->linea);
-                                }
-                                chunk_emitir_byte(&fn->chunk, OP_NULO, e->linea);
-                                chunk_emitir_byte(&fn->chunk, OP_REBANADA, e->linea);
-                            } else {
-                                long idx_real = (star_idx >= 0 && j > star_idx)
-                                    ? (long)(j - n_dst) : (long)j;
-                                chunk_emitir_byte2(&fn->chunk,
-                                    OP_OBTENER_LOCAL, (uint8_t)gx_slots_var[i], e->linea);
-                                chunk_emitir_constante(&fn->chunk,
-                                    valor_entero_de_long(idx_real), e->linea);
-                                chunk_emitir_byte(&fn->chunk, OP_INDICE, e->linea);
-                            }
-                            chunk_emitir_byte2(&fn->chunk, OP_ASIGNAR_LOCAL,
-                                (uint8_t)(slot_destino_base + j), e->linea);
+                        int cursor = gx_slots_var[i] + 1;
+                        if (!emitir_destruct_patron_compr(c, gx_slots_var[i],
+                                                          gx_patrones[i],
+                                                          &cursor, e->linea)) {
+                            gx_ok = false; break;
                         }
-                        int salto_fin_destr = emitir_salto(c, OP_SALTAR, e->linea);
-                        parchear_salto(c, salto_mal, e->linea);
-                        chunk_emitir_byte(&fn->chunk, OP_DESCARTAR, e->linea);
-                        int idx_err = agregar_nombre_global(c, "ErrorDeValor", 12);
-                        if (idx_err < 0 || idx_err > 255) {
-                            c->actual = prev;
-                            funcion_bc_liberar(fn);
-                            error_compilacion(c, e->linea, 0,
-                                "demasiadas constantes (>255)");
-                            return false;
-                        }
-                        chunk_emitir_byte2(&fn->chunk, OP_OBTENER_GLOBAL,
-                                            (uint8_t)idx_err, e->linea);
-                        chunk_emitir_byte2(&fn->chunk, 0, 0, e->linea);
-                        chunk_emitir_byte2(&fn->chunk, 0, 0, e->linea);
-                        chunk_emitir_constante(&fn->chunk,
-                            valor_cadena_duplicar(
-                                "aridad incorrecta en destructuring de comprehension",
-                                strlen("aridad incorrecta en destructuring de comprehension")),
-                            e->linea);
-                        chunk_emitir_byte2(&fn->chunk, OP_LLAMAR, 1, e->linea);
-                        chunk_emitir_byte(&fn->chunk, OP_LANZAR, e->linea);
-                        parchear_salto(c, salto_fin_destr, e->linea);
                     }
 
                     Expr *guarda_i = (i == 0)
@@ -1421,29 +1347,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             for (int i = 1; i < n_clausulas; i++) {
                 patrones[i] = extras[i - 1].patron;
             }
-            /* Validar el patron (cuerpo de cada uno debe ser IDENT o
-             * STAR_BIND; max un STAR por clausula). */
+            /* v1.138: validar recursivamente cada patron (acepta
+             * tuplas anidadas; max un STAR por nivel). */
             for (int i = 0; i < n_clausulas; i++) {
                 if (patrones[i] == NULL) continue;
-                Expr *pat = patrones[i];
-                int n_dst = pat->como.secuencia.n_elementos;
-                Expr **dst = pat->como.secuencia.elementos;
-                for (int j = 0; j < n_dst; j++) {
-                    if (dst[j]->tipo == EXPR_IDENT) continue;
-                    if (dst[j]->tipo == EXPR_STAR_BIND) {
-                        if (star_idx_clausula[i] >= 0) {
-                            error_compilacion(c, e->linea, e->columna,
-                                "ErrorDeSintaxis: solo se permite un '*' por clausula");
-                            return false;
-                        }
-                        star_idx_clausula[i] = j;
-                        continue;
-                    }
-                    error_compilacion(c, e->linea, e->columna,
-                        "ErrorDeSintaxis: destino de comprehension debe "
-                        "ser IDENT o '*IDENT'");
+                if (!validar_patron_compr(c, patrones[i], e->linea, e->columna))
                     return false;
-                }
             }
 
             /* Pre-empujar OP_NULO + agregar_local para TODOS los slots
@@ -1477,25 +1386,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 slots_var[i] = agregar_local(c, vn, vl, e->linea);
                 if (slots_var[i] < 0) return false;
 
-                /* Si hay patron, pre-reservar slots de los destinos. */
+                /* v1.138: si hay patron, pre-reservar slots de TODOS
+                 * los destinos hoja Y sub-tuplas anonimas (DFS). */
                 if (patrones[i] != NULL) {
-                    Expr *pat = patrones[i];
-                    int n_dst = pat->como.secuencia.n_elementos;
-                    Expr **dst = pat->como.secuencia.elementos;
-                    for (int j = 0; j < n_dst; j++) {
-                        const char *nm;
-                        int nm_len;
-                        if (dst[j]->tipo == EXPR_IDENT) {
-                            nm = dst[j]->como.ident.nombre;
-                            nm_len = dst[j]->como.ident.longitud;
-                        } else {  /* EXPR_STAR_BIND */
-                            nm = dst[j]->como.star_bind.nombre;
-                            nm_len = dst[j]->como.star_bind.longitud;
-                        }
-                        chunk_emitir_byte(c->actual->chunk, OP_NULO, e->linea);
-                        int sd = agregar_local(c, nm, nm_len, e->linea);
-                        if (sd < 0) return false;
-                    }
+                    if (!prereservar_slots_patron_compr(c, patrones[i],
+                                                          e->linea))
+                        return false;
                 }
             }
 
@@ -1522,108 +1418,17 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 chunk_emitir_byte2(c->actual->chunk, OP_ASIGNAR_LOCAL,
                                     (uint8_t)slots_var[i], e->linea);
 
-                /* v1.135: si la clausula tiene patron, hacer el
-                 * destructuring inline. El item esta en el slot
-                 * anonimo slots_var[i]; los slots de los destinos ya
-                 * fueron pre-reservados — solo extraer y asignar. */
+                /* v1.135/v1.138: si la clausula tiene patron, hacer
+                 * el destructuring inline. Helper recursivo soporta
+                 * IDENT, *IDENT y tuplas anidadas. El item esta en
+                 * el slot anonimo slots_var[i]; los slots de los
+                 * destinos (incluyendo sub-tuplas anonimas) ya
+                 * fueron pre-reservados con DFS. */
                 if (patrones[i] != NULL) {
-                    Expr *pat = patrones[i];
-                    int n_dst = pat->como.secuencia.n_elementos;
-                    Expr **dst = pat->como.secuencia.elementos;
-                    int star_idx = star_idx_clausula[i];
-                    /* El slot del primer destino del patron esta justo
-                     * despues de slots_var[i] (en compile time se
-                     * agregaron consecutivos). */
-                    int slot_destino_base = slots_var[i] + 1;
-
-                    /* Verificar aridad: longitud(item) == n_dst (sin
-                     * star) o >= n_dst - 1 (con star). */
-                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
-                                        (uint8_t)slots_var[i], e->linea);
-                    chunk_emitir_byte(c->actual->chunk, OP_LONGITUD, e->linea);
-                    chunk_emitir_constante(c->actual->chunk,
-                        valor_entero_de_long(
-                            (long)(star_idx >= 0 ? n_dst - 1 : n_dst)),
-                        e->linea);
-                    chunk_emitir_byte(c->actual->chunk,
-                        star_idx >= 0 ? OP_MAYOR_IGUAL : OP_IGUAL, e->linea);
-                    int salto_mal_aridad =
-                        emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
-                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
-                                        e->linea);  /* descarta bool true */
-
-                    /* Por cada destino, extraer y asignar a slot. */
-                    for (int j = 0; j < n_dst; j++) {
-                        if (j == star_idx) {
-                            chunk_emitir_byte2(c->actual->chunk,
-                                OP_OBTENER_LOCAL, (uint8_t)slots_var[i],
-                                e->linea);
-                            chunk_emitir_constante(c->actual->chunk,
-                                valor_entero_de_long((long)star_idx),
-                                e->linea);
-                            chunk_emitir_byte2(c->actual->chunk,
-                                OP_OBTENER_LOCAL, (uint8_t)slots_var[i],
-                                e->linea);
-                            chunk_emitir_byte(c->actual->chunk,
-                                OP_LONGITUD, e->linea);
-                            int tail = n_dst - 1 - star_idx;
-                            if (tail > 0) {
-                                chunk_emitir_constante(c->actual->chunk,
-                                    valor_entero_de_long((long)tail),
-                                    e->linea);
-                                chunk_emitir_byte(c->actual->chunk,
-                                    OP_RESTAR, e->linea);
-                            }
-                            chunk_emitir_byte(c->actual->chunk, OP_NULO,
-                                e->linea);
-                            chunk_emitir_byte(c->actual->chunk,
-                                OP_REBANADA, e->linea);
-                        } else {
-                            long idx_real = (star_idx >= 0 && j > star_idx)
-                                ? (long)(j - n_dst)
-                                : (long)j;
-                            chunk_emitir_byte2(c->actual->chunk,
-                                OP_OBTENER_LOCAL, (uint8_t)slots_var[i],
-                                e->linea);
-                            chunk_emitir_constante(c->actual->chunk,
-                                valor_entero_de_long(idx_real), e->linea);
-                            chunk_emitir_byte(c->actual->chunk,
-                                OP_INDICE, e->linea);
-                        }
-                        chunk_emitir_byte2(c->actual->chunk,
-                            OP_ASIGNAR_LOCAL,
-                            (uint8_t)(slot_destino_base + j), e->linea);
-                    }
-                    int salto_fin_destr =
-                        emitir_salto(c, OP_SALTAR, e->linea);
-
-                    /* Aterrizaje aridad mala: descartar bool false +
-                     * lanzar ErrorDeValor. */
-                    parchear_salto(c, salto_mal_aridad, e->linea);
-                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR,
-                                        e->linea);
-                    int idx_err =
-                        agregar_nombre_global(c, "ErrorDeValor", 12);
-                    if (idx_err < 0 || idx_err > 255) {
-                        error_compilacion(c, e->linea, 0,
-                            "demasiadas constantes (>255)");
-                        return false;
-                    }
-                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
-                                        (uint8_t)idx_err, e->linea);
-                    chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
-                    chunk_emitir_byte2(c->actual->chunk, 0, 0, e->linea);
-                    chunk_emitir_constante(c->actual->chunk,
-                        valor_cadena_duplicar(
-                            "aridad incorrecta en destructuring de comprehension",
-                            strlen("aridad incorrecta en destructuring de comprehension")),
-                        e->linea);
-                    chunk_emitir_byte2(c->actual->chunk, OP_LLAMAR, 1,
-                                        e->linea);
-                    chunk_emitir_byte(c->actual->chunk, OP_LANZAR,
-                                        e->linea);
-
-                    parchear_salto(c, salto_fin_destr, e->linea);
+                    int cursor = slots_var[i] + 1;
+                    if (!emitir_destruct_patron_compr(c, slots_var[i],
+                                                       patrones[i], &cursor,
+                                                       e->linea)) return false;
                 }
 
                 Expr *guarda_i = (i == 0)
@@ -1671,12 +1476,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             /* Limpieza: dejar el acumulador como TOS y liberar slots
              * temporales ($comp_acc, y por cada clausula su $comp_iter
              * y su var). 1 + 2 * n_clausulas slots base.
-             * v1.135: cada clausula con patron anade n_dst slots
-             * extra (uno por destino del destructuring). */
+             * v1.135/v1.138: cada clausula con patron anade
+             * contar_slots_patron(...) slots extra (DFS: hojas +
+             * sub-tuplas anonimas). */
             int extras_patron = 0;
             for (int i = 0; i < n_clausulas; i++) {
                 if (patrones[i] != NULL) {
-                    extras_patron += patrones[i]->como.secuencia.n_elementos;
+                    extras_patron += contar_slots_patron(patrones[i]);
                 }
             }
             chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
@@ -2003,6 +1809,186 @@ static bool compilar_clase(Compilador *c, const Sent *s);
    soporte `longitud()` y `[i]`. No requiere tipo coincidente con el LHS.
 */
 static bool emitir_destructuring(Compilador *c, const Expr *patron, int linea);
+
+/*
+ * v1.138: helpers para destructuring inline en comprehensions y
+ * genex, ahora con soporte de patrones anidados (EXPR_TUPLA dentro
+ * de EXPR_TUPLA).
+ *
+ * validar_patron_compr: recorre recursivamente comprobando que cada
+ * elemento sea IDENT, STAR_BIND o TUPLA, y que haya como mucho un
+ * STAR por nivel. NO emite bytes.
+ *
+ * prereservar_slots_patron_compr: por cada destino IDENT/STAR_BIND
+ * emite OP_NULO + agregar_local con nombre real; por cada sub-TUPLA
+ * emite OP_NULO + agregar_local "$compsub" y recurre. El orden DFS
+ * coincide con emitir_destruct_patron_compr.
+ *
+ * emitir_destruct_patron_compr: verifica aridad y emite las
+ * extracciones (OP_INDICE / OP_REBANADA + OP_ASIGNAR_LOCAL al slot
+ * correspondiente). Para sub-TUPLA, llama recursivamente sobre el
+ * slot que acaba de asignar. En aridad mala lanza ErrorDeValor
+ * atrapable. `cursor` apunta al slot del primer destino del nivel y
+ * avanza monotonicamente con cada slot consumido.
+ *
+ * Todos asumen c->actual fijado al scope correcto (function o
+ * top-level para list/dict/set; scope_gx para genex).
+ */
+static bool validar_patron_compr(Compilador *c, const Expr *patron,
+                                  int linea, int col) {
+    int n_dst = patron->como.secuencia.n_elementos;
+    Expr **dst = patron->como.secuencia.elementos;
+    int star_count = 0;
+    for (int j = 0; j < n_dst; j++) {
+        switch (dst[j]->tipo) {
+            case EXPR_IDENT:
+                break;
+            case EXPR_STAR_BIND:
+                if (++star_count > 1) {
+                    error_compilacion(c, linea, col,
+                        "ErrorDeSintaxis: solo se permite un '*' por nivel del patron");
+                    return false;
+                }
+                break;
+            case EXPR_TUPLA:
+                if (!validar_patron_compr(c, dst[j], linea, col)) return false;
+                break;
+            default:
+                error_compilacion(c, linea, col,
+                    "ErrorDeSintaxis: destino de comprehension debe ser "
+                    "IDENT, '*IDENT' o tupla anidada");
+                return false;
+        }
+    }
+    return true;
+}
+
+static int contar_slots_patron(const Expr *patron) {
+    int n_dst = patron->como.secuencia.n_elementos;
+    Expr **dst = patron->como.secuencia.elementos;
+    int total = n_dst;
+    for (int j = 0; j < n_dst; j++) {
+        if (dst[j]->tipo == EXPR_TUPLA) {
+            total += contar_slots_patron(dst[j]);
+        }
+    }
+    return total;
+}
+
+static bool prereservar_slots_patron_compr(Compilador *c, const Expr *patron,
+                                              int linea) {
+    int n_dst = patron->como.secuencia.n_elementos;
+    Expr **dst = patron->como.secuencia.elementos;
+    for (int j = 0; j < n_dst; j++) {
+        const char *nm; int nm_len;
+        if (dst[j]->tipo == EXPR_IDENT) {
+            nm = dst[j]->como.ident.nombre;
+            nm_len = dst[j]->como.ident.longitud;
+        } else if (dst[j]->tipo == EXPR_STAR_BIND) {
+            nm = dst[j]->como.star_bind.nombre;
+            nm_len = dst[j]->como.star_bind.longitud;
+        } else {
+            nm = "$compsub";
+            nm_len = 8;
+        }
+        chunk_emitir_byte(c->actual->chunk, OP_NULO, linea);
+        int s = agregar_local(c, nm, nm_len, linea);
+        if (s < 0) return false;
+        if (dst[j]->tipo == EXPR_TUPLA) {
+            if (!prereservar_slots_patron_compr(c, dst[j], linea)) return false;
+        }
+    }
+    return true;
+}
+
+static bool emitir_destruct_patron_compr(Compilador *c, int slot_item,
+                                            const Expr *patron, int *cursor,
+                                            int linea);
+
+/* Implementacion recursiva. */
+static bool emitir_destruct_patron_compr(Compilador *c, int slot_item,
+                                            const Expr *patron, int *cursor,
+                                            int linea) {
+    Chunk *chunk = c->actual->chunk;
+    int n_dst = patron->como.secuencia.n_elementos;
+    Expr **dst = patron->como.secuencia.elementos;
+    int star_idx = -1;
+    for (int j = 0; j < n_dst; j++) {
+        if (dst[j]->tipo == EXPR_STAR_BIND) { star_idx = j; break; }
+    }
+    /* Aridad. */
+    chunk_emitir_byte2(chunk, OP_OBTENER_LOCAL, (uint8_t)slot_item, linea);
+    chunk_emitir_byte(chunk, OP_LONGITUD, linea);
+    chunk_emitir_constante(chunk,
+        valor_entero_de_long((long)(star_idx >= 0 ? n_dst - 1 : n_dst)),
+        linea);
+    chunk_emitir_byte(chunk,
+        star_idx >= 0 ? OP_MAYOR_IGUAL : OP_IGUAL, linea);
+    int salto_mal = emitir_salto(c, OP_SALTAR_SI_FALSO, linea);
+    chunk_emitir_byte(chunk, OP_DESCARTAR, linea);
+    /* Reservar los slots del NIVEL actual (consecutivos, en orden). */
+    int slot_base = *cursor;
+    *cursor += n_dst;
+    /* Extraer cada destino y asignarlo a su slot. Recurrir para
+     * sub-tuplas DESPUES de su asignacion. El sub-cursor avanza con
+     * el cursor global (los slots de la sub-tupla son los siguientes
+     * en el orden DFS pre-reservado). */
+    for (int j = 0; j < n_dst; j++) {
+        int slot_destino = slot_base + j;
+        if (j == star_idx) {
+            chunk_emitir_byte2(chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_item, linea);
+            chunk_emitir_constante(chunk,
+                valor_entero_de_long((long)star_idx), linea);
+            chunk_emitir_byte2(chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_item, linea);
+            chunk_emitir_byte(chunk, OP_LONGITUD, linea);
+            int tail = n_dst - 1 - star_idx;
+            if (tail > 0) {
+                chunk_emitir_constante(chunk,
+                    valor_entero_de_long((long)tail), linea);
+                chunk_emitir_byte(chunk, OP_RESTAR, linea);
+            }
+            chunk_emitir_byte(chunk, OP_NULO, linea);
+            chunk_emitir_byte(chunk, OP_REBANADA, linea);
+        } else {
+            long idx_real = (star_idx >= 0 && j > star_idx)
+                ? (long)(j - n_dst) : (long)j;
+            chunk_emitir_byte2(chunk, OP_OBTENER_LOCAL,
+                                (uint8_t)slot_item, linea);
+            chunk_emitir_constante(chunk,
+                valor_entero_de_long(idx_real), linea);
+            chunk_emitir_byte(chunk, OP_INDICE, linea);
+        }
+        chunk_emitir_byte2(chunk, OP_ASIGNAR_LOCAL,
+                            (uint8_t)slot_destino, linea);
+        if (dst[j]->tipo == EXPR_TUPLA) {
+            if (!emitir_destruct_patron_compr(c, slot_destino, dst[j],
+                                                cursor, linea)) return false;
+        }
+    }
+    int salto_fin = emitir_salto(c, OP_SALTAR, linea);
+    parchear_salto(c, salto_mal, linea);
+    chunk_emitir_byte(chunk, OP_DESCARTAR, linea);
+    int idx_err = agregar_nombre_global(c, "ErrorDeValor", 12);
+    if (idx_err < 0 || idx_err > 255) {
+        error_compilacion(c, linea, 0, "demasiadas constantes (>255)");
+        return false;
+    }
+    chunk_emitir_byte2(chunk, OP_OBTENER_GLOBAL,
+                        (uint8_t)idx_err, linea);
+    chunk_emitir_byte2(chunk, 0, 0, linea);
+    chunk_emitir_byte2(chunk, 0, 0, linea);
+    chunk_emitir_constante(chunk,
+        valor_cadena_duplicar(
+            "aridad incorrecta en destructuring de comprehension",
+            strlen("aridad incorrecta en destructuring de comprehension")),
+        linea);
+    chunk_emitir_byte2(chunk, OP_LLAMAR, 1, linea);
+    chunk_emitir_byte(chunk, OP_LANZAR, linea);
+    parchear_salto(c, salto_fin, linea);
+    return true;
+}
 
 static bool emitir_asignacion_ident(Compilador *c, const Expr *destino,
                                       int linea) {
