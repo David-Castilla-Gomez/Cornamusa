@@ -307,6 +307,69 @@ funcion funcionales_minimo_dos(a: entero, b: entero):
     retornar b
 fin funcion
 
+# ─── juntar / zip (v1.146) ──────────────────────────────────────
+
+# Combina dos o mas iterables en pares/tuplas posicionales,
+# recorriendo en paralelo. Se detiene cuando el MAS CORTO se
+# agota. Devuelve una lista de tuplas.
+#
+# juntar([1, 2, 3], ["a", "b", "c"]) -> [(1, "a"), (2, "b"), (3, "c")]
+# juntar([1, 2], [10, 20, 30])       -> [(1, 10), (2, 20)]  (3 perdido)
+# juntar([1], [2], [3])              -> [(1, 2, 3)]
+funcion juntar(*iterables):
+    si longitud(iterables) == 0:
+        retornar []
+    fin si
+    # Materializa todos los iterables a listas para poder indexar.
+    listas = [lista(it) para it en iterables]
+    n = longitud(listas[0])
+    para l en listas[1:]:
+        si longitud(l) < n:
+            n = longitud(l)
+        fin si
+    fin para
+    resultado = []
+    para i en rango(0, n):
+        partes = []
+        para l en listas:
+            agregar(partes, l[i])
+        fin para
+        agregar(resultado, tupla(partes))
+    fin para
+    retornar resultado
+fin funcion
+
+# Como `juntar` pero recorre hasta agotar el MAS LARGO. Los
+# iterables ya consumidos rellenan con el valor de `relleno`.
+#
+# juntar_mas_largo([1, 2], [10, 20, 30], relleno=0)
+#   -> [(1, 10), (2, 20), (0, 30)]
+funcion juntar_mas_largo(iterables: lista, relleno=nulo):
+    si longitud(iterables) == 0:
+        retornar []
+    fin si
+    listas = [lista(it) para it en iterables]
+    n = 0
+    para l en listas:
+        si longitud(l) > n:
+            n = longitud(l)
+        fin si
+    fin para
+    resultado = []
+    para i en rango(0, n):
+        partes = []
+        para l en listas:
+            si i < longitud(l):
+                agregar(partes, l[i])
+            sino:
+                agregar(partes, relleno)
+            fin si
+        fin para
+        agregar(resultado, tupla(partes))
+    fin para
+    retornar resultado
+fin funcion
+
 # Divide `xs` en sub-listas consecutivas de tamano `n`. La ultima
 # puede ser mas corta si la longitud no es multiplo.
 #

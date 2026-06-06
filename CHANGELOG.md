@@ -6,6 +6,87 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.146.0] — 2026-06-06 — `juntar` (zip) y `juntar_mas_largo` (zip_longest)
+
+Continúa la racha de stdlib (v1.144 → v1.145 → v1.146).
+`stdlib/iteradores.cor` ya tenía `producto`, `concatenar`,
+`ventana`, `pares_consecutivos`, `dividir_en`, `comprimir`,
+`combinaciones`, `permutaciones`... pero faltaba el clásico
+`zip`.
+
+### Lo que ahora funciona
+
+```cornamusa
+desde iteradores importar juntar, juntar_mas_largo
+
+# 2 iterables
+juntar([1, 2, 3], ["a", "b", "c"])
+# → [(1, "a"), (2, "b"), (3, "c")]
+
+# El más corto manda
+juntar([1, 2], [10, 20, 30, 40])
+# → [(1, 10), (2, 20)]
+
+# N iterables
+juntar([1, 2], [10, 20], ["a", "b"])
+# → [(1, 10, "a"), (2, 20, "b")]
+
+# Acepta cualquier iterable (lista, tupla, cadena, rango)
+juntar(rango(0, 3), "abc")
+# → [(0, "a"), (1, "b"), (2, "c")]
+
+# Indice + valor (idioma de `enumerate`)
+para i, x en juntar(rango(0, longitud(xs)), xs):
+    ...
+fin para
+
+# juntar_mas_largo rellena hasta agotar el más largo
+juntar_mas_largo([[1, 2], [10, 20, 30]], relleno=0)
+# → [(1, 10), (2, 20), (0, 30)]
+
+juntar_mas_largo([[1, 2, 3], [10]], relleno="x")
+# → [(1, 10), (2, "x"), (3, "x")]
+```
+
+### Implementación
+
+`stdlib/iteradores.cor`:
+
+- **`juntar(*iterables)`**: aprovecha `*args` en función libre
+  (v1.22). Materializa cada iterable a lista, calcula `n =
+  longitud mínima` y construye `n` tuplas indexando en paralelo.
+  Devuelve lista vacía si no se pasan iterables o si alguno
+  está vacío.
+
+- **`juntar_mas_largo(iterables: lista, relleno=nulo)`**:
+  recibe la lista de iterables explícita (en vez de `*args`)
+  porque Cornamusa no permite combinar variádicos con defaults
+  desde v1.24 (validación del compilador). Recorre hasta `n =
+  longitud máxima`; los iterables ya agotados aportan `relleno`.
+
+Sin cambios al núcleo. Aprovecha:
+- `*args` en función libre (v1.22).
+- Defaults vía kwarg (siempre soportados).
+- `lista(iterable)` materializa cualquier iterable (rango,
+  cadena, tupla, generator...).
+- `tupla(lista)` para construir tuplas dinámicas.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_juntar.c` con 9 bloques:
+
+- `juntar` con 2 iterables de igual longitud.
+- `juntar` el más corto manda.
+- `juntar` con 3 iterables.
+- `juntar` con vacíos (cero args, con alguna lista vacía).
+- `juntar` acepta tipos mixtos (tupla + cadena).
+- `juntar` acepta rango lazy.
+- `juntar_mas_largo` con default `relleno=nulo`.
+- `juntar_mas_largo` con relleno custom (entero y cadena).
+- Caso real: índice + valor estilo `enumerate` Python.
+
+Suite: **342 tests verde**.
+
 ## [1.145.0] — 2026-06-06 — Ordenación: lex de tuplas/listas y `ordenado` funcional
 
 v1.144 abrió la idea de comparadores funcionales (`clave=`) para
