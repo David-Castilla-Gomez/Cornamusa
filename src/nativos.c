@@ -4723,6 +4723,151 @@ static Valor nativa_cadena_minusculas(EvalError *err, int n_args, Valor *args,
     return cadena_caso_unicode(err, &args[0], true, linea, columna);
 }
 
+/* v1.154: helper compartido para predicados es_alfa/es_digito/etc.
+ * Itera los code-points y verifica que TODOS cumplan la condicion
+ * indicada por `tipo`. Cadena vacia → falso (paridad con Python).
+ *
+ * tipo:
+ *   1 = es_alfa     : LU/LL/LT/LM/LO
+ *   2 = es_digito   : ND
+ *   3 = es_alfanum  : LU/LL/LT/LM/LO/ND/NL/NO
+ *   4 = es_espacios : ZS/ZL/ZP + ASCII whitespace (\t\n\r\f\v)
+ */
+static Valor cadena_predicado(EvalError *err, const Valor *v, int tipo,
+                                  int linea, int columna) {
+    if (v->tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: requiere una cadena, no '%s'",
+            valor_nombre_tipo(v));
+    }
+    const char *s = v->como.cadena.texto;
+    int sl = v->como.cadena.longitud;
+    if (sl == 0) return valor_booleano(false);
+    int i = 0;
+    while (i < sl) {
+        utf8proc_int32_t cp;
+        utf8proc_ssize_t cons = utf8proc_iterate(
+            (const utf8proc_uint8_t *)(s + i), sl - i, &cp);
+        if (cons <= 0) return valor_booleano(false);
+        int cat = utf8proc_category(cp);
+        bool ok = false;
+        switch (tipo) {
+            case 1:  /* es_alfa */
+                ok = (cat == UTF8PROC_CATEGORY_LU || cat == UTF8PROC_CATEGORY_LL
+                     || cat == UTF8PROC_CATEGORY_LT || cat == UTF8PROC_CATEGORY_LM
+                     || cat == UTF8PROC_CATEGORY_LO);
+                break;
+            case 2:  /* es_digito */
+                ok = (cat == UTF8PROC_CATEGORY_ND);
+                break;
+            case 3:  /* es_alfanum */
+                ok = (cat == UTF8PROC_CATEGORY_LU || cat == UTF8PROC_CATEGORY_LL
+                     || cat == UTF8PROC_CATEGORY_LT || cat == UTF8PROC_CATEGORY_LM
+                     || cat == UTF8PROC_CATEGORY_LO || cat == UTF8PROC_CATEGORY_ND
+                     || cat == UTF8PROC_CATEGORY_NL || cat == UTF8PROC_CATEGORY_NO);
+                break;
+            case 4:  /* es_espacios */
+                ok = (cat == UTF8PROC_CATEGORY_ZS
+                     || cat == UTF8PROC_CATEGORY_ZL
+                     || cat == UTF8PROC_CATEGORY_ZP
+                     || cp == '\t' || cp == '\n' || cp == '\r'
+                     || cp == '\f' || cp == '\v');
+                break;
+        }
+        if (!ok) return valor_booleano(false);
+        i += (int)cons;
+    }
+    return valor_booleano(true);
+}
+
+#define DEFINIR_PREDICADO(nombre, tipo_num)                                    \
+static Valor nativa_cadena_##nombre(EvalError *err, int n_args, Valor *args,   \
+                                       int linea, int columna) {              \
+    if (n_args != 1) {                                                         \
+        return error_nativa(err, linea, columna,                               \
+            "ErrorDeTipo: " #nombre "() no acepta argumentos");                \
+    }                                                                          \
+    return cadena_predicado(err, &args[0], tipo_num, linea, columna);          \
+}
+
+DEFINIR_PREDICADO(es_alfa,     1)
+DEFINIR_PREDICADO(es_digito,   2)
+DEFINIR_PREDICADO(es_alfanum,  3)
+DEFINIR_PREDICADO(es_espacios, 4)
+
+#undef DEFINIR_PREDICADO
+
+/* v1.154: cadena.titulo() — primera letra de cada "palabra" en
+ * mayuscula, el resto en minuscula. Una palabra empieza despues de
+ * un caracter no alfabetico (incluyendo el inicio de la cadena).
+ * Paridad con Python str.title(). */
+static Valor nativa_cadena_titulo(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: titulo() no acepta argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: titulo() requiere una cadena, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    int cap = sl * 2 + 8;
+    uint8_t *buf = (uint8_t *)malloc((size_t)cap);
+    if (!buf) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    int w = 0;
+    int i = 0;
+    bool inicio_palabra = true;
+    while (i < sl) {
+        utf8proc_int32_t cp;
+        utf8proc_ssize_t cons = utf8proc_iterate(
+            (const utf8proc_uint8_t *)(s + i), sl - i, &cp);
+        if (cons <= 0) {
+            if (w + 1 > cap) {
+                cap *= 2;
+                uint8_t *nb = (uint8_t *)realloc(buf, (size_t)cap);
+                if (!nb) { free(buf); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+                buf = nb;
+            }
+            buf[w++] = (uint8_t)s[i++];
+            continue;
+        }
+        int cat = utf8proc_category(cp);
+        bool es_letra = (cat == UTF8PROC_CATEGORY_LU || cat == UTF8PROC_CATEGORY_LL
+                          || cat == UTF8PROC_CATEGORY_LT || cat == UTF8PROC_CATEGORY_LM
+                          || cat == UTF8PROC_CATEGORY_LO);
+        utf8proc_int32_t mapped = cp;
+        if (es_letra) {
+            mapped = inicio_palabra
+                ? utf8proc_toupper(cp)
+                : utf8proc_tolower(cp);
+            inicio_palabra = false;
+        } else {
+            inicio_palabra = true;
+        }
+        if (w + 4 > cap) {
+            cap = cap * 2 + 4;
+            uint8_t *nb = (uint8_t *)realloc(buf, (size_t)cap);
+            if (!nb) { free(buf); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+            buf = nb;
+        }
+        utf8proc_ssize_t n = utf8proc_encode_char(mapped, &buf[w]);
+        if (n <= 0) {
+            n = utf8proc_encode_char(cp, &buf[w]);
+            if (n <= 0) n = 0;
+        }
+        w += (int)n;
+        i += (int)cons;
+    }
+    Valor r = valor_cadena_duplicar((const char *)buf, w);
+    free(buf);
+    return r;
+}
+
 static Valor nativa_cadena_mayusculas(EvalError *err, int n_args, Valor *args,
                                           int linea, int columna) {
     if (n_args != 1) {
@@ -6474,6 +6619,11 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     /* Cadenas */
     {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas},      /* v1.153 Unicode */
     {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas},      /* v1.153 Unicode */
+    {VAL_CADENA,     "titulo",       6, nativa_cadena_titulo},          /* v1.154 */
+    {VAL_CADENA,     "es_alfa",      7, nativa_cadena_es_alfa},         /* v1.154 */
+    {VAL_CADENA,     "es_digito",    9, nativa_cadena_es_digito},       /* v1.154 */
+    {VAL_CADENA,     "es_alfanum",  10, nativa_cadena_es_alfanum},      /* v1.154 */
+    {VAL_CADENA,     "es_espacios", 11, nativa_cadena_es_espacios},     /* v1.154 */
     {VAL_CADENA,     "empieza_con", 11, nativa_cadena_empieza_con},
     {VAL_CADENA,     "termina_con", 11, nativa_cadena_termina_con},
     {VAL_CADENA,     "indice_de",   9,  nativa_cadena_indice_de},

@@ -6,6 +6,86 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.154.0] — 2026-06-06 — Predicados de cadena y `titulo()` (Unicode)
+
+Cinco métodos clásicos de Python que faltaban — todos
+Unicode-aware via `utf8proc_category`:
+
+```cornamusa
+# Predicados (todos falsos para cadena vacia, igual que Python)
+"hola".es_alfa()                # → verdadero
+"Año".es_alfa()                  # → verdadero (Unicode)
+"abc123".es_alfa()              # → falso
+
+"12345".es_digito()             # → verdadero
+"١٢٣".es_digito()                # → verdadero (dígitos árabes)
+"12.5".es_digito()              # → falso
+
+"abc123".es_alfanum()           # → verdadero
+"año1".es_alfanum()             # → verdadero
+"hola mundo".es_alfanum()       # → falso (espacio)
+
+"   ".es_espacios()             # → verdadero
+" \t\n".es_espacios()           # → verdadero
+"\xa0".es_espacios()            # → verdadero (NBSP)
+
+# titulo: primera letra de cada palabra en mayúscula
+"hola mundo".titulo()           # → "Hola Mundo"
+"HOLA MUNDO".titulo()           # → "Hola Mundo"
+"año nuevo".titulo()            # → "Año Nuevo"
+"uno-dos-tres".titulo()         # → "Uno-Dos-Tres"
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`cadena_predicado(s, tipo)`** helper compartido. Recorre
+  code-points con `utf8proc_iterate`, llama
+  `utf8proc_category(cp)` y verifica que TODOS cumplan la
+  categoría requerida. `tipo`:
+  - `1 es_alfa`: LU/LL/LT/LM/LO (cualquier letra).
+  - `2 es_digito`: ND (decimal digit) — incluye dígitos
+    árabes ١٢٣, devanagari, etc.
+  - `3 es_alfanum`: letras o cualquier number category
+    (ND/NL/NO).
+  - `4 es_espacios`: ZS/ZL/ZP + ASCII whitespace
+    (`\t\n\r\f\v`).
+
+  Macro `DEFINIR_PREDICADO(nombre, tipo)` genera las cuatro
+  funciones nativas que envuelven el helper.
+
+- **`nativa_cadena_titulo(s)`**: recorre code-points
+  manteniendo un flag `inicio_palabra`. Para cada letra (LU/LL/LT/LM/LO):
+  - Si `inicio_palabra`: `utf8proc_toupper(cp)` + `inicio_palabra = false`.
+  - Si no: `utf8proc_tolower(cp)`.
+  Para cualquier no-letra: copiar tal cual y `inicio_palabra = true`.
+  Re-encode con `utf8proc_encode_char` en buffer dinámico (mismo
+  patrón que `mayusculas`/`minusculas` de v1.153).
+
+Sin cambios a bytecode ni VM. Todos los métodos se registran
+como `VAL_CADENA` en la tabla `METODOS_NATIVOS`.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_cadena_predicados.c` con 8
+bloques:
+
+- `es_alfa` con ASCII, Unicode (`Año`), mixto con dígitos,
+  con espacio, cadena vacía.
+- `es_digito` con dígitos ASCII, decimal, negativo, árabes (١٢٣).
+- `es_alfanum` con casos básicos, Unicode (`año1`) y con
+  espacio.
+- `es_espacios` con espacios ASCII, mezcla con `\t\n`, con
+  letra (falso), vacía.
+- `titulo` con simple, ALL CAPS, Unicode (`año nuevo`),
+  guiones.
+- `titulo` con cadena vacía y dígitos.
+- Predicados sobre griego (`αβγ` y `ΑΒΓ`).
+- `es_espacios` con NBSP (U+00A0).
+
+Suite: **350 tests verde**.
+
 ## [1.153.0] — 2026-06-06 — `mayusculas`/`minusculas` Unicode
 
 Cierra la limitación documentada en v1.152: las nativas
