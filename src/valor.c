@@ -1877,13 +1877,17 @@ void valor_imprimir(const Valor *v, FILE *out) {
     fputs(buffer, out);
 }
 
-/* v1.45: parsea un format spec estilo Python. Devuelve true si OK. */
+/* v1.45: parsea un format spec estilo Python. Devuelve true si OK.
+ * v1.139: anadido tipo 'o' (octal), sign flag '+'/' ' (mostrar signo
+ * para positivos), y tipo '%' (porcentaje: multiplica por 100 y
+ * agrega '%'). */
 typedef struct {
     char fill;
     char align;       /* '<', '>', '^', o 0 = default */
+    char sign;        /* '+', ' ' (espacio para positivos), o 0 = default */
     int  width;
     int  precision;   /* -1 = sin precisión explícita */
-    char type;        /* 'd','f','e','x','X','b','s', o 0 = implícito */
+    char type;        /* 'd','f','e','x','X','b','o','s','%', o 0 = implícito */
     bool cero_padding; /* '0' antes del ancho → relleno con 0 alineado a der */
 } FmtSpec;
 
@@ -1891,6 +1895,7 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
                               char *err, int err_cap) {
     out->fill = ' ';
     out->align = 0;
+    out->sign = 0;
     out->width = 0;
     out->precision = -1;
     out->type = 0;
@@ -1906,6 +1911,11 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
         && (spec[0] == '<' || spec[0] == '>' || spec[0] == '^')) {
         out->align = spec[0];
         i = 1;
+    }
+    /* v1.139: [sign] — '+' o ' ' (espacio para positivos). */
+    if (i < spec_len && (spec[i] == '+' || spec[i] == ' ')) {
+        out->sign = spec[i];
+        i++;
     }
     /* '0' indica zero-padding (Python: implica `>` y fill='0') */
     if (i < spec_len && spec[i] == '0' && out->align == 0) {
@@ -1932,7 +1942,7 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
     if (i < spec_len) {
         char t = spec[i];
         if (t == 'd' || t == 'f' || t == 'e' || t == 'x' || t == 'X'
-            || t == 'b' || t == 's') {
+            || t == 'b' || t == 'o' || t == 's' || t == '%') {
             out->type = t;
             i++;
         } else {
@@ -1966,6 +1976,17 @@ static char *fmt_aplicar_padding(const char *cuerpo, int cuerpo_len,
     if (!r) return NULL;
     int padding = total - cuerpo_len;
     char align = spec->align ? spec->align : '<';
+    /* v1.139: zero-padding con signo prefijo — preservar el signo
+     * al frente y rellenar con ceros DESPUES del signo. Sin esto,
+     * `f"{-5:05d}"` daria `000-5` en vez de `-0005` (Python). */
+    if (spec->cero_padding && align == '>' && cuerpo_len > 0
+        && (cuerpo[0] == '-' || cuerpo[0] == '+' || cuerpo[0] == ' ')) {
+        r[0] = cuerpo[0];
+        memset(r + 1, '0', (size_t)padding);
+        memcpy(r + 1 + padding, cuerpo + 1, (size_t)(cuerpo_len - 1));
+        *out_len = total;
+        return r;
+    }
     if (align == '<') {
         memcpy(r, cuerpo, (size_t)cuerpo_len);
         memset(r + cuerpo_len, spec->fill, (size_t)padding);
@@ -2091,7 +2112,16 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
             return valor_nulo();
         }
         cuerpo = fmt_entero_a_str(v, 2, false, &cuerpo_len);
-    } else if (type == 'f' || type == 'e') {
+    } else if (type == 'o') {
+        /* v1.139: octal. */
+        if (!valor_es_entero(v) && v->tipo != VAL_BOOLEANO) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeTipo: formato 'o' requiere entero, no '%s'",
+                valor_nombre_tipo(v));
+            return valor_nulo();
+        }
+        cuerpo = fmt_entero_a_str(v, 8, false, &cuerpo_len);
+    } else if (type == 'f' || type == 'e' || type == '%') {
         double d;
         if (v->tipo == VAL_DECIMAL) d = v->como.decimal;
         else if (v->tipo == VAL_ENTERO_SMALL) d = (double)v->como.entero_small;
@@ -2123,8 +2153,15 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
         int prec = (fs.precision >= 0) ? fs.precision : 6;
         char tmp[128];
         int n;
-        if (type == 'f') n = snprintf(tmp, sizeof(tmp), "%.*f", prec, d);
-        else             n = snprintf(tmp, sizeof(tmp), "%.*e", prec, d);
+        if (type == '%') {
+            /* v1.139: porcentaje. Multiplica por 100 y agrega '%'. */
+            d *= 100.0;
+            n = snprintf(tmp, sizeof(tmp), "%.*f%%", prec, d);
+        } else if (type == 'f') {
+            n = snprintf(tmp, sizeof(tmp), "%.*f", prec, d);
+        } else {
+            n = snprintf(tmp, sizeof(tmp), "%.*e", prec, d);
+        }
         if (n < 0) n = 0;
         if (n >= (int)sizeof(tmp)) n = (int)sizeof(tmp) - 1;
         cuerpo = (char *)malloc((size_t)n);
@@ -2167,14 +2204,36 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
     }
 
     /* Default de alineación según el tipo (Python):
-       - numéricos (`d f e x X b`): derecha
+       - numéricos (`d f e x X b o %`): derecha
        - cadenas (`s`, sin tipo): izquierda */
     if (fs.align == 0) {
         if (type == 'd' || type == 'f' || type == 'e'
-            || type == 'x' || type == 'X' || type == 'b') {
+            || type == 'x' || type == 'X' || type == 'b'
+            || type == 'o' || type == '%') {
             fs.align = '>';
         } else {
             fs.align = '<';
+        }
+    }
+
+    /* v1.139: aplicar sign flag para tipos numericos. Si el valor
+     * no es negativo (cuerpo no empieza con '-'), prepend fs.sign. */
+    if (fs.sign && (type == 'd' || type == 'f' || type == 'e'
+                    || type == 'x' || type == 'X' || type == 'b'
+                    || type == 'o' || type == '%')) {
+        if (cuerpo_len == 0 || cuerpo[0] != '-') {
+            char *nuevo = (char *)malloc((size_t)(cuerpo_len + 1));
+            if (!nuevo) {
+                free(cuerpo);
+                if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                    "memoria insuficiente");
+                return valor_nulo();
+            }
+            nuevo[0] = fs.sign;
+            memcpy(nuevo + 1, cuerpo, (size_t)cuerpo_len);
+            free(cuerpo);
+            cuerpo = nuevo;
+            cuerpo_len++;
         }
     }
 

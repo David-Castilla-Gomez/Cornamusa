@@ -6,6 +6,78 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.139.0] — 2026-06-06 — F-string specs: octal, porcentaje, signo
+
+v1.45 introdujo format specs en f-strings con alineación, ancho,
+precisión y los tipos `d/f/e/x/X/b/s`. v1.139 añade tres
+ortogonales que faltaban para uso diario.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Tipo 'o' — octal
+f"{42:o}"       # "52"
+f"{42:5o}"     # "   52"
+f"{255:o}"     # "377"
+
+# Tipo '%' — porcentaje (multiplica por 100, agrega '%')
+f"{0.5:%}"      # "50.000000%"
+f"{0.5:.2%}"    # "50.00%"
+f"{0.123:.1%}"  # "12.3%"
+f"{-0.25:.0%}"  # "-25%"
+
+# Flag 'sign' ('+' o ' ') — mostrar signo para positivos
+f"{5:+d}"       # "+5"
+f"{0:+d}"       # "+0"
+f"{-5:+d}"      # "-5"
+f"{5: d}"       # " 5"   (espacio para positivos)
+f"{3.14:+.2f}"  # "+3.14"
+
+# Zero-padding con signo — el signo va ANTES de los ceros (Python)
+f"{5:+05d}"     # "+0005"   (no "000+5")
+f"{-5:05d}"     # "-0005"
+f"{3.14:+08.2f}" # "+0003.14"
+```
+
+### Implementación
+
+`src/valor.c`:
+
+- `FmtSpec` gana un campo `char sign` (`'+'`, `' '`, o `0`).
+- `fmt_spec_parsear` añade tres puntos: parseo del flag `sign`
+  tras `[fill][align]`, aceptación de `'o'` y `'%'` como tipos
+  válidos, y `'o'` en la sección de conversión a entero (base 8).
+- Sección de conversión decimal extendida para tipo `'%'`:
+  multiplica `d` por 100 y usa `snprintf(..., "%.*f%%", ...)`.
+- Antes del padding, si `fs.sign` está set y el tipo es numérico,
+  se prepend `fs.sign` al cuerpo si no empieza ya con `'-'`.
+- `fmt_aplicar_padding` detecta zero-padding + signo prefijo y
+  preserva el signo al frente (`r[0]`) rellenando ceros después.
+  Sin esto, `f"{-5:05d}"` daría `'000-5'` en vez de `'-0005'`.
+
+Sin cambios a bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_fstring_specs.c` con 7 bloques
+(20+ asserts):
+
+- Octal sobre lista de enteros + width.
+- Signo `+` sobre positivo / cero / negativo, entero y decimal.
+- Signo espacio sobre positivo / negativo.
+- Zero-padding combinado con signo (positivo, negativo, decimal).
+- Porcentaje con varias precisiones, incluido negativo.
+- Regresión: tipos clásicos `d/b/x/X/f/s` siguen funcionando.
+- Errores: tipo no soportado (`z`) y tipo numérico sobre cadena.
+
+Suite: **335 tests verde** (334 + el nuevo).
+
+### Limitación
+
+`,` para separador de miles, `_` para separador a la europea,
+y `c` para code-point Unicode siguen sin soporte. Quedan
+documentados como TODO si surgen casos de uso.
+
 ## [1.138.0] — 2026-06-06 — Patrones anidados en comprehensions y genex
 
 v1.137 cerró las tuplas anidadas en `para`. Quedaba documentada
