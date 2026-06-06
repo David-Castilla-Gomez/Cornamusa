@@ -6,6 +6,88 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.155.0] — 2026-06-06 — `lst.vaciar()` y `lst.extender(iterable)`
+
+Paralelos para listas a los métodos que se añadieron para dicts
+en v1.150-v1.151. Paridad con Python `list.clear()` y
+`list.extend()`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# vaciar: elimina todos los elementos in-place
+xs = [1, 2, 3, 4, 5]
+xs.vaciar()
+imprimir(xs)            # → []
+imprimir(longitud(xs))  # → 0
+
+# Reutilizable tras vaciar
+xs.agregar(99)
+imprimir(xs)            # → [99]
+
+# extender: añade todos los elementos del iterable al final
+xs = [1, 2, 3]
+xs.extender([10, 20])
+imprimir(xs)            # → [1, 2, 3, 10, 20]
+
+# Acepta lista, tupla, cadena (cada code-point) y conjunto
+xs.extender((100, 200))
+xs.extender("abc")      # → ["a", "b", "c"] al final
+xs.extender({1000})
+
+# Auto-extender: snapshot de cuenta evita bucle infinito
+xs = [1, 2, 3]
+xs.extender(xs)
+imprimir(xs)            # → [1, 2, 3, 1, 2, 3]
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`nativa_lista_vaciar(l)`**: `valor_destruir` por cada
+  elemento ocupado, `l->cuenta = 0`. Mantiene la capacidad
+  interna asignada para que `agregar` posterior no realoque.
+
+- **`nativa_lista_extender(l, it)`**: switch sobre `it->tipo`:
+  - `VAL_LISTA`: itera elementos con clones. **Snapshot de
+    cuenta** (`int n_src = src->cuenta` antes del bucle) para
+    evitar bucle infinito en `xs.extender(xs)`.
+  - `VAL_TUPLA`: itera elementos con clones.
+  - `VAL_CADENA`: itera code-points con `utf8proc_iterate` y
+    agrega cada uno como cadena de 1 cp.
+  - `VAL_CONJUNTO`: itera entradas ocupadas con clones (orden
+    de iteración no determinista, como Python).
+  - Otros tipos → `ErrorDeTipo` claro listando los aceptados.
+
+Ambas rechazan no-lista (e.g. conjunto) con `ErrorDeTipo`
+atrapable.
+
+Sin cambios a bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_lista_vaciar_extender.c` con
+11 bloques:
+
+- `vaciar` no-vacía, ya-vacía, lista reutilizable tras vaciar.
+- `extender` con lista, tupla, cadena, conjunto.
+- `extender` con iterable vacío (sin cambio).
+- `extender(xs)` (auto): snapshot evita bucle infinito.
+- Errores: `extender(42)` (ErrorDeTipo) y `{1, 2}.vaciar()`
+  (ErrorDeTipo).
+
+Suite: **351 tests verde**.
+
+### Coherencia con `dict`
+
+| | `clear` | `pop` | `extend`/`update` |
+|---|---|---|---|
+| `list` | **v1.155** | v0.6 (`quitar`) | **v1.155** |
+| `dict` | v1.151 | v1.151 | v1.150 |
+
+Estructura simétrica al fin.
+
 ## [1.154.0] — 2026-06-06 — Predicados de cadena y `titulo()` (Unicode)
 
 Cinco métodos clásicos de Python que faltaban — todos

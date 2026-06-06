@@ -5387,6 +5387,98 @@ static Valor nativa_lista_copiar(EvalError *err, int n_args, Valor *args,
     return valor_lista(nueva);
 }
 
+/* v1.155: lista.vaciar() — quita todos los elementos in-place,
+ * dejando la lista como []. Paridad con Python list.clear(). */
+static Valor nativa_lista_vaciar(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: vaciar() no acepta argumentos");
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: vaciar() requiere una lista, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *l = args[0].como.lista;
+    for (int i = 0; i < l->cuenta; i++) {
+        valor_destruir(&l->elementos[i]);
+    }
+    l->cuenta = 0;
+    return valor_nulo();
+}
+
+/* v1.155: lista.extender(iterable) — agrega todos los elementos
+ * de `iterable` al final de la lista, in-place. Paridad con Python
+ * list.extend(). Acepta lista, tupla, cadena, rango y conjunto. */
+static Valor nativa_lista_extender(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: extender(otro) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_LISTA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: extender() requiere una lista como receptor, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Lista *dst = args[0].como.lista;
+    const Valor *it = &args[1];
+    if (it->tipo == VAL_LISTA) {
+        Lista *src = it->como.lista;
+        /* Cuidado: si dst == src, evitar bucle infinito iterando una
+         * snapshot. Tomamos la cuenta de src ANTES de empezar a
+         * agregar. */
+        int n_src = src->cuenta;
+        for (int i = 0; i < n_src; i++) {
+            if (!lista_agregar(dst, valor_clonar(&src->elementos[i]))) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al extender lista");
+            }
+        }
+    } else if (it->tipo == VAL_TUPLA) {
+        Tupla *t = it->como.tupla;
+        for (int i = 0; i < t->cuenta; i++) {
+            if (!lista_agregar(dst, valor_clonar(&t->elementos[i]))) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al extender lista");
+            }
+        }
+    } else if (it->tipo == VAL_CADENA) {
+        /* Cadena → cada code-point UTF-8 como cadena de 1 cp. */
+        const char *s = it->como.cadena.texto;
+        int sl = it->como.cadena.longitud;
+        int p = 0;
+        while (p < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+            if (cons <= 0) { p++; continue; }
+            Valor cv = valor_cadena_duplicar(s + p, (int)cons);
+            if (!lista_agregar(dst, cv)) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al extender lista");
+            }
+            p += (int)cons;
+        }
+    } else if (it->tipo == VAL_CONJUNTO) {
+        Conjunto *c = it->como.conjunto;
+        for (int i = 0; i < c->capacidad; i++) {
+            const EntradaConjunto *e = &c->entradas[i];
+            if (!e->ocupada) continue;
+            if (!lista_agregar(dst, valor_clonar(&e->elemento))) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al extender lista");
+            }
+        }
+    } else {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: extender() requiere un iterable (lista/tupla/cadena/conjunto), no '%s'",
+            valor_nombre_tipo(it));
+    }
+    return valor_nulo();
+}
+
 /* dict_items(d) -> lista de [clave, valor] en orden de insercion.
  * Patron canonico para iterar pares de un diccionario. */
 static Valor nativa_dict_items(EvalError *err, int n_args, Valor *args,
@@ -6616,6 +6708,8 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_LISTA,      "contar",      6, nativa_lista_contar},     /* v1.122 */
     {VAL_LISTA,      "contiene",    8, nativa_lista_contiene},   /* v1.122 */
     {VAL_LISTA,      "copiar",      6, nativa_lista_copiar},     /* v1.122 */
+    {VAL_LISTA,      "vaciar",      6, nativa_lista_vaciar},     /* v1.155 */
+    {VAL_LISTA,      "extender",    8, nativa_lista_extender},   /* v1.155 */
     /* Cadenas */
     {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas},      /* v1.153 Unicode */
     {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas},      /* v1.153 Unicode */
