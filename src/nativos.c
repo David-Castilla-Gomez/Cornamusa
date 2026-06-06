@@ -1055,6 +1055,32 @@ static int comparador_ordenar(const void *pa, const void *pb) {
         if (c != 0) return c < 0 ? -1 : 1;
         return la < lb ? -1 : (la > lb ? 1 : 0);
     }
+    /* v1.145: tuplas y listas se comparan lexicograficamente. Recurre
+     * en comparador_ordenar (sobre los elementos), igual que Python.
+     * Si algun par mismo-indice es incomparable, marca g_ordenar_error
+     * y aborta. */
+    if (a->tipo == VAL_TUPLA && b->tipo == VAL_TUPLA) {
+        Tupla *ta = a->como.tupla;
+        Tupla *tb = b->como.tupla;
+        int min = ta->cuenta < tb->cuenta ? ta->cuenta : tb->cuenta;
+        for (int i = 0; i < min; i++) {
+            int c = comparador_ordenar(&ta->elementos[i], &tb->elementos[i]);
+            if (g_ordenar_error) return 0;
+            if (c != 0) return c;
+        }
+        return ta->cuenta < tb->cuenta ? -1 : (ta->cuenta > tb->cuenta ? 1 : 0);
+    }
+    if (a->tipo == VAL_LISTA && b->tipo == VAL_LISTA) {
+        Lista *la = a->como.lista;
+        Lista *lb = b->como.lista;
+        int min = la->cuenta < lb->cuenta ? la->cuenta : lb->cuenta;
+        for (int i = 0; i < min; i++) {
+            int c = comparador_ordenar(&la->elementos[i], &lb->elementos[i]);
+            if (g_ordenar_error) return 0;
+            if (c != 0) return c;
+        }
+        return la->cuenta < lb->cuenta ? -1 : (la->cuenta > lb->cuenta ? 1 : 0);
+    }
     g_ordenar_error = true;
     return 0;
 }

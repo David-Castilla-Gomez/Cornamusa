@@ -158,6 +158,36 @@ funcion maximo(xs, clave=nulo):
     retornar actual
 fin funcion
 
+# v1.145: ordenar funcional sin mutar el iterable original. Soporta
+# `clave` para extraer una magnitud comparable (Schwartzian/DSU) e
+# `invertido` para orden descendente.
+#
+# Diferencia con la nativa `ordenar(lista)`: `ordenado(xs, ...)` admite
+# cualquier iterable y siempre devuelve una nueva lista; `ordenar`
+# muta in-place sobre lista.
+funcion ordenado(xs, clave=nulo, invertido=falso):
+    si clave != nulo:
+        # Decorar (clave(x), indice, x). El indice rompe empates de
+        # forma estable: si dos elementos comparten clave, conserva
+        # el orden original.
+        decorados = []
+        i = 0
+        para x en xs:
+            agregar(decorados, (clave(x), i, x))
+            i = i + 1
+        fin para
+        ordenar(decorados)
+        resultado = [tripla[2] para tripla en decorados]
+    sino:
+        resultado = lista(xs)
+        ordenar(resultado)
+    fin si
+    si invertido:
+        invertir(resultado)
+    fin si
+    retornar resultado
+fin funcion
+
 # ─── Helpers de coleccion (v1.87) ─────────────────────────────────
 
 # Agrupa los elementos de `xs` por la clave que devuelve `f(x)`.

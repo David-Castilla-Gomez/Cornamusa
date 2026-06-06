@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.145.0] — 2026-06-06 — Ordenación: lex de tuplas/listas y `ordenado` funcional
+
+v1.144 abrió la idea de comparadores funcionales (`clave=`) para
+agregaciones. v1.145 la extiende a ordenación, que tenía dos
+agujeros:
+
+1. **`ordenar([(1, "a"), (2, "b")])`** fallaba con `ErrorDeTipo:
+   no puede comparar tipos mixtos no numericos` — el comparador
+   nativo solo aceptaba números y cadenas.
+2. No había versión **funcional** (no muta) ni soporte para
+   `clave=`/`invertido=` al estilo Python `sorted()`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# 1. Tuplas y listas se ordenan lexicográficamente (paridad con Python)
+ordenar([(2, "a"), (1, "z"), (3, "m"), (1, "a")])
+# → [(1, "a"), (1, "z"), (2, "a"), (3, "m")]
+
+ordenar([[2, 1], [1, 5], [1, 2]])
+# → [[1, 2], [1, 5], [2, 1]]
+
+# Anidados también
+ordenar([(1, (2, 2)), (1, (1, 3))])
+# → [(1, (1, 3)), (1, (2, 2))]
+
+# 2. `ordenado(xs, clave=, invertido=)` — versión funcional
+desde funcionales importar ordenado
+
+# No muta el original
+orig = [3, 1, 2]
+nuevo = ordenado(orig)         # [1, 2, 3], `orig` intacto
+
+# Con clave (Schwartzian transform, estable)
+xs = [(2, "a"), (1, "z"), (3, "m")]
+ordenado(xs, clave=lambda p: p[1])
+# → [(2, "a"), (3, "m"), (1, "z")]
+
+# Invertido
+ordenado([3, 1, 4, 1, 5], invertido=verdadero)
+# → [5, 4, 3, 1, 1]
+
+# Combinado
+ordenado(xs, clave=lambda p: p[1], invertido=verdadero)
+```
+
+### Implementación
+
+**`src/nativos.c::comparador_ordenar`**: dos casos nuevos antes
+del fallback `g_ordenar_error = true`:
+
+- `VAL_TUPLA` vs `VAL_TUPLA`: comparación lexicográfica recursiva
+  sobre los elementos (compatibles entre sí). Si todos los pares
+  iguales hasta la mínima cuenta, gana la más corta (igual que
+  Python).
+- `VAL_LISTA` vs `VAL_LISTA`: idéntico.
+
+La recursión usa el propio `comparador_ordenar` para mantener la
+política de incomparabilidad (señalada vía `g_ordenar_error`).
+
+**`stdlib/funcionales.cor::ordenado`**: nueva función
+`ordenado(xs, clave=nulo, invertido=falso)`:
+
+- Sin `clave`: `lista(xs)` + `ordenar()` in-place sobre la copia.
+- Con `clave`: Schwartzian transform — decorar con tripletas
+  `(clave(x), indice, x)`, ordenar (que ahora funciona sobre
+  tuplas), undecorar tomando el último elemento. El índice
+  rompe empates de forma estable: con claves iguales conserva
+  el orden original (paridad con Python `sorted`).
+- `invertido`: invierte el resultado al final con `invertir()`.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_ordenado.c` con 9 bloques:
+
+- Comparación lex de tuplas, listas y anidados.
+- `ordenado` sin clave (no muta original, resultado correcto).
+- `ordenado` con `clave`.
+- `ordenado` con `invertido`.
+- `ordenado` con ambos parámetros.
+- Estabilidad con claves iguales (orden preservado).
+- Comparación mixta entre incomparables sigue lanzando
+  `ErrorDeTipo` atrapable.
+
+Suite: **341 tests verde**.
+
 ## [1.144.0] — 2026-06-06 — `minimo`/`maximo` con `clave=`
 
 Cambio de área tras el lote OOP (v1.141-143). Pequeña release de
