@@ -23,7 +23,7 @@ clase R:
         imprimir(f"  entra {yo.nombre}")
         retornar yo
     fin funcion
-    funcion __salir__(yo):
+    funcion __salir__(yo, _t, _v, _b):
         imprimir(f"  sale  {yo.nombre}")
     fin funcion
 fin clase

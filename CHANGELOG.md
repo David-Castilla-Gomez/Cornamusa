@@ -6,6 +6,104 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.141.0] — 2026-06-06 — `con` invoca `__salir__` con 3 argumentos
+
+Cambio de área tras la saga de f-strings. El bloque `con` (context
+manager) llevaba documentado desde v1.13 como **limitación
+intencional** que `__salir__` se invocaba sin argumentos:
+
+> `__salir__()` se invoca sin argumentos. La excepción no se pasa
+> al dunder. Los context managers que necesitan ver la excepción
+> deberán esperar a v1.14+ junto con la firma extendida
+> `__salir__(yo, tipo_exc, valor_exc, traceback)`.
+
+v1.14 nunca llegó; se quedaron 128 releases con esa firma divergente
+de Python. v1.141 cierra la firma: `__salir__` recibe 3 argumentos
+(tipo_exc, valor_exc, traza) — por ahora siempre `nulo`. La
+introspección real de la excepción queda para una release futura
+cuando el frame de traceback esté disponible.
+
+### Lo que ahora funciona
+
+```cornamusa
+clase Recurso:
+    funcion __iniciar__(yo, nombre):
+        yo.nombre = nombre
+    fin funcion
+    funcion __entrar__(yo):
+        retornar yo
+    fin funcion
+    funcion __salir__(yo, tipo_exc, valor, traza):
+        # Firma idéntica a Python. Por ahora los 3 siempre son nulo.
+        imprimir(f"cerrando {yo.nombre}")
+    fin funcion
+fin clase
+
+con Recurso("A") como a:
+    procesar(a)
+fin con
+# salir Recurso("A") -> __salir__(nulo, nulo, nulo)
+
+# Multi-recurso (v1.46) — cada __salir__ recibe 3 args, orden LIFO
+con abrir("a.txt") como fa, abrir("b.txt") como fb:
+    copiar(fa, fb)
+fin con
+
+# Con excepcion en el cuerpo, __salir__ se ejecuta antes de
+# propagar (mismo comportamiento que finalmente).
+con Recurso("X") como x:
+    lanzar ErrorDeValor("boom")
+fin con
+```
+
+### Cambio incompatible
+
+Las clases que declaraban `__salir__(yo)` sin argumentos ahora
+fallan con `ErrorDeTipo: __salir__() esperaba 0 argumentos, recibió 3`.
+**Migración**: añadir 3 parámetros ignorados, p.ej.
+`__salir__(yo, _t, _v, _b)`. Los tests
+`tests/unit/test_bytecode_con.c`,
+`tests/unit/test_bytecode_con_multi_spread.c` y el ejemplo
+`examples/63_con_multi_spread.cor` se actualizaron en este commit.
+
+(No hay todavía soporte de `*args` en métodos de clase, así que
+`__salir__(yo, *_)` —idiomático en Python— no funciona aún. Bug
+separado documentado, queda para otra release.)
+
+### Implementación
+
+Solo `desugar_un_con` en `src/parser.c`: la llamada a
+`__cm_X.__salir__()` ahora pasa 3 argumentos `expr_literal_nulo`.
+Cuando el cuerpo lanza excepción, el `finalmente` ejecuta esta
+llamada antes de propagar — `__salir__` recibe los 3 nulos
+también (limitación pendiente: no sabe que hubo excepción).
+
+Sin cambios a AST, compilador, bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_con_salir_args.c` con 5 bloques:
+
+- `con` simple con `__salir__` de 4 parámetros.
+- `con` sin alias.
+- Multi-recurso con orden LIFO de `__salir__`.
+- `con` cuyo cuerpo lanza excepción: `__salir__` se ejecuta
+  antes de la propagación.
+- Firma estricta (sin variádicos): los 3 args llegan como `nulo`.
+
+Suite: **337 tests verde**.
+
+### Limitaciones documentadas
+
+- `__salir__` no recibe info real de la excepción (siempre 3
+  nulos). Capturar y propagar el error preservando su info
+  requiere refactor del `finalmente` a `intentar/atrapar e/finalmente`
+  con relanzamiento — queda para futuro.
+- `*args` en métodos de clase no funciona. Es un bug separado
+  (las funciones libres sí lo soportan). Hasta que se arregle,
+  el idioma `__salir__(yo, *_)` no compila — usar nombres
+  explícitos.
+
 ## [1.140.0] — 2026-06-06 — F-string specs: separadores de miles y code-point
 
 v1.139 cerró el primer lote de gaps en f-string specs (octal,

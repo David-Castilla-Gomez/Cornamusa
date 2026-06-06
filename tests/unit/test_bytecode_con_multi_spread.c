@@ -105,7 +105,7 @@ static void verificar_var(const char *fuente, const char *var,
     "    agregar(orden, 'entra ' + yo.nombre)\n" \
     "    retornar yo\n" \
     "  fin funcion\n" \
-    "  funcion __salir__(yo):\n" \
+    "  funcion __salir__(yo, _t, _v, _b):\n" \
     "    agregar(orden, 'sale ' + yo.nombre)\n" \
     "  fin funcion\n" \
     "fin clase\n"

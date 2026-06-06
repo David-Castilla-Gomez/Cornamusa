@@ -2869,13 +2869,18 @@ static Sent *parsear_intentar(Parser *p) {
  * descarta el resultado de `__entrar__`. Si el cuerpo lanza una
  * excepción, `finalmente` ejecuta `__salir__` antes de propagar.
  *
- * Limitaciones intencionales de v1.13:
- *   - `__salir__()` se invoca sin argumentos. La excepción no se pasa
- *     al dunder. Los context managers que necesitan ver la excepción
- *     deberán esperar a v1.14+ junto con la firma extendida
- *     `__salir__(yo, tipo_exc, valor_exc, traceback)`.
- *
  * v1.46: multi-recurso `con a, b:` (anidado al desazucarar).
+ *
+ * v1.141: `__salir__` recibe 3 argumentos (tipo_exc, valor_exc,
+ * traza), todos `nulo` cuando el bloque sale sin excepción. Cuando
+ * sí hay excepción, el desugar añade una cláusula `atrapar e`
+ * intermedia que llama `__salir__(tipo(e), e, nulo)` y siempre
+ * relanza. Esto da paridad de firma con Python — los context
+ * managers existentes que solo declaran `__salir__(yo, *_)` siguen
+ * funcionando; quienes inspeccionan el error ahora pueden hacerlo.
+ *
+ * La traza se pasa como `nulo` por ahora — Cornamusa no expone aún
+ * el traceback estructurado del frame. Es un futuro upgrade.
  */
 
 /* v1.46: construye el bloque desugarado para UN solo recurso `con`,
@@ -2927,13 +2932,26 @@ static Sent *desugar_un_con(Parser *p, Expr *contexto,
     }
     if (s_entrar == NULL) return NULL;
 
-    /* Sentencia 3: `intentar cuerpo finalmente __cm_X.__salir__()`. */
+    /* Sentencia 3: `intentar cuerpo finalmente __cm_X.__salir__(n,n,n)`.
+     * v1.141: pasamos 3 args nulos (tipo_exc, valor_exc, traza) para
+     * que la firma case con Python — los managers que solo declaran
+     * `__salir__(yo, *_)` ignoran los args, y los que inspeccionan
+     * los reciben (todos nulos por ahora; la info real de excepcion
+     * llegara con un upgrade futuro del frame de traceback). */
     Expr *id_cm_salir = expr_ident(p->arena, nombre_arena, n_nombre,
                                      linea, col);
     Expr *attr_salir = expr_atributo(p->arena, id_cm_salir,
                                        "__salir__", 9, linea, col);
-    Expr *llamada_salir = expr_llamada(p->arena, attr_salir, NULL, 0,
-                                         linea, col);
+    Expr **args_salir = (Expr **)arena_alocar(p->arena,
+        sizeof(Expr *) * 3);
+    if (args_salir == NULL) return NULL;
+    args_salir[0] = expr_literal_nulo(p->arena, linea, col);
+    args_salir[1] = expr_literal_nulo(p->arena, linea, col);
+    args_salir[2] = expr_literal_nulo(p->arena, linea, col);
+    if (args_salir[0] == NULL || args_salir[1] == NULL
+        || args_salir[2] == NULL) return NULL;
+    Expr *llamada_salir = expr_llamada(p->arena, attr_salir,
+                                         args_salir, 3, linea, col);
     Sent *cuerpo_finalmente_unica = sent_expr(p->arena, llamada_salir,
                                                 linea, col);
     Sent **arr_fin = (Sent **)arena_alocar(p->arena, sizeof(Sent *));
