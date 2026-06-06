@@ -6,6 +6,86 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.158.0] — 2026-06-06 — `divmod`, `potencia_modular` y `mcm`
+
+Tres helpers numéricos que faltaban — cambio de área tras 14
+releases de stdlib de cadena/dict/list/set.
+
+### Lo que ahora funciona
+
+```cornamusa
+# divmod: cociente y resto en una sola pasada
+divmod(17, 5)       # → (3, 2)
+divmod(20, 4)       # → (5, 0)
+divmod(-17, 5)      # → (-4, 3)    floor div (paridad Python)
+divmod(17, -5)      # → (-4, -3)
+divmod(-17, -5)     # → (3, -2)
+
+# Bignum
+divmod(10**30, 7)
+# → (142857142857142857142857142857, 1)
+
+# potencia_modular: (b^e) % m eficiente (Python pow con 3 args)
+potencia_modular(2, 10, 100)                   # → 24   (1024 % 100)
+potencia_modular(7, 100, 13)                    # → 9
+potencia_modular(0, 0, 7)                       # → 1   (convención Python)
+
+# Exponente grande sin overflow — RSA-like
+potencia_modular(123456789, 987654321, 1000000007)
+# → 652541198
+
+# mcm (mínimo común múltiplo) en matematicas
+desde matematicas importar mcm
+mcm(4, 6)           # → 12
+mcm(12, 18)         # → 36
+mcm(0, 5)           # → 0     (paridad Python math.lcm)
+mcm(7, 11)          # → 77    coprimos = producto
+```
+
+### Implementación
+
+**`src/nativos.c`**:
+
+- **`nativa_divmod(a, b)`** — solo enteros (SMALL o BIG).
+  Camino rápido: si ambos caben en `int64`, división C truncate-
+  toward-zero más ajuste para floor div (si el resto y `b` tienen
+  signos opuestos, decrementa cociente y suma `b` al resto).
+  Camino bignum vía `mp_div` con el mismo ajuste sobre `mp_int`.
+  `b == 0` → `ErrorAritmetico` atrapable. Tupla devuelta con dos
+  enteros normalizados (SMALL si caben, BIG si no).
+
+- **`nativa_potencia_modular(b, e, m)`** — usa
+  `mp_exptmod` de libtommath para O(log e · tam_m). Requiere
+  `e >= 0` (lanza `ErrorDeValor` para exponente negativo, no
+  manejamos inversos modulares aquí) y `m != 0` (`ErrorAritmetico`
+  si no).
+
+Detalle de memoria: `valor_entero_de_mp_normalizado` toma
+ownership del `mp_int *` y lo libera si demote a SMALL. Por eso
+los `mp_int` que se transfieren se alocan en heap con `malloc`
+explícito, no en stack (un bug intermedio que descubrí al
+crashear `divmod(10**30, 7)` durante el desarrollo).
+
+**`stdlib/matematicas.cor::mcm(a, b)`**: `|a * b| / mcd(a, b)`,
+dividiendo primero por `mcd` para evitar overflow innecesario en
+bignum. Devuelve 0 si alguno es 0 (paridad
+`math.lcm`).
+
+Sin cambios a bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_divmod_potencia_modular.c` con
+12 bloques:
+
+- `divmod` positivo (3 casos), con negativos (3 casos paridad
+  Python), bignum, división por cero, no-entero.
+- `potencia_modular` básico, `0^0 % n = 1`, exponente grande
+  crypto-like, exponente negativo, módulo cero.
+- `mcm` básico, con cero, coprimos.
+
+Suite: **354 tests verde**.
+
 ## [1.157.0] — 2026-06-06 — `dividir_palabras()` y `rellenar_ceros(n)`
 
 Dos métodos clásicos de Python que Cornamusa no tenía y que se

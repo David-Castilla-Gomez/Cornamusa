@@ -3311,6 +3311,168 @@ static Valor nativa_redondear(EvalError *err, int n_args, Valor *args,
         "ErrorDeTipo: redondear() no acepta '%s'", valor_nombre_tipo(v));
 }
 
+/* v1.158: divmod(a, b) — devuelve la tupla (cociente, resto) de la
+ * division entera euclidea. Paridad con Python divmod(a, b).
+ *
+ * Para enteros con `b > 0`, el resto siempre esta en [0, b).
+ * Para `b < 0`, el resto esta en (b, 0].
+ * El cociente q cumple a = q*b + r exactamente.
+ *
+ * b == 0 lanza ErrorAritmetico (division por cero).
+ *
+ * Solo soporta enteros por ahora (SMALL o BIG). Decimales lanzan
+ * ErrorDeTipo — Python permite floats pero la semantica de
+ * floor-div sobre IEEE 754 introduce errores que prefiero evitar
+ * en una release pequena. */
+static Valor nativa_divmod(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: divmod(a, b) requiere 2 argumentos");
+    }
+    if (!valor_es_entero(&args[0]) || !valor_es_entero(&args[1])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: divmod() requiere enteros, no '%s' y '%s'",
+            valor_nombre_tipo(&args[0]), valor_nombre_tipo(&args[1]));
+    }
+    int64_t a_i64, b_i64;
+    bool a_fits = valor_entero_a_i64(&args[0], &a_i64);
+    bool b_fits = valor_entero_a_i64(&args[1], &b_i64);
+    /* Camino rapido: ambos caben en int64. */
+    if (a_fits && b_fits) {
+        if (b_i64 == 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorAritmetico: divmod por cero");
+        }
+        /* C division truncates toward zero. Adjust to floor div. */
+        int64_t q = a_i64 / b_i64;
+        int64_t r = a_i64 - q * b_i64;
+        /* Si el resto y b tienen signos opuestos, ajustar. */
+        if (r != 0 && ((r < 0) != (b_i64 < 0))) {
+            q -= 1;
+            r += b_i64;
+        }
+        Tupla *t = tupla_nueva(2);
+        if (!t) return error_nativa(err, linea, columna, "memoria insuficiente");
+        t->elementos[0] = valor_entero_de_i64(q);
+        t->elementos[1] = valor_entero_de_i64(r);
+        return valor_tupla(t);
+    }
+    /* Camino bignum via libtommath. ma/mb son temporales en stack;
+     * mq/mr son heap-allocated porque seran transferidos via
+     * valor_entero_de_mp_normalizado (que toma ownership del puntero). */
+    mp_int ma, mb;
+    mp_int *mq = (mp_int *)malloc(sizeof(mp_int));
+    mp_int *mr = (mp_int *)malloc(sizeof(mp_int));
+    if (!mq || !mr) {
+        free(mq); free(mr);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    if (mp_init_multi(&ma, &mb, mq, mr, NULL) != MP_OKAY) {
+        free(mq); free(mr);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    if (args[0].tipo == VAL_ENTERO_SMALL) mp_set_i64(&ma, args[0].como.entero_small);
+    else if (args[0].tipo == VAL_BOOLEANO) mp_set_l(&ma, args[0].como.booleano ? 1 : 0);
+    else mp_copy(args[0].como.entero, &ma);
+    if (args[1].tipo == VAL_ENTERO_SMALL) mp_set_i64(&mb, args[1].como.entero_small);
+    else if (args[1].tipo == VAL_BOOLEANO) mp_set_l(&mb, args[1].como.booleano ? 1 : 0);
+    else mp_copy(args[1].como.entero, &mb);
+    if (mp_iszero(&mb)) {
+        mp_clear_multi(&ma, &mb, mq, mr, NULL);
+        free(mq); free(mr);
+        return error_nativa(err, linea, columna,
+            "ErrorAritmetico: divmod por cero");
+    }
+    /* mp_div hace truncacion hacia cero. Ajustar a floor div. */
+    if (mp_div(&ma, &mb, mq, mr) != MP_OKAY) {
+        mp_clear_multi(&ma, &mb, mq, mr, NULL);
+        free(mq); free(mr);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    /* Si el resto es no-cero y tiene signo distinto a b, ajustar. */
+    if (!mp_iszero(mr)
+        && (mp_isneg(mr) != mp_isneg(&mb))) {
+        mp_int uno;
+        if (mp_init(&uno) != MP_OKAY) {
+            mp_clear_multi(&ma, &mb, mq, mr, NULL);
+            free(mq); free(mr);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        mp_set_l(&uno, 1);
+        mp_sub(mq, &uno, mq);
+        mp_add(mr, &mb, mr);
+        mp_clear(&uno);
+    }
+    Tupla *t = tupla_nueva(2);
+    if (!t) {
+        mp_clear_multi(&ma, &mb, mq, mr, NULL);
+        free(mq); free(mr);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    /* valor_entero_de_mp_normalizado toma ownership de mq/mr — los
+     * libera con free() si demote a SMALL, o los guarda en el Valor. */
+    t->elementos[0] = valor_entero_de_mp_normalizado(mq);
+    t->elementos[1] = valor_entero_de_mp_normalizado(mr);
+    mp_clear_multi(&ma, &mb, NULL);
+    return valor_tupla(t);
+}
+
+/* v1.158: potencia_modular(base, exp, mod) — devuelve (base^exp) % mod
+ * de forma eficiente, usando exponenciacion modular en tiempo
+ * O(log(exp) * tam_mod). Paridad con Python pow(base, exp, mod).
+ *
+ * Acepta enteros. exp debe ser >= 0; mod debe ser != 0.
+ * Usa mp_exptmod de libtommath internamente. */
+static Valor nativa_potencia_modular(EvalError *err, int n_args, Valor *args,
+                                          int linea, int columna) {
+    if (n_args != 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: potencia_modular(base, exp, mod) requiere 3 argumentos");
+    }
+    for (int i = 0; i < 3; i++) {
+        if (!valor_es_entero(&args[i])) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: potencia_modular() requiere enteros, arg %d es '%s'",
+                i, valor_nombre_tipo(&args[i]));
+        }
+    }
+    mp_int mbase, mexp, mmod;
+    mp_int *mres = (mp_int *)malloc(sizeof(mp_int));
+    if (!mres) return error_nativa(err, linea, columna, "memoria insuficiente");
+    if (mp_init_multi(&mbase, &mexp, &mmod, mres, NULL) != MP_OKAY) {
+        free(mres);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    for (int i = 0; i < 3; i++) {
+        mp_int *dst = (i == 0) ? &mbase : (i == 1) ? &mexp : &mmod;
+        if (args[i].tipo == VAL_ENTERO_SMALL) mp_set_i64(dst, args[i].como.entero_small);
+        else if (args[i].tipo == VAL_BOOLEANO) mp_set_l(dst, args[i].como.booleano ? 1 : 0);
+        else mp_copy(args[i].como.entero, dst);
+    }
+    if (mp_isneg(&mexp)) {
+        mp_clear_multi(&mbase, &mexp, &mmod, mres, NULL);
+        free(mres);
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: potencia_modular requiere exponente >= 0");
+    }
+    if (mp_iszero(&mmod)) {
+        mp_clear_multi(&mbase, &mexp, &mmod, mres, NULL);
+        free(mres);
+        return error_nativa(err, linea, columna,
+            "ErrorAritmetico: modulo no puede ser cero");
+    }
+    if (mp_exptmod(&mbase, &mexp, &mmod, mres) != MP_OKAY) {
+        mp_clear_multi(&mbase, &mexp, &mmod, mres, NULL);
+        free(mres);
+        return error_nativa(err, linea, columna,
+            "ErrorAritmetico: potencia_modular fallo");
+    }
+    Valor r = valor_entero_de_mp_normalizado(mres);
+    mp_clear_multi(&mbase, &mexp, &mmod, NULL);
+    return r;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Reflexión (v1.11): instancia_de, subclase_de, id, repr
  * ────────────────────────────────────────────────────────────────── */
@@ -6837,6 +6999,8 @@ static const EntradaNativa NATIVAS[] = {
     /* Numéricos y reflexión (v1.11). */
     {"absoluto",         8,  nativa_absoluto},
     {"redondear",        9,  nativa_redondear},
+    {"divmod",           6,  nativa_divmod},               /* v1.158 */
+    {"potencia_modular", 16, nativa_potencia_modular},     /* v1.158 */
     {"instancia_de",    12,  nativa_instancia_de},
     {"subclase_de",     11,  nativa_subclase_de},
     {"id",               2,  nativa_id},

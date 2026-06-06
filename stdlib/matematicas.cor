@@ -100,6 +100,17 @@ funcion mcd(a, b):
     retornar a
 fin funcion
 
+# v1.158: minimo comun multiplo. Devuelve 0 si alguno es 0
+# (paridad con Python math.lcm). Divide primero por mcd para evitar
+# overflow innecesario en enteros grandes.
+funcion mcm(a, b):
+    si a == 0 o b == 0:
+        retornar 0
+    fin si
+    g = mcd(a, b)
+    retornar absoluto(a // g * b)
+fin funcion
+
 # ─── v1.103: trigonometria, raiz, log, exp, redondeo ────────────
 #
 # Wrappers sobre las nativas C (libm). Aceptan entero/decimal/booleano
