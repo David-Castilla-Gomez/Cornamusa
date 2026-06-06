@@ -1880,14 +1880,17 @@ void valor_imprimir(const Valor *v, FILE *out) {
 /* v1.45: parsea un format spec estilo Python. Devuelve true si OK.
  * v1.139: anadido tipo 'o' (octal), sign flag '+'/' ' (mostrar signo
  * para positivos), y tipo '%' (porcentaje: multiplica por 100 y
- * agrega '%'). */
+ * agrega '%').
+ * v1.140: separador de grupos ',' o '_' (cada 3 digitos en la parte
+ * entera) y tipo 'c' (entero -> caracter Unicode UTF-8). */
 typedef struct {
     char fill;
     char align;       /* '<', '>', '^', o 0 = default */
     char sign;        /* '+', ' ' (espacio para positivos), o 0 = default */
+    char grouping;    /* ',' o '_' (separador de miles), o 0 = sin */
     int  width;
     int  precision;   /* -1 = sin precisión explícita */
-    char type;        /* 'd','f','e','x','X','b','o','s','%', o 0 = implícito */
+    char type;        /* 'd','f','e','x','X','b','o','c','s','%', o 0 = implícito */
     bool cero_padding; /* '0' antes del ancho → relleno con 0 alineado a der */
 } FmtSpec;
 
@@ -1896,6 +1899,7 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
     out->fill = ' ';
     out->align = 0;
     out->sign = 0;
+    out->grouping = 0;
     out->width = 0;
     out->precision = -1;
     out->type = 0;
@@ -1929,6 +1933,12 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
         out->width = out->width * 10 + (spec[i] - '0');
         i++;
     }
+    /* v1.140: grouping separator (',' o '_'). Va entre width y
+     * precision. Solo uno permitido. */
+    if (i < spec_len && (spec[i] == ',' || spec[i] == '_')) {
+        out->grouping = spec[i];
+        i++;
+    }
     /* .precision */
     if (i < spec_len && spec[i] == '.') {
         i++;
@@ -1942,7 +1952,7 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
     if (i < spec_len) {
         char t = spec[i];
         if (t == 'd' || t == 'f' || t == 'e' || t == 'x' || t == 'X'
-            || t == 'b' || t == 'o' || t == 's' || t == '%') {
+            || t == 'b' || t == 'o' || t == 'c' || t == 's' || t == '%') {
             out->type = t;
             i++;
         } else {
@@ -1962,6 +1972,62 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
 /* Aplica padding/align/fill a `cuerpo` (longitud `cuerpo_len`) según
    spec. Si el cuerpo ya cabe en `width`, lo devuelve tal cual.
    Aloca un buffer en heap; el caller libera. Devuelve len escrito. */
+/* v1.140: inserta `sep` cada 3 digitos en la parte entera del
+ * cuerpo. Acepta signo prefijo ('-', '+', ' ') que se preserva. La
+ * parte decimal (tras un '.') se deja intacta. El sufijo '%' (porc.)
+ * tambien se deja intacto. Devuelve buffer alocado nuevo; caller
+ * libera. *out_len recibe la longitud final. */
+static char *fmt_agrupar(const char *cuerpo, int cuerpo_len, char sep,
+                          int *out_len) {
+    int signo_len = 0;
+    if (cuerpo_len > 0
+        && (cuerpo[0] == '-' || cuerpo[0] == '+' || cuerpo[0] == ' ')) {
+        signo_len = 1;
+    }
+    /* Buscar fin de la parte entera (primer '.', 'e', '%' o end). */
+    int fin_entero = signo_len;
+    while (fin_entero < cuerpo_len
+            && cuerpo[fin_entero] != '.'
+            && cuerpo[fin_entero] != 'e'
+            && cuerpo[fin_entero] != 'E'
+            && cuerpo[fin_entero] != '%') {
+        fin_entero++;
+    }
+    int n_digitos = fin_entero - signo_len;
+    if (n_digitos <= 3) {
+        char *r = (char *)malloc((size_t)cuerpo_len);
+        if (!r) return NULL;
+        memcpy(r, cuerpo, (size_t)cuerpo_len);
+        *out_len = cuerpo_len;
+        return r;
+    }
+    int n_seps = (n_digitos - 1) / 3;
+    int total = cuerpo_len + n_seps;
+    char *r = (char *)malloc((size_t)total);
+    if (!r) return NULL;
+    /* Copiar signo si lo hay. */
+    int w = 0;
+    if (signo_len) r[w++] = cuerpo[0];
+    /* La parte entera se rellena de derecha a izquierda para insertar
+     * separadores cada 3 digitos. */
+    int primer_grupo = n_digitos % 3;
+    if (primer_grupo == 0) primer_grupo = 3;
+    int leido = signo_len;
+    /* Primer grupo (puede ser de 1, 2 o 3 digitos). */
+    for (int k = 0; k < primer_grupo; k++) r[w++] = cuerpo[leido++];
+    /* Grupos de 3 con separador delante. */
+    while (leido < fin_entero) {
+        r[w++] = sep;
+        r[w++] = cuerpo[leido++];
+        r[w++] = cuerpo[leido++];
+        r[w++] = cuerpo[leido++];
+    }
+    /* Copiar el resto (parte decimal/exponente/sufijo) tal cual. */
+    while (leido < cuerpo_len) r[w++] = cuerpo[leido++];
+    *out_len = w;
+    return r;
+}
+
 static char *fmt_aplicar_padding(const char *cuerpo, int cuerpo_len,
                                    const FmtSpec *spec, int *out_len) {
     if (cuerpo_len >= spec->width) {
@@ -2121,6 +2187,58 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
             return valor_nulo();
         }
         cuerpo = fmt_entero_a_str(v, 8, false, &cuerpo_len);
+    } else if (type == 'c') {
+        /* v1.140: code point Unicode → caracter UTF-8.
+         * Acepta enteros [0, 0x10FFFF]. Rechaza decimales, booleanos
+         * y valores fuera de rango (paridad con Python). */
+        long cp = 0;
+        if (v->tipo == VAL_ENTERO_SMALL) {
+            cp = (long)v->como.entero_small;
+        } else if (v->tipo == VAL_ENTERO) {
+            /* Bignum: si cabe en long y esta en rango, OK. */
+            int tam = 0;
+            if (mp_radix_size(v->como.entero, 10, &tam) != MP_OKAY) {
+                if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                    "ErrorInterno: mp_radix_size fallo");
+                return valor_nulo();
+            }
+            char *buf = (char *)malloc((size_t)tam);
+            if (!buf) {
+                if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                    "memoria insuficiente");
+                return valor_nulo();
+            }
+            size_t escritos;
+            mp_to_radix(v->como.entero, buf, (size_t)tam, &escritos, 10);
+            cp = strtol(buf, NULL, 10);
+            free(buf);
+        } else {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeTipo: formato 'c' requiere entero, no '%s'",
+                valor_nombre_tipo(v));
+            return valor_nulo();
+        }
+        if (cp < 0 || cp > 0x10FFFF) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeValor: codepoint fuera de rango (0..0x10FFFF)");
+            return valor_nulo();
+        }
+        uint8_t tmp[4];
+        utf8proc_ssize_t n = utf8proc_encode_char((utf8proc_int32_t)cp,
+                                                     (utf8proc_uint8_t *)tmp);
+        if (n <= 0) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "ErrorDeValor: codepoint invalido");
+            return valor_nulo();
+        }
+        cuerpo = (char *)malloc((size_t)n);
+        if (!cuerpo) {
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "memoria insuficiente");
+            return valor_nulo();
+        }
+        memcpy(cuerpo, tmp, (size_t)n);
+        cuerpo_len = (int)n;
     } else if (type == 'f' || type == 'e' || type == '%') {
         double d;
         if (v->tipo == VAL_DECIMAL) d = v->como.decimal;
@@ -2205,7 +2323,7 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
 
     /* Default de alineación según el tipo (Python):
        - numéricos (`d f e x X b o %`): derecha
-       - cadenas (`s`, sin tipo): izquierda */
+       - cadenas (`s`, `c`, sin tipo): izquierda */
     if (fs.align == 0) {
         if (type == 'd' || type == 'f' || type == 'e'
             || type == 'x' || type == 'X' || type == 'b'
@@ -2235,6 +2353,34 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
             cuerpo = nuevo;
             cuerpo_len++;
         }
+    }
+
+    /* v1.140: aplicar grouping separator (',' o '_'). Solo para
+     * tipos numericos con representacion decimal o entera; en hex/
+     * octal/binario Python lo permite pero aqui lo rechazamos por
+     * simplicidad (caso poco comun). */
+    if (fs.grouping && (type == 'd' || type == 'f' || type == 'e'
+                         || type == '%')) {
+        int nuevo_len = 0;
+        char *agrupado = fmt_agrupar(cuerpo, cuerpo_len, fs.grouping,
+                                       &nuevo_len);
+        if (!agrupado) {
+            free(cuerpo);
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "memoria insuficiente al agrupar");
+            return valor_nulo();
+        }
+        free(cuerpo);
+        cuerpo = agrupado;
+        cuerpo_len = nuevo_len;
+    } else if (fs.grouping
+                 && (type == 'x' || type == 'X' || type == 'b'
+                     || type == 'o' || type == 'c' || type == 's')) {
+        free(cuerpo);
+        if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+            "ErrorDeValor: separador '%c' no compatible con tipo '%c'",
+            fs.grouping, type);
+        return valor_nulo();
     }
 
     /* Aplicar padding/align/width. */

@@ -6,6 +6,104 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.140.0] — 2026-06-06 — F-string specs: separadores de miles y code-point
+
+v1.139 cerró el primer lote de gaps en f-string specs (octal,
+porcentaje, signo). v1.140 cierra los dos restantes documentados
+como TODO: separadores de miles (`,` y `_`) y tipo `c` (code
+point Unicode).
+
+### Lo que ahora funciona
+
+```cornamusa
+# Separador de miles con coma
+f"{1234567:,d}"        # "1,234,567"
+f"{1234567890:,d}"     # "1,234,567,890"
+f"{-1234567:,d}"       # "-1,234,567"
+f"{1234.5678:,.2f}"    # "1,234.57"
+f"{12345.67:,.2%}"     # "1,234,567.00%"
+
+# Separador con underscore
+f"{1234567:_d}"        # "1_234_567"
+
+# Combinaciones
+f"{1234567:+,d}"       # "+1,234,567"
+f"{1234567:15,d}"      # "      1,234,567"
+f"{1234.56:>15,.2f}"   # "       1,234.56"
+
+# Code-point Unicode → carácter UTF-8
+f"{65:c}"              # "A"
+f"{241:c}"             # "ñ"
+f"{0x4E2D:c}"          # "中"   (CJK, 3 bytes UTF-8)
+f"{0x1F600:c}"         # "😀"   (emoji, 4 bytes UTF-8)
+```
+
+### Implementación
+
+`src/valor.c`:
+
+- `FmtSpec` gana un campo `char grouping` (`,`, `_`, o `0`).
+- `fmt_spec_parsear` parsea el separador entre `[width]` y
+  `[.precision]`, y acepta `'c'` como tipo válido en la cascada
+  de tipos.
+- Nueva sección en la cascada para tipo `'c'`: extrae el code
+  point del entero (SMALL o bignum), valida rango `[0, 0x10FFFF]`
+  y llama a `utf8proc_encode_char` para producir la secuencia
+  UTF-8 (1–4 bytes). Decimales y booleanos rechazados con
+  `ErrorDeTipo`. Code points fuera de rango → `ErrorDeValor`.
+- Nueva función helper `fmt_agrupar` que inserta el separador
+  cada 3 dígitos en la parte entera del cuerpo. Preserva signo
+  prefijo (`-`/`+`/espacio), parte decimal (tras `.`), exponente
+  (tras `e`/`E`) y sufijo de porcentaje (`%`) sin tocar.
+- El grouping se aplica entre el sign flag (v1.139) y el padding
+  (v1.45). Solo compatible con tipos numéricos decimales
+  (`d/f/e/%`). Hex/octal/binario/cadena/code-point con grouping
+  → `ErrorDeValor` claro (Python los admite pero los acotamos
+  por simplicidad — caso poco común).
+
+Sin cambios a bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_fstring_grouping.c` con 9 bloques
+(20+ asserts):
+
+- Grouping con coma sobre enteros (positivos/negativos, varias
+  longitudes).
+- Grouping sobre decimales, porcentaje y números muy grandes.
+- Grouping con underscore.
+- Combinaciones: sign + grouping, width + grouping,
+  right-align + grouping + decimal.
+- Code-point `c` para ASCII (A), Latin-1 (ñ), CJK (中) y emoji
+  (😀) — verificando exactamente los bytes UTF-8 esperados.
+- Errores: separador con tipo no compatible (hex), code-point
+  fuera de rango, code-point sobre decimal.
+- Regresión: features de v1.139 (octal, sign, zero-pad+sign,
+  porcentaje) siguen funcionando.
+
+Suite: **336 tests verde** (335 + el nuevo).
+
+### Cierre del lote f-strings
+
+Con v1.140 los format specifiers de f-strings cubren todos los
+casos comunes de Python:
+
+| Feature | Versión |
+|---|---|
+| Tipos `d`/`f`/`e`/`x`/`X`/`b`/`s` | v1.45 |
+| Alineación `<`/`>`/`^`, fill, width, precision | v1.45 |
+| Zero-padding (`{:05}`) | v1.45 |
+| Octal `:o` | v1.139 |
+| Porcentaje `:%` | v1.139 |
+| Signo `:+` y `: ` | v1.139 |
+| Zero-padding con signo `:+05d` | v1.139 |
+| Separador miles `:,` y `:_` | v1.140 |
+| Code-point `:c` | v1.140 |
+
+Solo queda fuera: presentación `g`/`G` (notación general) y `n`
+(localized number). Casos muy raros; quedan documentados como
+TODO si surgen.
+
 ## [1.139.0] — 2026-06-06 — F-string specs: octal, porcentaje, signo
 
 v1.45 introdujo format specs en f-strings con alineación, ancho,
