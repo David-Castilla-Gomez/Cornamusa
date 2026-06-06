@@ -5047,6 +5047,40 @@ static Valor nativa_dict_obtener(EvalError *err, int n_args, Valor *args,
     return valor_clonar(&args[2]);
 }
 
+/* v1.150: dicc.actualizar(otro) — copia todas las parejas de `otro`
+ * a `args[0]`, sobrescribiendo las claves que ya existian. Devuelve
+ * nulo (mutacion in-place, paridad con Python dict.update). */
+static Valor nativa_dict_actualizar(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: actualizar(d, otro) requiere 2 argumentos");
+    }
+    if (args[0].tipo != VAL_DICCIONARIO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: actualizar() requiere un diccionario como receptor, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    if (args[1].tipo != VAL_DICCIONARIO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: actualizar() requiere un diccionario como argumento, no '%s'",
+            valor_nombre_tipo(&args[1]));
+    }
+    Diccionario *dst = args[0].como.dicc;
+    Diccionario *src = args[1].como.dicc;
+    /* Iterar el src y copiar cada (clave, valor) a dst. */
+    for (int i = 0; i < src->capacidad; i++) {
+        const EntradaDicc *e = &src->entradas[i];
+        if (!e->ocupada) continue;
+        if (!dicc_asignar(dst, valor_clonar(&e->clave),
+                              valor_clonar(&e->valor))) {
+            return error_nativa(err, linea, columna,
+                "memoria insuficiente al actualizar diccionario");
+        }
+    }
+    return valor_nulo();
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * v1.128: nativas adicionales para metodos sobre conjunto y tupla.
  *
@@ -6148,6 +6182,7 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_DICCIONARIO, "valores",    7, nativa_valores},
     {VAL_DICCIONARIO, "items",      5, nativa_dict_items},        /* v1.122 */
     {VAL_DICCIONARIO, "obtener",    7, nativa_dict_obtener},      /* v1.122 */
+    {VAL_DICCIONARIO, "actualizar", 10, nativa_dict_actualizar},  /* v1.150 */
     /* Conjuntos (v1.128) */
     {VAL_CONJUNTO, "agregar",        7, nativa_agregar},  /* nativa global ya acepta conj */
     {VAL_CONJUNTO, "añadir",         7, nativa_agregar},  /* 7 bytes UTF-8 */

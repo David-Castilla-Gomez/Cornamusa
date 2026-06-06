@@ -210,6 +210,21 @@ funcion agrupar_por(xs, f):
     retornar grupos
 fin funcion
 
+# v1.150: combina varios diccionarios en uno nuevo. Equivale a
+# `{**d1, **d2, ...}` en Python — las claves que se repiten toman
+# el valor del ULTIMO diccionario que las contenga. NO muta los
+# diccionarios originales.
+#
+# fusionar({"a": 1, "b": 2}, {"b": 20, "c": 30})
+#   → {"a": 1, "b": 20, "c": 30}
+funcion fusionar(*dicts):
+    resultado = {}
+    para d en dicts:
+        resultado.actualizar(d)
+    fin para
+    retornar resultado
+fin funcion
+
 # Devuelve los primeros `n` elementos de `xs` como lista. Si `xs`
 # tiene menos de `n`, devuelve todos los disponibles (no lanza).
 # Funciona con cualquier iterable incluyendo generadores infinitos.

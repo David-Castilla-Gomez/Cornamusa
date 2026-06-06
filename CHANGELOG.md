@@ -6,6 +6,72 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.150.0] — 2026-06-06 — `dicc.actualizar(otro)` y `fusionar(*dicts)`
+
+Cornamusa tenía `d[k] = v` para asignar por clave, pero NO una
+forma de copiar TODAS las claves de otro dict en bloque. Python
+tiene `dict.update(otro)` (muta) y `{**d1, **d2}` o `d1 | d2`
+(3.9+, no muta). Cornamusa cierra el gap.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Mutación in-place — paridad con Python dict.update
+d = {"a": 1, "b": 2}
+d.actualizar({"b": 20, "c": 30})
+imprimir(d)   # {"a": 1, "b": 20, "c": 30}
+
+# Versión funcional — crea dict nuevo, NO muta originales
+desde funcionales importar fusionar
+
+d1 = {"a": 1, "b": 2}
+d2 = {"b": 20, "c": 30}
+d3 = {"c": 300, "d": 400}
+imprimir(fusionar(d1, d2, d3))
+# → {"a": 1, "b": 20, "c": 300, "d": 400}
+# d1, d2, d3 quedan intactos
+
+# Aceptables cero o un argumento
+fusionar()        # → {}
+fusionar({"a": 1})  # → {"a": 1}
+```
+
+### Implementación
+
+**`src/nativos.c::nativa_dict_actualizar`**: nueva nativa
+registrada como método de `VAL_DICCIONARIO`. Itera las entradas
+ocupadas del segundo dict y llama a `dicc_asignar(dst, k, v)`
+con clones de las parejas. Sobrescribe claves existentes
+(política de Python). Devuelve `nulo` para señalar mutación
+in-place. Rechaza no-diccionario con `ErrorDeTipo` claro.
+
+**`stdlib/funcionales.cor::fusionar(*dicts)`**: aprovecha
+`*args` en función libre (v1.22). Crea un dict vacío y llama a
+`resultado.actualizar(d)` para cada dict de la lista. Las
+claves repetidas toman el valor del ÚLTIMO dict (semántica
+Python).
+
+Sin cambios a bytecode ni VM. La nativa usa la API
+`dicc_asignar` existente y `fusionar` se apoya en la nueva
+nativa.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_dict_actualizar_fusionar.c` con
+8 bloques:
+
+- `actualizar` con claves repetidas (sobrescritura) y nuevas.
+- `actualizar` con dict vacío no cambia el receptor.
+- `actualizar` sobre dict vacío como receptor.
+- `actualizar` rechaza no-diccionario con `ErrorDeTipo`
+  atrapable.
+- `fusionar` con 3 dicts y claves repetidas (último gana).
+- `fusionar` NO muta los originales.
+- `fusionar()` sin args devuelve `{}`.
+- `fusionar(d)` con un solo dict (copia).
+
+Suite: **346 tests verde**.
+
 ## [1.149.0] — 2026-06-06 — `contar_si(p, xs)` y `unicos_por(xs, clave)`
 
 Vuelta a stdlib funcional tras el paréntesis de v1.148 (nativas
