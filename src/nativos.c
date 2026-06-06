@@ -4877,6 +4877,141 @@ static Valor nativa_cadena_mayusculas(EvalError *err, int n_args, Valor *args,
     return cadena_caso_unicode(err, &args[0], false, linea, columna);
 }
 
+/* v1.157: cadena.dividir_palabras() — divide por cualquier secuencia
+ * de whitespace (espacios, \t, \n, \r, \f, \v + Unicode Z*),
+ * descartando whitespace al inicio y al final. NO produce cadenas
+ * vacias entre runs de whitespace. Paridad con Python str.split()
+ * sin argumentos.
+ *
+ * Diferencia con separar(" "): este NO emite cadenas vacias entre
+ * espacios consecutivos. "a  b".dividir_palabras() -> ["a", "b"]
+ * vs "a  b".separar(" ") -> ["a", "", "b"]. */
+static Valor nativa_cadena_dividir_palabras(EvalError *err, int n_args,
+                                                 Valor *args,
+                                                 int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dividir_palabras() no acepta argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dividir_palabras() requiere una cadena, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    Lista *l = lista_nueva(0);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+
+    int i = 0;
+    while (i < sl) {
+        /* Saltar whitespace. */
+        while (i < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + i), sl - i, &cp);
+            if (cons <= 0) break;
+            int cat = utf8proc_category(cp);
+            bool es_ws = (cat == UTF8PROC_CATEGORY_ZS
+                          || cat == UTF8PROC_CATEGORY_ZL
+                          || cat == UTF8PROC_CATEGORY_ZP
+                          || cp == '\t' || cp == '\n' || cp == '\r'
+                          || cp == '\f' || cp == '\v');
+            if (!es_ws) break;
+            i += (int)cons;
+        }
+        if (i >= sl) break;
+        /* Capturar palabra hasta el siguiente whitespace. */
+        int inicio = i;
+        while (i < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + i), sl - i, &cp);
+            if (cons <= 0) { i++; continue; }
+            int cat = utf8proc_category(cp);
+            bool es_ws = (cat == UTF8PROC_CATEGORY_ZS
+                          || cat == UTF8PROC_CATEGORY_ZL
+                          || cat == UTF8PROC_CATEGORY_ZP
+                          || cp == '\t' || cp == '\n' || cp == '\r'
+                          || cp == '\f' || cp == '\v');
+            if (es_ws) break;
+            i += (int)cons;
+        }
+        Valor v = valor_cadena_duplicar(s + inicio, i - inicio);
+        if (!lista_agregar(l, v)) {
+            lista_liberar(l);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    return valor_lista(l);
+}
+
+/* v1.157: cadena.rellenar_ceros(ancho) — rellena con '0' por la
+ * izquierda hasta alcanzar `ancho` code-points. Si la cadena
+ * empieza con '+' o '-', el signo se queda al frente y los ceros
+ * van DESPUES (paridad con Python str.zfill).
+ *
+ * "5".rellenar_ceros(4)   -> "0005"
+ * "-5".rellenar_ceros(4)  -> "-005"  (no "00-5")
+ * "+5".rellenar_ceros(4)  -> "+005"
+ * "12345".rellenar_ceros(3) -> "12345"  (sin cambios, ya cabe) */
+static Valor nativa_cadena_rellenar_ceros(EvalError *err, int n_args,
+                                                Valor *args,
+                                                int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: rellenar_ceros(ancho) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: rellenar_ceros() requiere una cadena, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    int64_t ancho_i64;
+    if (!valor_entero_a_i64(&args[1], &ancho_i64)) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: rellenar_ceros() requiere un entero como ancho");
+    }
+    if (ancho_i64 < 0 || ancho_i64 > 1000000) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: ancho fuera de rango [0, 1_000_000]");
+    }
+    int ancho = (int)ancho_i64;
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+
+    /* Contar code-points actuales. */
+    int cps = 0;
+    {
+        int p = 0;
+        while (p < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+            if (cons <= 0) { p++; cps++; continue; }
+            p += (int)cons;
+            cps++;
+        }
+    }
+    if (ancho <= cps) {
+        return valor_cadena_duplicar(s, sl);
+    }
+    int n_ceros = ancho - cps;
+    int signo_len = 0;
+    if (sl > 0 && (s[0] == '+' || s[0] == '-')) signo_len = 1;
+    int total_bytes = sl + n_ceros;
+    char *buf = (char *)malloc((size_t)total_bytes);
+    if (!buf) return error_nativa(err, linea, columna, "memoria insuficiente");
+    int w = 0;
+    if (signo_len) buf[w++] = s[0];
+    for (int i = 0; i < n_ceros; i++) buf[w++] = '0';
+    memcpy(buf + w, s + signo_len, (size_t)(sl - signo_len));
+    w += sl - signo_len;
+    Valor r = valor_cadena_duplicar(buf, w);
+    free(buf);
+    return r;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * cadena_unir (v1.61): nativa O(n) para concatenar lista de cadenas.
  *
@@ -6849,6 +6984,8 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas},      /* v1.153 Unicode */
     {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas},      /* v1.153 Unicode */
     {VAL_CADENA,     "titulo",       6, nativa_cadena_titulo},          /* v1.154 */
+    {VAL_CADENA,     "dividir_palabras", 16, nativa_cadena_dividir_palabras}, /* v1.157 */
+    {VAL_CADENA,     "rellenar_ceros",   14, nativa_cadena_rellenar_ceros},   /* v1.157 */
     {VAL_CADENA,     "es_alfa",      7, nativa_cadena_es_alfa},         /* v1.154 */
     {VAL_CADENA,     "es_digito",    9, nativa_cadena_es_digito},       /* v1.154 */
     {VAL_CADENA,     "es_alfanum",  10, nativa_cadena_es_alfanum},      /* v1.154 */

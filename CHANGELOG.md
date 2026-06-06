@@ -6,6 +6,65 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.157.0] — 2026-06-06 — `dividir_palabras()` y `rellenar_ceros(n)`
+
+Dos métodos clásicos de Python que Cornamusa no tenía y que se
+echaban de menos al procesar texto:
+
+```cornamusa
+# dividir_palabras: split por whitespace SIN cadenas vacías
+"hola    mundo".dividir_palabras()           # → ["hola", "mundo"]
+"   leading trailing   ".dividir_palabras()  # → ["leading", "trailing"]
+"uno\tdos tres\ncuatro".dividir_palabras()    # → ["uno", "dos", "tres", "cuatro"]
+"".dividir_palabras()                         # → []
+
+# vs separar(" ") que produce vacios entre runs:
+"a  b".separar(" ")        # → ["a", "", "b"]
+"a  b".dividir_palabras()   # → ["a", "b"]
+
+# rellenar_ceros: pad con '0' a la izquierda, respeta signo
+"5".rellenar_ceros(4)        # → "0005"
+"-5".rellenar_ceros(4)       # → "-005"   (signo al frente, no "00-5")
+"+5".rellenar_ceros(4)       # → "+005"
+"12345".rellenar_ceros(3)    # → "12345"  (sin cambios si ya cabe)
+"hola".rellenar_ceros(8)     # → "0000hola"  (también vale para texto)
+"ñ".rellenar_ceros(4)        # → "000ñ"   (Unicode code-points)
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`nativa_cadena_dividir_palabras(s)`**: bucle exterior con
+  dos sub-bucles:
+  1. Salta whitespace (`utf8proc_category` ∈ {ZS, ZL, ZP}
+     o ASCII `\t\n\r\f\v`).
+  2. Captura code-points no-whitespace en una palabra.
+  Cada palabra capturada se agrega como cadena duplicada. Si
+  no quedan caracteres no-whitespace, devuelve lista vacía.
+
+- **`nativa_cadena_rellenar_ceros(s, ancho)`**: cuenta
+  code-points con `utf8proc_iterate`. Si `ancho <= cps`,
+  devuelve copia inmutable. Si no, detecta si `s[0] ∈ {'+', '-'}`,
+  preserva el signo al frente, inserta `n_ceros` × `'0'`, y
+  copia el resto.
+
+Sin cambios a bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_cadena_palabras_ceros.c` con
+13 bloques:
+
+- `dividir_palabras`: básico, runs de whitespace, leading/trailing,
+  vacía y solo-whitespace, mezcla `\t\n`, singleton.
+- `rellenar_ceros`: sin signo, ya-cabe, vacía, negativo,
+  positivo explícito, texto no-numérico, Unicode.
+- `rellenar_ceros` con ancho 0 o menor (sin cambios).
+- Error: ancho negativo (ErrorDeValor atrapable).
+
+Suite: **353 tests verde**.
+
 ## [1.156.0] — 2026-06-06 — `conj.vaciar`/`actualizar`/`descartar`: simetría list/dict/set
 
 Cierra la **simetría de operaciones bulk** entre los 3
