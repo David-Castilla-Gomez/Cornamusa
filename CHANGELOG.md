@@ -6,6 +6,82 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.152.0] — 2026-06-06 — `s.dividir_lineas()` y alineación de cadenas
+
+Cambio de superficie de cadena tras dos releases de diccionario.
+Cuatro métodos que Python lleva siempre encima y faltaban en
+Cornamusa.
+
+### Lo que ahora funciona
+
+```cornamusa
+# dividir_lineas: paridad con str.splitlines()
+"hola\nmundo\nadios\n".dividir_lineas()
+# → ["hola", "mundo", "adios"]   (sin la línea vacía final)
+
+# CRLF (Windows), CR (legacy Mac) y \n mezclados — todos OK
+"uno\r\ndos\r\ntres".dividir_lineas()    # → ["uno", "dos", "tres"]
+"a\nb\r\nc\rd".dividir_lineas()            # → ["a", "b", "c", "d"]
+
+# Alineación contando code-points UTF-8 (no bytes)
+"hola".centrar(10)            # → "   hola   "
+"hi".centrar(8, "-")          # → "---hi---"
+"hi".alinear_izquierda(8)     # → "hi      "
+"hi".alinear_izquierda(8, ".") # → "hi......"
+"hi".alinear_derecha(8, "*")  # → "******hi"
+
+# La 'ñ' es 1 code-point (no 2 bytes UTF-8) para los anchos
+longitud("ñ".centrar(5))      # → 5   (no 6)
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`nativa_cadena_dividir_lineas(s)`**: itera detectando `\n`,
+  `\r\n` y `\r`. Conserva el contenido y descarta el terminador
+  final (paridad con `str.splitlines()`). Si la cadena no
+  termina en uno, la última línea sí se conserva.
+
+- **`fmt_alinear_cadena` (helper)**: cuenta code-points UTF-8
+  con `utf8proc_iterate`, calcula padding y rellena con
+  `memset`-style usando el byte de relleno indicado. Las tres
+  variantes (`centrar`, `alinear_izquierda`,
+  `alinear_derecha`) comparten este helper.
+
+- **`fmt_args_alinear` (helper)**: parsea `(ancho[, relleno])`.
+  Ancho entero en `[0, 1_000_000]`. Relleno cadena de 1
+  caracter (ASCII) o espacio por defecto. Rechaza
+  multi-caracter con `ErrorDeValor` atrapable.
+
+Sin cambios a bytecode ni VM. Los métodos se registran en la
+tabla `METODOS_NATIVOS` como `VAL_CADENA`.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_cadena_lineas_alinear.c` con 15
+bloques:
+
+- `dividir_lineas` con terminador final, sin terminador, cadena
+  vacía, CRLF, CR, mezcla `\n`/`\r\n`/`\r`.
+- `centrar` con default, ancho impar, relleno custom, cadena
+  más larga (sin cambios).
+- `alinear_izquierda` y `alinear_derecha` con default y custom.
+- Unicode: la `ñ` cuenta como 1 code-point.
+- Errores: relleno multi-carácter y ancho negativo, ambos
+  `ErrorDeValor` atrapable.
+
+Suite: **348 tests verde**.
+
+### Limitaciones
+
+- El relleno es 1 carácter ASCII por simplicidad. Soportar
+  multi-byte Unicode requeriría calcular code-points del
+  relleno también; queda como TODO si surge el caso.
+- `mayusculas()`/`minusculas()` siguen siendo ASCII-only. Para
+  Unicode habría que llamar `utf8proc_map`; queda fuera de
+  esta release.
+
 ## [1.151.0] — 2026-06-06 — `dicc.sacar(k[, default])` y `dicc.vaciar()`
 
 Sigue la racha de diccionarios. v1.150 cerró `actualizar` /

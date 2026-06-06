@@ -4888,6 +4888,175 @@ static Valor nativa_cadena_recortar(EvalError *err, int n_args, Valor *args,
     return valor_cadena_duplicar(s + ini, fin - ini);
 }
 
+/* v1.152: cadena.dividir_lineas() — divide por '\n' descartando la
+ * linea vacia final que generaria `\n` al final. Tambien acepta
+ * "\r\n" (Windows) y "\r" (legacy Mac). Paridad con Python
+ * str.splitlines(). Sin parametros — siempre conserva contenido
+ * (los terminadores se descartan). */
+static Valor nativa_cadena_dividir_lineas(EvalError *err, int n_args,
+                                              Valor *args,
+                                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dividir_lineas() no acepta argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: dividir_lineas() requiere una cadena");
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    Lista *l = lista_nueva(0);
+    if (!l) return error_nativa(err, linea, columna, "memoria insuficiente");
+    int i = 0;
+    while (i < sl) {
+        int j = i;
+        while (j < sl && s[j] != '\n' && s[j] != '\r') j++;
+        Valor v = valor_cadena_duplicar(s + i, j - i);
+        if (!lista_agregar(l, v)) {
+            lista_liberar(l);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        if (j >= sl) break;
+        /* Consumir terminador: \r\n, \n, o \r solo. */
+        if (s[j] == '\r' && j + 1 < sl && s[j + 1] == '\n') {
+            i = j + 2;
+        } else {
+            i = j + 1;
+        }
+    }
+    return valor_lista(l);
+}
+
+/* Helper compartido para centrar/alinear. Devuelve nueva cadena
+ * rellenada con `rel` hasta longitud `ancho` (en code points UTF-8).
+ * `alineacion`: '<' izq, '>' der, '^' centro. Si la cadena ya tiene
+ * ancho >= solicitado, se devuelve sin modificar (clonada). */
+static Valor fmt_alinear_cadena(EvalError *err, const char *s, int sl,
+                                  int ancho, char alineacion, char rel,
+                                  int linea, int columna) {
+    /* Contar code points en s. */
+    int cps = 0;
+    {
+        int p = 0;
+        while (p < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+            if (cons <= 0) { p++; cps++; continue; }
+            p += (int)cons;
+            cps++;
+        }
+    }
+    if (ancho <= cps) {
+        return valor_cadena_duplicar(s, sl);
+    }
+    int n_rel = ancho - cps;
+    int pad_izq = 0, pad_der = 0;
+    if (alineacion == '<') { pad_der = n_rel; }
+    else if (alineacion == '>') { pad_izq = n_rel; }
+    else { pad_izq = n_rel / 2; pad_der = n_rel - pad_izq; }
+    int total_len = sl + pad_izq + pad_der;
+    char *buf = (char *)malloc((size_t)total_len);
+    if (!buf) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    int w = 0;
+    for (int i = 0; i < pad_izq; i++) buf[w++] = rel;
+    memcpy(buf + w, s, (size_t)sl);
+    w += sl;
+    for (int i = 0; i < pad_der; i++) buf[w++] = rel;
+    Valor r = valor_cadena_duplicar(buf, total_len);
+    free(buf);
+    return r;
+}
+
+static bool fmt_args_alinear(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna,
+                               int *out_ancho, char *out_rel,
+                               const char *nombre) {
+    if (n_args < 2 || n_args > 3) {
+        error_nativa(err, linea, columna,
+            "ErrorDeTipo: %s(s, ancho[, relleno]) requiere 2 o 3 argumentos",
+            nombre);
+        return false;
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        error_nativa(err, linea, columna,
+            "ErrorDeTipo: %s() requiere una cadena, no '%s'",
+            nombre, valor_nombre_tipo(&args[0]));
+        return false;
+    }
+    int64_t ancho_i64;
+    if (!valor_entero_a_i64(&args[1], &ancho_i64)) {
+        error_nativa(err, linea, columna,
+            "ErrorDeTipo: %s() requiere un entero como ancho", nombre);
+        return false;
+    }
+    if (ancho_i64 < 0 || ancho_i64 > 1000000) {
+        error_nativa(err, linea, columna,
+            "ErrorDeValor: ancho fuera de rango [0, 1_000_000]");
+        return false;
+    }
+    *out_ancho = (int)ancho_i64;
+    *out_rel = ' ';
+    if (n_args == 3) {
+        if (args[2].tipo != VAL_CADENA || args[2].como.cadena.longitud != 1) {
+            error_nativa(err, linea, columna,
+                "ErrorDeValor: relleno debe ser una cadena de 1 caracter");
+            return false;
+        }
+        *out_rel = args[2].como.cadena.texto[0];
+    }
+    return true;
+}
+
+/* v1.152: cadena.centrar(ancho[, relleno=" "]) — centra la cadena
+ * en `ancho` code points rellenando con `relleno`. Si la cadena ya
+ * es mas larga, se devuelve sin modificar. Paridad con Python
+ * str.center(). */
+static Valor nativa_cadena_centrar(EvalError *err, int n_args, Valor *args,
+                                       int linea, int columna) {
+    int ancho; char rel;
+    if (!fmt_args_alinear(err, n_args, args, linea, columna,
+                            &ancho, &rel, "centrar")) {
+        return valor_nulo();
+    }
+    return fmt_alinear_cadena(err,
+        args[0].como.cadena.texto, args[0].como.cadena.longitud,
+        ancho, '^', rel, linea, columna);
+}
+
+/* v1.152: cadena.alinear_izquierda(ancho[, relleno]) — paridad con
+ * str.ljust(). */
+static Valor nativa_cadena_alinear_izquierda(EvalError *err, int n_args,
+                                                 Valor *args,
+                                                 int linea, int columna) {
+    int ancho; char rel;
+    if (!fmt_args_alinear(err, n_args, args, linea, columna,
+                            &ancho, &rel, "alinear_izquierda")) {
+        return valor_nulo();
+    }
+    return fmt_alinear_cadena(err,
+        args[0].como.cadena.texto, args[0].como.cadena.longitud,
+        ancho, '<', rel, linea, columna);
+}
+
+/* v1.152: cadena.alinear_derecha(ancho[, relleno]) — paridad con
+ * str.rjust(). */
+static Valor nativa_cadena_alinear_derecha(EvalError *err, int n_args,
+                                                Valor *args,
+                                                int linea, int columna) {
+    int ancho; char rel;
+    if (!fmt_args_alinear(err, n_args, args, linea, columna,
+                            &ancho, &rel, "alinear_derecha")) {
+        return valor_nulo();
+    }
+    return fmt_alinear_cadena(err,
+        args[0].como.cadena.texto, args[0].como.cadena.longitud,
+        ancho, '>', rel, linea, columna);
+}
+
 /* cadena_contiene(s, sub) -> booleano. Wrapper de indice_de >= 0. */
 static Valor nativa_cadena_contiene(EvalError *err, int n_args, Valor *args,
                                        int linea, int columna) {
@@ -6235,6 +6404,10 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_CADENA,     "recortar",    8,  nativa_cadena_recortar},  /* v1.122 */
     {VAL_CADENA,     "contiene",    8,  nativa_cadena_contiene},  /* v1.122 */
     {VAL_CADENA,     "unir",        4,  nativa_cadena_unir_metodo},/* v1.122 */
+    {VAL_CADENA,     "dividir_lineas", 14, nativa_cadena_dividir_lineas}, /* v1.152 */
+    {VAL_CADENA,     "centrar",     7,  nativa_cadena_centrar},          /* v1.152 */
+    {VAL_CADENA,     "alinear_izquierda", 17, nativa_cadena_alinear_izquierda}, /* v1.152 */
+    {VAL_CADENA,     "alinear_derecha",   15, nativa_cadena_alinear_derecha},   /* v1.152 */
     {VAL_LISTA,      "indice_de",   9, nativa_lista_indice_de},   /* v1.128 */
     /* Diccionarios */
     {VAL_DICCIONARIO, "claves",     6, nativa_claves},
