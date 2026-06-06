@@ -6,6 +6,96 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.142.0] — 2026-06-06 — `*args` y `**kw` en métodos de clase
+
+v1.141 sacó a la luz una asimetría: las funciones libres soportaban
+variádicos (`funcion f(*args):`) desde v1.22, pero los **métodos de
+clase NO**. Las clases con `funcion m(yo, *args):` fallaban con
+`ErrorDeTipo: m() esperaba 1 argumentos, recibio N` aunque la
+plantilla compilada tuviera `tiene_estrella = true`.
+
+Esto bloqueaba el idioma estándar `__salir__(yo, *_)` para
+context managers — descubierto al actualizar la firma en v1.141.
+v1.142 cierra la asimetría.
+
+### Lo que ahora funciona
+
+```cornamusa
+clase C:
+    funcion uno(yo, *args):
+        imprimir(args)
+    fin funcion
+
+    # Args fijos antes de *resto
+    funcion dos(yo, a, b, *resto):
+        imprimir(a, b, resto)
+    fin funcion
+
+    # **kw como dict vacio (kwargs reales por otra ruta — ver limitación)
+    funcion tres(yo, **kw):
+        imprimir(tipo(kw))
+    fin funcion
+
+    # `*_` para ignorar args extras (idiomatico para dunders flexibles)
+    funcion __salir__(yo, *_):
+        imprimir("ok")
+    fin funcion
+fin clase
+
+c = C()
+c.uno()                  # ()
+c.uno(10, 20)            # (10, 20)
+c.dos(1, 2)              # 1 2 ()
+c.dos(1, 2, 3, 4, 5)     # 1 2 (3, 4, 5)
+```
+
+### Implementación
+
+`src/vm.c::ejecutar_llamar_metodo_ligado`: replica el algoritmo
+variádico que ya existía en `ejecutar_llamar_bc` (línea 1035+):
+
+1. Detecta `fn->tiene_estrella || fn->tiene_doble_estrella`.
+2. Computa `n_fijos = aridad - estrella - doble_estrella`.
+3. Verifica `args_con_yo >= n_fijos` (mínimo), error si no.
+4. Tras el shift que inserta `yo` como receptor, empaqueta los
+   args sobrantes (`args_con_yo - n_fijos`) en una `Tupla` para
+   `*resto`, y empuja un `Diccionario` vacío para `**kw` si está
+   declarado.
+5. Defaults solo se aplican en el path no variádico (mismo
+   contrato que funciones libres — variádicos no se combinan con
+   defaults; validado en el compilador desde v1.24).
+
+Sin cambios a AST, parser, compilador ni bytecode.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_metodo_variadicos.c` con 8 bloques:
+
+- `*args` solo (vacío y con valores).
+- `*args` con args fijos previos.
+- Idioma `*_` para ignorar (caso original de v1.141).
+- Uso real en `con`: `__salir__(yo, *resto)` recibe `(nulo, nulo,
+  nulo)` — combinación con la nueva firma de v1.141.
+- `**kw` solo (dict vacío como receptor).
+- `*args` + `**kw` juntos.
+- Regresión: funciones libres con `*args` siguen funcionando.
+- Regresión: métodos con aridad fija sin variádicos.
+
+Suite: **337 tests verde**.
+
+### Limitación pendiente
+
+**Kwargs reales en métodos** (`c.tres(x=1, z=2)`) siguen sin
+soportarse — pasan por `ejecutar_llamar_kw` que rechaza con
+"keyword args solo soportados para funciones bytecode (no
+'funcion')". El parámetro `**kw` se recibe como dict vacío
+siempre. Es un bug separado que requiere extender el path de
+kwargs al dispatch de método ligado. Queda como TODO.
+
+Lo que sí funciona: el contrato de tener `**kw` declarado para
+absorber kwargs futuros (forward-compat) — el método se invoca
+sin error, solo que `kw` es siempre `{}`.
+
 ## [1.141.0] — 2026-06-06 — `con` invoca `__salir__` con 3 argumentos
 
 Cambio de área tras la saga de f-strings. El bloque `con` (context

@@ -2132,10 +2132,32 @@ static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout
     MetodoLigado *bm = base_nuevo->como.metodo_ligado;
     Closure *cl = bm->metodo;
     FuncionBC *fn = cl->plantilla;
-    /* v1.17: aceptar n_args + 1 dentro del rango con defaults. */
-    if (n_args + 1 != fn->aridad) {
+    /* v1.142: aceptar variádicos (`*args` / `**kw`) en métodos.
+     * `yo` cuenta como 1 fijo siempre; lo añadiremos abajo con el
+     * shift. Total de args incluyendo yo será n_args + 1. */
+    bool variadico = fn->tiene_estrella || fn->tiene_doble_estrella;
+    int args_con_yo = (int)n_args + 1;
+    if (variadico) {
+        int n_fijos = fn->aridad
+                      - (fn->tiene_estrella ? 1 : 0)
+                      - (fn->tiene_doble_estrella ? 1 : 0);
+        if (args_con_yo < n_fijos) {
+            llamar_set_error(vm, frame,
+                "ErrorDeTipo: %.*s() esperaba al menos %d argumentos, recibio %d",
+                fn->longitud_nombre, fn->nombre, n_fijos - 1, n_args);
+            return VM_ERROR_RUNTIME;
+        }
+        if (!fn->tiene_estrella && args_con_yo > n_fijos) {
+            /* Solo **kw: extras posicionales no permitidos. */
+            llamar_set_error(vm, frame,
+                "ErrorDeTipo: %.*s() recibio %d argumentos, acepta %d posicionales",
+                fn->longitud_nombre, fn->nombre, n_args, n_fijos - 1);
+            return VM_ERROR_RUNTIME;
+        }
+    } else if (args_con_yo != fn->aridad) {
+        /* v1.17: aceptar n_args + 1 dentro del rango con defaults. */
         int min_aridad = fn->aridad - fn->n_defaults;
-        if (n_args + 1 >= min_aridad && n_args + 1 < fn->aridad && cl->defaults) {
+        if (args_con_yo >= min_aridad && args_con_yo < fn->aridad && cl->defaults) {
             /* OK, completaremos con defaults abajo. */
         } else {
             llamar_set_error(vm, frame,
@@ -2165,9 +2187,45 @@ static ResultadoVM ejecutar_llamar_metodo_ligado(VM *vm, CallFrame **frame_inout
     base_nuevo[1] = receptor;
     valor_destruir(&bound_old);
 
-    /* v1.17: completar con defaults si faltan. */
-    int total_actual = (int)n_args + 1;
-    if (total_actual < fn->aridad) {
+    /* v1.142: empaquetar variádicos tras el shift. El stack ahora
+     * tiene [callee, yo, arg1, ..., argN]. Si la función declara
+     * `*resto` recogemos los args sobrantes en una tupla; si declara
+     * `**kw` empujamos un dict vacío como su slot final (los kwargs
+     * reales llegan por el path de OP_LLAMAR_KW, no por aquí). */
+    if (variadico) {
+        int n_fijos = fn->aridad
+                      - (fn->tiene_estrella ? 1 : 0)
+                      - (fn->tiene_doble_estrella ? 1 : 0);
+        if (fn->tiene_estrella) {
+            int n_extra = args_con_yo - n_fijos;
+            Tupla *t = tupla_nueva(n_extra);
+            if (!t) {
+                llamar_set_error(vm, frame,
+                    "memoria insuficiente al recolectar *resto");
+                return VM_ERROR_RUNTIME;
+            }
+            Valor *base_extra = base_nuevo + 1 + n_fijos;
+            for (int i = 0; i < n_extra; i++) {
+                t->elementos[i] = base_extra[i];
+            }
+            vm->tope = base_extra;
+            empujar(vm, valor_tupla(t));
+        }
+        if (fn->tiene_doble_estrella) {
+            Diccionario *d = dicc_nuevo();
+            if (!d) {
+                llamar_set_error(vm, frame, "memoria insuficiente para **kw");
+                return VM_ERROR_RUNTIME;
+            }
+            empujar(vm, valor_diccionario(d));
+        }
+    }
+
+    /* v1.17: completar con defaults si faltan. Solo en path no
+     * variádico — los variádicos no aceptan defaults (validado en
+     * compilador). */
+    int total_actual = args_con_yo;
+    if (!variadico && total_actual < fn->aridad) {
         int min_aridad_w_yo = fn->aridad - fn->n_defaults;
         int n_faltantes = fn->aridad - total_actual;
         for (int i = 0; i < n_faltantes; i++) {
