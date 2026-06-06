@@ -6,6 +6,68 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.149.0] — 2026-06-06 — `contar_si(p, xs)` y `unicos_por(xs, clave)`
+
+Vuelta a stdlib funcional tras el paréntesis de v1.148 (nativas
+I/O). Dos helpers que completan la familia `contar`/`unicos`.
+
+### Lo que ahora funciona
+
+```cornamusa
+desde funcionales importar contar_si, unicos_por
+
+# contar_si: cuántos cumplen el predicado, sin materializar lista
+contar_si(lambda x: x > 0, [-1, 2, -3, 4, 5])      # → 3
+contar_si(lambda x: x == "a", ["a", "b", "a"])     # → 2
+
+# unicos_por: deduplicar por aspecto del elemento
+users = [
+    {"id": 1, "nombre": "Ana"},
+    {"id": 2, "nombre": "Bea"},
+    {"id": 1, "nombre": "AnaDuplicada"},
+]
+unicos_por(users, lambda d: d["id"])
+# → [{"id": 1, "nombre": "Ana"}, {"id": 2, "nombre": "Bea"}]
+# (el primer "id=1" gana; el duplicado se descarta)
+
+# Útil cuando "único" no significa igualdad estricta:
+palabras = ["arbol", "amigo", "barco", "cesta", "alma"]
+unicos_por(palabras, lambda s: s[0])
+# → ["arbol", "barco", "cesta"]   (una palabra por letra inicial)
+```
+
+### Implementación
+
+`stdlib/funcionales.cor`:
+
+- **`contar_si(p, xs)`**: bucle simple con acumulador entero.
+  Equivale a `longitud([x para x en xs si p(x)])` pero NO
+  materializa la lista intermedia — útil para iterables grandes.
+
+- **`unicos_por(xs, clave)`**: variante de `unicos(xs)`
+  existente, pero usa `clave(x)` para decidir identidad. El
+  elemento devuelto es el ORIGINAL (no su clave); en colisión
+  gana el PRIMERO encontrado. Útil cuando los elementos no son
+  hashables directamente (Python lo hace con
+  `dict.fromkeys(... key=...)` o similar).
+
+Sin cambios al núcleo. Reutiliza `conjunto()` para el tracking
+de claves vistas.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_contar_unicos_por.c` con 10
+bloques:
+
+- `contar_si` con positivos, igualdad de cadenas, vacío, ninguno
+  cumple, todos cumplen.
+- `unicos_por` dedup por atributo de diccionario.
+- `unicos_por` con primer encontrado gana en colisión.
+- `unicos_por` vacío y todos distintos.
+- Regresión: `unicos` clásico sigue funcionando.
+
+Suite: **345 tests verde**.
+
 ## [1.148.0] — 2026-06-06 — `escribir` (sin `\n`) y `imprimir_error` (a stderr)
 
 Cambio de área tras 4 releases stdlib. Dos nativas pequeñas que

@@ -343,6 +343,45 @@ funcion unicos(xs):
     retornar resultado
 fin funcion
 
+# v1.149: como `unicos` pero usa una funcion `clave` para decidir
+# identidad. Util cuando el elemento original no es hashable o
+# cuando se quiere deduplicar por algun aspecto del elemento. El
+# elemento DEVUELTO es el original (no la clave); en caso de
+# colision se queda el PRIMERO encontrado.
+#
+# unicos_por([{"id": 1, "n": "Ana"}, {"id": 2, "n": "Bea"},
+#             {"id": 1, "n": "AnaDup"}], lambda d: d["id"])
+#   -> [{"id": 1, "n": "Ana"}, {"id": 2, "n": "Bea"}]
+funcion unicos_por(xs, clave):
+    vistos = conjunto()
+    resultado = []
+    para x en xs:
+        k = clave(x)
+        si k en vistos:
+            continuar
+        fin si
+        agregar(vistos, k)
+        agregar(resultado, x)
+    fin para
+    retornar resultado
+fin funcion
+
+# v1.149: cuenta cuantos elementos de `xs` cumplen el predicado `p`.
+# Equivalente a `longitud([x para x en xs si p(x)])` pero sin
+# materializar la lista intermedia (mas eficiente para iterables
+# grandes).
+#
+# contar_si(lambda x: x > 0, [-1, 2, -3, 4, 5]) -> 3
+funcion contar_si(p, xs):
+    n = 0
+    para x en xs:
+        si p(x):
+            n = n + 1
+        fin si
+    fin para
+    retornar n
+fin funcion
+
 # v1.101: ordenar_por(xs, clave) - ordena `xs` por el resultado de
 # `clave(x)` para cada elemento. Devuelve UNA LISTA NUEVA (no
 # muta `xs`). `clave` se invoca una vez por elemento (no por
