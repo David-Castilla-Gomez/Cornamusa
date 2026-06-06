@@ -6,6 +6,79 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.151.0] — 2026-06-06 — `dicc.sacar(k[, default])` y `dicc.vaciar()`
+
+Sigue la racha de diccionarios. v1.150 cerró `actualizar` /
+`fusionar` (write bulk). v1.151 cierra los dos métodos básicos
+de lectura-destrucción y reset que faltaban — paridad con
+Python `dict.pop` y `dict.clear`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# d.sacar(k): quita y devuelve el valor; ErrorDeClave si no existe
+d = {"a": 1, "b": 2, "c": 3}
+v = d.sacar("b")     # → 2
+# d ahora es {"a": 1, "c": 3}
+
+# d.sacar(k, default): devuelve default si la clave no existe
+config = {"timeout": 30}
+modo = config.sacar("modo", "produccion")    # → "produccion"
+# config queda igual
+
+# Idiomatico para procesar opciones
+intentar:
+    valor = config.sacar("crítico")
+atrapar ErrorDeClave:
+    # opción obligatoria ausente — abortar
+    ...
+fin intentar
+
+# d.vaciar(): elimina todas las entradas in-place
+cache = {"a": 1, "b": 2}
+cache.vaciar()
+# cache ahora es {} (mismo dict, sin entradas)
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`nativa_dict_sacar(d, k[, default])`**: acepta 2 o 3 args.
+  Llama a `dicc_quitar(d, &k, &out)` (API C existente). Si
+  retorna `true` (clave existía), devuelve `out` directamente
+  porque `dicc_quitar` transfiere ownership. Si retorna
+  `false`:
+  - con default (`n_args == 3`): `valor_clonar(&args[2])`.
+  - sin default: `ErrorDeClave` con la clave en el mensaje.
+
+- **`nativa_dict_vaciar(d)`**: recorre `d->entradas`, llama a
+  `valor_destruir` por cada `clave` y `valor` ocupados, marca
+  `ocupada = false`, resetea `cuenta = 0` e incrementa
+  `version` (invalida slot caches del propio dict).
+
+Ambas registradas como métodos de `VAL_DICCIONARIO`. Rechazan
+no-diccionario con `ErrorDeTipo` claro.
+
+Sin cambios a bytecode ni VM.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_dict_sacar_vaciar.c` con 8
+bloques:
+
+- `sacar` con clave presente devuelve valor y quita la entrada.
+- `sacar` con default devuelve default sin mutar dict.
+- `sacar` sin default sobre clave ausente lanza
+  `ErrorDeClave` atrapable.
+- `sacar` con default de tipo complejo (lista).
+- `vaciar` deja el dict como `{}` con `longitud == 0`.
+- `vaciar` sobre dict ya vacío no crashea.
+- Dict reutilizable tras `vaciar` (asignar nueva clave funciona).
+- `vaciar` rechaza no-diccionario con `ErrorDeTipo`.
+
+Suite: **347 tests verde**.
+
 ## [1.150.0] — 2026-06-06 — `dicc.actualizar(otro)` y `fusionar(*dicts)`
 
 Cornamusa tenía `d[k] = v` para asignar por clave, pero NO una

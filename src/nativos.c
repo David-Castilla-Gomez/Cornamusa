@@ -5047,6 +5047,65 @@ static Valor nativa_dict_obtener(EvalError *err, int n_args, Valor *args,
     return valor_clonar(&args[2]);
 }
 
+/* v1.151: dicc.sacar(k) o dicc.sacar(k, default) — quita la clave `k`
+ * del dict y devuelve su valor. Si no existe:
+ *   - 2 args (sin default): lanza ErrorDeClave.
+ *   - 3 args (con default): devuelve `default` sin lanzar.
+ * Muta el dict in-place. */
+static Valor nativa_dict_sacar(EvalError *err, int n_args, Valor *args,
+                                  int linea, int columna) {
+    if (n_args < 2 || n_args > 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: sacar(d, k[, defecto]) requiere 2 o 3 argumentos");
+    }
+    if (args[0].tipo != VAL_DICCIONARIO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: sacar() requiere un diccionario, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Valor out;
+    if (dicc_quitar(args[0].como.dicc, &args[1], &out)) {
+        return out;  /* dicc_quitar transfiere ownership */
+    }
+    /* Clave ausente. */
+    if (n_args == 3) {
+        return valor_clonar(&args[2]);
+    }
+    /* Sin default: lanzar ErrorDeClave con la clave en el mensaje. */
+    char buf[256];
+    valor_a_cadena(&args[1], buf, sizeof(buf));
+    return error_nativa(err, linea, columna,
+        "ErrorDeClave: %s", buf);
+}
+
+/* v1.151: dicc.vaciar() — quita todas las entradas in-place.
+ * Devuelve nulo. */
+static Valor nativa_dict_vaciar(EvalError *err, int n_args, Valor *args,
+                                   int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: vaciar() no acepta argumentos");
+    }
+    if (args[0].tipo != VAL_DICCIONARIO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: vaciar() requiere un diccionario, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Diccionario *d = args[0].como.dicc;
+    /* Recorrer entradas y liberar las ocupadas. */
+    for (int i = 0; i < d->capacidad; i++) {
+        EntradaDicc *e = &d->entradas[i];
+        if (e->ocupada) {
+            valor_destruir(&e->clave);
+            valor_destruir(&e->valor);
+            e->ocupada = false;
+        }
+    }
+    d->cuenta = 0;
+    d->version++;
+    return valor_nulo();
+}
+
 /* v1.150: dicc.actualizar(otro) — copia todas las parejas de `otro`
  * a `args[0]`, sobrescribiendo las claves que ya existian. Devuelve
  * nulo (mutacion in-place, paridad con Python dict.update). */
@@ -6183,6 +6242,8 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_DICCIONARIO, "items",      5, nativa_dict_items},        /* v1.122 */
     {VAL_DICCIONARIO, "obtener",    7, nativa_dict_obtener},      /* v1.122 */
     {VAL_DICCIONARIO, "actualizar", 10, nativa_dict_actualizar},  /* v1.150 */
+    {VAL_DICCIONARIO, "sacar",       5, nativa_dict_sacar},        /* v1.151 */
+    {VAL_DICCIONARIO, "vaciar",      6, nativa_dict_vaciar},       /* v1.151 */
     /* Conjuntos (v1.128) */
     {VAL_CONJUNTO, "agregar",        7, nativa_agregar},  /* nativa global ya acepta conj */
     {VAL_CONJUNTO, "añadir",         7, nativa_agregar},  /* 7 bytes UTF-8 */
