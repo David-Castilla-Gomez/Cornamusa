@@ -229,6 +229,59 @@ funcion tomar(n, xs):
     retornar resultado
 fin funcion
 
+# v1.147: tomar mientras el predicado se cumpla. Para en cuanto
+# falla — los elementos posteriores NO se prueban. Idiomatico para
+# extraer una cabecera homogenea: numeros pares al inicio, lineas
+# de cabecera HTTP, etc.
+#
+# tomar_mientras(lambda x: x > 0, [3, 1, 2, -1, 5, 7]) -> [3, 1, 2]
+funcion tomar_mientras(p, xs):
+    resultado = []
+    para x en xs:
+        si no p(x):
+            romper
+        fin si
+        agregar(resultado, x)
+    fin para
+    retornar resultado
+fin funcion
+
+# v1.147: complemento de `tomar_mientras`. Descarta elementos
+# mientras el predicado se cumpla; en cuanto falla, deja pasar
+# TODOS los demas (sin volver a probar el predicado).
+#
+# descartar_mientras(lambda x: x > 0, [3, 1, 2, -1, 5, 7]) -> [-1, 5, 7]
+funcion descartar_mientras(p, xs):
+    resultado = []
+    descartando = verdadero
+    para x en xs:
+        si descartando y p(x):
+            continuar
+        fin si
+        descartando = falso
+        agregar(resultado, x)
+    fin para
+    retornar resultado
+fin funcion
+
+# v1.147: divide xs en dos listas segun el predicado. Preserva el
+# orden original en cada lista. Idiomatico para "true vs false"
+# sin tener que escribir dos `filtrar`.
+#
+# particionar(lambda x: x % 2 == 0, [1, 2, 3, 4, 5]) -> ([2, 4], [1, 3, 5])
+funcion particionar(p, xs):
+    si_cumple = []
+    no_cumple = []
+    para x en xs:
+        si p(x):
+            agregar(si_cumple, x)
+        sino:
+            agregar(no_cumple, x)
+        fin si
+    fin para
+    retornar (si_cumple, no_cumple)
+fin funcion
+
 # Devuelve `xs` sin los primeros `n` elementos. Si `n` >= longitud,
 # devuelve lista vacia. Funciona con cualquier iterable.
 funcion saltar(n, xs):

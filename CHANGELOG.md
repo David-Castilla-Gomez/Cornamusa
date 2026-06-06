@@ -6,6 +6,71 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.147.0] — 2026-06-06 — `tomar_mientras`, `descartar_mientras`, `particionar`
+
+Sigue la racha de stdlib funcional (v1.144 → v1.147). Cornamusa
+ya tenía `tomar(n, xs)` y `saltar(n, xs)` por cantidad fija;
+v1.147 añade las tres variantes funcionales por predicado.
+
+### Lo que ahora funciona
+
+```cornamusa
+desde funcionales importar tomar_mientras, descartar_mientras, particionar
+
+# tomar_mientras: para en cuanto el predicado falla
+tomar_mientras(lambda x: x > 0, [3, 1, 2, -1, 5, 7])
+# → [3, 1, 2]                el 5 y 7 NO se incluyen aunque cumplen
+
+# descartar_mientras: simétrico — descarta el prefijo y deja TODO lo demás
+descartar_mientras(lambda x: x > 0, [3, 1, 2, -1, 5, 7])
+# → [-1, 5, 7]                el 5 y 7 sí pasan
+
+# particionar: divide en dos listas en UNA pasada
+pares, impares = particionar(lambda x: x % 2 == 0, [1, 2, 3, 4, 5])
+# pares   = [2, 4]
+# impares = [1, 3, 5]
+
+# Caso real: separar buenos/malos sin escribir dos `filtrar`
+msgs = ["INFO: ok", "ERROR: fallo", "INFO: ok"]
+buenos, malos = particionar(lambda m: m[0:4] == "INFO", msgs)
+```
+
+### Implementación
+
+`stdlib/funcionales.cor`:
+
+- **`tomar_mientras(p, xs)`**: bucle `para` con `romper` en
+  cuanto `p(x)` es falso. Paridad con `itertools.takewhile`.
+
+- **`descartar_mientras(p, xs)`**: flag `descartando` que pasa
+  a `falso` en cuanto el predicado falla por primera vez —
+  desde ahí, todos los elementos pasan sin volver a probar el
+  predicado. Paridad con `itertools.dropwhile`.
+
+- **`particionar(p, xs)`**: una pasada que reparte a dos
+  listas `si_cumple`/`no_cumple`. Devuelve `(si_cumple,
+  no_cumple)` como tupla. Equivale a
+  `(filtrar(p, xs), filtrar(no p, xs))` pero más eficiente
+  (un solo recorrido) y idiomático.
+
+Sin cambios al núcleo. Solo features existentes (lambdas,
+`romper`, `continuar`, tuplas como retorno).
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_tomar_descartar_particionar.c`
+con 10 bloques:
+
+- `tomar_mientras` con prefijo, todos cumplen, ninguno cumple,
+  iterable vacío.
+- `descartar_mientras` simétrico, primero falla (conserva
+  todo), todos cumplen (vacío).
+- `particionar` clásico pares/impares.
+- `particionar` con vacío y con todos a un lado.
+- Caso real: separar mensajes por prefijo.
+
+Suite: **343 tests verde**.
+
 ## [1.146.0] — 2026-06-06 — `juntar` (zip) y `juntar_mas_largo` (zip_longest)
 
 Continúa la racha de stdlib (v1.144 → v1.145 → v1.146).
