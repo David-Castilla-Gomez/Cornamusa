@@ -107,15 +107,26 @@ funcion suma(xs, inicial=0):
 fin funcion
 
 # Mínimo y máximo de un iterable no vacío. ErrorDeValor si está vacío.
-funcion minimo(xs):
+#
+# v1.144: parámetro opcional `clave` para extraer la magnitud que se
+# compara. El elemento DEVUELTO sigue siendo el original; lo que se
+# compara con `<`/`>` es `clave(elemento)`. Permite usos idiomáticos
+# como `minimo(personas, clave=lambda p: p.edad)`.
+funcion minimo(xs, clave=nulo):
     primero = verdadero
     actual = nulo
+    actual_k = nulo
     para x en xs:
         si primero:
             actual = x
+            actual_k = clave(x) si clave != nulo sino x
             primero = falso
-        sino si x < actual:
-            actual = x
+        sino:
+            xk = clave(x) si clave != nulo sino x
+            si xk < actual_k:
+                actual = x
+                actual_k = xk
+            fin si
         fin si
     fin para
     si primero:
@@ -124,15 +135,21 @@ funcion minimo(xs):
     retornar actual
 fin funcion
 
-funcion maximo(xs):
+funcion maximo(xs, clave=nulo):
     primero = verdadero
     actual = nulo
+    actual_k = nulo
     para x en xs:
         si primero:
             actual = x
+            actual_k = clave(x) si clave != nulo sino x
             primero = falso
-        sino si x > actual:
-            actual = x
+        sino:
+            xk = clave(x) si clave != nulo sino x
+            si xk > actual_k:
+                actual = x
+                actual_k = xk
+            fin si
         fin si
     fin para
     si primero:

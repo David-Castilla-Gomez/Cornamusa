@@ -6,6 +6,61 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.144.0] — 2026-06-06 — `minimo`/`maximo` con `clave=`
+
+Cambio de área tras el lote OOP (v1.141-143). Pequeña release de
+stdlib que cierra un gap visible cada vez que alguien necesita
+`min(it, key=f)` al estilo Python.
+
+### Lo que ahora funciona
+
+```cornamusa
+desde funcionales importar minimo, maximo
+
+# Sin clave: comparacion natural
+minimo([3, 1, 4, 1, 5, 9, 2, 6])         # 1
+maximo([3, 1, 4, 1, 5, 9, 2, 6])         # 9
+
+# Con clave: compara `clave(elemento)`, devuelve el ELEMENTO original
+xs = [(1, "z"), (2, "a"), (3, "m")]
+minimo(xs, clave=lambda p: p[1])          # (2, "a")
+maximo(xs, clave=lambda p: p[1])          # (1, "z")
+
+# Caso real: extraer por atributo de instancia
+gente = [Persona("Ana", 30), Persona("Bea", 25), Persona("Carlos", 35)]
+mas_joven = minimo(gente, clave=lambda p: p.edad)
+mas_mayor = maximo(gente, clave=lambda p: p.edad)
+```
+
+### Implementación
+
+`stdlib/funcionales.cor`: parámetro `clave=nulo` añadido a
+`minimo` y `maximo`. Si `clave != nulo`, en cada iteración se
+calcula `xk = clave(x)` y se compara con `actual_k`. El elemento
+DEVUELTO sigue siendo el original (`x`), no su clave (paridad
+con Python `min(it, key=f)`).
+
+Estabilidad: si dos elementos tienen la misma clave, se queda el
+primero encontrado (usamos `<` y `>` estrictos, no `<=`/`>=`).
+
+Sin cambios al núcleo (VM, bytecode, parser, compilador). Solo
+stdlib aprovechando el kwarg sobre función libre que ya
+funcionaba desde v1.23.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_minimo_maximo_clave.c` con 6
+bloques:
+
+- Regresión: sin clave, comparación natural.
+- Clave por segundo elemento de tupla (caso clásico).
+- Clave sobre atributo de instancia (caso real).
+- Iterable vacío sigue lanzando `ErrorDeValor` (atrapable).
+- Estabilidad con claves iguales.
+- Iterable de un solo elemento.
+
+Suite: **340 tests verde**.
+
 ## [1.143.0] — 2026-06-06 — Kwargs reales en métodos de clase
 
 v1.142 cerró la mitad firma: `*args`/`**kw` en la **declaración**
