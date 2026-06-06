@@ -5794,6 +5794,141 @@ static Valor nativa_conjunto_copiar(EvalError *err, int n_args, Valor *args,
     return valor_conjunto(r);
 }
 
+/* v1.156: conjunto.vaciar() — quita todas las entradas in-place.
+ * Paridad con Python set.clear(). */
+static Valor nativa_conjunto_vaciar(EvalError *err, int n_args, Valor *args,
+                                         int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: vaciar() no acepta argumentos");
+    }
+    if (args[0].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: vaciar() requiere un conjunto, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Conjunto *c = args[0].como.conjunto;
+    for (int i = 0; i < c->capacidad; i++) {
+        EntradaConjunto *e = &c->entradas[i];
+        if (e->ocupada) {
+            valor_destruir(&e->elemento);
+            e->ocupada = false;
+        }
+    }
+    c->cuenta = 0;
+    return valor_nulo();
+}
+
+/* v1.156: conjunto.actualizar(iterable) — agrega todos los
+ * elementos de `iterable` al conjunto. Paridad con Python
+ * set.update(). Acepta conjunto, lista, tupla, cadena. */
+static Valor nativa_conjunto_actualizar(EvalError *err, int n_args, Valor *args,
+                                            int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: actualizar(otro) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: actualizar() requiere un conjunto como receptor, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    Conjunto *dst = args[0].como.conjunto;
+    const Valor *it = &args[1];
+    if (it->tipo == VAL_CONJUNTO) {
+        Conjunto *src = it->como.conjunto;
+        /* No es self-update peligroso: conj_agregar puede rehash, pero
+         * iteramos sobre snapshot del array hasta capacidad. Si dst ==
+         * src, los elementos ya estan presentes asi que agregar es
+         * idempotente. */
+        for (int i = 0; i < src->capacidad; i++) {
+            const EntradaConjunto *e = &src->entradas[i];
+            if (!e->ocupada) continue;
+            if (!valor_es_hashable(&e->elemento)) {
+                return error_nativa(err, linea, columna,
+                    "ErrorDeTipo: '%s' no es hashable",
+                    valor_nombre_tipo(&e->elemento));
+            }
+            if (!conj_agregar(dst, valor_clonar(&e->elemento))) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al actualizar conjunto");
+            }
+        }
+    } else if (it->tipo == VAL_LISTA) {
+        Lista *l = it->como.lista;
+        for (int i = 0; i < l->cuenta; i++) {
+            if (!valor_es_hashable(&l->elementos[i])) {
+                return error_nativa(err, linea, columna,
+                    "ErrorDeTipo: '%s' no es hashable",
+                    valor_nombre_tipo(&l->elementos[i]));
+            }
+            if (!conj_agregar(dst, valor_clonar(&l->elementos[i]))) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al actualizar conjunto");
+            }
+        }
+    } else if (it->tipo == VAL_TUPLA) {
+        Tupla *t = it->como.tupla;
+        for (int i = 0; i < t->cuenta; i++) {
+            if (!valor_es_hashable(&t->elementos[i])) {
+                return error_nativa(err, linea, columna,
+                    "ErrorDeTipo: '%s' no es hashable",
+                    valor_nombre_tipo(&t->elementos[i]));
+            }
+            if (!conj_agregar(dst, valor_clonar(&t->elementos[i]))) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al actualizar conjunto");
+            }
+        }
+    } else if (it->tipo == VAL_CADENA) {
+        const char *s = it->como.cadena.texto;
+        int sl = it->como.cadena.longitud;
+        int p = 0;
+        while (p < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+            if (cons <= 0) { p++; continue; }
+            Valor cv = valor_cadena_duplicar(s + p, (int)cons);
+            if (!conj_agregar(dst, cv)) {
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente al actualizar conjunto");
+            }
+            p += (int)cons;
+        }
+    } else {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: actualizar() requiere un iterable (conjunto/lista/tupla/cadena), no '%s'",
+            valor_nombre_tipo(it));
+    }
+    return valor_nulo();
+}
+
+/* v1.156: conjunto.descartar(elem) — quita `elem` si esta presente,
+ * sin lanzar si no lo esta. Paridad con Python set.discard().
+ * `quitar(elem)` ya lanza ErrorDeClave si no existe; esta es la
+ * variante "silenciosa". */
+static Valor nativa_conjunto_descartar(EvalError *err, int n_args, Valor *args,
+                                            int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: descartar(elem) requiere 1 argumento");
+    }
+    if (args[0].tipo != VAL_CONJUNTO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: descartar() requiere un conjunto, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    if (!valor_es_hashable(&args[1])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: '%s' no es hashable",
+            valor_nombre_tipo(&args[1]));
+    }
+    /* conj_quitar retorna false si no estaba presente. Ignoramos. */
+    (void)conj_quitar(args[0].como.conjunto, &args[1]);
+    return valor_nulo();
+}
+
 /* tupla_contar(t, x) -> entero con apariciones por igualdad. */
 static Valor nativa_tupla_contar(EvalError *err, int n_args, Valor *args,
                                      int linea, int columna) {
@@ -6749,6 +6884,9 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_CONJUNTO, "es_subconjunto",14, nativa_conjunto_es_subconjunto},
     {VAL_CONJUNTO, "contiene",       8, nativa_conjunto_contiene},
     {VAL_CONJUNTO, "copiar",         6, nativa_conjunto_copiar},
+    {VAL_CONJUNTO, "vaciar",         6, nativa_conjunto_vaciar},      /* v1.156 */
+    {VAL_CONJUNTO, "actualizar",    10, nativa_conjunto_actualizar},  /* v1.156 */
+    {VAL_CONJUNTO, "descartar",      9, nativa_conjunto_descartar},   /* v1.156 */
     /* Tuplas (v1.128) */
     {VAL_TUPLA,    "contar",         6, nativa_tupla_contar},
     {VAL_TUPLA,    "contiene",       8, nativa_tupla_contiene},

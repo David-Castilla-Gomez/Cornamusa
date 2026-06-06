@@ -211,17 +211,17 @@ int main(void) {
         AFIRMAR(strstr(out, "err") != NULL, "ext_no_iter");
     }
 
-    /* Error: vaciar sobre conjunto (sigue rechazado por VAL_LISTA) */
+    /* Error: extender sobre tupla (no muta) */
     {
         char out[256];
         ejecutar_capturando(
             "intentar:\n"
-            "    {1, 2}.vaciar()\n"
+            "    (1, 2).extender([3])\n"
             "atrapar ErrorDeTipo:\n"
             "    imprimir(\"err\")\n"
             "fin intentar\n",
             out, sizeof(out));
-        AFIRMAR(strstr(out, "err") != NULL, "vaciar_no_lista");
+        AFIRMAR(strstr(out, "err") != NULL, "extender_no_tupla");
     }
 
     if (fallos == 0) {

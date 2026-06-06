@@ -182,12 +182,12 @@ int main(void) {
         char out[256];
         ejecutar_capturando(
             "intentar:\n"
-            "    [1, 2].vaciar()\n"
+            "    (1, 2).sacar(0)\n"   /* tupla no tiene `sacar` */
             "atrapar ErrorDeTipo:\n"
             "    imprimir(\"ok\")\n"
             "fin intentar\n",
             out, sizeof(out));
-        AFIRMAR(strstr(out, "ok") != NULL, "vaciar_rechaza_lista");
+        AFIRMAR(strstr(out, "ok") != NULL, "sacar_rechaza_tupla");
     }
 
     if (fallos == 0) {

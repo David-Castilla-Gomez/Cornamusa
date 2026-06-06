@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.156.0] — 2026-06-06 — `conj.vaciar`/`actualizar`/`descartar`: simetría list/dict/set
+
+Cierra la **simetría de operaciones bulk** entre los 3
+contenedores principales (lista, dict, conjunto):
+
+|              | clear  | pop/remove silent     | extend / union     |
+|--------------|--------|------------------------|---------------------|
+| `list` (v0.6/v1.155) | `vaciar` | `quitar` / —          | `extender`          |
+| `dict` (v1.150/v1.151) | `vaciar` | `sacar` / —           | `actualizar`        |
+| `set` (**v1.156**)    | `vaciar` | `quitar` / `descartar` | `actualizar`        |
+
+### Lo que ahora funciona
+
+```cornamusa
+# vaciar: elimina todos los elementos in-place
+s = {1, 2, 3}
+s.vaciar()             # s = conjunto()
+
+# actualizar: union in-place, acepta cualquier iterable
+s = {1, 2, 3}
+s.actualizar({3, 4, 5})   # s = {1, 2, 3, 4, 5}  (duplicados ignorados)
+s.actualizar([10, 20])     # lista
+s.actualizar((100,))       # tupla
+s.actualizar("abc")        # cadena → 1 cp = 1 elemento
+
+# descartar: como quitar pero NO lanza si no existe
+s = {1, 2}
+s.descartar(99)            # silencioso (paridad set.discard)
+
+# Comparativa: quitar lanza ErrorDeClave si no existe
+intentar:
+    {1, 2}.quitar(99)
+atrapar ErrorDeClave:
+    ...
+fin intentar
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`nativa_conjunto_vaciar(c)`**: itera entradas ocupadas,
+  `valor_destruir` + `ocupada = false`, `cuenta = 0`.
+
+- **`nativa_conjunto_actualizar(c, it)`**: switch sobre tipo:
+  - `VAL_CONJUNTO`: itera entradas (idempotente para auto).
+  - `VAL_LISTA`, `VAL_TUPLA`: itera elementos.
+  - `VAL_CADENA`: itera code-points con `utf8proc_iterate`.
+  - Otros tipos → `ErrorDeTipo` claro.
+  Cada elemento se verifica con `valor_es_hashable`.
+
+- **`nativa_conjunto_descartar(c, e)`**: llama `conj_quitar` e
+  **ignora** el `false` (no lanza si no estaba).
+
+Sin cambios a bytecode ni VM.
+
+### Tests corregidos retroactivamente
+
+Los tests de v1.151 (`test_bytecode_dict_sacar_vaciar.c`) y
+v1.155 (`test_bytecode_lista_vaciar_extender.c`) tenían asserts
+que **se rompieron** al añadir los métodos correspondientes al
+conjunto:
+
+- `[1, 2].vaciar()` ya no falla (v1.155 lo añadió a lista).
+- `{1, 2}.vaciar()` ya no falla (v1.156 lo añade a conjunto).
+
+Cambié los receptores en esos tests a `tupla.sacar(0)` y
+`tupla.extender([])` — tipos que efectivamente no soportan
+esos métodos. Bugs ocultos por el flaky pre-existente del
+`genex_multi_destr` (las corridas con flaky reportan "1 fail"
+y los reales pasaban desapercibidos).
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_conjunto_vaciar_actualizar_descartar.c`
+con 12 bloques:
+
+- `vaciar` no-vacío, ya-vacío, reutilizable.
+- `actualizar` con conjunto, lista, tupla, cadena.
+- `descartar` quita elemento presente.
+- `descartar` silencioso con elemento ausente.
+- Comparativa: `quitar` lanza ErrorDeClave.
+- Errores: `actualizar(42)` no-iterable, `(1,2).vaciar()` no-conjunto.
+
+Suite: **352 tests verde**.
+
 ## [1.155.0] — 2026-06-06 — `lst.vaciar()` y `lst.extender(iterable)`
 
 Paralelos para listas a los métodos que se añadieron para dicts
