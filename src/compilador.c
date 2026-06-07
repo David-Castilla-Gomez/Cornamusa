@@ -527,6 +527,9 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     /* +x es identidad numérica; no emitimos nada — el
                        valor ya está en el tope. */
                     return true;
+                case TT_TILDE_BIT:  /* v1.167 */
+                    chunk_emitir_byte(c->actual->chunk, OP_TILDE_BIT, e->linea);
+                    return true;
                 default:
                     error_compilacion(c, e->linea, e->columna,
                         "operador unario no soportado en bytecode v0.6 sesion 2");

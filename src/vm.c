@@ -2932,9 +2932,56 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
 
             /* ─── Unarios ─── */
             case OP_NEGAR: {
+                /* v1.167: instancia con `__negar__` -> dispatch del dunder.
+                 * A diferencia de OP_NO, NO decrementamos ip — el dunder
+                 * ya retorna el valor final (no hay nada que aplicar
+                 * encima). Si decrementaramos, una `__negar__` que devuelve
+                 * otra instancia entraria en recursion infinita. */
+                const Valor *tope_peek = vm->tope - 1;
+                if (tope_peek->tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        tope_peek->como.instancia->clase,
+                        "__negar__", 9);
+                    if (m) {
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__negar__", 9) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
                 int linea = linea_actual_frame(frame);
                 Valor v = sacar(vm);
                 Valor r = evaluador_aplicar_unario(&vm->error, TT_MENOS, v,
+                                                    linea, 0);
+                if (vm->error.tuvo_error) {
+                    valor_destruir(&r);
+                    RAISE_OR_DIE();
+                }
+                empujar(vm, r);
+                break;
+            }
+            case OP_TILDE_BIT: {
+                /* v1.167: unario ~x. Para instancias, despacha `__tilde__`.
+                 * Para enteros/booleanos delega en evaluador_aplicar_unario
+                 * que ya implementa el complemento bit a bit. NO ip-- (ver
+                 * comentario en OP_NEGAR). */
+                const Valor *tope_peek = vm->tope - 1;
+                if (tope_peek->tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        tope_peek->como.instancia->clase,
+                        "__tilde__", 9);
+                    if (m) {
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__tilde__", 9) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
+                int linea = linea_actual_frame(frame);
+                Valor v = sacar(vm);
+                Valor r = evaluador_aplicar_unario(&vm->error, TT_TILDE_BIT, v,
                                                     linea, 0);
                 if (vm->error.tuvo_error) {
                     valor_destruir(&r);

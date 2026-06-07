@@ -86,6 +86,7 @@ typedef enum {
     OP_MODULO,
     OP_POTENCIA,        /* ** */
     OP_NEGAR,           /* unario -x */
+    OP_TILDE_BIT,       /* unario ~x (v1.167) */
 
     /* ---- Comparación / lógica ---- */
     OP_NO,              /* unario `no x` */

@@ -126,6 +126,7 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_MODULO:          return instruccion_simple("OP_MODULO", offset, out);
         case OP_POTENCIA:        return instruccion_simple("OP_POTENCIA", offset, out);
         case OP_NEGAR:           return instruccion_simple("OP_NEGAR", offset, out);
+        case OP_TILDE_BIT:       return instruccion_simple("OP_TILDE_BIT", offset, out);
 
         case OP_NO:              return instruccion_simple("OP_NO", offset, out);
         case OP_IGUAL:           return instruccion_simple("OP_IGUAL", offset, out);

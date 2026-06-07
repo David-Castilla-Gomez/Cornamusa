@@ -6,6 +6,92 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.167.0] — 2026-06-07 — `~x` con variables y dunders unarios
+
+Dos huecos pequeños pero notorios:
+
+1. **`~x` con variables** no estaba implementado en el bytecode. El
+   tree-walking sí lo soportaba (y constant folding manejaba `~5`
+   literal), pero `x = 5; ~x` daba "operador unario no soportado
+   en bytecode v0.6 sesion 2". Bug latente, no detectado porque
+   nadie había escrito un test del camino no-folded.
+
+2. **`-instancia` y `~instancia`** ignoraban los dunders. Ahora si la
+   clase define `__negar__(yo)` o `__tilde__(yo)`, el operador unario
+   despacha al dunder.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Antes: error de compilacion. Ahora: -6
+x = 5
+imprimir(~x)
+
+# Mascara de bits encapsulada
+clase Mascara:
+    funcion __iniciar__(yo, bits):
+        yo.bits = bits
+    fin funcion
+    funcion __tilde__(yo):
+        retornar Mascara(~yo.bits)
+    fin funcion
+fin clase
+
+m = Mascara(5)
+~m                         # Mascara(-6), dispatch a __tilde__
+
+# Vector con negacion
+clase Vector:
+    funcion __iniciar__(yo, x, y):
+        yo.x = x
+        yo.y = y
+    fin funcion
+    funcion __negar__(yo):
+        retornar Vector(-yo.x, -yo.y)
+    fin funcion
+fin clase
+
+v = Vector(3, -4)
+-v                         # Vector(-3, 4), dispatch a __negar__
+```
+
+### Implementación
+
+- **Nuevo opcode `OP_TILDE_BIT`** en `src/chunk.h`. Registrado en
+  `chunk.c` (nombre) y `debug.c` (desensamblador).
+- **Compilador** (`src/compilador.c`): caso `TT_TILDE_BIT` ahora
+  emite `OP_TILDE_BIT` en lugar de error.
+- **VM** (`src/vm.c`):
+  - `OP_NEGAR`: si TOS es `VAL_INSTANCIA` y la clase tiene
+    `__negar__`, despacha el dunder.
+  - `OP_TILDE_BIT`: handler nuevo. Si TOS es `VAL_INSTANCIA` y la
+    clase tiene `__tilde__`, despacha. Si no, delega en
+    `evaluador_aplicar_unario` con `TT_TILDE_BIT` (que ya
+    implementaba el complemento bit a bit via `mp_complement`).
+
+### Decisión: NO `ip--` tras dispatch del dunder
+
+Patrón distinto al de `OP_NO`: alli se decrementa `ip` para que
+el opcode se re-ejecute sobre el valor retornado por `__booleano__`
+(y aplique el `no`). Aquí no — `__negar__` y `__tilde__` ya
+retornan el valor final negado/complementado. Re-ejecutar provoca
+recursión infinita si el dunder devuelve otra instancia que tambien
+tiene el dunder (caso casi siempre cierto: `__tilde__` suele
+devolver otra Mascara). Patrón documentado in-line para el
+proximo dunder unario.
+
+### Limitaciones honestas
+
+- **`+x` (positivo unario)** sigue siendo no-op total para
+  instancias — no despacha `__positivo__`. Razón: en Cornamusa,
+  `+x` literal se compila a no-op (el comentario decía
+  "identidad numérica"). Para llamar a un dunder habría que emitir
+  un opcode dedicado. Bajo valor, postergado.
+- **El tree-walking** (motor de fallback, congelado desde v0.6)
+  todavía no llama a `__negar__`/`__tilde__`. Solo el bytecode lo
+  hace. Documentar — no se va a fixear porque tree-walking es de
+  referencia.
+
 ## [1.166.0] — 2026-06-07 — `producto(xs)` y `acumular(xs, op, inicial)`
 
 Dos primitivos funcionales que faltaban en `funcionales.cor` —
