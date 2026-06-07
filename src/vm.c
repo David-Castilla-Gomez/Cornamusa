@@ -5976,6 +5976,57 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         lista_agregar(l, valor_clonar(&src->elementos[i]));
                     }
                     valor_destruir(&it);
+                } else if (it.tipo == VAL_CONJUNTO) {
+                    /* v1.171: spread de conjunto — itera elementos. */
+                    Conjunto *src = it.como.conjunto;
+                    for (int i = 0; i < src->capacidad; i++) {
+                        if (!src->entradas[i].ocupada) continue;
+                        lista_agregar(l, valor_clonar(&src->entradas[i].elemento));
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_DICCIONARIO) {
+                    /* v1.171: spread de dicc — itera claves (paridad
+                       Python: `[*d]` da las claves). */
+                    Diccionario *src = it.como.dicc;
+                    for (int idx = 0; idx < src->cuenta; idx++) {
+                        int slot = src->orden_insercion[idx];
+                        lista_agregar(l, valor_clonar(&src->entradas[slot].clave));
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_CADENA) {
+                    /* v1.171: spread de cadena — itera code points como
+                       sub-cadenas de 1 caracter. */
+                    const char *s = it.como.cadena.texto;
+                    int sl = it.como.cadena.longitud;
+                    int p = 0;
+                    while (p < sl) {
+                        utf8proc_int32_t cp;
+                        utf8proc_ssize_t cons = utf8proc_iterate(
+                            (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+                        if (cons <= 0) { p++; continue; }
+                        lista_agregar(l, valor_cadena_duplicar(s + p, (int)cons));
+                        p += (int)cons;
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_RANGO) {
+                    /* v1.171: spread de rango — itera enteros. */
+                    mp_int idx, paso, fin;
+                    mp_init_multi(&idx, &paso, &fin, NULL);
+                    mp_copy(it.como.rango.inicio, &idx);
+                    mp_copy(it.como.rango.paso, &paso);
+                    mp_copy(it.como.rango.fin, &fin);
+                    int signo_paso = mp_isneg(&paso) == MP_YES ? -1 : 1;
+                    while (true) {
+                        int cmp = mp_cmp(&idx, &fin);
+                        if (signo_paso > 0 ? cmp != MP_LT : cmp != MP_GT) break;
+                        mp_int *copia = (mp_int *)malloc(sizeof(mp_int));
+                        if (!copia) break;
+                        mp_init(copia); mp_copy(&idx, copia);
+                        lista_agregar(l, valor_entero_de_mp_normalizado(copia));
+                        mp_add(&idx, &paso, &idx);
+                    }
+                    mp_clear_multi(&idx, &paso, &fin, NULL);
+                    valor_destruir(&it);
                 } else {
                     const char *tname = valor_nombre_tipo(&it);
                     VM_ERROR(

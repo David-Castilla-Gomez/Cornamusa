@@ -961,6 +961,21 @@ static bool parsear_comprehension_cola(Parser *p,
  * Parsea una lista literal `[a, b, c]`, `[]`, `[1]`, o una comprehension
  * `[expr para v en iter [si guarda]]`.
  */
+/* v1.171: helper para elementos de literal de lista/tupla/conjunto.
+ * Si el elemento empieza por '*', lo envuelve en EXPR_UNARIO con op
+ * TT_ASTERISCO. El compilador detecta este marcador para emitir
+ * OP_LISTA_EXTENDER en lugar de OP_LISTA_AGREGAR. */
+static Expr *parsear_elemento_con_spread(Parser *p) {
+    if (check(p, TT_ASTERISCO)) {
+        Token t = p->actual;
+        avanzar(p);
+        Expr *e = parsear_expresion(p);
+        if (!e) return NULL;
+        return expr_unario(p->arena, TT_ASTERISCO, e, t.linea, t.columna);
+    }
+    return parsear_expresion(p);
+}
+
 static Expr *parsear_lista_literal(Parser *p) {
     Token apertura = p->actual;
     avanzar(p); /* consume '[' */
@@ -972,13 +987,15 @@ static Expr *parsear_lista_literal(Parser *p) {
                             apertura.linea, apertura.columna);
     }
 
-    /* Parsear primer elemento. */
-    Expr *primero = parsear_expresion(p);
+    /* Parsear primer elemento. v1.171: soporta `*xs` spread. */
+    bool primero_es_spread = check(p, TT_ASTERISCO);
+    Expr *primero = parsear_elemento_con_spread(p);
     if (primero == NULL) return NULL;
 
-    /* v1.30: comprehension `[expr para ...]`.
+    /* v1.30: comprehension `[expr para ...]`. v1.171: si el primer
+     * elemento era spread, no es comprehension valida.
      * v1.132: soporta multiples para/si encadenados. */
-    if (check(p, TT_PARA)) {
+    if (!primero_es_spread && check(p, TT_PARA)) {
         const char *vn; int vl; Expr *iter; Expr *guarda;
         Expr *patron = NULL;
         struct ClausulaComp *extras; int n_extras;
@@ -1009,7 +1026,7 @@ static Expr *parsear_lista_literal(Parser *p) {
 
     while (consumir_si(p, TT_COMA)) {
         if (check(p, TT_CORCH_DER)) break; /* trailing comma */
-        Expr *e = parsear_expresion(p);
+        Expr *e = parsear_elemento_con_spread(p);
         if (e == NULL) return NULL;
         if (n >= cap) {
             cap *= 2;

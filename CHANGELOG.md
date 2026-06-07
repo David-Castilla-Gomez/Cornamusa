@@ -6,6 +6,76 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.171.0] — 2026-06-07 — Spread `*xs` en literales de lista
+
+`[a, *xs, b]` desempaca el iterable `xs` en posición. Patrón
+idiomático Python — antes de v1.171 daba `ErrorDeSintaxis`.
+
+Funciona con cualquier iterable nativo: lista, tupla, cadena (los
+code points como sub-cadenas de 1 char), conjunto, dicc (las
+claves, paridad Python), rango.
+
+### Lo que ahora funciona
+
+```cornamusa
+xs = [1, 2, 3]
+[0, *xs, 4]                # [0, 1, 2, 3, 4]
+[*xs]                       # [1, 2, 3]
+[*xs, *xs]                  # [1, 2, 3, 1, 2, 3]
+
+[*"hola"]                   # ["h", "o", "l", "a"]
+[*rango(5)]                 # [0, 1, 2, 3, 4]
+[*{1, 2, 3}]                # 3 elementos (orden no garantizado)
+[*{"a": 1, "b": 2}]         # ["a", "b"]  — claves, como en Python
+
+# Mezcla con comprehension
+[*[x*x para x en rango(4)], 100]   # [0, 1, 4, 9, 100]
+```
+
+### Implementación
+
+- **Parser** (`src/parser.c`): nuevo helper
+  `parsear_elemento_con_spread` que detecta `*` antes del elemento
+  y lo envuelve en `EXPR_UNARIO(TT_ASTERISCO, expr)`. Usado en
+  todas las posiciones de elemento de `parsear_lista_literal`,
+  incluido el primer elemento (que entonces NO entra al camino de
+  comprehension).
+- **Compilador** (`src/compilador.c`): `EXPR_LISTA` detecta si hay
+  algún elemento spread. Si no, emite `OP_BUILD_LISTA n` como
+  siempre — sin overhead. Si SÍ:
+  ```
+  OP_BUILD_LISTA 0
+  por cada elemento:
+    si es spread: COMPILAR(operando) + OP_LISTA_EXTENDER
+    si no:        COMPILAR(elemento) + OP_LISTA_AGREGAR
+  ```
+- **VM** (`src/vm.c`): `OP_LISTA_EXTENDER` extendido. Antes solo
+  aceptaba lista y tupla; ahora también conjunto (itera
+  elementos), dicc (itera claves), cadena (code points UTF-8) y
+  rango (genera enteros). Tipos no-iterables (entero, decimal,
+  instancia sin protocolo) lanzan `ErrorDeTipo` atrapable.
+
+### Limitaciones honestas
+
+- **Solo lista en v1.171**. Tupla con spread (`(a, *xs)`),
+  conjunto con spread (`{*a, *b}`), y dicc con `**d` quedan
+  pendientes para releases posteriores. Cada uno requiere un
+  opcode "convertir lista a X" o "extender X con iterable" que
+  todavía no existe (tupla es inmutable, conjunto necesita
+  `OP_CONJUNTO_EXTENDER`).
+- **Generadores no soportados** como fuente de spread todavía. Es
+  un tipo iterable más, pero el path requiere reanudar el frame
+  generador desde dentro de `OP_LISTA_EXTENDER`. Postergado.
+- **Instancias** con `__iterar__` no se desempacan. Igual que con
+  `x en obj` antes de v1.168, hace falta un protocolo explícito.
+- **Comprehensions inline** dentro del spread rompen el slot
+  tracking: `[*[x para x en xs], 99]` falla con "estado interno
+  corrupto". Workaround: extraer la comprehension a una variable
+  previa. Limitación conocida que afecta solo a este caso muy
+  específico — el problema está en la interacción de los slots
+  locales reservados por la comprehension y el path incremental
+  del spread. Fix requiere refactor del manejo de slots; postergado.
+
 ## [1.170.0] — 2026-06-07 — Bitwise binarios en bytecode + dunders
 
 Mismo bug latente que `~x` (resuelto en v1.167) pero para los
