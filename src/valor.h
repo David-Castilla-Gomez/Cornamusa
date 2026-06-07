@@ -286,6 +286,12 @@ void dicc_liberar(Diccionario *d);
    no son hashables. */
 bool valor_es_hashable(const Valor *v);
 
+/* v1.163: hash interno expuesto. Devuelve un uint64 FNV-1a-derivado
+ * sobre los bytes/identidad del valor. Misma funcion que usan dicc y
+ * conjunto para indexar. NO es criptografico — para eso usar
+ * stdlib/hashing.cor con sha256/etc. */
+uint64_t hash_valor(const Valor *v);
+
 /* ──────────────────────────────────────────────────────────────────
  * v1.42: hooks para despachar dunders desde valor.c sin acoplarse
  * con vm.h. La VM los registra al iniciarse (`vm_iniciar` →

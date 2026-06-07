@@ -3947,6 +3947,28 @@ static Valor nativa_repr(EvalError *err, int n_args, Valor *args,
     return valor_cadena_duplicar(buffer, n);
 }
 
+/* v1.163: hash(x) — expone el hash interno (mismo que usan dicc y
+ * conjunto). Devuelve un entero (puede ser negativo). No criptografico.
+ *
+ * Rechaza valores no hashables (listas, dicc, conjunto, lambdas con
+ * captura mutable). Para esos tipos el dict/set ya lanza ErrorDeTipo —
+ * hash() debe coincidir con esa semantica para que `hash(k)` y `d[k]`
+ * fallen al unisono. */
+static Valor nativa_hash(EvalError *err, int n_args, Valor *args,
+                          int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hash() requiere 1 argumento, recibio %d", n_args);
+    }
+    if (!valor_es_hashable(&args[0])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hash() no acepta valores de tipo %s (no hashable)",
+            valor_nombre_tipo(&args[0]));
+    }
+    uint64_t h = hash_valor(&args[0]);
+    return valor_entero_de_i64((int64_t)h);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Atributos dinamicos (v1.86): tiene_atributo, obtener_atributo,
  * asignar_atributo. Analogo a `hasattr`/`getattr`/`setattr` de Python.
@@ -7385,6 +7407,7 @@ static const EntradaNativa NATIVAS[] = {
     {"subclase_de",     11,  nativa_subclase_de},
     {"id",               2,  nativa_id},
     {"repr",             4,  nativa_repr},
+    {"hash",             4,  nativa_hash},                  /* v1.163 */
     /* Atributos dinamicos (v1.86). */
     {"tiene_atributo",   14, nativa_tiene_atributo},
     {"obtener_atributo", 16, nativa_obtener_atributo},

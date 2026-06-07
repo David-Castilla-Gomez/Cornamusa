@@ -6,6 +6,65 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.163.0] — 2026-06-07 — `hash(x)` nativa
+
+Expone el hash interno que ya usan dicc y conjunto para indexar
+sus claves. Mismo valor de hash para claves iguales — útil para
+estructuras tipo dicc/cache hechas a mano, particionado por hash
+en pipelines de datos, y debugging de colisiones.
+
+NO es criptográfico (FNV-1a sobre los bytes del valor). Para
+hashing seguro (firmas, integridad, contraseñas) sigue siendo
+obligado usar `stdlib/hashing.cor` con SHA-256.
+
+### Lo que ahora funciona
+
+```cornamusa
+hash(42)              # → -55488592825689361 (entero, puede ser negativo)
+hash("hola")          # → 4623503348185510199
+hash((1, "dos", 3.0)) # → 3875977664213108140
+hash(nulo)            # → 3735928559
+
+# Consistencia: misma clave → mismo hash
+hash("hola") == hash("hola")  # verdadero
+hash((1, 2)) == hash((1, 2))  # verdadero
+
+# Particionado por hash (sharding manual)
+funcion shard(clave, n):
+    retornar absoluto(hash(clave)) % n
+fin funcion
+```
+
+### Tipos hashables
+
+`entero` (incluido bignum), `decimal`, `cadena`, `booleano`,
+`nulo`, `tupla` de hashables. Las funciones, nativas, clases y
+módulos también son hashables (por identidad).
+
+Las `listas`, `dicc`, `conjunto` mutable lanzan `ErrorDeTipo`
+atrapable — coincide con la regla de que tampoco pueden ser
+claves de dict/set.
+
+### Implementación
+
+- `nativa_hash` en `src/nativos.c`: chequea `valor_es_hashable`,
+  llama a `hash_valor` y castea el `uint64_t` a `int64_t`. El bit
+  alto se conserva como signo — semántica idéntica a Python (el
+  hash puede ser negativo).
+- `hash_valor` en `src/valor.c` deja de ser `static` y se expone
+  en `valor.h`. La función ya existía y se usaba internamente; no
+  hay cambios de comportamiento — solo se hace pública.
+
+### Limitaciones honestas
+
+- El hash NO es estable entre versiones de Cornamusa. La función
+  puede cambiar; no usar para persistir índices en disco.
+- El hash NO es criptográfico. Es FNV-1a + bit-mixing — rápido
+  pero predecible. Para hash-flooding hostil no sirve.
+- Hash de instancias de clase ahora mismo es por identidad
+  (puntero). Soporte para `__hash__` user-defined está en el plan
+  pero no en esta release.
+
 ## [1.162.0] — 2026-06-07 — `cadena.sin_acentos()` Unicode
 
 Útil para slugs de URL, búsqueda tolerante a acentos, y

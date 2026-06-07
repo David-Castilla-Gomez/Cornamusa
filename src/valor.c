@@ -497,7 +497,7 @@ bool valor_dunder_hubo_error_y_limpiar(void) {
     return e;
 }
 
-static uint64_t hash_valor(const Valor *v) {
+uint64_t hash_valor(const Valor *v) {
     /* Camino rápido para numéricos que caben en int64. */
     int64_t n;
     if (valor_a_int64_si_cabe(v, &n)) {
