@@ -550,6 +550,31 @@ uint64_t hash_valor(const Valor *v) {
             }
             return h;
         }
+        case VAL_CONJUNTO: {
+            /* v1.164: hash de frozenset. XOR de los hashes individuales
+               para que sea orden-independiente (los elementos no tienen
+               orden definido). Mezclamos cada elemento con un multiplier
+               estilo Python frozenset_hash para reducir colisiones de
+               sub-conjuntos relacionados ({1,2} vs {2,1}). */
+            uint64_t h = 0;
+            const Conjunto *c = v->como.conjunto;
+            for (int i = 0; i < c->capacidad; i++) {
+                if (!c->entradas[i].ocupada) continue;
+                uint64_t eh = hash_valor(&c->entradas[i].elemento);
+                /* Bit-mix para descorrelacionar elementos vecinos antes
+                   del XOR. */
+                eh ^= (eh >> 16);
+                eh *= 0x21f0aaad;
+                eh ^= (eh >> 15);
+                eh *= 0xd35a2d97;
+                eh ^= (eh >> 15);
+                h ^= eh;
+            }
+            /* Mezclar el conteo para que conj vacio y conj con un solo
+               elemento de hash 0 no colisionen. */
+            h ^= (uint64_t)c->cuenta * 1099511628211ULL;
+            return h;
+        }
         case VAL_INSTANCIA: {
             /* v1.42: si la clase define `__hash__`, despachamos el
                dunder (vía hook hacia la VM) la primera vez y cacheamos.
@@ -592,9 +617,19 @@ uint64_t hash_valor(const Valor *v) {
 bool valor_es_hashable(const Valor *v) {
     if (v == NULL) return false;
     switch (v->tipo) {
+        case VAL_CONJUNTO:
+            /* v1.164: conjunto congelado (frozenset) es hashable si
+               todos sus elementos lo son. Conjunto mutable nunca. */
+            if (!v->como.conjunto->congelado) return false;
+            for (int i = 0; i < v->como.conjunto->capacidad; i++) {
+                if (!v->como.conjunto->entradas[i].ocupada) continue;
+                if (!valor_es_hashable(&v->como.conjunto->entradas[i].elemento)) {
+                    return false;
+                }
+            }
+            return true;
         case VAL_LISTA:
         case VAL_DICCIONARIO:
-        case VAL_CONJUNTO:
         case VAL_RANGO:
         case VAL_ITERADOR:
         case VAL_PLANTILLA_BC:
@@ -895,6 +930,7 @@ Conjunto *conj_nuevo(void) {
     c->cuenta = 0;
     c->capacidad = DICC_CAPACIDAD_INICIAL;
     c->refcount = 1;
+    c->congelado = false;
     return c;
 }
 
@@ -2597,6 +2633,38 @@ int valor_a_cadena(const Valor *v, char *buffer, int capacidad) {
         }
         case VAL_CONJUNTO: {
             const Conjunto *c = v->como.conjunto;
+            /* v1.164: frozenset usa `conjunto_fijo({...})` para
+               distinguir del mutable; el vacio es `conjunto_fijo()`. */
+            if (c->congelado) {
+                if (c->cuenta == 0) {
+                    n = snprintf(buffer, (size_t)capacidad, "conjunto_fijo()");
+                    break;
+                }
+                int escritos = snprintf(buffer, (size_t)capacidad,
+                                         "conjunto_fijo({");
+                if (escritos < 0 || escritos >= capacidad) { n = capacidad - 1; break; }
+                int impreso = 0;
+                for (int i = 0; i < c->capacidad; i++) {
+                    if (!c->entradas[i].ocupada) continue;
+                    if (escritos + 3 >= capacidad) break;
+                    if (impreso > 0) {
+                        buffer[escritos++] = ',';
+                        buffer[escritos++] = ' ';
+                    }
+                    int restante = capacidad - escritos;
+                    int we = valor_a_repr(&c->entradas[i].elemento,
+                                           buffer + escritos, restante);
+                    escritos += we;
+                    impreso++;
+                }
+                if (escritos + 1 < capacidad) {
+                    buffer[escritos++] = '}';
+                    buffer[escritos++] = ')';
+                }
+                buffer[escritos < capacidad ? escritos : capacidad - 1] = '\0';
+                n = escritos < capacidad ? escritos : capacidad - 1;
+                break;
+            }
             /* Conjunto vacío: imprimir como `conjunto()` para distinguir
                de `{}` (diccionario vacío). Conjuntos no vacíos se
                representan como `{a, b, c}`. */

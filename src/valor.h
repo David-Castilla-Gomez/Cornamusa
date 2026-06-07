@@ -370,6 +370,8 @@ struct Conjunto {
     int cuenta;
     int capacidad;
     int refcount;
+    bool congelado;         /* v1.164: si true, mutadores fallan y el
+                               conjunto es hashable (frozenset Python). */
 };
 
 Conjunto *conj_nuevo(void);

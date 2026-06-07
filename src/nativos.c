@@ -1038,6 +1038,15 @@ static bool indice_a_long_natural(const Valor *v, long *out, int total) {
     return true;
 }
 
+/* v1.164: helper compartido — rechazar mutaciones sobre un conjunto
+ * congelado (frozenset). Se inserta al inicio de cada mutador. */
+static inline Valor error_conjunto_congelado(EvalError *err, int linea,
+                                              int columna, const char *metodo) {
+    return error_nativa(err, linea, columna,
+        "ErrorDeTipo: %s() no se puede usar en un conjunto congelado",
+        metodo);
+}
+
 /*
  * agregar(lista|conjunto, x) — añade x al final (lista) o como nuevo
  * elemento (conjunto, deduplicado). Devuelve nulo.
@@ -1056,6 +1065,9 @@ static Valor nativa_agregar(EvalError *err, int n_args, Valor *args,
         return valor_nulo();
     }
     if (args[0].tipo == VAL_CONJUNTO) {
+        if (args[0].como.conjunto->congelado) {
+            return error_conjunto_congelado(err, linea, columna, "agregar");
+        }
         if (!valor_es_hashable(&args[1])) {
             return error_nativa(err, linea, columna,
                 "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
@@ -1111,6 +1123,9 @@ static Valor nativa_quitar(EvalError *err, int n_args, Valor *args,
         if (n_args != 2) {
             return error_nativa(err, linea, columna,
                 "ErrorDeTipo: quitar(conjunto, elemento) requiere 2 argumentos");
+        }
+        if (args[0].como.conjunto->congelado) {
+            return error_conjunto_congelado(err, linea, columna, "quitar");
         }
         if (!valor_es_hashable(&args[1])) {
             return error_nativa(err, linea, columna,
@@ -3969,6 +3984,89 @@ static Valor nativa_hash(EvalError *err, int n_args, Valor *args,
     return valor_entero_de_i64((int64_t)h);
 }
 
+/* v1.164: congelar(s) — devuelve un conjunto inmutable y hashable
+ * con los mismos elementos. El original NO se modifica (paridad con
+ * Python `frozenset()`). Si `s` ya es un frozenset, retorna una nueva
+ * copia frozen (no devuelve el mismo objeto para evitar aliasing).
+ *
+ * Acepta tambien iterables (lista, tupla, cadena, rango, dicc — sobre
+ * las claves) — equivalente a congelar(conjunto(it)) en una sola
+ * llamada. */
+static Valor nativa_congelar(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: congelar() requiere 1 argumento, recibio %d", n_args);
+    }
+    Conjunto *nuevo = conj_nuevo();
+    if (!nuevo) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    const Valor *it = &args[0];
+    if (it->tipo == VAL_CONJUNTO) {
+        Conjunto *src = it->como.conjunto;
+        for (int i = 0; i < src->capacidad; i++) {
+            const EntradaConjunto *e = &src->entradas[i];
+            if (!e->ocupada) continue;
+            if (!conj_agregar(nuevo, valor_clonar(&e->elemento))) {
+                conj_liberar(nuevo);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+        }
+    } else if (it->tipo == VAL_LISTA) {
+        Lista *l = it->como.lista;
+        for (int i = 0; i < l->cuenta; i++) {
+            if (!valor_es_hashable(&l->elementos[i])) {
+                conj_liberar(nuevo);
+                return error_nativa(err, linea, columna,
+                    "ErrorDeTipo: '%s' no es hashable",
+                    valor_nombre_tipo(&l->elementos[i]));
+            }
+            if (!conj_agregar(nuevo, valor_clonar(&l->elementos[i]))) {
+                conj_liberar(nuevo);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+        }
+    } else if (it->tipo == VAL_TUPLA) {
+        Tupla *t = it->como.tupla;
+        for (int i = 0; i < t->cuenta; i++) {
+            if (!valor_es_hashable(&t->elementos[i])) {
+                conj_liberar(nuevo);
+                return error_nativa(err, linea, columna,
+                    "ErrorDeTipo: '%s' no es hashable",
+                    valor_nombre_tipo(&t->elementos[i]));
+            }
+            if (!conj_agregar(nuevo, valor_clonar(&t->elementos[i]))) {
+                conj_liberar(nuevo);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+        }
+    } else if (it->tipo == VAL_CADENA) {
+        const char *s = it->como.cadena.texto;
+        int sl = it->como.cadena.longitud;
+        int p = 0;
+        while (p < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+            if (cons <= 0) { p++; continue; }
+            Valor cv = valor_cadena_duplicar(s + p, (int)cons);
+            if (!conj_agregar(nuevo, cv)) {
+                conj_liberar(nuevo);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            p += (int)cons;
+        }
+    } else {
+        conj_liberar(nuevo);
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: congelar() requiere un iterable (conjunto/lista/tupla/cadena), no '%s'",
+            valor_nombre_tipo(it));
+    }
+    nuevo->congelado = true;
+    return valor_conjunto(nuevo);
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Atributos dinamicos (v1.86): tiene_atributo, obtener_atributo,
  * asignar_atributo. Analogo a `hasattr`/`getattr`/`setattr` de Python.
@@ -6502,6 +6600,9 @@ static Valor nativa_conjunto_vaciar(EvalError *err, int n_args, Valor *args,
             "ErrorDeTipo: vaciar() requiere un conjunto, no '%s'",
             valor_nombre_tipo(&args[0]));
     }
+    if (args[0].como.conjunto->congelado) {
+        return error_conjunto_congelado(err, linea, columna, "vaciar");
+    }
     Conjunto *c = args[0].como.conjunto;
     for (int i = 0; i < c->capacidad; i++) {
         EntradaConjunto *e = &c->entradas[i];
@@ -6527,6 +6628,9 @@ static Valor nativa_conjunto_actualizar(EvalError *err, int n_args, Valor *args,
         return error_nativa(err, linea, columna,
             "ErrorDeTipo: actualizar() requiere un conjunto como receptor, no '%s'",
             valor_nombre_tipo(&args[0]));
+    }
+    if (args[0].como.conjunto->congelado) {
+        return error_conjunto_congelado(err, linea, columna, "actualizar");
     }
     Conjunto *dst = args[0].como.conjunto;
     const Valor *it = &args[1];
@@ -6613,6 +6717,9 @@ static Valor nativa_conjunto_descartar(EvalError *err, int n_args, Valor *args,
         return error_nativa(err, linea, columna,
             "ErrorDeTipo: descartar() requiere un conjunto, no '%s'",
             valor_nombre_tipo(&args[0]));
+    }
+    if (args[0].como.conjunto->congelado) {
+        return error_conjunto_congelado(err, linea, columna, "descartar");
     }
     if (!valor_es_hashable(&args[1])) {
         return error_nativa(err, linea, columna,
@@ -7408,6 +7515,7 @@ static const EntradaNativa NATIVAS[] = {
     {"id",               2,  nativa_id},
     {"repr",             4,  nativa_repr},
     {"hash",             4,  nativa_hash},                  /* v1.163 */
+    {"congelar",         8,  nativa_congelar},              /* v1.164 */
     /* Atributos dinamicos (v1.86). */
     {"tiene_atributo",   14, nativa_tiene_atributo},
     {"obtener_atributo", 16, nativa_obtener_atributo},

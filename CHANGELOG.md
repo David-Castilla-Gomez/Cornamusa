@@ -6,6 +6,75 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.164.0] — 2026-06-07 — `congelar(s)` (frozenset)
+
+Complemento natural de [v1.163]: `hash(x)` ya expuso el hash, pero
+los conjuntos seguían sin ser hashables. `congelar(s)` devuelve un
+conjunto inmutable y hashable — el `frozenset` de Python.
+
+### Lo que ahora funciona
+
+```cornamusa
+f = congelar({1, 2, 3})
+hash(f)              # entero — frozen es hashable
+f.agregar(4)         # ErrorDeTipo: agregar() no se puede usar en un conjunto congelado
+
+# Frozen como clave de dicc
+d = {}
+d[congelar({1, 2})] = "ab"
+d[congelar({3, 4})] = "cd"
+imprimir(d[congelar({1, 2})])  # "ab"
+
+# Conjuntos de conjuntos (los exteriores tienen que ser frozen)
+familias = {congelar({1, 2}), congelar({3, 4}), congelar({1, 2})}
+imprimir(longitud(familias))  # 2 — el duplicado se descarta
+
+# congelar acepta cualquier iterable
+congelar([1, 2, 2, 3])    # conjunto_fijo({1, 2, 3})
+congelar("hola")           # conjunto_fijo({h, o, l, a})
+congelar((1, 2, 3))        # conjunto_fijo({1, 2, 3})
+```
+
+### Implementación
+
+- **Campo `congelado` en `struct Conjunto`** (`src/valor.h`). Por
+  defecto `false`. `conj_nuevo()` lo inicializa.
+- **`valor_es_hashable`** (`src/valor.c`) ahora retorna `true` para
+  un conjunto si `congelado` y todos sus elementos son hashables.
+- **`hash_valor`** para `VAL_CONJUNTO` (frozen): XOR de los hashes
+  individuales, con bit-mixing por elemento antes del XOR para
+  descorrelacionar y reducir colisiones de sub-conjuntos
+  relacionados. Mezcla del conteo al final para distinguir el
+  vacío del singleton-hash-0. Esto hace el hash
+  **orden-independiente** — `congelar([1, 2])` y `congelar([2, 1])`
+  hashean al mismo valor.
+- **Mutadores bloqueados** (`agregar`, `quitar`, `descartar`,
+  `vaciar`, `actualizar`): cada uno chequea `congelado` al inicio
+  y devuelve `ErrorDeTipo` atrapable. Helper compartido
+  `error_conjunto_congelado()`.
+- **`nativa_congelar`** (`src/nativos.c`): construye un conjunto
+  nuevo (copia), itera el argumento (conjunto/lista/tupla/cadena),
+  marca `congelado = true` y lo devuelve. El argumento NO se muta
+  — congelar es un constructor, no una mutación in-place.
+- **`repr` distintivo**: `conjunto_fijo({1, 2})` para no
+  confundirlo con un mutable. El vacío es `conjunto_fijo()`.
+
+### Limitaciones honestas
+
+- No hay sintaxis literal para frozenset (no existe `{|1, 2|}` ni
+  similar). Siempre hay que usar `congelar(...)`. Decisión
+  consciente: añadir sintaxis nueva por una construcción
+  poco frecuente complica el lexer sin gran beneficio.
+- `congelar` SIEMPRE hace una copia. Para un conjunto con muchos
+  elementos, esto puede ser sorprendentemente costoso. No hay
+  optimización "ya está congelado, te lo devuelvo igual" porque
+  podría causar aliasing si el caller modifica el original
+  esperando que el frozen sea independiente.
+- Las operaciones de conjunto (`union`, `interseccion`,
+  `diferencia`) sobre un frozenset devuelven un **conjunto
+  mutable**, no otro frozen. Si necesitas el resultado frozen,
+  envuélvelo: `congelar(f1.union(f2))`.
+
 ## [1.163.0] — 2026-06-07 — `hash(x)` nativa
 
 Expone el hash interno que ya usan dicc y conjunto para indexar
