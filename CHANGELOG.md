@@ -6,6 +6,70 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.166.0] — 2026-06-07 — `producto(xs)` y `acumular(xs, op, inicial)`
+
+Dos primitivos funcionales que faltaban en `funcionales.cor` —
+visibles en cuanto pasas de "sumar una lista" a cualquier
+estadística acumulativa.
+
+### Lo que ahora funciona
+
+```cornamusa
+importar funcionales
+
+# producto: dual aritmetico de suma
+funcionales.producto([2, 3, 4])           # 24
+funcionales.producto(rango(1, 11))         # 3628800 (10!)
+funcionales.producto(rango(1, 21))         # bignum (20!)
+funcionales.producto([])                   # 1 (identidad)
+funcionales.producto([2.5, 4.0])           # 10.0
+
+# acumular: sumas parciales / running totals
+funcionales.acumular([1, 2, 3, 4])                 # [1, 3, 6, 10]
+funcionales.acumular([1, 2, 3, 4], inicial=100)    # [101, 103, 106, 110]
+
+# Con operador custom — paridad con itertools.accumulate(func=...)
+funcionales.acumular([2, 3, 4], op=lambda a, b: a * b)
+# [2, 6, 24]  — factoriales parciales
+
+# Maximo acumulado (high-water mark)
+funcion mayor(a, b):
+    si a > b: retornar a sino: retornar b fin si
+fin funcion
+funcionales.acumular([3, 1, 4, 1, 5, 9, 2], op=mayor)
+# [3, 3, 4, 4, 5, 9, 9]
+
+# Iterable vacio devuelve lista vacia, sin error
+funcionales.acumular([])  # []
+```
+
+### Implementación
+
+- **`producto(xs, inicial=1)`**: bucle simple `p = p * x`. La
+  identidad multiplicativa (1) significa que `producto([])` es 1,
+  no error — paridad con `math.prod([])` de Python.
+- **`acumular(xs, op=nulo, inicial=nulo)`**: con `op=nulo` usa el
+  operador `+` directo (despachado por la VM, asi que soporta
+  enteros, decimales, bignum y cualquier dunder `__sumar__`). Con
+  `inicial=nulo`, el primer elemento del iterable es la semilla y
+  el resultado empieza por el. Con `inicial` no-nulo, el primer
+  resultado es `op(inicial, xs[0])` y la lista tiene la misma
+  longitud que el iterable.
+
+### Por que es util
+
+- **Prefijos** para queries de subrango O(1).
+- **Balances acumulados** en pipelines financieros / contables.
+- **Gráficas acumuladas** (Pareto, distribución).
+- **High-water marks** con `op=max`.
+
+### Limitaciones
+
+- Devuelve siempre una **lista materializada**. No hay version
+  generador lazy. Para `acumular` sobre iterables infinitos (poco
+  comun en Cornamusa) habria que esperar al equivalente
+  generador-de.
+
 ## [1.165.0] — 2026-06-07 — `copia(x)` y `copia_profunda(x)`
 
 Faltaba un built-in genérico para clonar contenedores mutables.

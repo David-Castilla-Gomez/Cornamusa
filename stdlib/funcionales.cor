@@ -106,6 +106,60 @@ funcion suma(xs, inicial=0):
     retornar total
 fin funcion
 
+# v1.166: producto multiplicativo de los elementos. Dual aritmetico
+# de `suma`. Por defecto inicia en 1 — para producto vacio devuelve
+# el `inicial`, que es la identidad multiplicativa.
+#
+# Funciona para enteros (incluido bignum), decimales y cualquier
+# clase con `__multiplicar__`.
+#
+#   producto([2, 3, 4])           # 24
+#   producto([2.5, 4.0])           # 10.0
+#   producto([], inicial=1)        # 1
+#   producto(rango(1, 11))         # 3628800 (10!)
+funcion producto(xs, inicial=1):
+    p = inicial
+    para x en xs:
+        p = p * x
+    fin para
+    retornar p
+fin funcion
+
+# v1.166: sumas parciales / running totals. Devuelve una lista con
+# el resultado intermedio tras combinar cada elemento.
+#
+#   acumular([1, 2, 3, 4])               # [1, 3, 6, 10]
+#   acumular([1, 2, 3, 4], inicial=100)  # [101, 103, 106, 110]
+#   acumular([2, 3, 4], op=lambda a, b: a * b)  # [2, 6, 24]
+#
+# Paralelo de `itertools.accumulate` (Python). `op` por defecto es
+# `+`. Si `inicial=nulo`, el primer elemento del iterable se usa
+# como semilla y aparece como primer elemento del resultado. Si se
+# pasa `inicial`, el primer resultado es `op(inicial, xs[0])` y la
+# lista tiene la misma longitud que `xs` (no incluye `inicial`).
+#
+# Util para arrays de prefijos, balances acumulados, graficas, etc.
+funcion acumular(xs, op=nulo, inicial=nulo):
+    resultado = []
+    acc = inicial
+    primero = verdadero
+    para x en xs:
+        si primero y acc == nulo:
+            acc = x
+            primero = falso
+        sino:
+            si op == nulo:
+                acc = acc + x
+            sino:
+                acc = op(acc, x)
+            fin si
+            primero = falso
+        fin si
+        agregar(resultado, acc)
+    fin para
+    retornar resultado
+fin funcion
+
 # Mínimo y máximo de un iterable no vacío. ErrorDeValor si está vacío.
 #
 # v1.144: parámetro opcional `clave` para extraer la magnitud que se
