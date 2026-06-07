@@ -2695,6 +2695,28 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                    que ambos sean enteros (incluyendo SMALL). */
                 bool ambos_int = (valor_es_entero(&vm->tope[-1])
                                   && valor_es_entero(&vm->tope[-2]));
+                /* v1.168: `x en obj` con obj instancia + __contiene__.
+                   Receptor es DERECHO (obj), no izquierdo como el resto
+                   de binarios. Swapeamos antes de despachar para que
+                   ejecutar_dunder_binario vea (obj, x) en su orden
+                   habitual. El dunder retorna booleano. */
+                if ((OpCode)op == OP_EN
+                    && vm->tope[-1].tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        vm->tope[-1].como.instancia->clase,
+                        "__contiene__", 12);
+                    if (m) {
+                        Valor tmp = vm->tope[-1];
+                        vm->tope[-1] = vm->tope[-2];
+                        vm->tope[-2] = tmp;
+                        if (ejecutar_dunder_binario(vm, &frame, m,
+                                                      "__contiene__", 12)
+                            != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
                 /* v1.2: si el operando izquierdo es VAL_INSTANCIA y su
                    clase define el dunder correspondiente, despachamos
                    a `__sumar__`/`__restar__`/etc. preparando un frame

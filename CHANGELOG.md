@@ -6,6 +6,72 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.168.0] — 2026-06-07 — `__contiene__` dunder para `x en obj`
+
+Tercer dunder de la trilogía de v1.167-168 (unarios + membership).
+Antes, `x en instancia` siempre fallaba con `ErrorDeTipo` porque
+OP_EN solo soportaba los tipos colectivos (lista, tupla, cadena,
+dicc, conjunto, rango). Ahora las clases que definan
+`__contiene__(yo, x)` participan del operador `en`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Conjunto definido por predicado (sin materializar)
+clase Pares:
+    funcion __iniciar__(yo, limite):
+        yo.limite = limite
+    fin funcion
+    funcion __contiene__(yo, n):
+        retornar n % 2 == 0 y n >= 0 y n <= yo.limite
+    fin funcion
+fin clase
+
+p = Pares(10)
+4 en p       # verdadero
+5 en p       # falso
+12 en p      # falso (fuera de limite)
+
+# Componer con `no`, `y`, `o`
+no (5 en p)            # verdadero
+3 en a y 3 en b         # interseccion de conjuntos abstractos
+
+# En condicional
+para i en rango(10):
+    si i en tres_modulo:
+        imprimir(i)
+    fin si
+fin para
+```
+
+### Implementación
+
+- **VM** (`src/vm.c`): caso especial **antes** del dispatch normal
+  de operadores binarios. A diferencia de `__sumar__`, `__menor__`,
+  etc., el receptor de `__contiene__` es el operando DERECHO
+  (`obj`), no el izquierdo (`x`) — paridad con Python:
+  `x in obj` → `obj.__contains__(x)`.
+- Swap de los dos topes del stack y luego se llama a
+  `ejecutar_dunder_binario` que ya espera receptor en `[-2]`,
+  argumento en `[-1]`. Un swap es más simple que un helper
+  especializado.
+- Si la clase NO define `__contiene__`, el dispatch cae al camino
+  normal — que rechaza el tipo instancia con `ErrorDeTipo`. Esto
+  es deliberado: si quieres que `x en miobj` funcione, el contrato
+  es definir el dunder explícitamente (igual que para operadores
+  aritméticos).
+
+### Limitaciones honestas
+
+- **No hay fallback automático a iteración**. Si una clase define
+  `__iterar__` (puede iterarse) pero NO `__contiene__`, `x en obj`
+  todavía falla. Python implementa el fallback: itera y compara con
+  `==`. Cornamusa lo deja explícito por ahora — pasarlo a iter es
+  trivial pero esconde un coste O(n) tras una sintaxis O(1)-looking.
+- **El dunder debe devolver booleano** — no se chequea, así que un
+  retorno no-booleano se acepta y participa en la expresión normal.
+  Convención, no contrato runtime.
+
 ## [1.167.0] — 2026-06-07 — `~x` con variables y dunders unarios
 
 Dos huecos pequeños pero notorios:
