@@ -88,6 +88,11 @@ typedef enum {
     OP_NEGAR,           /* unario -x */
     OP_TILDE_BIT,       /* unario ~x (v1.167) */
     OP_POSITIVO,        /* unario +x: no-op excepto __positivo__ (v1.169) */
+    OP_BIT_Y,           /* binario & (v1.170) */
+    OP_BIT_O,           /* binario | (v1.170) */
+    OP_BIT_XOR,         /* binario ^ (v1.170) */
+    OP_DESPL_IZQ,       /* binario << (v1.170) */
+    OP_DESPL_DER,       /* binario >> (v1.170) */
 
     /* ---- Comparación / lógica ---- */
     OP_NO,              /* unario `no x` */

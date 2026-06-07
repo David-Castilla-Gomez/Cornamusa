@@ -127,6 +127,11 @@ static int opcode_a_token_binario(OpCode op) {
         case OP_MAYOR_IGUAL:     return TT_MAYOR_IGUAL;
         case OP_ES:              return TT_ES;
         case OP_EN:              return TT_EN;
+        case OP_BIT_Y:           return TT_AMPERSAND;   /* v1.170 */
+        case OP_BIT_O:           return TT_BARRA_VERT;  /* v1.170 */
+        case OP_BIT_XOR:         return TT_CIRCUNFLEJO; /* v1.170 */
+        case OP_DESPL_IZQ:       return TT_DESPL_IZQ;   /* v1.170 */
+        case OP_DESPL_DER:       return TT_DESPL_DER;   /* v1.170 */
         default:                 return -1;
     }
 }
@@ -2053,6 +2058,12 @@ static const char *dunder_para_op_binario(OpCode op) {
         case OP_MENOR_IGUAL:     return "__menor_igual__";
         case OP_MAYOR:           return "__mayor__";
         case OP_MAYOR_IGUAL:     return "__mayor_igual__";
+        /* v1.170 */
+        case OP_BIT_Y:           return "__bit_y__";
+        case OP_BIT_O:           return "__bit_o__";
+        case OP_BIT_XOR:         return "__bit_xor__";
+        case OP_DESPL_IZQ:       return "__despl_izq__";
+        case OP_DESPL_DER:       return "__despl_der__";
         default: return NULL;
     }
 }
@@ -2686,7 +2697,10 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
             case OP_IGUAL: case OP_DISTINTO:
             case OP_MENOR: case OP_MENOR_IGUAL:
             case OP_MAYOR: case OP_MAYOR_IGUAL:
-            case OP_ES: case OP_EN: {
+            case OP_ES: case OP_EN:
+            /* v1.170: bitwise binarios — mismo dispatch genérico. */
+            case OP_BIT_Y: case OP_BIT_O: case OP_BIT_XOR:
+            case OP_DESPL_IZQ: case OP_DESPL_DER: {
                 const uint8_t *opcode_addr = frame->ip - 1;
                 int linea = linea_actual_frame(frame);
                 /* Capturar tipos antes de sacar (evaluador_aplicar_binario

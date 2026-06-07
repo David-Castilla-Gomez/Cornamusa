@@ -27,6 +27,11 @@ const char *opcode_nombre(OpCode op) {
         case OP_NEGAR:           return "OP_NEGAR";
         case OP_TILDE_BIT:       return "OP_TILDE_BIT";
         case OP_POSITIVO:        return "OP_POSITIVO";
+        case OP_BIT_Y:           return "OP_BIT_Y";
+        case OP_BIT_O:           return "OP_BIT_O";
+        case OP_BIT_XOR:         return "OP_BIT_XOR";
+        case OP_DESPL_IZQ:       return "OP_DESPL_IZQ";
+        case OP_DESPL_DER:       return "OP_DESPL_DER";
         case OP_NO:              return "OP_NO";
         case OP_IGUAL:           return "OP_IGUAL";
         case OP_DISTINTO:        return "OP_DISTINTO";

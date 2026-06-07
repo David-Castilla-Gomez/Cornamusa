@@ -128,6 +128,11 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_NEGAR:           return instruccion_simple("OP_NEGAR", offset, out);
         case OP_TILDE_BIT:       return instruccion_simple("OP_TILDE_BIT", offset, out);
         case OP_POSITIVO:        return instruccion_simple("OP_POSITIVO", offset, out);
+        case OP_BIT_Y:           return instruccion_simple("OP_BIT_Y", offset, out);
+        case OP_BIT_O:           return instruccion_simple("OP_BIT_O", offset, out);
+        case OP_BIT_XOR:         return instruccion_simple("OP_BIT_XOR", offset, out);
+        case OP_DESPL_IZQ:       return instruccion_simple("OP_DESPL_IZQ", offset, out);
+        case OP_DESPL_DER:       return instruccion_simple("OP_DESPL_DER", offset, out);
 
         case OP_NO:              return instruccion_simple("OP_NO", offset, out);
         case OP_IGUAL:           return instruccion_simple("OP_IGUAL", offset, out);

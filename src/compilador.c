@@ -304,6 +304,11 @@ static int token_a_opcode_binario(TipoToken op) {
         case TT_MAYOR_IGUAL:     return OP_MAYOR_IGUAL;
         case TT_ES:              return OP_ES;
         case TT_EN:              return OP_EN;
+        case TT_AMPERSAND:       return OP_BIT_Y;     /* v1.170 */
+        case TT_BARRA_VERT:      return OP_BIT_O;     /* v1.170 */
+        case TT_CIRCUNFLEJO:     return OP_BIT_XOR;   /* v1.170 */
+        case TT_DESPL_IZQ:       return OP_DESPL_IZQ; /* v1.170 */
+        case TT_DESPL_DER:       return OP_DESPL_DER; /* v1.170 */
         default:                 return -1;
     }
 }

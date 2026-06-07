@@ -6,6 +6,83 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.170.0] — 2026-06-07 — Bitwise binarios en bytecode + dunders
+
+Mismo bug latente que `~x` (resuelto en v1.167) pero para los
+binarios. Los cinco operadores bitwise (`&`, `|`, `^`, `<<`, `>>`)
+funcionaban con literales por constant folding pero fallaban en
+bytecode con variables: "operador binario no soportado en bytecode
+v0.6 sesion 2".
+
+Aprovechando la corrección añadimos dunders correspondientes para
+instancias — paridad con la familia aritmética (`__sumar__`, etc.).
+
+### Lo que ahora funciona
+
+```cornamusa
+# Antes: error. Ahora: 8
+a = 12
+b = 10
+imprimir(a & b)
+imprimir(a | b)
+imprimir(a ^ b)
+imprimir(a << 2)
+imprimir(a >> 1)
+
+# Funciona con bignum
+n = 10**40
+n & 0xFF        # mascara baja, devuelve los ultimos 8 bits como entero
+
+# Instancias con dunders bitwise
+clase Bits:
+    funcion __iniciar__(yo, n):
+        yo.n = n
+    fin funcion
+    funcion __bit_y__(yo, otro):
+        retornar Bits(yo.n & otro.n)
+    fin funcion
+    funcion __despl_izq__(yo, otro):
+        retornar Bits(yo.n << otro)
+    fin funcion
+fin clase
+
+Bits(12) & Bits(10)    # Bits(8)
+Bits(3) << 4           # Bits(48)
+```
+
+### Implementación
+
+- **5 opcodes nuevos** en `src/chunk.h`: `OP_BIT_Y`, `OP_BIT_O`,
+  `OP_BIT_XOR`, `OP_DESPL_IZQ`, `OP_DESPL_DER`. Registrados en
+  `chunk.c` y `debug.c`.
+- **`token_a_opcode_binario`** (`src/compilador.c`) ahora mapea
+  `TT_AMPERSAND`, `TT_BARRA_VERT`, `TT_CIRCUNFLEJO`, `TT_DESPL_IZQ`,
+  `TT_DESPL_DER` a sus opcodes. Antes devolvía `-1` y dispararía
+  el error "operador binario no soportado".
+- **VM** (`src/vm.c`): los 5 opcodes caen en el mismo switch que
+  los aritméticos — comparten el dispatch genérico que ya maneja
+  fast-path enteros, dispatch a dunder en `VAL_INSTANCIA`, y
+  fallback al evaluador.
+- **`opcode_a_token_binario`** y **`dunder_para_op_binario`** se
+  extienden con los 5 nuevos casos. Los dunders son `__bit_y__`,
+  `__bit_o__`, `__bit_xor__`, `__despl_izq__`, `__despl_der__`.
+
+### Decisión: NO dunders reflejados para bitwise
+
+Los aritméticos tienen `__sumar_derecho__`, `__restar_derecho__`,
+etc., para permitir `5 + V(...)` cuando V tiene la lógica. Para
+bitwise NO los añadimos: el caso de uso es marginal (`5 & V(...)`
+es raro fuera de aritmética modular) y el patrón se puede modelar
+con un wrapper. Si surge la demanda, ampliar es trivial.
+
+### Limitaciones
+
+- **Constant folding** sigue activo: `0b1100 & 0b1010` se resuelve
+  en compilación. Si el folding falla (overflow, tipo no plegable),
+  cae al opcode. Comportamiento transparente.
+- **Tree-walking** (motor de referencia congelado) ya soportaba
+  los bitwise via `evaluador_aplicar_binario`. No hay cambio ahí.
+
 ## [1.169.0] — 2026-06-07 — `__positivo__` dunder y `OP_POSITIVO`
 
 Cierra la trilogía de unarios sobre instancias: v1.167 trajo
