@@ -2983,6 +2983,27 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 empujar(vm, r);
                 break;
             }
+            case OP_POSITIVO: {
+                /* v1.169: `+x`. Para instancias con `__positivo__`,
+                 * despacha el dunder. Para todo lo demas (entero,
+                 * decimal, etc.) es NO-OP: el valor ya esta en el tope.
+                 * Sin ip-- (ver OP_NEGAR/OP_TILDE_BIT). */
+                const Valor *tope_peek = vm->tope - 1;
+                if (tope_peek->tipo == VAL_INSTANCIA) {
+                    Closure *m = clase_obtener_metodo(
+                        tope_peek->como.instancia->clase,
+                        "__positivo__", 12);
+                    if (m) {
+                        if (ejecutar_dunder_unario(vm, &frame, m,
+                                                     "__positivo__", 12) != VM_OK) {
+                            return VM_ERROR_RUNTIME;
+                        }
+                        break;
+                    }
+                }
+                /* No-op: el valor ya esta en tope. */
+                break;
+            }
             case OP_TILDE_BIT: {
                 /* v1.167: unario ~x. Para instancias, despacha `__tilde__`.
                  * Para enteros/booleanos delega en evaluador_aplicar_unario

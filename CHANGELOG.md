@@ -6,6 +6,58 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.169.0] — 2026-06-07 — `__positivo__` dunder y `OP_POSITIVO`
+
+Cierra la trilogía de unarios sobre instancias: v1.167 trajo
+`__negar__` y `__tilde__`; v1.169 trae `__positivo__`. Hueco
+documentado como "postergado, bajo valor" en v1.167 — siendo
+honestos, el coste resultó trivial.
+
+### Lo que ahora funciona
+
+```cornamusa
+clase Cifra:
+    funcion __iniciar__(yo, n):
+        yo.n = n
+    fin funcion
+    funcion __positivo__(yo):
+        retornar Cifra(absoluto(yo.n))
+    fin funcion
+fin clase
+
+x = Cifra(-5)
++x   # Cifra(5), via __positivo__
+```
+
+Para enteros y decimales, `+x` sigue siendo identidad — no hay
+cambio observable de comportamiento. El compilador ya hace
+constant folding cuando puede (`+5` literal pasa a `5` sin emitir
+opcode).
+
+### Implementación
+
+- **Nuevo opcode `OP_POSITIVO`** en `src/chunk.h`. Antes, el
+  compilador emitía nada para `+x` (declaraba "identidad
+  numerica"). Ahora emite OP_POSITIVO.
+- **Compilador** (`src/compilador.c`): caso `TT_MAS` unario emite
+  `OP_POSITIVO` en lugar del no-op anterior. Constant folding sigue
+  funcionando — para casos como `+5` literal, `evaluar_constante`
+  resuelve antes de llegar al emit y se emite directamente la
+  constante. Solo el camino "operando no-foldable" emite el opcode.
+- **VM** (`src/vm.c`): handler análogo a `OP_NEGAR`/`OP_TILDE_BIT`.
+  Si TOS es `VAL_INSTANCIA` con `__positivo__`, despacha el dunder
+  (sin `ip--` por el mismo motivo que los otros — el dunder ya
+  retorna el valor final). Si no, no-op trivial — el valor ya
+  esta en el tope.
+
+### Coste
+
+Para programas que usan `+x` con numericos, el overhead es
+exactamente un opcode adicional (lectura + tipo-check + `break`).
+Bajo LTO+O3 el coste medible es indistinguible del ruido. La VM
+acepta este coste a cambio de la consistencia: las tres unarias
+ahora despachan dunders.
+
 ## [1.168.0] — 2026-06-07 — `__contiene__` dunder para `x en obj`
 
 Tercer dunder de la trilogía de v1.167-168 (unarios + membership).

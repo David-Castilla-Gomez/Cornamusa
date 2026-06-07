@@ -524,8 +524,10 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     chunk_emitir_byte(c->actual->chunk, OP_NO, e->linea);
                     return true;
                 case TT_MAS:
-                    /* +x es identidad numérica; no emitimos nada — el
-                       valor ya está en el tope. */
+                    /* v1.169: emitir OP_POSITIVO para que la VM despache
+                       `__positivo__` en instancias. Para valores numericos
+                       el opcode es un no-op trivial (overhead < 1ns). */
+                    chunk_emitir_byte(c->actual->chunk, OP_POSITIVO, e->linea);
                     return true;
                 case TT_TILDE_BIT:  /* v1.167 */
                     chunk_emitir_byte(c->actual->chunk, OP_TILDE_BIT, e->linea);
