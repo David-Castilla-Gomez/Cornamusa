@@ -6,6 +6,98 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.159.0] — 2026-06-07 — `entero(s, base)` + `binario`/`hexadecimal`/`octal`
+
+Cuatro nativas para conversión entre representaciones numéricas
+en distintas bases — paridad con Python `int(s, base)`, `bin()`,
+`hex()`, `oct()`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# entero con base explícita (2..36)
+entero("ff", 16)              # → 255
+entero("FF", 16)              # → 255    (mayúsculas)
+entero("1010", 2)             # → 10
+entero("777", 8)              # → 511
+entero("zz", 36)              # → 1295
+
+# Prefijo opcional cuando coincide con la base
+entero("0xff", 16)            # → 255
+entero("0b1010", 2)           # → 10
+entero("0o17", 8)             # → 15
+
+# Base 0 auto-detecta por prefijo (paridad Python int(s, 0))
+entero("0xff", 0)             # → 255
+entero("0b1010", 0)           # → 10
+entero("42", 0)               # → 42
+
+# Negativos
+entero("-7b", 16)             # → -123
+
+# Guiones bajos idiomáticos
+entero("de_ad_be_ef", 16)     # → 3735928559
+entero("1_000_000", 0)        # → 1000000
+
+# Conversión entero → cadena en base
+binario(10)                   # → "0b1010"
+binario(-5)                   # → "-0b101"
+hexadecimal(255)              # → "0xff"
+hexadecimal(0xdeadbeef)       # → "0xdeadbeef"
+octal(8)                      # → "0o10"
+
+# Bignum
+hexadecimal(2**64)            # → "0x10000000000000000"
+binario(2**100)               # → cadena de 100+ bits
+
+# Round-trip
+entero(binario(42), 0) == 42  # → verdadero
+```
+
+### Implementación
+
+`src/nativos.c`:
+
+- **`nativa_entero(x[, base])`** extendido a 2 args. La base:
+  - `2..36`: dígitos `0-9a-z`/`A-Z` válidos hasta la base.
+  - `0`: detecta `0x`/`0b`/`0o` (case-insensitive) o decimal.
+  Acepta signo `+`/`-`, guiones bajos `_` (descartados), y
+  prefijo coincidente con la base (`entero("0xff", 16)` OK).
+  Usa `mp_read_radix` de libtommath sobre buffer null-terminado.
+
+- **`entero_a_radix_con_prefijo(v, base, prefijo, ...)`** helper
+  compartido. Convierte el entero a `mp_int`, llama `mp_radix_size`
+  + `mp_to_radix`, normaliza a lowercase (Python convention),
+  prepend prefijo y signo. Maneja correctamente el cero, negativos,
+  y bignum.
+
+- **`nativa_binario(n)`**, **`nativa_hexadecimal(n)`**,
+  **`nativa_octal(n)`** son wrappers de 3 líneas sobre el helper.
+
+Sin cambios a bytecode ni VM. Test pre-existente
+`test_bytecode_conversores.c::test_arity_errors` actualizado:
+el mensaje de error de `entero()` ahora es "requiere 1 o 2
+argumentos".
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_entero_base_bin_hex_oct.c` con
+12 bloques:
+
+- `entero(s, base)` con bases 2/8/16/36, mayúsculas, prefijo
+  opcional.
+- `entero(s, 0)` auto-detección.
+- Negativos.
+- `binario`/`hexadecimal`/`octal` básicos, con cero, negativos,
+  bignum (2^64, 2^100).
+- Round-trip: `entero(binario(n), 0) == n`.
+- Errores: dígito inválido para base, base fuera de rango,
+  decimal sobre `binario`.
+- Regresión: `entero(x)` sin base sigue funcionando.
+- Guiones bajos: `"de_ad_be_ef"` y `"1_000_000"`.
+
+Suite: **355 tests verde**.
+
 ## [1.158.0] — 2026-06-06 — `divmod`, `potencia_modular` y `mcm`
 
 Tres helpers numéricos que faltaban — cambio de área tras 14

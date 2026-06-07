@@ -350,11 +350,112 @@ static Valor nativa_cadena(EvalError *err, int n_args, Valor *args,
  */
 static Valor nativa_entero(EvalError *err, int n_args, Valor *args,
                             int linea, int columna) {
-    if (n_args != 1) {
+    if (n_args < 1 || n_args > 2) {
         return error_nativa(err, linea, columna,
-            "ErrorDeTipo: entero() requiere 1 argumento, recibio %d", n_args);
+            "ErrorDeTipo: entero() requiere 1 o 2 argumentos, recibio %d", n_args);
     }
     const Valor *v = &args[0];
+
+    /* v1.159: entero(cadena, base) parsea con base 2..36 o 0 (auto). */
+    if (n_args == 2) {
+        if (v->tipo != VAL_CADENA) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: entero(s, base) requiere cadena, no '%s'",
+                valor_nombre_tipo(v));
+        }
+        int64_t base_i64;
+        if (!valor_entero_a_i64(&args[1], &base_i64)) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: base debe ser entero, no '%s'",
+                valor_nombre_tipo(&args[1]));
+        }
+        if (base_i64 != 0 && (base_i64 < 2 || base_i64 > 36)) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: base debe ser 0 o estar en [2, 36]");
+        }
+        const char *txt; int len;
+        trim_ascii(v->como.cadena.texto, v->como.cadena.longitud, &txt, &len);
+        if (len == 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: cadena vacia no es entero valido");
+        }
+        bool negativo = false;
+        if (txt[0] == '+' || txt[0] == '-') {
+            negativo = (txt[0] == '-');
+            txt++; len--;
+        }
+        /* Auto-detectar base por prefijo si base == 0. */
+        int base = (int)base_i64;
+        if (base == 0) {
+            if (len >= 2 && txt[0] == '0'
+                && (txt[1] == 'x' || txt[1] == 'X')) { base = 16; txt += 2; len -= 2; }
+            else if (len >= 2 && txt[0] == '0'
+                && (txt[1] == 'b' || txt[1] == 'B')) { base = 2;  txt += 2; len -= 2; }
+            else if (len >= 2 && txt[0] == '0'
+                && (txt[1] == 'o' || txt[1] == 'O')) { base = 8;  txt += 2; len -= 2; }
+            else { base = 10; }
+        } else if (len >= 2 && txt[0] == '0') {
+            /* Si base explicita coincide con prefijo, saltarlo (Python compat). */
+            if ((base == 16 && (txt[1] == 'x' || txt[1] == 'X'))
+                || (base == 2 && (txt[1] == 'b' || txt[1] == 'B'))
+                || (base == 8 && (txt[1] == 'o' || txt[1] == 'O'))) {
+                txt += 2; len -= 2;
+            }
+        }
+        if (len == 0) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: '%.*s' no es entero valido",
+                v->como.cadena.longitud, v->como.cadena.texto);
+        }
+        /* Copiar a buffer null-terminado (mp_read_radix lo necesita) y
+         * descartar guiones bajos. */
+        char *buf = (char *)malloc((size_t)len + 1);
+        if (!buf) return error_nativa(err, linea, columna, "memoria insuficiente");
+        int w = 0;
+        for (int i = 0; i < len; i++) {
+            char c = txt[i];
+            if (c == '_') continue;
+            /* Validar caracter para la base. */
+            int dig;
+            if (c >= '0' && c <= '9') dig = c - '0';
+            else if (c >= 'a' && c <= 'z') dig = c - 'a' + 10;
+            else if (c >= 'A' && c <= 'Z') dig = c - 'A' + 10;
+            else {
+                free(buf);
+                return error_nativa(err, linea, columna,
+                    "ErrorDeValor: caracter '%c' invalido para base %d", c, base);
+            }
+            if (dig >= base) {
+                free(buf);
+                return error_nativa(err, linea, columna,
+                    "ErrorDeValor: digito '%c' invalido para base %d", c, base);
+            }
+            buf[w++] = c;
+        }
+        buf[w] = '\0';
+        if (w == 0) {
+            free(buf);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: '%.*s' no es entero valido",
+                v->como.cadena.longitud, v->como.cadena.texto);
+        }
+        mp_int *m = (mp_int *)malloc(sizeof(mp_int));
+        if (!m) { free(buf); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+        if (mp_init(m) != MP_OKAY) {
+            free(buf); free(m);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        if (mp_read_radix(m, buf, base) != MP_OKAY) {
+            mp_clear(m); free(m); free(buf);
+            return error_nativa(err, linea, columna,
+                "ErrorDeValor: '%.*s' no es entero valido en base %d",
+                v->como.cadena.longitud, v->como.cadena.texto, base);
+        }
+        free(buf);
+        if (negativo) mp_neg(m, m);
+        return valor_entero_de_mp_normalizado(m);
+    }
+
     if (valor_es_entero(v)) {
         Valor r = valor_clonar(v);
         if (r.tipo == VAL_NULO && v->tipo != VAL_NULO) {
@@ -441,6 +542,110 @@ static Valor nativa_entero(EvalError *err, int n_args, Valor *args,
     }
     return error_nativa(err, linea, columna,
         "ErrorDeTipo: entero() no acepta '%s'", valor_nombre_tipo(v));
+}
+
+/* v1.159: helper compartido — entero → cadena en base con prefijo
+ * Python-style. Acepta SMALL/BIG, decimales y booleanos rechazados.
+ * `prefijo`: "0b", "0o", "0x" o "" si NULL. */
+static Valor entero_a_radix_con_prefijo(EvalError *err, const Valor *v,
+                                            int base, const char *prefijo,
+                                            const char *nombre,
+                                            int linea, int columna) {
+    if (!valor_es_entero(v) && v->tipo != VAL_BOOLEANO) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: %s() requiere entero, no '%s'",
+            nombre, valor_nombre_tipo(v));
+    }
+    /* Convertir a mp_int para usar mp_to_radix. */
+    mp_int m;
+    if (mp_init(&m) != MP_OKAY) {
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    if (v->tipo == VAL_ENTERO_SMALL) mp_set_i64(&m, v->como.entero_small);
+    else if (v->tipo == VAL_BOOLEANO) mp_set_l(&m, v->como.booleano ? 1 : 0);
+    else mp_copy(v->como.entero, &m);
+
+    bool negativo = mp_isneg(&m);
+    if (negativo) mp_neg(&m, &m);
+
+    int tam = 0;
+    if (mp_radix_size(&m, base, &tam) != MP_OKAY) {
+        mp_clear(&m);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    char *digitos = (char *)malloc((size_t)tam);
+    if (!digitos) {
+        mp_clear(&m);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    size_t escritos;
+    if (mp_to_radix(&m, digitos, (size_t)tam, &escritos, base) != MP_OKAY) {
+        free(digitos);
+        mp_clear(&m);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    mp_clear(&m);
+    int dig_len = (int)escritos - 1;  /* excluir null terminator */
+    if (dig_len < 0) dig_len = 0;
+    /* mp_to_radix devuelve dígitos en uppercase para hex (A-F). Python
+     * usa lowercase en hex(), oct(), bin(). Normalizar. */
+    for (int i = 0; i < dig_len; i++) {
+        if (digitos[i] >= 'A' && digitos[i] <= 'Z') {
+            digitos[i] = (char)(digitos[i] + ('a' - 'A'));
+        }
+    }
+    int pref_len = prefijo ? (int)strlen(prefijo) : 0;
+    int total = (negativo ? 1 : 0) + pref_len + dig_len;
+    char *buf = (char *)malloc((size_t)total);
+    if (!buf) {
+        free(digitos);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    int w = 0;
+    if (negativo) buf[w++] = '-';
+    if (pref_len) { memcpy(buf + w, prefijo, (size_t)pref_len); w += pref_len; }
+    memcpy(buf + w, digitos, (size_t)dig_len);
+    w += dig_len;
+    Valor r = valor_cadena_duplicar(buf, w);
+    free(buf);
+    free(digitos);
+    return r;
+}
+
+/* v1.159: binario(n) → cadena en base 2 con prefijo "0b".
+ * Paridad con Python bin(). Negativos: "-0b101". */
+static Valor nativa_binario(EvalError *err, int n_args, Valor *args,
+                                int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: binario() requiere 1 argumento");
+    }
+    return entero_a_radix_con_prefijo(err, &args[0], 2, "0b",
+                                          "binario", linea, columna);
+}
+
+/* v1.159: hexadecimal(n) → cadena en base 16 con prefijo "0x".
+ * Paridad con Python hex(). Letras a-f minusculas. */
+static Valor nativa_hexadecimal(EvalError *err, int n_args, Valor *args,
+                                     int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: hexadecimal() requiere 1 argumento");
+    }
+    return entero_a_radix_con_prefijo(err, &args[0], 16, "0x",
+                                          "hexadecimal", linea, columna);
+}
+
+/* v1.159: octal(n) → cadena en base 8 con prefijo "0o".
+ * Paridad con Python oct(). */
+static Valor nativa_octal(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: octal() requiere 1 argumento");
+    }
+    return entero_a_radix_con_prefijo(err, &args[0], 8, "0o",
+                                          "octal", linea, columna);
 }
 
 /*
@@ -6933,6 +7138,9 @@ static const EntradaNativa NATIVAS[] = {
     /* Conversores (v1.1). */
     {"cadena",      6,  nativa_cadena},
     {"entero",      6,  nativa_entero},
+    {"binario",     7,  nativa_binario},        /* v1.159 */
+    {"hexadecimal", 11, nativa_hexadecimal},    /* v1.159 */
+    {"octal",       5,  nativa_octal},          /* v1.159 */
     {"decimal",     7,  nativa_decimal},
     {"booleano",    8,  nativa_booleano},
     {"lista",       5,  nativa_lista},

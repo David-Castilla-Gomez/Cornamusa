@@ -305,7 +305,7 @@ static void test_diccionario_errores(void) {
 static void test_arity_errors(void) {
     verificar_error("x = cadena()",         "requiere 1 argumento");
     verificar_error("x = cadena(1, 2)",     "requiere 1 argumento");
-    verificar_error("x = entero()",         "requiere 1 argumento");
+    verificar_error("x = entero()",         "requiere 1 o 2 argumentos");
     verificar_error("x = decimal(1, 2, 3)", "requiere 1 argumento");
     verificar_error("x = booleano()",       "requiere 1 argumento");
 }
