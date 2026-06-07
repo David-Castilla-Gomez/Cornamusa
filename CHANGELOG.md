@@ -6,6 +6,75 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.162.0] — 2026-06-07 — `cadena.sin_acentos()` Unicode
+
+Útil para slugs de URL, búsqueda tolerante a acentos, y
+comparación fuzzy de nombres. Cornamusa no tenía nada parecido —
+las opciones eran reemplazar a mano vocal por vocal.
+
+### Lo que ahora funciona
+
+```cornamusa
+"CAFÉ".sin_acentos()              # → "CAFE"
+"España".sin_acentos()             # → "Espana"
+"ÁÉÍÓÚ".sin_acentos()              # → "AEIOU"
+"naïve résumé über".sin_acentos()  # → "naive resume uber"
+"Hola, ¿cómo estás?".sin_acentos()  # → "Hola, ¿como estas?"
+
+# Slugificar URL
+s = "El año 2026 - ¡Próspero!"
+s.sin_acentos().minusculas()       # → "el ano 2026 - ¡prospero!"
+```
+
+### Implementación
+
+`src/nativos.c::nativa_cadena_sin_acentos(s)`: usa
+`utf8proc_map` con flags
+`UTF8PROC_DECOMPOSE | UTF8PROC_STRIPMARK | UTF8PROC_STABLE`:
+
+1. **DECOMPOSE** (NFD): descompone los precomposed — `'é'` se
+   separa en `'e' + combining acute`, `'ñ'` en `'n' + combining
+   tilde`.
+2. **STRIPMARK**: elimina las marcas combinantes resultantes.
+3. **STABLE**: garantiza resultado consistente entre versiones
+   Unicode.
+
+`utf8proc_map` aloca el buffer destino con `malloc`; lo liberamos
+tras duplicar el resultado en una `Valor` cadena.
+
+**Combinación importante**: COMPOSE NO se usa porque no es
+compatible con STRIPMARK + DECOMPOSE — el orden de operaciones
+ya da el resultado deseado (descomponer + quitar marcas), y
+recomponer sería irrelevante (ya no quedan marcas).
+
+Sin cambios a bytecode ni VM.
+
+### Política con `ñ`
+
+La `'ñ'` también pierde su tilde porque la tilde es una marca
+combinante. `'ñoño'.sin_acentos()` → `'nono'`. Esto coincide
+con el comportamiento estándar de NFD + strip marks.
+
+Si necesitas preservar la `'ñ'` específicamente, haz un
+postproceso a medida — está documentado en el header de la
+nativa.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_sin_acentos.c` con 9 bloques:
+
+- Vocales acentuadas castellanas (mayúsculas y minúsculas).
+- `ñ` → `n`, `España` → `Espana`.
+- ASCII (no cambia), símbolos.
+- Cadena vacía.
+- Otros idiomas: francés (`ï`, `é`), alemán (`ü`).
+- Slugificar (`sin_acentos` + `minusculas`).
+- Pregunta con `¿` que no es marca (se preserva).
+- Longitud post-conversión.
+- Error: tipo no-cadena.
+
+Suite: **358 tests verde**.
+
 ## [1.161.0] — 2026-06-07 — `aplanar_profundo` y `aplanar_hasta`
 
 `stdlib/funcionales.cor::aplanar(xs)` aplanaba un solo nivel.

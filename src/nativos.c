@@ -5289,6 +5289,56 @@ DEFINIR_PREDICADO(es_espacios, 4)
  * mayuscula, el resto en minuscula. Una palabra empieza despues de
  * un caracter no alfabetico (incluyendo el inicio de la cadena).
  * Paridad con Python str.title(). */
+/* v1.162: cadena.sin_acentos() — devuelve una copia con los acentos
+ * y marcas combinantes (ä, é, ñ → ã, e, n; ñ → n) eliminados. Internamente
+ * usa utf8proc_map con UTF8PROC_DECOMPOSE | UTF8PROC_STRIPMARK | UTF8PROC_COMPOSE:
+ *
+ *   1. DECOMPOSE: separa 'é' en 'e' + acento combinante.
+ *   2. STRIPMARK: quita las marcas combinantes.
+ *   3. COMPOSE: recompone lo que quede (sin marcas).
+ *
+ * Util para:
+ *   - Slugs de URL (eliminar diacriticos antes de tolower).
+ *   - Comparacion tolerante a acentos.
+ *   - Normalizacion para busqueda.
+ *
+ * Nota: la 'ñ' tambien pierde la tilde por ser una marca combinante:
+ *   "ñoño".sin_acentos() -> "nono".
+ * Para preservar la 'ñ' especificamente, usa un postproceso a medida. */
+static Valor nativa_cadena_sin_acentos(EvalError *err, int n_args, Valor *args,
+                                            int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: sin_acentos() no acepta argumentos");
+    }
+    if (args[0].tipo != VAL_CADENA) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: sin_acentos() requiere una cadena, no '%s'",
+            valor_nombre_tipo(&args[0]));
+    }
+    const char *s = args[0].como.cadena.texto;
+    int sl = args[0].como.cadena.longitud;
+    if (sl == 0) return valor_cadena_duplicar("", 0);
+    utf8proc_uint8_t *dst = NULL;
+    /* DECOMPOSE | STRIPMARK quita las marcas combinantes. COMPOSE
+     * (recomposicion) no es compatible con STRIPMARK + DECOMPOSE
+     * — el orden de operaciones es importante: descomponer separa
+     * 'é' en 'e' + combining acute, STRIPMARK quita el combining,
+     * y al no recomponer, ya queda 'e' como deseamos. */
+    utf8proc_ssize_t n = utf8proc_map(
+        (const utf8proc_uint8_t *)s, sl, &dst,
+        UTF8PROC_DECOMPOSE | UTF8PROC_STRIPMARK | UTF8PROC_STABLE);
+    if (n < 0 || !dst) {
+        const char *msg = (n < 0) ? utf8proc_errmsg(n) : "memoria insuficiente";
+        if (dst) free(dst);
+        return error_nativa(err, linea, columna,
+            "ErrorInterno: sin_acentos: %s", msg ? msg : "fallo");
+    }
+    Valor r = valor_cadena_duplicar((const char *)dst, (int)n);
+    free(dst);
+    return r;
+}
+
 static Valor nativa_cadena_titulo(EvalError *err, int n_args, Valor *args,
                                        int linea, int columna) {
     if (n_args != 1) {
@@ -7478,6 +7528,7 @@ static const MetodoNativoEntrada METODOS_NATIVOS[] = {
     {VAL_CADENA,     "minusculas",  10, nativa_cadena_minusculas},      /* v1.153 Unicode */
     {VAL_CADENA,     "mayusculas",  10, nativa_cadena_mayusculas},      /* v1.153 Unicode */
     {VAL_CADENA,     "titulo",       6, nativa_cadena_titulo},          /* v1.154 */
+    {VAL_CADENA,     "sin_acentos", 11, nativa_cadena_sin_acentos},     /* v1.162 */
     {VAL_CADENA,     "dividir_palabras", 16, nativa_cadena_dividir_palabras}, /* v1.157 */
     {VAL_CADENA,     "rellenar_ceros",   14, nativa_cadena_rellenar_ceros},   /* v1.157 */
     {VAL_CADENA,     "es_alfa",      7, nativa_cadena_es_alfa},         /* v1.154 */
