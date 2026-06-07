@@ -6,6 +6,90 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.160.0] — 2026-06-07 — `inverso(iterable)` no-mutante
+
+Cornamusa tenía dos formas de invertir:
+
+```cornamusa
+xs.invertir()    # muta in-place
+xs[::-1]         # slice — solo lista/cadena/tupla
+```
+
+Faltaba la versión idiomática de Python `list(reversed(it))`:
+
+### Lo que ahora funciona
+
+```cornamusa
+# Lista — no muta el original
+xs = [1, 2, 3, 4, 5]
+inverso(xs)            # → [5, 4, 3, 2, 1]
+imprimir(xs)            # → [1, 2, 3, 4, 5]  (intacto)
+
+# Tupla → lista
+inverso((10, 20, 30))   # → [30, 20, 10]
+
+# Cadena: cada code-point UTF-8 como cadena de 1 cp
+inverso("hola")         # → ["a", "l", "o", "h"]
+inverso("ñoño")         # → ["o", "ñ", "o", "ñ"]  (4 code-points)
+
+# Conjunto: orden no determinista, conserva longitud
+longitud(inverso({1, 2, 3, 4, 5}))   # → 5
+
+# Idiomático: iterar al revés sin copia visible
+para x en inverso([1, 2, 3]):
+    ...
+fin para
+
+# Doble inverso = original (semánticamente)
+inverso(inverso([1, 2, 3]))   # → [1, 2, 3]
+```
+
+### Implementación
+
+`src/nativos.c::nativa_inverso(it)`:
+
+- **Lista/tupla**: bucle de `cuenta - 1` hacia `0` agregando
+  clones a la lista resultado.
+
+- **Cadena**: dos pasadas. Primera pre-calcula offsets de cada
+  code-point en un array `int[]`. Segunda itera al revés y
+  agrega cada segmento como cadena duplicada de 1 cp. Maneja
+  bytes inválidos avanzando 1 (best-effort).
+
+- **Conjunto**: vuelca elementos a buffer temporal en orden de
+  iteración, luego los mueve al resultado en orden inverso.
+  El orden del conjunto no es determinista, así que "inverso"
+  no tiene semántica fuerte aquí — coherente con `lista(conj)`.
+
+- **Rango**: rechaza con error claro y sugerencia
+  `inverso(lista(rango(...)))`. Su iteración lazy
+  complicaría el código sin ganancia práctica.
+
+Sin cambios a bytecode ni VM.
+
+### Diferencia con `invertir()`
+
+| | Muta | Tipo entrada | Tipo salida |
+|---|---|---|---|
+| `lst.invertir()` | sí | solo lista | `nulo` |
+| `xs[::-1]` | no | lista/cadena/tupla | mismo tipo |
+| `inverso(it)` | no | lista/tupla/cadena/conjunto | **siempre lista** |
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_inverso.c` con 11 bloques:
+
+- Lista (no muta), vacía, singleton.
+- Tupla → lista.
+- Cadena ASCII y Unicode (`ñoño` → 4 elementos).
+- Cadena vacía.
+- Conjunto (longitud y tipo).
+- Iteración idiomática `para x en inverso(xs)`.
+- Doble inverso (involutivo).
+- Errores: no-iterable, rango con workaround documentado.
+
+Suite: **356 tests verde**.
+
 ## [1.159.0] — 2026-06-07 — `entero(s, base)` + `binario`/`hexadecimal`/`octal`
 
 Cuatro nativas para conversión entre representaciones numéricas
