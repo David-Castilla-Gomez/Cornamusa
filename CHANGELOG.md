@@ -6,6 +6,74 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.161.0] — 2026-06-07 — `aplanar_profundo` y `aplanar_hasta`
+
+`stdlib/funcionales.cor::aplanar(xs)` aplanaba un solo nivel.
+Faltaban las variantes para listas con anidamiento arbitrario.
+
+### Lo que ahora funciona
+
+```cornamusa
+desde funcionales importar aplanar, aplanar_profundo, aplanar_hasta
+
+# Regresión: aplanar (1 nivel) sigue igual
+aplanar([[1, 2], [3, 4]])           # → [1, 2, 3, 4]
+
+# aplanar_profundo: recursivo hasta hojas
+aplanar_profundo([1, [2, [3, [4]]], 5])
+# → [1, 2, 3, 4, 5]
+
+# Mezcla lista + tupla — ambas se aplanan
+aplanar_profundo([1, (2, 3), [4, (5, [6])]])
+# → [1, 2, 3, 4, 5, 6]
+
+# Cadenas NO se descomponen aunque sean iterables
+aplanar_profundo([1, "abc", [2, "de"]])
+# → [1, "abc", 2, "de"]   no [1, "a", "b", "c", 2, "d", "e"]
+
+# aplanar_hasta: control fino de la profundidad
+xs = [[[1, 2], [3]], [[4]]]
+aplanar_hasta(xs, 0)   # → [[[1, 2], [3]], [[4]]]   identidad
+aplanar_hasta(xs, 1)   # → [[1, 2], [3], [4]]        un nivel
+aplanar_hasta(xs, 2)   # → [1, 2, 3, 4]              dos niveles
+aplanar_hasta(xs, 99)  # → [1, 2, 3, 4]              completo
+```
+
+### Implementación
+
+`stdlib/funcionales.cor`:
+
+- **`_es_secuencia_aplanable(v)`** privado: usa `tipo(v)` para
+  filtrar por `"lista"` o `"tupla"`. Las cadenas (aunque sean
+  iterables) NO se aplanan — política coherente con que el
+  usuario espera ver palabras enteras en listas mixtas.
+
+- **`aplanar_profundo(xs)`**: wrapper que delega en
+  `_aplanar_profundo_aux(xs, resultado)`. La aux recorre `xs` y,
+  si el elemento es aplanable, recurre; si no, agrega.
+
+- **`aplanar_hasta(xs, n: entero)`**: valida `n >= 0` (lanza
+  `ErrorDeValor` si no), `n == 0` devuelve `lista(xs)`, en otros
+  casos delega en `_aplanar_hasta_aux` que decrementa `n` en cada
+  recursión.
+
+Sin cambios al núcleo. Solo stdlib usando `tipo()`, `agregar` y
+recursión.
+
+### Cobertura
+
+Nuevo `tests/unit/test_bytecode_aplanar_profundo.c` con 11
+bloques:
+
+- Regresión: `aplanar` un nivel.
+- `aplanar_profundo` recursivo, con cadenas (no desempaqueta),
+  lista ya plana, vacías (incluido `[[]]`), mezcla lista+tupla.
+- `aplanar_hasta` con `n=0` (identidad), `n=1` (≡ `aplanar`),
+  `n=2` (alcanza), `n=99` (tiende a profundo).
+- `n` negativo lanza `ErrorDeValor` atrapable.
+
+Suite: **357 tests verde**.
+
 ## [1.160.0] — 2026-06-07 — `inverso(iterable)` no-mutante
 
 Cornamusa tenía dos formas de invertir:

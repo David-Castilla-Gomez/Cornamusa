@@ -343,6 +343,64 @@ funcion aplanar(xs):
     retornar resultado
 fin funcion
 
+# v1.161: helper privado — devuelve verdadero si `v` es lista o tupla
+# (los unicos contenedores que aplanamos por defecto). Cadenas NO
+# se descomponen aunque sean iterables — es lo que espera el usuario:
+# aplanar_profundo([1, ["abc", [2, 3]]]) -> [1, "abc", 2, 3], no
+# [1, "a", "b", "c", 2, 3].
+funcion _es_secuencia_aplanable(v):
+    t = tipo(v)
+    retornar t == "lista" o t == "tupla"
+fin funcion
+
+# v1.161: aplana recursivamente, hasta llegar a hojas no-secuencia.
+# Util para arboles o JSON de listas anidadas a profundidad arbitraria.
+#
+#   aplanar_profundo([1, [2, [3, [4]]], 5])  -> [1, 2, 3, 4, 5]
+#   aplanar_profundo([[1, 2], [3, 4]])        -> [1, 2, 3, 4]
+#   aplanar_profundo([1, "abc", [2]])         -> [1, "abc", 2]
+funcion aplanar_profundo(xs):
+    resultado = []
+    _aplanar_profundo_aux(xs, resultado)
+    retornar resultado
+fin funcion
+
+funcion _aplanar_profundo_aux(xs, resultado):
+    para x en xs:
+        si _es_secuencia_aplanable(x):
+            _aplanar_profundo_aux(x, resultado)
+        sino:
+            agregar(resultado, x)
+        fin si
+    fin para
+fin funcion
+
+# v1.161: aplana exactamente `n` niveles. n=1 equivale a aplanar(xs);
+# n=0 devuelve una copia tal cual; n grande tiende a aplanar_profundo.
+# Util para casos intermedios: aplanar_hasta([[[1, 2], [3]], [[4]]], 1)
+# -> [[1, 2], [3], [4]]  (un nivel pelado).
+funcion aplanar_hasta(xs, n: entero):
+    si n < 0:
+        lanzar ErrorDeValor("aplanar_hasta requiere n >= 0")
+    fin si
+    si n == 0:
+        retornar lista(xs)
+    fin si
+    resultado = []
+    _aplanar_hasta_aux(xs, n, resultado)
+    retornar resultado
+fin funcion
+
+funcion _aplanar_hasta_aux(xs, n: entero, resultado):
+    para x en xs:
+        si n > 0 y _es_secuencia_aplanable(x):
+            _aplanar_hasta_aux(x, n - 1, resultado)
+        sino:
+            agregar(resultado, x)
+        fin si
+    fin para
+fin funcion
+
 # Elementos unicos preservando el orden de primera aparicion.
 # Equivalente a `lista(conjunto(xs))` pero garantiza el orden.
 funcion unicos(xs):
