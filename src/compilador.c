@@ -1074,6 +1074,39 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         }
         case EXPR_DICCIONARIO: {
             int n = e->como.diccionario.n_pares;
+            /* v1.173: `**d` dict spread. Marcador parser:
+             * claves[i] = EXPR_UNARIO(TT_DOBLE_ASTERISCO, expr) y
+             * valores[i] = NULL. */
+            bool hay_dspread = false;
+            for (int i = 0; i < n; i++) {
+                Expr *k = e->como.diccionario.claves[i];
+                if (k->tipo == EXPR_UNARIO
+                    && k->como.unario.op == TT_DOBLE_ASTERISCO) {
+                    hay_dspread = true;
+                    break;
+                }
+            }
+            if (hay_dspread) {
+                chunk_emitir_byte2(c->actual->chunk, OP_BUILD_DICC,
+                                    0, e->linea);
+                for (int i = 0; i < n; i++) {
+                    Expr *k = e->como.diccionario.claves[i];
+                    if (k->tipo == EXPR_UNARIO
+                        && k->como.unario.op == TT_DOBLE_ASTERISCO) {
+                        if (!compilador_compilar_expr(c, k->como.unario.operando))
+                            return false;
+                        chunk_emitir_byte(c->actual->chunk,
+                                            OP_DICC_EXTENDER, e->linea);
+                    } else {
+                        if (!compilador_compilar_expr(c, k)) return false;
+                        if (!compilador_compilar_expr(c,
+                                e->como.diccionario.valores[i])) return false;
+                        chunk_emitir_byte(c->actual->chunk,
+                                            OP_DICC_AGREGAR_PAR, e->linea);
+                    }
+                }
+                return true;
+            }
             if (n > 255) {
                 error_compilacion(c, e->linea, e->columna,
                     "literal de diccionario con mas de 255 pares no soportado en v0.6");

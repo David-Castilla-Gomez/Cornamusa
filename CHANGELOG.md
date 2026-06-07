@@ -6,6 +6,74 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.173.0] — 2026-06-07 — `**d` dict spread
+
+Cierra la trilogía de spread iniciada en v1.171 (lista, tupla,
+conjunto, dicc). Patrón Python `{**defaults, "k": v, **overrides}`
+para fusionar configuraciones — antes daba `ErrorDeSintaxis`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Override pattern (idiomatic Python)
+defecto = {"timeout": 30, "host": "default"}
+config = {**defecto, "host": "prod"}
+# {"timeout": 30, "host": "prod"}
+
+# Multiples sources
+{**d1, **d2, "z": 3}
+
+# dspread como primer elemento (fuerza dict, no conjunto)
+{**a}
+{**a, "x": 99}
+
+# Override inverso: ultimo gana
+{"a": 1, **{"a": 99}}   # {"a": 99}
+
+# Claves no-string ok (paridad con dicc normal)
+{**{1: "uno"}, 3: "tres"}
+```
+
+### Implementación
+
+- **Parser** (`src/parser.c`):
+  - Si `parsear_llaves` ve `**` como primer elemento, fuerza el
+    camino de dict (no conjunto, no comprehension) y parsea el
+    resto en un bucle especializado.
+  - El bucle de pares chequea `**` antes de leer la clave; si lo
+    encuentra, marca el "par" como dspread.
+- **AST**: reusa el truco de v1.171/172 — marcador
+  `claves[i] = EXPR_UNARIO(TT_DOBLE_ASTERISCO, expr)`,
+  `valores[i] = NULL`. Sin cambios al struct.
+- **Compilador** (`src/compilador.c`): `EXPR_DICCIONARIO` detecta
+  si hay dspread. Si no, path eficiente `OP_BUILD_DICC n`. Si sí:
+  ```
+  OP_BUILD_DICC 0
+  por cada par:
+    si es dspread: COMPILAR(operando) + OP_DICC_EXTENDER
+    si no:         COMPILAR(clave) + COMPILAR(valor) + OP_DICC_AGREGAR_PAR
+  ```
+- **VM**: ningún cambio. `OP_DICC_EXTENDER` existía desde v1.150
+  (`fusionar()`). Solo conectamos el flujo de literales a él.
+
+### Por qué importa
+
+El patrón `{**defaults, **overrides}` es la forma idiomática Python
+para combinar configuraciones. Antes en Cornamusa tenías que
+escribir `fusionar(defaults, overrides)` — funciona pero no es
+expresivo en literales anidados:
+
+```cornamusa
+# Antes
+opciones = fusionar(defaults, {"host": "prod"})
+
+# Ahora
+opciones = {**defaults, "host": "prod"}
+```
+
+Particularmente útil dentro de comprehensions y al construir
+estructuras de config inline.
+
 ## [1.172.0] — 2026-06-07 — Spread en tupla y conjunto
 
 Continuación de v1.171 (que cubrió lista). Tupla y conjunto

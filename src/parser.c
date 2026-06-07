@@ -1067,6 +1067,65 @@ static Expr *parsear_llaves(Parser *p) {
                                 apertura.linea, apertura.columna);
     }
 
+    /* v1.173: `{**d, ...}` — dict spread como PRIMER elemento.
+     * Forzamos diccionario (no conjunto/comprehension) y parseamos
+     * el resto en el bucle de pares. Marcador: clave =
+     * EXPR_UNARIO(TT_DOBLE_ASTERISCO, expr), valor = NULL. */
+    if (check(p, TT_DOBLE_ASTERISCO)) {
+        Token tt = p->actual;
+        avanzar(p);
+        Expr *expr_dspread = parsear_expresion(p);
+        if (expr_dspread == NULL) return NULL;
+        Expr **claves = NULL;
+        Expr **valores = NULL;
+        int n = 0;
+        int cap = 8;
+        claves = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+        valores = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * (size_t)cap);
+        if (claves == NULL || valores == NULL) return NULL;
+        claves[0] = expr_unario(p->arena, TT_DOBLE_ASTERISCO, expr_dspread,
+                                  tt.linea, tt.columna);
+        valores[0] = NULL;
+        n = 1;
+        while (consumir_si(p, TT_COMA)) {
+            if (check(p, TT_LLAVE_DER)) break; /* trailing comma */
+            if (n >= cap) {
+                cap *= 2;
+                Expr **nk = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                Expr **nv = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                if (nk == NULL || nv == NULL) return NULL;
+                memcpy(nk, claves, sizeof(Expr *) * (size_t)n);
+                memcpy(nv, valores, sizeof(Expr *) * (size_t)n);
+                claves = nk; valores = nv;
+            }
+            if (check(p, TT_DOBLE_ASTERISCO)) {
+                Token tt2 = p->actual;
+                avanzar(p);
+                Expr *e = parsear_expresion(p);
+                if (e == NULL) return NULL;
+                claves[n] = expr_unario(p->arena, TT_DOBLE_ASTERISCO, e,
+                                         tt2.linea, tt2.columna);
+                valores[n] = NULL;
+            } else {
+                Expr *k = parsear_expresion(p);
+                if (k == NULL) return NULL;
+                if (!consumir(p, TT_DOS_PUNTOS,
+                    "se esperaba ':' tras la clave del diccionario")) return NULL;
+                Expr *v = parsear_expresion(p);
+                if (v == NULL) return NULL;
+                claves[n] = k;
+                valores[n] = v;
+            }
+            n++;
+        }
+        if (!consumir(p, TT_LLAVE_DER,
+            "se esperaba '}' al final del diccionario")) return NULL;
+        return expr_diccionario(p->arena, claves, valores, n,
+                                apertura.linea, apertura.columna);
+    }
+
     Expr *primero = parsear_expresion(p);
     if (primero == NULL) return NULL;
 
@@ -1111,12 +1170,6 @@ static Expr *parsear_llaves(Parser *p) {
 
         while (consumir_si(p, TT_COMA)) {
             if (check(p, TT_LLAVE_DER)) break; /* trailing comma */
-            Expr *k = parsear_expresion(p);
-            if (k == NULL) return NULL;
-            if (!consumir(p, TT_DOS_PUNTOS,
-                "se esperaba ':' tras la clave del diccionario")) return NULL;
-            Expr *v = parsear_expresion(p);
-            if (v == NULL) return NULL;
             if (n >= cap) {
                 cap *= 2;
                 Expr **nk = (Expr **)arena_alocar(p->arena,
@@ -1129,6 +1182,24 @@ static Expr *parsear_llaves(Parser *p) {
                 claves = nk;
                 valores = nv;
             }
+            /* v1.173: `**d` dict spread en posicion de par. */
+            if (check(p, TT_DOBLE_ASTERISCO)) {
+                Token tt2 = p->actual;
+                avanzar(p);
+                Expr *e = parsear_expresion(p);
+                if (e == NULL) return NULL;
+                claves[n] = expr_unario(p->arena, TT_DOBLE_ASTERISCO, e,
+                                         tt2.linea, tt2.columna);
+                valores[n] = NULL;
+                n++;
+                continue;
+            }
+            Expr *k = parsear_expresion(p);
+            if (k == NULL) return NULL;
+            if (!consumir(p, TT_DOS_PUNTOS,
+                "se esperaba ':' tras la clave del diccionario")) return NULL;
+            Expr *v = parsear_expresion(p);
+            if (v == NULL) return NULL;
             claves[n] = k;
             valores[n] = v;
             n++;
