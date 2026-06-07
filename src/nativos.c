@@ -4067,6 +4067,218 @@ static Valor nativa_congelar(EvalError *err, int n_args, Valor *args,
     return valor_conjunto(nuevo);
 }
 
+/* v1.165: copia(x) — shallow copy. Para mutables (lista, dicc,
+ * conjunto) construye un nuevo contenedor con `valor_clonar` de
+ * cada elemento — los elementos siguen compartiendo referencia con
+ * los originales, pero el contenedor en si es independiente.
+ *
+ * Para inmutables (entero, decimal, cadena, booleano, nulo, tupla,
+ * rango) retorna `valor_clonar` directo — no hay diferencia entre
+ * shallow y deep para ellos.
+ *
+ * Si el conjunto era frozen, la copia tambien lo es. */
+static Valor nativa_copia(EvalError *err, int n_args, Valor *args,
+                           int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: copia() requiere 1 argumento, recibio %d", n_args);
+    }
+    const Valor *v = &args[0];
+    if (v->tipo == VAL_LISTA) {
+        Lista *src = v->como.lista;
+        Lista *dst = lista_nueva(src->cuenta);
+        if (!dst) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        for (int i = 0; i < src->cuenta; i++) {
+            if (!lista_agregar(dst, valor_clonar(&src->elementos[i]))) {
+                lista_liberar(dst);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+        return valor_lista(dst);
+    }
+    if (v->tipo == VAL_DICCIONARIO) {
+        Diccionario *src = v->como.dicc;
+        Diccionario *dst = dicc_nuevo();
+        if (!dst) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        for (int idx = 0; idx < src->cuenta; idx++) {
+            int slot = src->orden_insercion[idx];
+            const EntradaDicc *e = &src->entradas[slot];
+            if (!dicc_asignar(dst, valor_clonar(&e->clave),
+                                    valor_clonar(&e->valor))) {
+                dicc_liberar(dst);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+        return valor_diccionario(dst);
+    }
+    if (v->tipo == VAL_CONJUNTO) {
+        Conjunto *src = v->como.conjunto;
+        Conjunto *dst = conj_nuevo();
+        if (!dst) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        for (int i = 0; i < src->capacidad; i++) {
+            if (!src->entradas[i].ocupada) continue;
+            if (!conj_agregar(dst, valor_clonar(&src->entradas[i].elemento))) {
+                conj_liberar(dst);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+        dst->congelado = src->congelado;
+        return valor_conjunto(dst);
+    }
+    /* Inmutables: valor_clonar ya devuelve la representacion correcta
+     * (compartido por refcount donde aplica, escalar copiado donde
+     * aplica). */
+    return valor_clonar(v);
+}
+
+/* v1.165: copia_profunda(x) — deep copy recursivo. Para
+ * contenedores anidados construye nuevos contenedores en cada
+ * nivel; cualquier mutacion sobre la copia no afecta al original
+ * por mas profunda que sea.
+ *
+ * Maneja ciclos via memoizador (puntero original -> Valor nuevo).
+ * Sin el memo, una lista que se contiene a si misma colgaria la VM.
+ *
+ * Las claves de dicc se clonan shallow porque son hashables (y por
+ * tanto inmutables en la practica). Los elementos de conjunto idem.
+ *
+ * Tipos no-colectivos (instancia, funcion, etc.) caen a
+ * valor_clonar — equivalente a "share by reference". Para deep
+ * copy de instancias habria que invocar un dunder __copia__ que
+ * todavia no existe; documentado como limitacion. */
+static Valor copia_profunda_rec(EvalError *err, const Valor *v,
+                                 Diccionario *memo,
+                                 int linea, int columna) {
+    void *puntero = NULL;
+    switch (v->tipo) {
+        case VAL_LISTA:        puntero = v->como.lista; break;
+        case VAL_DICCIONARIO:  puntero = v->como.dicc; break;
+        case VAL_CONJUNTO:     puntero = v->como.conjunto; break;
+        case VAL_TUPLA:        puntero = v->como.tupla; break;
+        default: break;
+    }
+    if (puntero) {
+        Valor clave = valor_entero_de_i64((int64_t)(intptr_t)puntero);
+        Valor cached;
+        if (dicc_obtener(memo, &clave, &cached)) {
+            valor_destruir(&clave);
+            return valor_clonar(&cached);
+        }
+        valor_destruir(&clave);
+    }
+    if (v->tipo == VAL_LISTA) {
+        Lista *src = v->como.lista;
+        Lista *dst = lista_nueva(src->cuenta);
+        if (!dst) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        Valor resultado = valor_lista(dst);
+        /* Cachear ANTES de recurrir para tolerar ciclos. */
+        Valor mkey = valor_entero_de_i64((int64_t)(intptr_t)src);
+        dicc_asignar(memo, mkey, valor_clonar(&resultado));
+        for (int i = 0; i < src->cuenta; i++) {
+            Valor copiado = copia_profunda_rec(err, &src->elementos[i],
+                                                memo, linea, columna);
+            if (err->tuvo_error) { valor_destruir(&resultado);
+                                    return valor_nulo(); }
+            if (!lista_agregar(dst, copiado)) {
+                valor_destruir(&resultado);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+        return resultado;
+    }
+    if (v->tipo == VAL_DICCIONARIO) {
+        Diccionario *src = v->como.dicc;
+        Diccionario *dst = dicc_nuevo();
+        if (!dst) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        Valor resultado = valor_diccionario(dst);
+        Valor mkey = valor_entero_de_i64((int64_t)(intptr_t)src);
+        dicc_asignar(memo, mkey, valor_clonar(&resultado));
+        for (int idx = 0; idx < src->cuenta; idx++) {
+            int slot = src->orden_insercion[idx];
+            const EntradaDicc *e = &src->entradas[slot];
+            /* La clave es hashable -> shallow basta. */
+            Valor k = valor_clonar(&e->clave);
+            Valor val = copia_profunda_rec(err, &e->valor, memo,
+                                             linea, columna);
+            if (err->tuvo_error) {
+                valor_destruir(&k);
+                valor_destruir(&resultado);
+                return valor_nulo();
+            }
+            if (!dicc_asignar(dst, k, val)) {
+                valor_destruir(&resultado);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+        return resultado;
+    }
+    if (v->tipo == VAL_CONJUNTO) {
+        Conjunto *src = v->como.conjunto;
+        Conjunto *dst = conj_nuevo();
+        if (!dst) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        Valor resultado = valor_conjunto(dst);
+        Valor mkey = valor_entero_de_i64((int64_t)(intptr_t)src);
+        dicc_asignar(memo, mkey, valor_clonar(&resultado));
+        for (int i = 0; i < src->capacidad; i++) {
+            if (!src->entradas[i].ocupada) continue;
+            /* Elemento hashable -> shallow. */
+            if (!conj_agregar(dst, valor_clonar(&src->entradas[i].elemento))) {
+                valor_destruir(&resultado);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        }
+        dst->congelado = src->congelado;
+        return resultado;
+    }
+    if (v->tipo == VAL_TUPLA) {
+        Tupla *src = v->como.tupla;
+        Tupla *dst = tupla_nueva(src->cuenta);
+        if (!dst) return error_nativa(err, linea, columna,
+            "memoria insuficiente");
+        Valor resultado = valor_tupla(dst);
+        Valor mkey = valor_entero_de_i64((int64_t)(intptr_t)src);
+        dicc_asignar(memo, mkey, valor_clonar(&resultado));
+        for (int i = 0; i < src->cuenta; i++) {
+            dst->elementos[i] = copia_profunda_rec(err, &src->elementos[i],
+                                                    memo, linea, columna);
+            if (err->tuvo_error) {
+                valor_destruir(&resultado);
+                return valor_nulo();
+            }
+        }
+        return resultado;
+    }
+    /* Inmutables / no-colectivos: valor_clonar. */
+    return valor_clonar(v);
+}
+
+static Valor nativa_copia_profunda(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: copia_profunda() requiere 1 argumento, recibio %d",
+            n_args);
+    }
+    Diccionario *memo = dicc_nuevo();
+    if (!memo) return error_nativa(err, linea, columna,
+        "memoria insuficiente");
+    Valor resultado = copia_profunda_rec(err, &args[0], memo, linea, columna);
+    dicc_liberar(memo);
+    return resultado;
+}
+
 /* ──────────────────────────────────────────────────────────────────
  * Atributos dinamicos (v1.86): tiene_atributo, obtener_atributo,
  * asignar_atributo. Analogo a `hasattr`/`getattr`/`setattr` de Python.
@@ -7516,6 +7728,8 @@ static const EntradaNativa NATIVAS[] = {
     {"repr",             4,  nativa_repr},
     {"hash",             4,  nativa_hash},                  /* v1.163 */
     {"congelar",         8,  nativa_congelar},              /* v1.164 */
+    {"copia",            5,  nativa_copia},                 /* v1.165 */
+    {"copia_profunda",  14,  nativa_copia_profunda},        /* v1.165 */
     /* Atributos dinamicos (v1.86). */
     {"tiene_atributo",   14, nativa_tiene_atributo},
     {"obtener_atributo", 16, nativa_obtener_atributo},

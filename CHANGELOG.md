@@ -6,6 +6,77 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.165.0] — 2026-06-07 — `copia(x)` y `copia_profunda(x)`
+
+Faltaba un built-in genérico para clonar contenedores mutables.
+`lista.copiar()` y `conjunto.copiar()` existían pero no `dicc.copiar()`
+ni nada recursivo. Ahora hay paridad con `copy.copy()` y
+`copy.deepcopy()` de Python.
+
+Tema con v1.163-164: control fino sobre aliasing. `hash`, `congelar`,
+y ahora `copia/copia_profunda` cubren el espectro completo.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Shallow: contenedor independiente, elementos compartidos
+xs = [[1, 2], [3, 4]]
+ys = copia(xs)
+ys.agregar([5, 6])    # solo en ys
+ys[0].agregar(99)      # tambien afecta a xs[0] (sub-listas compartidas)
+
+# Deep: independencia total
+zs = copia_profunda(xs)
+zs[0].agregar(77)      # NO afecta a xs[0]
+
+# Tolera ciclos
+ciclo = [1, 2]
+ciclo.agregar(ciclo)
+copia_profunda(ciclo)  # OK, no cuelga (memoizador puntero -> copia)
+
+# Frozen se preserva
+copia(congelar({1, 2}))  # sigue siendo frozen
+
+# Inmutables (entero, decimal, cadena, tupla sin contenedores, nulo):
+# devuelven el mismo valor — no hay diferencia entre shallow y deep
+copia(42)              # 42
+copia((1, 2))          # (1, 2)
+```
+
+### Implementación
+
+- **`nativa_copia`** (`src/nativos.c`): construye una lista/dicc/
+  conjunto nuevo y llena con `valor_clonar` (que para mutables hace
+  refcount-share, para inmutables copia la struct). Para
+  inmutables redirige a `valor_clonar` directo.
+- **`nativa_copia_profunda`** crea un `Diccionario` memoizador
+  `puntero original -> Valor nuevo`, llama a `copia_profunda_rec`
+  y lo libera. El memo soporta ciclos: si encontramos el puntero
+  en el memo, devolvemos su valor (la copia parcial ya construida).
+- **`copia_profunda_rec`** registra el resultado en el memo **antes**
+  de recurrir sobre los hijos. Eso es lo que permite que un nodo
+  ciclico vuelva a verse a si mismo y termine.
+- **Claves de dicc y elementos de conjunto** se clonan shallow
+  (`valor_clonar`) porque son hashables — en la practica, inmutables
+  o instancias con identidad estable. Solo los valores de dicc y los
+  elementos de lista/tupla pasan por recursion deep.
+
+### Limitaciones honestas
+
+- **Instancias de clases** caen a `valor_clonar` (share by
+  reference). No invocan un `__copia__` dunder porque ese
+  dunder todavia no existe. Si necesitas deep copy de una
+  instancia, tienes que implementarlo a mano en un metodo.
+- **El memo usa el puntero como clave de dicc**. Eso significa
+  que cada llamada a `copia_profunda` crea un `Diccionario` nuevo
+  con headers GC — overhead pequeno pero no nulo. Para
+  estructuras minusculas (3 elementos), `copia(x)` puede ser 2-3
+  veces mas rapido que `copia_profunda(x)`.
+- **Funciones, generadores, iteradores** se comparten por
+  refcount tambien en deep copy. Tiene sentido: una funcion
+  cerrada sobre variables externas no debe copiarse — duplicaria
+  el comportamiento, no el estado.
+
 ## [1.164.0] — 2026-06-07 — `congelar(s)` (frozenset)
 
 Complemento natural de [v1.163]: `hash(x)` ya expuso el hash, pero
