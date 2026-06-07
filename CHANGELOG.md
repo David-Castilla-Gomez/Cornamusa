@@ -6,6 +6,59 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.172.0] — 2026-06-07 — Spread en tupla y conjunto
+
+Continuación de v1.171 (que cubrió lista). Tupla y conjunto
+literales ahora aceptan spread `*xs`:
+
+```cornamusa
+xs = [1, 2, 3]
+(0, *xs, 4)              # (0, 1, 2, 3, 4)
+(1, *(10, 20), 99)       # (1, 10, 20, 99)
+(1, *"ab", 2)            # (1, "a", "b", 2)
+(-1, *rango(5), 100)     # (-1, 0, 1, 2, 3, 4, 100)
+
+{0, *xs, 4}              # 5 elementos, deduplicado
+{1, *[1, 2, 3], 2}       # 3 elementos (deduplicacion natural)
+{0, *"hola"}             # {0, "h", "o", "l", "a"}
+```
+
+### Implementación
+
+- **2 opcodes nuevos** (`src/chunk.h`):
+  - `OP_CONJUNTO_EXTENDER` — análogo a `OP_LISTA_EXTENDER`. Pop
+    iterable, agrega cada elemento al conjunto debajo (con check
+    de hashabilidad).
+  - `OP_LISTA_A_TUPLA` — convierte la lista TOS en tupla. Necesario
+    porque la tupla es inmutable: no se puede "agregar" en
+    incremental, así que construimos lista y convertimos al final.
+- **Parser** (`src/parser.c`): `parsear_grupo` (tupla) y
+  `parsear_llaves` (conjunto) usan `parsear_elemento_con_spread`
+  en el bucle de elementos. Forward declaration añadida.
+- **Compilador** (`src/compilador.c`):
+  - `EXPR_TUPLA`: si hay spread, emite `OP_BUILD_LISTA 0` + bucle
+    AGREGAR/EXTENDER + `OP_LISTA_A_TUPLA`. Sin spread, sigue el
+    path eficiente `OP_BUILD_TUPLA n`.
+  - `EXPR_CONJUNTO`: análogo con `OP_BUILD_CONJUNTO 0` + bucle
+    AGREGAR/EXTENDER. `OP_CONJUNTO_EXTENDER` valida hashabilidad
+    elemento a elemento.
+- **VM** (`src/vm.c`): `OP_CONJUNTO_EXTENDER` itera lista, tupla,
+  conjunto, dicc (claves), cadena (code points) y rango — misma
+  cobertura que `OP_LISTA_EXTENDER`. `OP_LISTA_A_TUPLA` clona los
+  elementos a una `Tupla *` nueva.
+
+### Limitaciones honestas
+
+- **Primer elemento NO puede ser spread**: `(*xs,)` y `{*xs}` no
+  parsean. El primer elemento se lee con `parsear_expresion`
+  (que no acepta `*` como prefix), y solo los subsecuentes pasan
+  por `parsear_elemento_con_spread`. Fix requeriría reorganizar
+  el caso especial del primer elemento; postergado. Workaround:
+  `(0, *xs)[1:]` o `{0, *xs} - {0}`.
+- **Dicc con `**d`** sigue pendiente (v1.173). El opcode
+  `OP_DICC_EXTENDER` ya existe; falta el parser que detecte
+  doble-asterisco y el compilador que emita el path incremental.
+
 ## [1.171.0] — 2026-06-07 — Spread `*xs` en literales de lista
 
 `[a, *xs, b]` desempaca el iterable `xs` en posición. Patrón

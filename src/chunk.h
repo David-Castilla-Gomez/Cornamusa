@@ -172,6 +172,8 @@ typedef enum {
     /* v1.30: para set comprehension. TOS=valor; debajo=conjunto. Pop valor,
        agregar al conjunto. Valor debe ser hashable. */
     OP_CONJUNTO_AGREGAR,
+    OP_CONJUNTO_EXTENDER,  /* v1.172 — analogo a OP_LISTA_EXTENDER */
+    OP_LISTA_A_TUPLA,      /* v1.172 — convierte lista TOS en tupla */
 
     /* v1.31: `producir EXPR` en generador. TOS=valor producido. La VM
        suspende el frame del generador (guarda IP y stack) y retorna al

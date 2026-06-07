@@ -78,6 +78,7 @@ static Expr *parsear_no(Parser *p);
 static Expr *parsear_lambda(Parser *p);
 static Expr *parsear_lista_literal(Parser *p);
 static Expr *parsear_llaves(Parser *p);
+static Expr *parsear_elemento_con_spread(Parser *p);  /* v1.171/v1.172 */
 static Expr *parsear_binario(Parser *p, Expr *izq);
 static Expr *parsear_logica(Parser *p, Expr *izq);
 static Expr *parsear_potencia(Parser *p, Expr *izq);
@@ -718,7 +719,8 @@ static Expr *parsear_grupo(Parser *p) {
     if (!check(p, TT_PARENT_DER)) {
         do {
             if (check(p, TT_PARENT_DER)) break; /* trailing comma */
-            Expr *e = parsear_expresion(p);
+            /* v1.172: soporta spread *xs en elementos de tupla. */
+            Expr *e = parsear_elemento_con_spread(p);
             if (e == NULL) return NULL;
             if (n >= cap) {
                 cap *= 2;
@@ -1169,7 +1171,8 @@ static Expr *parsear_llaves(Parser *p) {
 
     while (consumir_si(p, TT_COMA)) {
         if (check(p, TT_LLAVE_DER)) break;
-        Expr *e = parsear_expresion(p);
+        /* v1.172: soporta spread *xs en elementos de conjunto. */
+        Expr *e = parsear_elemento_con_spread(p);
         if (e == NULL) return NULL;
         if (n >= cap) {
             cap *= 2;

@@ -1029,6 +1029,37 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         }
         case EXPR_TUPLA: {
             int n = e->como.secuencia.n_elementos;
+            /* v1.172: spread en tupla — construir lista incremental y
+             * convertir al final con OP_LISTA_A_TUPLA. */
+            bool hay_spread = false;
+            for (int i = 0; i < n; i++) {
+                Expr *el = e->como.secuencia.elementos[i];
+                if (el->tipo == EXPR_UNARIO
+                    && el->como.unario.op == TT_ASTERISCO) {
+                    hay_spread = true;
+                    break;
+                }
+            }
+            if (hay_spread) {
+                chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA,
+                                    0, e->linea);
+                for (int i = 0; i < n; i++) {
+                    Expr *el = e->como.secuencia.elementos[i];
+                    if (el->tipo == EXPR_UNARIO
+                        && el->como.unario.op == TT_ASTERISCO) {
+                        if (!compilador_compilar_expr(c, el->como.unario.operando))
+                            return false;
+                        chunk_emitir_byte(c->actual->chunk,
+                                            OP_LISTA_EXTENDER, e->linea);
+                    } else {
+                        if (!compilador_compilar_expr(c, el)) return false;
+                        chunk_emitir_byte(c->actual->chunk,
+                                            OP_LISTA_AGREGAR, e->linea);
+                    }
+                }
+                chunk_emitir_byte(c->actual->chunk, OP_LISTA_A_TUPLA, e->linea);
+                return true;
+            }
             if (n > 255) {
                 error_compilacion(c, e->linea, e->columna,
                     "literal de tupla con mas de 255 elementos no soportado en v0.6");
@@ -1058,6 +1089,35 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         }
         case EXPR_CONJUNTO: {
             int n = e->como.secuencia.n_elementos;
+            /* v1.172: spread en conjunto literal. */
+            bool hay_spread = false;
+            for (int i = 0; i < n; i++) {
+                Expr *el = e->como.secuencia.elementos[i];
+                if (el->tipo == EXPR_UNARIO
+                    && el->como.unario.op == TT_ASTERISCO) {
+                    hay_spread = true;
+                    break;
+                }
+            }
+            if (hay_spread) {
+                chunk_emitir_byte2(c->actual->chunk, OP_BUILD_CONJUNTO,
+                                    0, e->linea);
+                for (int i = 0; i < n; i++) {
+                    Expr *el = e->como.secuencia.elementos[i];
+                    if (el->tipo == EXPR_UNARIO
+                        && el->como.unario.op == TT_ASTERISCO) {
+                        if (!compilador_compilar_expr(c, el->como.unario.operando))
+                            return false;
+                        chunk_emitir_byte(c->actual->chunk,
+                                            OP_CONJUNTO_EXTENDER, e->linea);
+                    } else {
+                        if (!compilador_compilar_expr(c, el)) return false;
+                        chunk_emitir_byte(c->actual->chunk,
+                                            OP_CONJUNTO_AGREGAR, e->linea);
+                    }
+                }
+                return true;
+            }
             if (n > 255) {
                 error_compilacion(c, e->linea, e->columna,
                     "literal de conjunto con mas de 255 elementos no soportado en v0.6");

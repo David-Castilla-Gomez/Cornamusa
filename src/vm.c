@@ -6037,6 +6037,130 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 }
                 break;
             }
+            case OP_CONJUNTO_EXTENDER: {
+                /* v1.172: TOS = iterable; debajo = conjunto. Pop
+                   iterable, itera elementos y los agrega al conjunto. */
+                Valor it = *(--vm->tope);
+                Valor *c_slot = vm->tope - 1;
+                if (c_slot->tipo != VAL_CONJUNTO) {
+                    valor_destruir(&it);
+                    VM_ERROR("ErrorInterno: OP_CONJUNTO_EXTENDER sin conjunto");
+                    return VM_ERROR_RUNTIME;
+                }
+                Conjunto *cj = c_slot->como.conjunto;
+                #define AGREGAR_AL_CONJ(v) do { \
+                    if (!valor_es_hashable(&(v))) { \
+                        valor_destruir(&(v)); \
+                        VM_ERROR("ErrorDeTipo: elemento no hashable en spread de conjunto"); \
+                        valor_destruir(&it); \
+                        RAISE_OR_DIE(); \
+                        goto conj_ext_done; \
+                    } \
+                    if (!conj_agregar(cj, (v))) { \
+                        VM_ERROR("memoria insuficiente"); \
+                        valor_destruir(&it); \
+                        return VM_ERROR_RUNTIME; \
+                    } \
+                } while (0)
+                if (it.tipo == VAL_LISTA) {
+                    Lista *src = it.como.lista;
+                    for (int i = 0; i < src->cuenta; i++) {
+                        Valor v = valor_clonar(&src->elementos[i]);
+                        AGREGAR_AL_CONJ(v);
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_TUPLA) {
+                    Tupla *src = it.como.tupla;
+                    for (int i = 0; i < src->cuenta; i++) {
+                        Valor v = valor_clonar(&src->elementos[i]);
+                        AGREGAR_AL_CONJ(v);
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_CONJUNTO) {
+                    Conjunto *src = it.como.conjunto;
+                    for (int i = 0; i < src->capacidad; i++) {
+                        if (!src->entradas[i].ocupada) continue;
+                        Valor v = valor_clonar(&src->entradas[i].elemento);
+                        AGREGAR_AL_CONJ(v);
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_DICCIONARIO) {
+                    Diccionario *src = it.como.dicc;
+                    for (int idx = 0; idx < src->cuenta; idx++) {
+                        int slot = src->orden_insercion[idx];
+                        Valor v = valor_clonar(&src->entradas[slot].clave);
+                        AGREGAR_AL_CONJ(v);
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_CADENA) {
+                    const char *s = it.como.cadena.texto;
+                    int sl = it.como.cadena.longitud;
+                    int p = 0;
+                    while (p < sl) {
+                        utf8proc_int32_t cp;
+                        utf8proc_ssize_t cons = utf8proc_iterate(
+                            (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+                        if (cons <= 0) { p++; continue; }
+                        Valor v = valor_cadena_duplicar(s + p, (int)cons);
+                        AGREGAR_AL_CONJ(v);
+                        p += (int)cons;
+                    }
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_RANGO) {
+                    mp_int idx, paso, fin;
+                    mp_init_multi(&idx, &paso, &fin, NULL);
+                    mp_copy(it.como.rango.inicio, &idx);
+                    mp_copy(it.como.rango.paso, &paso);
+                    mp_copy(it.como.rango.fin, &fin);
+                    int signo_paso = mp_isneg(&paso) == MP_YES ? -1 : 1;
+                    while (true) {
+                        int cmp = mp_cmp(&idx, &fin);
+                        if (signo_paso > 0 ? cmp != MP_LT : cmp != MP_GT) break;
+                        mp_int *copia = (mp_int *)malloc(sizeof(mp_int));
+                        if (!copia) break;
+                        mp_init(copia); mp_copy(&idx, copia);
+                        Valor v = valor_entero_de_mp_normalizado(copia);
+                        AGREGAR_AL_CONJ(v);
+                        mp_add(&idx, &paso, &idx);
+                    }
+                    mp_clear_multi(&idx, &paso, &fin, NULL);
+                    valor_destruir(&it);
+                } else {
+                    const char *tname = valor_nombre_tipo(&it);
+                    VM_ERROR(
+                        "ErrorDeTipo: '%s' no es iterable para spread (*)",
+                        tname);
+                    valor_destruir(&it);
+                    RAISE_OR_DIE();
+                }
+                conj_ext_done: ;
+                #undef AGREGAR_AL_CONJ
+                break;
+            }
+            case OP_LISTA_A_TUPLA: {
+                /* v1.172: convierte la lista en TOS a una tupla con
+                 * los mismos elementos. Usado para implementar
+                 * (a, *xs, b) que requiere construir incrementalmente. */
+                Valor v = *(--vm->tope);
+                if (v.tipo != VAL_LISTA) {
+                    valor_destruir(&v);
+                    VM_ERROR("ErrorInterno: OP_LISTA_A_TUPLA sin lista");
+                    return VM_ERROR_RUNTIME;
+                }
+                Lista *l = v.como.lista;
+                Tupla *t = tupla_nueva(l->cuenta);
+                if (!t) {
+                    valor_destruir(&v);
+                    VM_ERROR("memoria insuficiente");
+                    return VM_ERROR_RUNTIME;
+                }
+                for (int i = 0; i < l->cuenta; i++) {
+                    t->elementos[i] = valor_clonar(&l->elementos[i]);
+                }
+                valor_destruir(&v);
+                empujar(vm, valor_tupla(t));
+                break;
+            }
             case OP_LLAMAR_KW: {
                 /* v1.23: llamada con keyword arguments.
                    Stack: [..., callee, pos0..n_pos-1, key0, val0, ...]

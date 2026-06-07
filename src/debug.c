@@ -175,6 +175,8 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_LISTA_EXTENDER:  return instruccion_simple("OP_LISTA_EXTENDER", offset, out);
         case OP_LLAMAR_SPREAD:   return instruccion_simple("OP_LLAMAR_SPREAD", offset, out);
         case OP_CONJUNTO_AGREGAR: return instruccion_simple("OP_CONJUNTO_AGREGAR", offset, out);
+        case OP_CONJUNTO_EXTENDER: return instruccion_simple("OP_CONJUNTO_EXTENDER", offset, out);
+        case OP_LISTA_A_TUPLA:   return instruccion_simple("OP_LISTA_A_TUPLA", offset, out);
         case OP_PRODUCIR:        return instruccion_simple("OP_PRODUCIR", offset, out);
         case OP_LLAMAR_KW: {
             /* 2 bytes: n_pos, n_kw. */
