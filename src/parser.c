@@ -668,8 +668,38 @@ static Expr *parsear_grupo(Parser *p) {
                           apertura.linea, apertura.columna);
     }
 
-    Expr *primero = parsear_expresion(p);
+    /* v1.174: `(*xs, ...)` o `(*xs,)` — primer elemento spread fuerza
+     * tupla (no es grupo de expresion). Saltamos el caso comun y
+     * vamos directo al bucle de tupla. */
+    bool primero_es_spread = check(p, TT_ASTERISCO);
+    Expr *primero = parsear_elemento_con_spread(p);
     if (primero == NULL) return NULL;
+    if (primero_es_spread) {
+        /* Esperamos `,` o `)` directamente; no es grupo, no es genex. */
+        Expr **elementos = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * 4);
+        if (elementos == NULL) return NULL;
+        int n = 1;
+        int cap = 4;
+        elementos[0] = primero;
+        while (consumir_si(p, TT_COMA)) {
+            if (check(p, TT_PARENT_DER)) break; /* trailing comma */
+            Expr *e = parsear_elemento_con_spread(p);
+            if (e == NULL) return NULL;
+            if (n >= cap) {
+                cap *= 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                if (nuevo == NULL) return NULL;
+                memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+                elementos = nuevo;
+            }
+            elementos[n++] = e;
+        }
+        if (!consumir(p, TT_PARENT_DER,
+            "se esperaba ')' al final de la tupla")) return NULL;
+        return expr_tupla(p->arena, elementos, n,
+                            apertura.linea, apertura.columna);
+    }
 
     /* v1.34: generator expression `(expr para v en iter [si guarda])`.
        Produce un generador lazy en lugar de una lista materializada.
@@ -1065,6 +1095,36 @@ static Expr *parsear_llaves(Parser *p) {
     if (consumir_si(p, TT_LLAVE_DER)) {
         return expr_diccionario(p->arena, NULL, NULL, 0,
                                 apertura.linea, apertura.columna);
+    }
+
+    /* v1.174: `{*xs, ...}` — set spread como PRIMER elemento.
+     * Forzamos conjunto literal (no dict, no comprehension). */
+    if (check(p, TT_ASTERISCO)) {
+        Expr *primero = parsear_elemento_con_spread(p);
+        if (primero == NULL) return NULL;
+        Expr **elementos = (Expr **)arena_alocar(p->arena, sizeof(Expr *) * 4);
+        if (elementos == NULL) return NULL;
+        int n = 1;
+        int cap = 4;
+        elementos[0] = primero;
+        while (consumir_si(p, TT_COMA)) {
+            if (check(p, TT_LLAVE_DER)) break;
+            Expr *e = parsear_elemento_con_spread(p);
+            if (e == NULL) return NULL;
+            if (n >= cap) {
+                cap *= 2;
+                Expr **nuevo = (Expr **)arena_alocar(p->arena,
+                    sizeof(Expr *) * (size_t)cap);
+                if (nuevo == NULL) return NULL;
+                memcpy(nuevo, elementos, sizeof(Expr *) * (size_t)n);
+                elementos = nuevo;
+            }
+            elementos[n++] = e;
+        }
+        if (!consumir(p, TT_LLAVE_DER,
+            "se esperaba '}' al final del conjunto")) return NULL;
+        return expr_conjunto(p->arena, elementos, n,
+                              apertura.linea, apertura.columna);
     }
 
     /* v1.173: `{**d, ...}` — dict spread como PRIMER elemento.

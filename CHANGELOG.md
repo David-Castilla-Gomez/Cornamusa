@@ -6,6 +6,65 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.174.0] — 2026-06-07 — Primer elemento spread
+
+Cierra la limitación documentada en v1.172: `(*xs,)` y `{*xs}`
+ya parsean correctamente. Antes, el `*` solo se aceptaba en
+posiciones secundarias (tras el primer elemento), por simplicidad
+del parser. Ahora también se acepta como primer elemento.
+
+### Lo que ahora funciona
+
+```cornamusa
+xs = [1, 2, 3]
+
+# Tupla con primer spread
+(*xs,)         # (1, 2, 3)
+(*xs, 99)      # (1, 2, 3, 99)
+(*xs, *xs)     # (1, 2, 3, 1, 2, 3)
+
+# Conjunto con primer spread
+{*xs}          # {1, 2, 3}
+{*xs, 99}      # {1, 2, 3, 99}
+{*[1, 1, 2]}   # {1, 2}  (deduplicado)
+
+# Lista ya funcionaba desde v1.171
+[*xs]          # [1, 2, 3]
+```
+
+### Implementación
+
+- **Parser** (`src/parser.c`):
+  - `parsear_grupo`: si el primer token es `*`, ramificamos
+    directo al camino tupla con spread (salta la rama de "grupo
+    de expresion" y "generator expression"). Si la siguiente
+    sigue siendo `,` o `)`, esto es una tupla con primer elemento
+    desempacado.
+  - `parsear_llaves`: si el primer token es `*` (distinto de
+    `**` que ya manejaba dspread en v1.173), ramificamos directo
+    a conjunto literal con spread.
+- **Compilador / VM**: ningún cambio. Reusa el mismo bytecode
+  generado por v1.171 / v1.172 (path incremental
+  `OP_BUILD_LISTA 0` + `OP_LISTA_AGREGAR`/`OP_LISTA_EXTENDER` +
+  `OP_LISTA_A_TUPLA` para tupla; `OP_BUILD_CONJUNTO 0` + agregar/
+  extender para conjunto).
+
+### Por qué la limitación existía
+
+En v1.172 el primer elemento siempre se leía con
+`parsear_expresion` para mantener compatibilidad con
+generator expressions `(expr para v en it)` y dict literals
+`{k: v}`. Detectar la diferencia entre `(*xs, ...)` (tupla con
+spread), `(expr para ...)` (genex) y `(expr)` (grupo) requería
+peek-ahead. Trampa: el `*` *prefix* en cornamusa no es un
+operador unario válido, así que basta con chequearlo antes de
+intentar `parsear_expresion`. Diferenciable sin peek-ahead real.
+
+### No cambia
+
+`{**d}` (dict spread) sigue funcionando igual — v1.173 ya lo
+gestionaba.
+
 ## [1.173.0] — 2026-06-07 — `**d` dict spread
 
 Cierra la trilogía de spread iniciada en v1.171 (lista, tupla,
