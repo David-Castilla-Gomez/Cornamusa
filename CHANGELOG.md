@@ -6,6 +6,81 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.176.0] — 2026-06-08 — Spread con instancias iterables
+
+Cierra la ultima limitacion de v1.171 sobre spread. Una clase que
+define `__siguiente__` (o `__iterar__` que retorna otra instancia
+con `__siguiente__`) ahora puede desempacarse en literales:
+`[*obj]`, `(*obj,)`, `{*obj}`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Iterador stateful con __siguiente__ directo (self-iterator)
+clase Contador:
+    funcion __iniciar__(yo, n):
+        yo.n = n
+        yo.i = 0
+    fin funcion
+    funcion __siguiente__(yo):
+        si yo.i >= yo.n:
+            lanzar ErrorDeIteracion()
+        fin si
+        v = yo.i
+        yo.i = yo.i + 1
+        retornar v
+    fin funcion
+fin clase
+
+[*Contador(5)]        # [0, 1, 2, 3, 4]
+(*Contador(3),)        # (0, 1, 2)
+{*Contador(4)}         # {0, 1, 2, 3}
+[100, *Contador(3), 200]   # [100, 0, 1, 2, 200]
+
+# Patron iter()/next() Python: __iterar__ devuelve self
+clase Rango:
+    funcion __iniciar__(yo, a, b):
+        yo.a = a; yo.b = b; yo.i = a
+    fin funcion
+    funcion __iterar__(yo):
+        yo.i = yo.a
+        retornar yo
+    fin funcion
+    funcion __siguiente__(yo):
+        si yo.i >= yo.b: lanzar ErrorDeIteracion() fin si
+        v = yo.i; yo.i = yo.i + 1; retornar v
+    fin funcion
+fin clase
+
+[*Rango(10, 15)]       # [10, 11, 12, 13, 14]
+```
+
+### Implementación
+
+- **VM** (`src/vm.c`): `OP_LISTA_EXTENDER` y `OP_CONJUNTO_EXTENDER`
+  añaden caso `VAL_INSTANCIA`. Algoritmo:
+  1. Si la clase tiene `__siguiente__` directo, la instancia es
+     su propio iterador (idiom Python self-iterator).
+  2. Si no, invocar `__iterar__` con `vm_ejecutar_dunder_sync`.
+     El resultado debe ser otra instancia con `__siguiente__`;
+     si no, `ErrorDeTipo` con sugerencia de usar `[*lista(obj)]`.
+  3. Loop: llamar `__siguiente__` con sub-VM síncrono. Si lanza
+     `ErrorDeIteracion`, atrapamos como señal de fin
+     (paridad Python `StopIteration`). Otros errores propagan.
+
+### Limitaciones honestas
+
+- **`__iterar__` debe devolver una instancia con `__siguiente__`**,
+  no un iterable nativo. Si quieres devolver una lista/tupla/
+  generador desde `__iterar__`, el spread falla con `ErrorDeTipo`
+  claro y sugiere usar `[*lista(obj)]`. El motivo: tratar el
+  caso recursivamente requeriría re-entrar al case del switch,
+  lo que es feo en C. Pragmatismo > paridad exacta.
+- **Re-iteración**: el spread consume el estado del iterador. Si
+  haces `[*obj]` dos veces, la segunda puede dar vacío (si la
+  clase no implementa `__iterar__` que resetea). Comportamiento
+  esperado: paridad con generadores y con Python.
+
 ## [1.175.0] — 2026-06-08 — Spread con generadores
 
 Limitación documentada en v1.171 resuelta: `[*gen()]`,

@@ -6041,6 +6041,81 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         break;
                     }
                     valor_destruir(&it);
+                } else if (it.tipo == VAL_INSTANCIA) {
+                    /* v1.176: instancia con __siguiente__ (iterador
+                       lazy) o __iterar__ que retorna instancia
+                       iterador. Patron Python: iter(obj) -> next(it). */
+                    Clase *cls = it.como.instancia->clase;
+                    Closure *m_sig = clase_obtener_metodo(cls,
+                                            "__siguiente__", 13);
+                    /* Si NO tiene __siguiente__ directo, invocar
+                       __iterar__ para obtener el iterador real. */
+                    if (!m_sig) {
+                        Closure *m_iter = clase_obtener_metodo(cls,
+                                                "__iterar__", 10);
+                        if (!m_iter) {
+                            VM_ERROR(
+                                "ErrorDeTipo: la clase '%.*s' no define "
+                                "'__iterar__' ni '__siguiente__'",
+                                cls->longitud_nombre, cls->nombre);
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            break;
+                        }
+                        Valor iter_real;
+                        if (!vm_ejecutar_dunder_sync(vm, m_iter,
+                                it.como.instancia, NULL, 0, &iter_real)) {
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            break;
+                        }
+                        valor_destruir(&it);
+                        it = iter_real;
+                        if (it.tipo != VAL_INSTANCIA) {
+                            VM_ERROR(
+                                "ErrorDeTipo: __iterar__ debe devolver una "
+                                "instancia con __siguiente__ (recibido '%s'); "
+                                "usa [*lista(obj)] para iterables nativos",
+                                valor_nombre_tipo(&it));
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            break;
+                        }
+                        m_sig = clase_obtener_metodo(
+                            it.como.instancia->clase, "__siguiente__", 13);
+                        if (!m_sig) {
+                            VM_ERROR(
+                                "ErrorDeTipo: el resultado de __iterar__ "
+                                "no tiene __siguiente__");
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            break;
+                        }
+                    }
+                    /* Loop: llamar __siguiente__ hasta ErrorDeIteracion. */
+                    bool err_no_iter = false;
+                    while (true) {
+                        Valor v;
+                        if (vm_ejecutar_dunder_sync(vm, m_sig,
+                                it.como.instancia, NULL, 0, &v)) {
+                            lista_agregar(l, v);
+                            continue;
+                        }
+                        if (vm->error.tuvo_error
+                            && strncmp(vm->error.mensaje,
+                                        "ErrorDeIteracion", 16) == 0) {
+                            vm->error.tuvo_error = false;
+                            vm->error.mensaje[0] = '\0';
+                            break;
+                        }
+                        err_no_iter = true;
+                        break;
+                    }
+                    valor_destruir(&it);
+                    if (err_no_iter) {
+                        RAISE_OR_DIE();
+                        break;
+                    }
                 } else {
                     const char *tname = valor_nombre_tipo(&it);
                     VM_ERROR(
@@ -6152,6 +6227,76 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         goto conj_ext_done;
                     }
                     valor_destruir(&it);
+                } else if (it.tipo == VAL_INSTANCIA) {
+                    /* v1.176: instancia con __siguiente__ (o __iterar__
+                       que retorna iterador). */
+                    Clase *cls = it.como.instancia->clase;
+                    Closure *m_sig = clase_obtener_metodo(cls,
+                                            "__siguiente__", 13);
+                    if (!m_sig) {
+                        Closure *m_iter = clase_obtener_metodo(cls,
+                                                "__iterar__", 10);
+                        if (!m_iter) {
+                            VM_ERROR(
+                                "ErrorDeTipo: la clase '%.*s' no define "
+                                "'__iterar__' ni '__siguiente__'",
+                                cls->longitud_nombre, cls->nombre);
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            goto conj_ext_done;
+                        }
+                        Valor iter_real;
+                        if (!vm_ejecutar_dunder_sync(vm, m_iter,
+                                it.como.instancia, NULL, 0, &iter_real)) {
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            goto conj_ext_done;
+                        }
+                        valor_destruir(&it);
+                        it = iter_real;
+                        if (it.tipo != VAL_INSTANCIA) {
+                            VM_ERROR(
+                                "ErrorDeTipo: __iterar__ debe devolver una "
+                                "instancia con __siguiente__ (recibido '%s')",
+                                valor_nombre_tipo(&it));
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            goto conj_ext_done;
+                        }
+                        m_sig = clase_obtener_metodo(
+                            it.como.instancia->clase, "__siguiente__", 13);
+                        if (!m_sig) {
+                            VM_ERROR(
+                                "ErrorDeTipo: el resultado de __iterar__ "
+                                "no tiene __siguiente__");
+                            valor_destruir(&it);
+                            RAISE_OR_DIE();
+                            goto conj_ext_done;
+                        }
+                    }
+                    bool err_no_iter = false;
+                    while (true) {
+                        Valor v;
+                        if (vm_ejecutar_dunder_sync(vm, m_sig,
+                                it.como.instancia, NULL, 0, &v)) {
+                            AGREGAR_AL_CONJ(v);
+                            continue;
+                        }
+                        if (vm->error.tuvo_error
+                            && strncmp(vm->error.mensaje,
+                                        "ErrorDeIteracion", 16) == 0) {
+                            vm->error.tuvo_error = false;
+                            vm->error.mensaje[0] = '\0';
+                            break;
+                        }
+                        err_no_iter = true;
+                        break;
+                    }
+                    valor_destruir(&it);
+                    if (err_no_iter) {
+                        RAISE_OR_DIE();
+                        goto conj_ext_done;
+                    }
                 } else {
                     const char *tname = valor_nombre_tipo(&it);
                     VM_ERROR(
