@@ -6,6 +6,81 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.177.0] — 2026-06-08 — Comprehensions y genex inline en spread
+
+Cierra la **ultima** limitacion documentada en v1.171. Antes:
+
+```cornamusa
+[*[x para x en xs], 99]
+# estado interno corrupto: OP_ITER_SIGUIENTE sin iterador en slot 1
+```
+
+Ahora funciona sin trampas. Patron Python idiomatico totalmente
+soportado.
+
+### Lo que ahora funciona
+
+```cornamusa
+# List comprehension en spread de lista
+[*[x*x para x en rango(4)], 100]   # [0, 1, 4, 9, 100]
+
+# Comprehension con guarda
+[0, *[x para x en rango(10) si x % 2 == 0], 99]
+# [0, 0, 2, 4, 6, 8, 99]
+
+# Generator expression en spread de tupla
+(*[10, 20], *(x*2 para x en rango(3)), 99)
+# (10, 20, 0, 2, 4, 99)
+
+# Dict comprehension en dspread
+{**{x: x*x para x en rango(3)}, "extra": 99}
+# {0: 0, 1: 1, 2: 4, "extra": 99}
+
+# Multiples comprehensions en mismo literal
+[*[a para a en rango(3)], *[b*10 para b en rango(3)]]
+# [0, 1, 2, 0, 10, 20]
+```
+
+### Root cause y fix
+
+El path spread mantenia la lista temporal como valor **huerfano**
+en el stack — empujado por `OP_BUILD_LISTA 0` sin reservar un
+slot local. Cuando una comprehension interior compilaba, hacia
+`agregar_local` para sus slots `$comp_acc` y `$comp_iter`, que se
+indexan desde `n_locales`. Pero el valor huerfano del spread
+ocupaba una posicion REAL del stack que `n_locales` no contaba.
+Resultado: `OP_ITER_SIGUIENTE slot_iter` accedia al slot
+equivocado (el del spread en lugar del iter).
+
+**Fix** (`src/compilador.c`):
+
+1. Reservar slot local `$spread_lst`/`$spread_cj`/`$spread_dc`
+   para la lista/conjunto/dicc temporal — informa a la
+   compilacion subsiguiente de que ese slot esta ocupado.
+2. Por cada elemento del literal:
+   - `OP_OBTENER_LOCAL slot_lst` empuja una referencia al TOS.
+   - Reservar otro slot local `$spread_tmp` para esa referencia
+     — asi tambien esta contabilizado durante la compilacion
+     del elemento (que puede ser comprehension/genex/etc.).
+   - Compilar la sub-expresion. Si tiene comprehensions
+     interiores, sus slots estan ahora correctamente
+     calibrados con respecto al stack real.
+   - Emitir el OP_AGREGAR / OP_EXTENDER correspondiente.
+   - `OP_DESCARTAR` para sacar la referencia del TOS.
+   - `n_locales -= 1` para liberar `$spread_tmp`.
+3. Al final, `n_locales -= 1` libera `$spread_lst` — la lista
+   queda en el TOS como valor de la expresion.
+
+### No cambia
+
+Ningun opcode nuevo. El bytecode generado es ligeramente mas
+largo (un OP_OBTENER_LOCAL + OP_DESCARTAR por elemento) pero el
+patron es trivial para el JIT/optimizador futuro de detectar y
+colapsar.
+
+Path sin spread sigue siendo el eficiente `OP_BUILD_LISTA n` (sin
+slot temporal). Solo el camino con spread paga el overhead.
+
 ## [1.176.0] — 2026-06-08 — Spread con instancias iterables
 
 Cierra la ultima limitacion de v1.171 sobre spread. Una clase que

@@ -997,12 +997,27 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
             }
             if (hay_spread) {
+                /* v1.177: usar un slot local para la lista temporal en
+                 * lugar de mantenerla como valor "huerfano" en el stack.
+                 * Esto permite que sub-expresiones (comprehensions,
+                 * genex) reserven sus propios slots sin descuadrarse.
+                 * Por cada elemento reservamos tambien un slot $spread_tmp
+                 * para el valor que OP_OBTENER_LOCAL empuja al TOS — asi
+                 * la comprehension interior ve el contador n_locales
+                 * coherente con la altura real del stack. */
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA,
                                     0, e->linea);
+                int slot_lst = agregar_local(c, "$spread_lst", 11, e->linea);
+                if (slot_lst < 0) return false;
                 for (int i = 0; i < n; i++) {
                     Expr *el = e->como.secuencia.elementos[i];
-                    if (el->tipo == EXPR_UNARIO
-                        && el->como.unario.op == TT_ASTERISCO) {
+                    bool sp = (el->tipo == EXPR_UNARIO
+                                && el->como.unario.op == TT_ASTERISCO);
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                        (uint8_t)slot_lst, e->linea);
+                    int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
+                    if (slot_tmp < 0) return false;
+                    if (sp) {
                         if (!compilador_compilar_expr(c, el->como.unario.operando))
                             return false;
                         chunk_emitir_byte(c->actual->chunk,
@@ -1012,7 +1027,10 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         chunk_emitir_byte(c->actual->chunk,
                                             OP_LISTA_AGREGAR, e->linea);
                     }
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                    c->actual->n_locales -= 1;  /* liberar $spread_tmp */
                 }
+                c->actual->n_locales -= 1;  /* liberar $spread_lst */
                 return true;
             }
             if (n > 255) {
@@ -1041,12 +1059,20 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
             }
             if (hay_spread) {
+                /* v1.177: ver comentario en EXPR_LISTA. */
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA,
                                     0, e->linea);
+                int slot_lst = agregar_local(c, "$spread_lst", 11, e->linea);
+                if (slot_lst < 0) return false;
                 for (int i = 0; i < n; i++) {
                     Expr *el = e->como.secuencia.elementos[i];
-                    if (el->tipo == EXPR_UNARIO
-                        && el->como.unario.op == TT_ASTERISCO) {
+                    bool sp = (el->tipo == EXPR_UNARIO
+                                && el->como.unario.op == TT_ASTERISCO);
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                        (uint8_t)slot_lst, e->linea);
+                    int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
+                    if (slot_tmp < 0) return false;
+                    if (sp) {
                         if (!compilador_compilar_expr(c, el->como.unario.operando))
                             return false;
                         chunk_emitir_byte(c->actual->chunk,
@@ -1056,8 +1082,11 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         chunk_emitir_byte(c->actual->chunk,
                                             OP_LISTA_AGREGAR, e->linea);
                     }
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                    c->actual->n_locales -= 1;
                 }
                 chunk_emitir_byte(c->actual->chunk, OP_LISTA_A_TUPLA, e->linea);
+                c->actual->n_locales -= 1;
                 return true;
             }
             if (n > 255) {
@@ -1087,12 +1116,20 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
             }
             if (hay_dspread) {
+                /* v1.177: ver comentario en EXPR_LISTA. */
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_DICC,
                                     0, e->linea);
+                int slot_dc = agregar_local(c, "$spread_dc", 10, e->linea);
+                if (slot_dc < 0) return false;
                 for (int i = 0; i < n; i++) {
                     Expr *k = e->como.diccionario.claves[i];
-                    if (k->tipo == EXPR_UNARIO
-                        && k->como.unario.op == TT_DOBLE_ASTERISCO) {
+                    bool sp = (k->tipo == EXPR_UNARIO
+                                && k->como.unario.op == TT_DOBLE_ASTERISCO);
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                        (uint8_t)slot_dc, e->linea);
+                    int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
+                    if (slot_tmp < 0) return false;
+                    if (sp) {
                         if (!compilador_compilar_expr(c, k->como.unario.operando))
                             return false;
                         chunk_emitir_byte(c->actual->chunk,
@@ -1104,7 +1141,10 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         chunk_emitir_byte(c->actual->chunk,
                                             OP_DICC_AGREGAR_PAR, e->linea);
                     }
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                    c->actual->n_locales -= 1;
                 }
+                c->actual->n_locales -= 1;
                 return true;
             }
             if (n > 255) {
@@ -1133,12 +1173,20 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
             }
             if (hay_spread) {
+                /* v1.177: ver comentario en EXPR_LISTA. */
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_CONJUNTO,
                                     0, e->linea);
+                int slot_cj = agregar_local(c, "$spread_cj", 10, e->linea);
+                if (slot_cj < 0) return false;
                 for (int i = 0; i < n; i++) {
                     Expr *el = e->como.secuencia.elementos[i];
-                    if (el->tipo == EXPR_UNARIO
-                        && el->como.unario.op == TT_ASTERISCO) {
+                    bool sp = (el->tipo == EXPR_UNARIO
+                                && el->como.unario.op == TT_ASTERISCO);
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                        (uint8_t)slot_cj, e->linea);
+                    int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
+                    if (slot_tmp < 0) return false;
+                    if (sp) {
                         if (!compilador_compilar_expr(c, el->como.unario.operando))
                             return false;
                         chunk_emitir_byte(c->actual->chunk,
@@ -1148,7 +1196,10 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         chunk_emitir_byte(c->actual->chunk,
                                             OP_CONJUNTO_AGREGAR, e->linea);
                     }
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                    c->actual->n_locales -= 1;
                 }
+                c->actual->n_locales -= 1;
                 return true;
             }
             if (n > 255) {
