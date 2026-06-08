@@ -3177,27 +3177,18 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             return false;
 
         case PATRON_TIPO: {
-            /* `Foo()`: matchea si sujeto es instancia de Foo (vía
-               cadena de superclases). Reusa el built-in `instancia_de`
-               emitiendo:
-                   push instancia_de (global)
-                   push sujeto navegado
-                   push Foo (global)
-                   OP_LLAMAR 2
-                   OP_SALTAR_SI_FALSO no_match
-                   OP_DESCARTAR
-               Si el usuario sombrea `instancia_de` con su propio
-               binding, el patrón usará esa versión. */
+            /* `Foo()`: matchea si sujeto es instancia de Foo. Si tiene
+               args `Foo(a, b)`, ademas valida cada atributo segun el
+               sub-patron del arg. */
             int idx_inst = agregar_nombre_global(c, "instancia_de", 12);
-            int idx_clase = agregar_nombre_global(c, pat->como.bind.nombre,
-                                                     pat->como.bind.longitud);
+            int idx_clase = agregar_nombre_global(c, pat->como.tipo.nombre,
+                                                     pat->como.tipo.longitud);
             if (idx_inst < 0 || idx_inst > 255
                 || idx_clase < 0 || idx_clase > 255) {
                 error_compilacion(c, pl, 0,
                     "demasiadas constantes en 'coincidir' (>255)");
                 return false;
             }
-            /* OP_OBTENER_GLOBAL: 6 bytes (opcode + name_idx + 4 zeros). */
             chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_GLOBAL,
                                 (uint8_t)idx_inst, pl);
             chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
@@ -3215,6 +3206,35 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             }
             saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+
+            /* v1.178: validar cada arg con LITERAL (otros sub-patrones
+             * se validan en emitir_binds o son trivialmente cierto). */
+            for (int i = 0; i < pat->como.tipo.n_args; i++) {
+                ArgPatron *arg = &pat->como.tipo.args[i];
+                Patron *sub = arg->sub;
+                if (sub->tipo != PATRON_LITERAL) continue;
+                int idx_attr = agregar_nombre_global(c, arg->nombre_attr,
+                                                        arg->len_attr);
+                if (idx_attr < 0 || idx_attr > 255) {
+                    error_compilacion(c, pl, 0,
+                        "demasiadas constantes en patron de tipo (>255)");
+                    return false;
+                }
+                emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
+                                    (uint8_t)idx_attr, pl);
+                chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+                chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+                if (!compilador_compilar_expr(c, sub->como.literal)) return false;
+                chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
+                if (*n_saltos >= MATCH_MAX_SALTOS) {
+                    error_compilacion(c, pl, 0,
+                        "patron 'cuando' demasiado complejo");
+                    return false;
+                }
+                saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+            }
             return true;
         }
     }
@@ -3229,11 +3249,44 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
         case PATRON_WILDCARD:
         case PATRON_LITERAL:
         case PATRON_OR:
-        case PATRON_TIPO:
-            /* OR/TIPO: no crean binds en su sub-pattern (TIPO solo
-               valida tipo; el binding del sujeto se hace con `como`
-               en la cláusula). */
+            /* OR: no crean binds (parser restringe alternativas
+               a LITERAL/WILDCARD). */
             return true;
+
+        case PATRON_TIPO: {
+            /* v1.178: si hay args con sub-patrones BIND, emitir
+             * binds que extraen sujeto.<attr> al local. */
+            for (int i = 0; i < pat->como.tipo.n_args; i++) {
+                ArgPatron *arg = &pat->como.tipo.args[i];
+                Patron *sub = arg->sub;
+                if (sub->tipo == PATRON_BIND) {
+                    int idx_attr = agregar_nombre_global(c, arg->nombre_attr,
+                                                            arg->len_attr);
+                    if (idx_attr < 0 || idx_attr > 255) {
+                        error_compilacion(c, pl, 0,
+                            "demasiadas constantes en patron (>255)");
+                        return false;
+                    }
+                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
+                                        (uint8_t)idx_attr, pl);
+                    chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+                    chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
+                    int slot = agregar_local(c, sub->como.bind.nombre,
+                                                  sub->como.bind.longitud, pl);
+                    if (slot < 0) return false;
+                } else if (sub->tipo == PATRON_WILDCARD
+                            || sub->tipo == PATRON_LITERAL) {
+                    /* skip */
+                } else {
+                    error_compilacion(c, pl, 0,
+                        "sub-patron en 'Foo(...)' debe ser BIND, WILDCARD o LITERAL "
+                        "(v1.178)");
+                    return false;
+                }
+            }
+            return true;
+        }
 
         case PATRON_BIND: {
             emitir_navegar(c, slot_sujeto, indices, n_indices, pl);

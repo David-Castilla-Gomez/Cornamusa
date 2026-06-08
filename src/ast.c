@@ -828,9 +828,23 @@ Patron *patron_star_bind(Arena *a, const char *nombre, int len, int linea, int c
 Patron *patron_tipo(Arena *a, const char *nombre, int len, int linea, int col) {
     Patron *p = nuevo_patron(a, PATRON_TIPO, linea, col);
     if (p) {
-        /* Reusamos el union .bind para el nombre de la clase. */
-        p->como.bind.nombre = nombre;
-        p->como.bind.longitud = len;
+        p->como.tipo.nombre = nombre;
+        p->como.tipo.longitud = len;
+        p->como.tipo.args = NULL;
+        p->como.tipo.n_args = 0;
+    }
+    return p;
+}
+
+/* v1.178: variante con args (Foo(a=PAT, b=PAT)). */
+Patron *patron_tipo_con_args(Arena *a, const char *nombre, int len,
+                               ArgPatron *args, int n_args, int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_TIPO, linea, col);
+    if (p) {
+        p->como.tipo.nombre = nombre;
+        p->como.tipo.longitud = len;
+        p->como.tipo.args = args;
+        p->como.tipo.n_args = n_args;
     }
     return p;
 }

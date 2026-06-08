@@ -3300,13 +3300,58 @@ static Patron *parsear_patron_simple(Parser *p) {
         avanzar(p);
         if (check(p, TT_PARENT_IZQ)) {
             avanzar(p);
-            /* v1.16.3 solo `Foo()` sin args. Destructuring posicional
-               requiere atributos posicionales que Cornamusa no tiene. */
+            /* `Foo()` sin args = type-match puro. */
+            if (consumir_si(p, TT_PARENT_DER)) {
+                return patron_tipo(p->arena, nombre, len, linea, col);
+            }
+            /* v1.178: `Foo(a, b)` o `Foo(a=PAT, b=PAT)`. Cada arg:
+             *   - IDENT seguido de '=': nombre_attr = IDENT, sub = patron.
+             *   - IDENT solo: nombre_attr = IDENT, sub = PATRON_BIND mismo nombre.
+             *   - Wildcard `_` solo: error (no hay atributo asociado).
+             * Para patrones complejos posicionales sin nombre habria que
+             * usar __match_args__ (Python 3.10), no soportado todavia. */
+            ArgPatron *args = NULL;
+            int n_args = 0, cap = 0;
+            do {
+                if (check(p, TT_PARENT_DER)) break;  /* trailing coma */
+                if (!check(p, TT_IDENT)) {
+                    error_en(p, &p->actual,
+                        "se esperaba un nombre de atributo en patron de tipo");
+                    return NULL;
+                }
+                const char *aname = p->actual.inicio;
+                int alen = p->actual.longitud;
+                int aline = p->actual.linea;
+                int acol = p->actual.columna;
+                avanzar(p);
+                Patron *sub;
+                if (consumir_si(p, TT_ASIGNAR)) {
+                    sub = parsear_patron(p);
+                    if (sub == NULL) return NULL;
+                } else {
+                    /* Shortcut: `a` ≡ `a=a` (bindea atributo a una var del mismo nombre). */
+                    sub = patron_bind(p->arena, aname, alen, aline, acol);
+                    if (sub == NULL) return NULL;
+                }
+                if (n_args >= cap) {
+                    cap = cap == 0 ? 4 : cap * 2;
+                    ArgPatron *nuevo = (ArgPatron *)arena_alocar(p->arena,
+                        sizeof(ArgPatron) * (size_t)cap);
+                    if (nuevo == NULL) return NULL;
+                    if (n_args > 0) memcpy(nuevo, args,
+                                            sizeof(ArgPatron) * (size_t)n_args);
+                    args = nuevo;
+                }
+                args[n_args].nombre_attr = aname;
+                args[n_args].len_attr = alen;
+                args[n_args].sub = sub;
+                n_args++;
+            } while (consumir_si(p, TT_COMA));
             if (!consumir(p, TT_PARENT_DER,
-                    "v1.16.3 solo soporta 'Foo()' sin args en patron de tipo")) {
+                    "se esperaba ')' al final del patron de tipo")) {
                 return NULL;
             }
-            return patron_tipo(p->arena, nombre, len, linea, col);
+            return patron_tipo_con_args(p->arena, nombre, len, args, n_args, linea, col);
         }
         return patron_bind(p->arena, nombre, len, linea, col);
     }

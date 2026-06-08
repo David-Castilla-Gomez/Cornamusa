@@ -6,6 +6,90 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.178.0] — 2026-06-08 — Patrón de clase con args en `coincidir`
+
+Cierra la limitacion documentada desde v1.16.3: antes solo
+`Foo()` sin args. Ahora `Foo(a, b)` o `Foo(a=PAT, b=PAT)`,
+matcheando por atributos.
+
+### Lo que ahora funciona
+
+```cornamusa
+clase Punto:
+    funcion __iniciar__(yo, ax, ay):
+        yo.ax = ax
+        yo.ay = ay
+    fin funcion
+fin clase
+
+# Bind: nombre = atributo y variable a la vez
+coincidir Punto(3, 4):
+    cuando Punto(ax, ay):
+        imprimir(ax, ay)    # 3 4
+fin coincidir
+
+# Literal por atributo
+coincidir Punto(0, 5):
+    cuando Punto(ax=0, ay):
+        imprimir("en eje y, ay=", ay)
+    cuando Punto(ax, ay):
+        imprimir("otro:", ax, ay)
+fin coincidir
+
+# Bind con nombre custom
+cuando Punto(ax=primero, ay=segundo):
+    imprimir(primero, segundo)
+
+# Wildcard
+cuando Punto(ax=3, ay=_):
+    imprimir("ax=3, ay=cualquier")
+```
+
+### Sintaxis
+
+- `Foo(a)` ≡ `Foo(a=a)`: bindea `sujeto.a` a una variable local `a`.
+- `Foo(a=PAT, b=PAT)`: nombre antes del `=` es atributo; PAT es
+  sub-patron.
+- **Sub-patrones soportados en v1.178**: `PATRON_BIND` (variable),
+  `PATRON_WILDCARD` (`_`), `PATRON_LITERAL` (entero, cadena, booleano,
+  `nulo`).
+
+### Implementación
+
+- **AST** (`src/ast.h`/`src/ast.c`): la union `como` de `Patron` añade
+  el case `tipo` con `nombre`, `longitud`, `args` (array) y `n_args`.
+  PATRON_TIPO migrado de `como.bind` a `como.tipo`. Nuevo constructor
+  `patron_tipo_con_args`.
+- **Parser** (`src/parser.c`): en `parsear_patron_simple`, tras
+  detectar `IDENT(`, parsear cada arg como `IDENT [= PAT]`. Sin `=`,
+  shortcut a `IDENT=IDENT` (mismo nombre como atributo y como bind).
+- **Compilador** (`src/compilador.c`):
+  - `emitir_verify` para PATRON_TIPO: tras validar `instancia_de`,
+    iterar args con `PATRON_LITERAL` y emitir
+    `sujeto.<attr> == lit` con OP_OBTENER_ATRIBUTO + OP_IGUAL.
+  - `emitir_binds` para PATRON_TIPO: por cada arg con `PATRON_BIND`,
+    emitir extracción del atributo (OP_OBTENER_ATRIBUTO) +
+    `agregar_local` con el nombre del bind.
+
+### Limitaciones honestas
+
+- **Sub-patrones complejos NO soportados**: `Foo(a=Bar(...))`,
+  `Foo(a=(1, 2))`, `Foo(a=[1, 2])` dan error de compilación claro
+  ("sub-patron en 'Foo(...)' debe ser BIND, WILDCARD o LITERAL").
+  Soporte completo recursivo requeriría refactorizar la navegación
+  por índices del compilador para aceptar nombres de atributo.
+  Workaround: bindear el atributo a una variable y usar otro
+  `coincidir` anidado, o usar la cláusula `si` para validar.
+- **No hay match posicional sin nombre** estilo Python 3.10
+  `__match_args__`. Para Cornamusa, *todos* los args llevan
+  nombre (explícito tras `=` o implícito reusando el IDENT).
+- **Validación de atributo inexistente**: si la instancia es de
+  la clase correcta pero no tiene el atributo nombrado,
+  `OP_OBTENER_ATRIBUTO` lanza `ErrorDeAtributo` en tiempo de
+  ejecución en lugar de no-match. Esto es un detalle de
+  implementación; en práctica todas las instancias salidas
+  de `__iniciar__` tienen los atributos esperados.
+
 ## [1.177.0] — 2026-06-08 — Comprehensions y genex inline en spread
 
 Cierra la **ultima** limitacion documentada en v1.171. Antes:

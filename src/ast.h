@@ -454,6 +454,13 @@ typedef enum {
     PATRON_TIPO,         /* `Foo()`: matchea si sujeto es instancia de Foo (v1.16.3) */
 } TipoPatron;
 
+/* v1.178: argumento de un patron de tipo. `Punto(a=PAT, b=PAT)`. */
+typedef struct ArgPatron {
+    const char *nombre_attr;
+    int len_attr;
+    struct Patron *sub;
+} ArgPatron;
+
 typedef struct Patron {
     TipoPatron tipo;
     int linea, columna;
@@ -467,6 +474,12 @@ typedef struct Patron {
             struct Patron **elementos;
             int n;
         } estructural;             /* PATRON_TUPLA, PATRON_LISTA, PATRON_OR */
+        struct {
+            const char *nombre;
+            int longitud;
+            ArgPatron *args;       /* NULL si Foo() sin args */
+            int n_args;
+        } tipo;                    /* PATRON_TIPO (v1.178: con args) */
     } como;
 } Patron;
 
@@ -716,6 +729,9 @@ Patron *patron_lista(Arena *a, Patron **elementos, int n, int linea, int col);
 Patron *patron_or(Arena *a, Patron **alternativas, int n, int linea, int col);
 Patron *patron_star_bind(Arena *a, const char *nombre, int len, int linea, int col);
 Patron *patron_tipo(Arena *a, const char *nombre, int len, int linea, int col);
+/* v1.178: PATRON_TIPO con argumentos `Foo(a=PAT, b=PAT)`. */
+Patron *patron_tipo_con_args(Arena *a, const char *nombre, int len,
+                               ArgPatron *args, int n_args, int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);
