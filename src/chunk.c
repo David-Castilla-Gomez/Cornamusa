@@ -109,6 +109,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_LLAMAR_SPREAD_KW_DICT: return "OP_LLAMAR_SPREAD_KW_DICT";
         case OP_LONGITUD:        return "OP_LONGITUD";
         case OP_ES_TUPLA:        return "OP_ES_TUPLA";
+        case OP_ES_DICC:         return "OP_ES_DICC";
         case OP_ES_LISTA:        return "OP_ES_LISTA";
         case OP_BORRAR_INDICE:   return "OP_BORRAR_INDICE";
         case OP_BORRAR_ATRIBUTO: return "OP_BORRAR_ATRIBUTO";

@@ -3368,6 +3368,88 @@ static Patron *parsear_patron_simple(Parser *p) {
         return patron_tupla(p->arena, elems, n, linea, col);
     }
 
+    /* v1.179: Dict `{k1: p1, k2: p2, ...}`. La clave debe ser literal
+     * (entero, decimal, cadena, booleano, nulo). El sub-patron puede
+     * ser cualquier patron (BIND, WILDCARD, LITERAL, anidado). */
+    if (p->actual.tipo == TT_LLAVE_IZQ) {
+        avanzar(p);
+        Expr **claves = NULL;
+        Patron **subs = NULL;
+        int n = 0, cap = 0;
+        if (!check(p, TT_LLAVE_DER)) {
+            do {
+                if (check(p, TT_LLAVE_DER)) break;
+                Token tk = p->actual;
+                Expr *k = NULL;
+                bool kneg = false;
+                if (tk.tipo == TT_MENOS) { kneg = true; avanzar(p); tk = p->actual; }
+                switch (tk.tipo) {
+                    case TT_ENTERO:
+                        avanzar(p);
+                        k = expr_literal_entero(p->arena, tk.inicio, tk.longitud,
+                                                  tk.linea, tk.columna);
+                        break;
+                    case TT_DECIMAL:
+                        avanzar(p);
+                        k = expr_literal_decimal(p->arena, tk.inicio, tk.longitud,
+                                                   tk.linea, tk.columna);
+                        break;
+                    case TT_CADENA:
+                        avanzar(p);
+                        k = expr_literal_cadena(p->arena, tk.inicio, tk.longitud,
+                                                  tk.linea, tk.columna);
+                        break;
+                    case TT_VERDADERO:
+                        avanzar(p);
+                        k = expr_literal_booleano(p->arena, true,
+                                                    tk.linea, tk.columna);
+                        break;
+                    case TT_FALSO:
+                        avanzar(p);
+                        k = expr_literal_booleano(p->arena, false,
+                                                    tk.linea, tk.columna);
+                        break;
+                    case TT_NULO:
+                        avanzar(p);
+                        k = expr_literal_nulo(p->arena, tk.linea, tk.columna);
+                        break;
+                    default:
+                        error_en(p, &tk,
+                            "clave de patron dict debe ser literal");
+                        return NULL;
+                }
+                if (k == NULL) return NULL;
+                if (kneg) {
+                    k = expr_unario(p->arena, TT_MENOS, k, tk.linea, tk.columna);
+                    if (k == NULL) return NULL;
+                }
+                if (!consumir(p, TT_DOS_PUNTOS,
+                        "se esperaba ':' tras clave de patron dict")) return NULL;
+                Patron *sub = parsear_patron(p);
+                if (sub == NULL) return NULL;
+                if (n >= cap) {
+                    cap = cap == 0 ? 4 : cap * 2;
+                    Expr **nk = (Expr **)arena_alocar(p->arena,
+                        sizeof(Expr *) * (size_t)cap);
+                    Patron **ns = (Patron **)arena_alocar(p->arena,
+                        sizeof(Patron *) * (size_t)cap);
+                    if (nk == NULL || ns == NULL) return NULL;
+                    if (n > 0) {
+                        memcpy(nk, claves, sizeof(Expr *) * (size_t)n);
+                        memcpy(ns, subs, sizeof(Patron *) * (size_t)n);
+                    }
+                    claves = nk; subs = ns;
+                }
+                claves[n] = k;
+                subs[n] = sub;
+                n++;
+            } while (consumir_si(p, TT_COMA));
+        }
+        if (!consumir(p, TT_LLAVE_DER,
+                "se esperaba '}' al final del patron dict")) return NULL;
+        return patron_dicc(p->arena, claves, subs, n, linea, col);
+    }
+
     /* Lista `[p1, p2, ...]` (v1.16). */
     if (p->actual.tipo == TT_CORCH_IZQ) {
         avanzar(p);

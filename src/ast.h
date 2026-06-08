@@ -452,6 +452,7 @@ typedef enum {
     PATRON_OR,           /* `p1 | p2 | ...`: matchea si alguno coincide (v1.16.2) */
     PATRON_STAR_BIND,    /* `*nombre` dentro de una lista; captura el resto (v1.16.2) */
     PATRON_TIPO,         /* `Foo()`: matchea si sujeto es instancia de Foo (v1.16.3) */
+    PATRON_DICC,         /* `{k1: p1, k2: p2, ...}`: matchea dict con esas claves (v1.179) */
 } TipoPatron;
 
 /* v1.178: argumento de un patron de tipo. `Punto(a=PAT, b=PAT)`. */
@@ -480,6 +481,11 @@ typedef struct Patron {
             ArgPatron *args;       /* NULL si Foo() sin args */
             int n_args;
         } tipo;                    /* PATRON_TIPO (v1.178: con args) */
+        struct {
+            Expr **claves;         /* expresiones constantes (literales) */
+            struct Patron **subs;  /* sub-patron por clave */
+            int n;
+        } dicc;                    /* PATRON_DICC (v1.179) */
     } como;
 } Patron;
 
@@ -732,6 +738,9 @@ Patron *patron_tipo(Arena *a, const char *nombre, int len, int linea, int col);
 /* v1.178: PATRON_TIPO con argumentos `Foo(a=PAT, b=PAT)`. */
 Patron *patron_tipo_con_args(Arena *a, const char *nombre, int len,
                                ArgPatron *args, int n_args, int linea, int col);
+/* v1.179: PATRON_DICC `{k1: p1, k2: p2, ...}` — matchea dict con claves. */
+Patron *patron_dicc(Arena *a, Expr **claves, Patron **subs, int n,
+                     int linea, int col);
 
 /* Pretty-printer para sentencias. Formato S-expression. */
 void sent_imprimir(const Sent *s, FILE *salida);

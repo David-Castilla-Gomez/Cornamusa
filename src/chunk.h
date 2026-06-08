@@ -379,6 +379,7 @@ typedef enum {
      */
     OP_ES_TUPLA,
     OP_ES_LISTA,
+    OP_ES_DICC,                /* v1.179: matchea VAL_DICCIONARIO en patron */
 
     /*
      * OP_BORRAR_INDICE (v1.56): `borrar obj[clave]` para dict/lista/conjunto.

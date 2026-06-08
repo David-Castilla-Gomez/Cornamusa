@@ -849,6 +849,18 @@ Patron *patron_tipo_con_args(Arena *a, const char *nombre, int len,
     return p;
 }
 
+/* v1.179: PATRON_DICC. */
+Patron *patron_dicc(Arena *a, Expr **claves, Patron **subs, int n,
+                     int linea, int col) {
+    Patron *p = nuevo_patron(a, PATRON_DICC, linea, col);
+    if (p) {
+        p->como.dicc.claves = claves;
+        p->como.dicc.subs = subs;
+        p->como.dicc.n = n;
+    }
+    return p;
+}
+
 /* ══════════════════════════════════════════════════════════════════
  * Sentencias — pretty-printer
  *

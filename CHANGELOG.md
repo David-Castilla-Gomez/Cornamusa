@@ -6,6 +6,99 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.179.0] — 2026-06-08 — Dict patterns en `coincidir`
+
+Continuación del trabajo en patrones (v1.178 cerró class args).
+Antes `cuando {"k": v}:` daba "patron invalido en 'cuando'".
+Ahora soportado, paridad con `case {"k": v}` de Python 3.10.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Bind por clave
+coincidir {"nombre": "Ana", "edad": 30}:
+    cuando {"nombre": n, "edad": e}:
+        imprimir(n, e)    # Ana 30
+fin coincidir
+
+# Super-set: el dict del sujeto puede tener mas claves
+coincidir {"a": 1, "b": 2, "c": 3}:
+    cuando {"a": x}:
+        imprimir(x)        # 1
+fin coincidir
+
+# Literal en valor para discriminar
+coincidir {"tipo": "punto", "x": 10}:
+    cuando {"tipo": "circulo"}:
+        imprimir("circulo")
+    cuando {"tipo": "punto", "x": x}:
+        imprimir("punto", x)   # punto 10
+fin coincidir
+
+# Wildcard
+cuando {"x": _}:
+    imprimir("tiene x")
+
+# Claves no-string
+coincidir {1: "uno", 2: "dos"}:
+    cuando {1: u, 2: d}:
+        imprimir(u, d)         # uno dos
+
+# `{}` matchea cualquier dict
+cuando {}:
+    imprimir("es algun dict")
+
+# Con guarda
+cuando {"edad": e} si e >= 18:
+    imprimir("adulto", e)
+
+# Combinado con `como`
+cuando {"k": k} como d:
+    imprimir(k, d["v"])   # acceso al dict completo
+```
+
+### Sintaxis
+
+- `{k1: PAT, k2: PAT, ...}` donde:
+  - **Claves**: literales — `entero`, `decimal`, `cadena`, `booleano`, `nulo`. Soporta negativos (`{-1: PAT}`).
+  - **Sub-patrones** (v1.179): `BIND` (variable), `WILDCARD` (`_`),
+    `LITERAL` (literal). Patrones complejos (tupla, lista, tipo
+    anidado) postergados.
+- `{}` matchea cualquier dict (no exige claves).
+- Semántica **super-set**: el sujeto puede tener claves extra.
+  Solo se exige que las claves del patrón estén presentes.
+
+### Implementación
+
+- **Nuevo opcode** `OP_ES_DICC` (análogo a `OP_ES_TUPLA`/
+  `OP_ES_LISTA`): pop, push booleano `tipo == VAL_DICCIONARIO`.
+- **AST**: nuevo `PATRON_DICC` con `Expr **claves`, `Patron **subs`,
+  `int n`.
+- **Parser** (`src/parser.c`): en `parsear_patron_simple`, ver
+  `{` y parsear pares `LITERAL : PATRON`. Reusa el mismo machine
+  de literales de `parsear_patron_simple` (con negativos).
+- **Compilador** `emitir_verify`:
+  1. `OP_ES_DICC` → salta si no es dict.
+  2. Por cada par `(k, sub)`: emitir `k en dict` (con `OP_EN`).
+     Salta si no.
+  3. Si sub es `PATRON_LITERAL`: emitir `dict[k] == lit` con
+     `OP_INDICE + OP_IGUAL`.
+- **Compilador** `emitir_binds`: por cada par con `sub=PATRON_BIND`,
+  emitir `OP_INDICE + agregar_local` con el nombre del bind.
+
+### Limitaciones honestas
+
+- **Sub-patrones complejos**: `cuando {"k": (a, b)}` (tupla
+  anidada), `cuando {"k": Foo(a)}` (tipo anidado), `cuando {"k": [a]}`
+  (lista anidada). Todos dan error de compilación claro
+  ("sub-patron en patron dict debe ser BIND, WILDCARD o LITERAL").
+  Workaround: bindear y usar `coincidir` anidado.
+- **Sin `**resto` para capturar claves no nombradas**. Python lo
+  soporta (`case {**resto}`). Postergado.
+- **Las claves del patrón se evalúan en cada `cuando`**. Si el
+  literal es complejo (no constant-foldable), se reevalúa cada
+  vez. Para claves típicas (strings, enteros) no hay coste.
+
 ## [1.178.0] — 2026-06-08 — Patrón de clase con args en `coincidir`
 
 Cierra la limitacion documentada desde v1.16.3: antes solo

@@ -3176,6 +3176,60 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
                 "patron '*' solo permitido como elemento de lista");
             return false;
 
+        case PATRON_DICC: {
+            /* v1.179: matchea si sujeto es dict Y tiene cada clave del
+             * patron Y dict[k] matchea su sub-patron. El sujeto puede
+             * tener mas claves (super-set ok). */
+            emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+            chunk_emitir_byte(c->actual->chunk, OP_ES_DICC, pl);
+            if (*n_saltos >= MATCH_MAX_SALTOS) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' demasiado complejo");
+                return false;
+            }
+            saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+            chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+
+            for (int i = 0; i < pat->como.dicc.n; i++) {
+                Expr *k = pat->como.dicc.claves[i];
+                Patron *sub = pat->como.dicc.subs[i];
+                /* 1. Verificar que k esta en el dict: push k, push dict,
+                 *    OP_EN. */
+                if (!compilador_compilar_expr(c, k)) return false;
+                emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                chunk_emitir_byte(c->actual->chunk, OP_EN, pl);
+                if (*n_saltos >= MATCH_MAX_SALTOS) {
+                    error_compilacion(c, pl, 0,
+                        "patron 'cuando' demasiado complejo");
+                    return false;
+                }
+                saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+                /* 2. Si sub es LITERAL, verificar dict[k] == lit. */
+                if (sub->tipo == PATRON_LITERAL) {
+                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                    if (!compilador_compilar_expr(c, k)) return false;
+                    chunk_emitir_byte(c->actual->chunk, OP_INDICE, pl);
+                    if (!compilador_compilar_expr(c, sub->como.literal)) return false;
+                    chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
+                    if (*n_saltos >= MATCH_MAX_SALTOS) {
+                        error_compilacion(c, pl, 0,
+                            "patron 'cuando' demasiado complejo");
+                        return false;
+                    }
+                    saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+                } else if (sub->tipo != PATRON_BIND
+                            && sub->tipo != PATRON_WILDCARD) {
+                    error_compilacion(c, pl, 0,
+                        "sub-patron en patron dict debe ser BIND, WILDCARD "
+                        "o LITERAL (v1.179)");
+                    return false;
+                }
+            }
+            return true;
+        }
+
         case PATRON_TIPO: {
             /* `Foo()`: matchea si sujeto es instancia de Foo. Si tiene
                args `Foo(a, b)`, ademas valida cada atributo segun el
@@ -3252,6 +3306,24 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
             /* OR: no crean binds (parser restringe alternativas
                a LITERAL/WILDCARD). */
             return true;
+
+        case PATRON_DICC: {
+            /* v1.179: para cada par (k, sub) con sub=BIND, emitir
+             * extraccion dict[k] y agregar local. */
+            for (int i = 0; i < pat->como.dicc.n; i++) {
+                Expr *k = pat->como.dicc.claves[i];
+                Patron *sub = pat->como.dicc.subs[i];
+                if (sub->tipo == PATRON_BIND) {
+                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                    if (!compilador_compilar_expr(c, k)) return false;
+                    chunk_emitir_byte(c->actual->chunk, OP_INDICE, pl);
+                    int slot = agregar_local(c, sub->como.bind.nombre,
+                                                  sub->como.bind.longitud, pl);
+                    if (slot < 0) return false;
+                }
+            }
+            return true;
+        }
 
         case PATRON_TIPO: {
             /* v1.178: si hay args con sub-patrones BIND, emitir

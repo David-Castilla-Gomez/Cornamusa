@@ -4773,6 +4773,14 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 empujar(vm, valor_booleano(es));
                 break;
             }
+            case OP_ES_DICC: {
+                /* v1.179: patron dict. */
+                Valor v = sacar(vm);
+                bool es = (v.tipo == VAL_DICCIONARIO);
+                valor_destruir(&v);
+                empujar(vm, valor_booleano(es));
+                break;
+            }
 
             /* v1.56: `borrar obj[clave]`. */
             case OP_BORRAR_INDICE: {
