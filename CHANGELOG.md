@@ -6,6 +6,50 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.183.0] — 2026-06-08 — Lambdas con keyword-only
+
+Cierra la limitación documentada en v1.182. Las lambdas ahora
+soportan parámetros keyword-only tras `*args`, exactamente igual
+que las funciones nombradas.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Lambda *args + kw-only
+f = lambda *args, inicial=0: inicial + longitud(args)
+f(1, 2, 3)              # 3 (inicial=0)
+f(1, 2, 3, inicial=10)   # 13
+f(inicial=100)           # 100
+
+# Combinado: fijo + *args + kw-only
+g = lambda nombre, *vals, sep=", ": nombre + ":" + sep
+g("a", 1, 2)            # "a:, "
+g("b", 1, sep="|")      # "b:|"
+
+# Multiples kw-only
+h = lambda *xs, a=1, b=2, c=3: a + b + c + longitud(xs)
+h()                     # 6
+h(99)                   # 7
+h(99, b=20)             # 26
+
+# Como callback
+funcion aplicar(f, *xs): retornar f(*xs) fin funcion
+aplicar(lambda *xs, mult=2: longitud(xs) * mult, 1, 2, 3)   # 6
+```
+
+### Implementación
+
+Cambio mínimo en el compilador (`src/compilador.c`,
+`EXPR_LAMBDA`): mismo refactor que v1.182 aplicado a lambda —
+detectar params kw-only tras `*args`, todos con default, marcar
+`fn->n_kw_only`. La VM ya estaba lista desde v1.182. Sin cambios
+en VM ni en AST.
+
+### Limitaciones
+
+- **kw-only obligatorios** (sin default) siguen sin soportarse en
+  lambda ni en `funcion`.
+
 ## [1.182.0] — 2026-06-08 — Parámetros keyword-only tras `*args`
 
 Antes `funcion f(*args, sep=", "):` daba "variádicos no se combinan

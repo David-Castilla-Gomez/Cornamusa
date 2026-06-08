@@ -1747,18 +1747,24 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "'**kw' debe ser el ultimo parametro");
                 return false;
             }
+            /* v1.183: paridad con v1.182 (funcion). Permitir params
+             * kw-only entre *args y **kw, todos con default. */
+            int n_kw_only_lam = 0;
             if (tiene_estrella_lam) {
-                int esperado = tiene_doble_estrella_lam ? n_params - 2 : n_params - 1;
-                if (idx_estrella_lam != esperado) {
-                    error_compilacion(c, e->linea, e->columna,
-                        "'*resto' debe ir justo antes de '**kw' o ser el ultimo");
-                    return false;
+                int fin_kw = tiene_doble_estrella_lam ? n_params - 1 : n_params;
+                for (int i = idx_estrella_lam + 1; i < fin_kw; i++) {
+                    if (params[i].es_estrella || params[i].es_doble_estrella) {
+                        error_compilacion(c, e->linea, e->columna,
+                            "'*resto' debe ir antes de '**kw'");
+                        return false;
+                    }
+                    if (params[i].valor_defecto == NULL) {
+                        error_compilacion(c, e->linea, e->columna,
+                            "parametros despues de '*args' deben tener valor por defecto");
+                        return false;
+                    }
+                    n_kw_only_lam++;
                 }
-            }
-            if ((tiene_estrella_lam || tiene_doble_estrella_lam) && n_defaults_lam > 0) {
-                error_compilacion(c, e->linea, e->columna,
-                    "variádicos no se combinan con defaults en v1.24");
-                return false;
             }
 
             FuncionBC *fn = funcion_bc_nueva("lambda", 6, n_params);
@@ -1789,10 +1795,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 return false;
             }
 
-            /* v1.17: registrar n_defaults antes de promover a constante. */
+            /* v1.17: registrar n_defaults antes de promover a constante.
+             * v1.183: n_defaults incluye kw-only. */
             fn->n_defaults = n_defaults_lam;
             fn->tiene_estrella = tiene_estrella_lam;
             fn->tiene_doble_estrella = tiene_doble_estrella_lam;
+            fn->n_kw_only = n_kw_only_lam;
             /* v1.23: duplicar nombres de params (lambda también soporta kwargs). */
             if (n_params > 0) {
                 fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
