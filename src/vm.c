@@ -1038,11 +1038,16 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
        Si solo `*resto`: n_fijos = aridad - 1.
        Si ninguno: n_fijos = aridad. */
     if (fn->tiene_estrella || fn->tiene_doble_estrella) {
+        /* v1.182: n_kw_only = params despues de *args con default. */
+        int n_kw = fn->n_kw_only;
         int n_fijos = fn->aridad
                       - (fn->tiene_estrella ? 1 : 0)
-                      - (fn->tiene_doble_estrella ? 1 : 0);
+                      - (fn->tiene_doble_estrella ? 1 : 0)
+                      - n_kw;
         if (n_args < n_fijos) {
-            int min_aridad_fija = n_fijos - fn->n_defaults;
+            /* Los defaults pre-*args son los primeros (n_defaults - n_kw). */
+            int n_defaults_fijos = fn->n_defaults - n_kw;
+            int min_aridad_fija = n_fijos - n_defaults_fijos;
             if (n_args >= min_aridad_fija && cl->defaults) {
                 int n_faltantes = n_fijos - n_args;
                 for (int i = 0; i < n_faltantes; i++) {
@@ -1082,6 +1087,15 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
                     fn->longitud_nombre, fn->nombre, n_args, n_fijos);
                 return VM_ERROR_RUNTIME;
             }
+        }
+        /* v1.182: empujar defaults de los kw-only. Los defaults
+         * kw-only ocupan las ULTIMAS n_kw posiciones de cl->defaults. */
+        if (n_kw > 0 && cl->defaults) {
+            int n_def_fijos = fn->n_defaults - n_kw;
+            for (int i = 0; i < n_kw; i++) {
+                empujar(vm, valor_clonar(&cl->defaults[n_def_fijos + i]));
+            }
+            n_args = (uint8_t)(n_args + n_kw);
         }
         /* Si tiene **kw, empujar dict vacío en su slot final. */
         if (fn->tiene_doble_estrella) {
@@ -1304,9 +1318,18 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         err_nombre = fn->nombre;
         err_long_nombre = fn->longitud_nombre;
     }
+    /* v1.182: separar "posicionales" de "kw-only". */
+    int n_kw_only = fn->n_kw_only;
     int aridad_fija = fn->aridad
                       - (fn->tiene_estrella ? 1 : 0)
-                      - (fn->tiene_doble_estrella ? 1 : 0);
+                      - (fn->tiene_doble_estrella ? 1 : 0)
+                      - n_kw_only;
+    int aridad_named = fn->aridad
+                       - (fn->tiene_estrella ? 1 : 0)
+                       - (fn->tiene_doble_estrella ? 1 : 0);
+    int slot_estrella = fn->tiene_estrella ? aridad_fija : -1;
+    int slot_kw_inicio = aridad_fija + (fn->tiene_estrella ? 1 : 0);
+    /* slot_kw_inicio..slot_kw_inicio+n_kw_only-1 son los kw-only. */
     if (n_pos > aridad_fija && !fn->tiene_estrella) {
         llamar_set_error(vm, frame,
             "ErrorDeTipo: %.*s() recibio %d posicionales pero solo acepta %d",
@@ -1330,8 +1353,9 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         params_finales[i] = base_nuevo[1 + i];
         params_asignados[i] = true;
     }
-    if (fn->tiene_estrella && n_pos > aridad_fija) {
+    if (fn->tiene_estrella) {
         int n_extra = n_pos - aridad_fija;
+        if (n_extra < 0) n_extra = 0;
         Tupla *t = tupla_nueva(n_extra);
         if (!t) {
             if (dict_kw) dicc_liberar(dict_kw);
@@ -1341,10 +1365,10 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         for (int i = 0; i < n_extra; i++) {
             t->elementos[i] = base_nuevo[1 + aridad_fija + i];
         }
-        int slot_estrella = fn->tiene_doble_estrella ? (aridad - 2) : (aridad - 1);
         params_finales[slot_estrella] = valor_tupla(t);
         params_asignados[slot_estrella] = true;
     }
+    (void)aridad_named; (void)slot_kw_inicio;
     bool error_match = false;
     char err_buf[256] = {0};
     for (int i = 0; i < n_kw; i++) {
@@ -1359,6 +1383,7 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
             break;
         }
         int slot = -1;
+        /* Buscar en params posicionales fijos (pre-*args). */
         for (int j = 0; j < aridad_fija; j++) {
             if (fn->long_nombres_params[j] == key.como.cadena.longitud
                 && memcmp(fn->nombres_params[j],
@@ -1366,6 +1391,19 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
                            (size_t)key.como.cadena.longitud) == 0) {
                 slot = j;
                 break;
+            }
+        }
+        /* v1.182: tambien buscar en params kw-only (post-*args). */
+        if (slot < 0 && n_kw_only > 0) {
+            for (int j = 0; j < n_kw_only; j++) {
+                int s = slot_kw_inicio + j;
+                if (fn->long_nombres_params[s] == key.como.cadena.longitud
+                    && memcmp(fn->nombres_params[s],
+                               key.como.cadena.texto,
+                               (size_t)key.como.cadena.longitud) == 0) {
+                    slot = s;
+                    break;
+                }
             }
         }
         if (slot < 0) {
@@ -1407,8 +1445,10 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         llamar_set_error(vm, frame, "%s", err_buf);
         return VM_ERROR_RUNTIME;
     }
-    /* Rellenar defaults para slots fijos no-asignados. */
-    int min_aridad_fija = aridad_fija - fn->n_defaults;
+    /* Rellenar defaults para slots fijos no-asignados.
+     * v1.182: n_defaults incluye kw-only; los fijos usan los primeros. */
+    int n_def_fijos = fn->n_defaults - n_kw_only;
+    int min_aridad_fija = aridad_fija - n_def_fijos;
     for (int i = 0; i < aridad_fija; i++) {
         if (params_asignados[i]) continue;
         if (i < min_aridad_fija || !cl->defaults) {
@@ -1423,6 +1463,23 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         params_finales[i] = valor_clonar(&cl->defaults[def_idx]);
         params_asignados[i] = true;
     }
+    /* v1.182: rellenar defaults para kw-only no-asignados. */
+    if (!error_match && n_kw_only > 0) {
+        for (int i = 0; i < n_kw_only; i++) {
+            int s = slot_kw_inicio + i;
+            if (params_asignados[s]) continue;
+            if (!cl->defaults) {
+                snprintf(err_buf, sizeof(err_buf),
+                    "ErrorDeTipo: %.*s() falta keyword '%.*s'",
+                    err_long_nombre, err_nombre,
+                    fn->long_nombres_params[s], fn->nombres_params[s]);
+                error_match = true;
+                break;
+            }
+            params_finales[s] = valor_clonar(&cl->defaults[n_def_fijos + i]);
+            params_asignados[s] = true;
+        }
+    }
     if (error_match) {
         for (int j = 0; j < aridad; j++) {
             if (params_asignados[j]) valor_destruir(&params_finales[j]);
@@ -1435,7 +1492,6 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
     }
     /* *resto vacía si no asignada y dict **kw final. */
     if (fn->tiene_estrella) {
-        int slot_estrella = fn->tiene_doble_estrella ? (aridad - 2) : (aridad - 1);
         if (!params_asignados[slot_estrella]) {
             Tupla *t = tupla_nueva(0);
             if (!t) {

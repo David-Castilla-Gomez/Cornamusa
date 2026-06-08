@@ -4611,19 +4611,38 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
             "'**kw' debe ser el ultimo parametro");
         return false;
     }
+    /* v1.182: contar params keyword-only entre *args y **kw. Cada
+     * uno debe tener default (no soportamos kw-only obligatorios). */
+    int n_kw_only_fn = 0;
     if (tiene_estrella) {
-        int esperado = tiene_doble_estrella ? n_params - 2 : n_params - 1;
-        if (idx_estrella != esperado) {
+        int fin_kw = tiene_doble_estrella ? n_params - 1 : n_params;
+        for (int i = idx_estrella + 1; i < fin_kw; i++) {
+            if (params[i].es_estrella || params[i].es_doble_estrella) {
+                error_compilacion(c, s->linea, s->columna,
+                    "'*resto' debe ir antes de '**kw'");
+                return false;
+            }
+            if (params[i].valor_defecto == NULL) {
+                error_compilacion(c, s->linea, s->columna,
+                    "parametros despues de '*args' deben tener valor por defecto");
+                return false;
+            }
+            n_kw_only_fn++;
+        }
+    } else if (tiene_doble_estrella) {
+        if (idx_doble != n_params - 1) {
             error_compilacion(c, s->linea, s->columna,
-                "'*resto' debe ir justo antes de '**kw' o ser el ultimo");
+                "'**kw' debe ser el ultimo parametro");
             return false;
         }
     }
-    if ((tiene_estrella || tiene_doble_estrella) && n_defaults > 0) {
+    if (tiene_estrella && tiene_doble_estrella
+        && idx_doble != n_params - 1) {
         error_compilacion(c, s->linea, s->columna,
-            "variádicos no se combinan con defaults (v1.24)");
+            "'**kw' debe ser el ultimo parametro");
         return false;
     }
+    /* Variadicos pueden ahora combinarse con kw-only defaults (v1.182). */
 
     FuncionBC *fn = funcion_bc_nueva(nombre, len_nombre, n_params);
     if (!fn) {
@@ -4667,12 +4686,16 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     detectar_inline_dunder(fn, s);
 
     /* v1.17: registrar n_defaults en la plantilla. La VM lo lee al
-       procesar OP_CLOSURE para saber cuántos valores pop del stack. */
+       procesar OP_CLOSURE para saber cuántos valores pop del stack.
+       v1.182: n_defaults cuenta TODOS los defaults (pre-*args
+       + kw-only post-*args). */
     fn->n_defaults = n_defaults;
     /* v1.22: registrar si tiene `*resto`. */
     fn->tiene_estrella = tiene_estrella;
     /* v1.24: registrar si tiene `**kw`. */
     fn->tiene_doble_estrella = tiene_doble_estrella;
+    /* v1.182: cantidad de params kw-only despues de *args. */
+    fn->n_kw_only = n_kw_only_fn;
     /* v1.23: duplicar nombres de parámetros para matching de kwargs. */
     if (n_params > 0) {
         fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);

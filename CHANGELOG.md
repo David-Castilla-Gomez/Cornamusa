@@ -6,6 +6,70 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.182.0] — 2026-06-08 — Parámetros keyword-only tras `*args`
+
+Antes `funcion f(*args, sep=", "):` daba "variádicos no se combinan
+con defaults". Ahora soportado, paridad con Python
+`def f(*args, sep=", "):`.
+
+### Lo que ahora funciona
+
+```cornamusa
+funcion sumar(*args, inicial=0):
+    t = inicial
+    para xx en args:
+        t = t + xx
+    fin para
+    retornar t
+fin funcion
+
+sumar(1, 2, 3)             # 6 (inicial=0 default)
+sumar(1, 2, 3, inicial=10)  # 16
+sumar(inicial=100)          # 100
+sumar()                     # 0
+
+# Multiples kw-only
+funcion log_evt(*args, nivel="INFO", canal="default"):
+    imprimir(nivel, canal, args)
+fin funcion
+
+log_evt("hola")                          # INFO default ("hola",)
+log_evt("err", nivel="ERR")              # ERR default ("err",)
+log_evt("e", nivel="W", canal="auth")     # W auth ("e",)
+
+# Combinado con params fijos + **kw
+funcion completa(a, *args, sep=":", **kw):
+    ...
+fin funcion
+```
+
+### Implementación
+
+- **`FuncionBC`**: nuevo campo `n_kw_only` (cantidad de
+  parámetros entre `*args` y `**kw`).
+- **Compilador**: detecta params después de `*args`. Cada uno
+  debe tener default (kw-only obligatorios no soportados en
+  v1.182). `n_defaults` se mantiene como el total (pre-*args
+  + kw-only).
+- **VM** (camino llamada normal): tras construir la tupla
+  *args, empuja los defaults de los kw-only en orden.
+- **VM** (camino kwargs): `aridad_fija` ahora excluye los
+  kw-only. Búsqueda de keyword también busca en el rango
+  kw-only `[slot_kw_inicio, slot_kw_inicio + n_kw_only)`.
+  Rellena con defaults los kw-only no asignados.
+
+### Limitaciones honestas
+
+- **Lambdas** no soportan kw-only todavía (solo `funcion`). Las
+  lambdas son one-liners típicamente; el patrón no es común.
+- **kw-only obligatorios** (sin default) no soportados.
+  Equivalente Python `def f(*args, kw)`. Requiere validación
+  extra en runtime; postergado.
+- **Bug pre-existente conocido**: comprehension inline dentro
+  de un method call dentro de una función con `*args` puede
+  fallar con "estado interno corrupto". Workaround: extraer la
+  comprehension a una variable. No regresión de v1.182.
+
 ## [1.181.0] — 2026-06-08 — `**resto` en dict patterns
 
 Cierra la limitacion documentada en v1.180. Paridad con Python:

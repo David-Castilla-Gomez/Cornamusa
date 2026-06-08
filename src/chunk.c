@@ -243,6 +243,7 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->n_defaults = 0;     /* v1.17: el compilador lo setea si hay defaults */
     f->tiene_estrella = false;  /* v1.22: lo setea el compilador si hay *resto */
     f->tiene_doble_estrella = false;  /* v1.24: setea si hay **kw */
+    f->n_kw_only = 0;                  /* v1.182: setea si hay kw-only */
     f->es_generador = false;  /* v1.31: setea si contiene `producir` */
     f->nombres_params = NULL;       /* v1.23: setea el compilador */
     f->long_nombres_params = NULL;
