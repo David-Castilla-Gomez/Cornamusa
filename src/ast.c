@@ -849,7 +849,7 @@ Patron *patron_tipo_con_args(Arena *a, const char *nombre, int len,
     return p;
 }
 
-/* v1.179: PATRON_DICC. */
+/* v1.179: PATRON_DICC. v1.181: con resto opcional. */
 Patron *patron_dicc(Arena *a, Expr **claves, Patron **subs, int n,
                      int linea, int col) {
     Patron *p = nuevo_patron(a, PATRON_DICC, linea, col);
@@ -857,6 +857,8 @@ Patron *patron_dicc(Arena *a, Expr **claves, Patron **subs, int n,
         p->como.dicc.claves = claves;
         p->como.dicc.subs = subs;
         p->como.dicc.n = n;
+        p->como.dicc.resto_nombre = NULL;
+        p->como.dicc.resto_len = 0;
     }
     return p;
 }

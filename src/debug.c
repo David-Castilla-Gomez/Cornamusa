@@ -274,6 +274,7 @@ int desensamblar_instruccion(const Chunk *c, int offset, FILE *out) {
         case OP_LONGITUD:        return instruccion_simple("OP_LONGITUD", offset, out);
         case OP_ES_TUPLA:        return instruccion_simple("OP_ES_TUPLA", offset, out);
         case OP_ES_DICC:         return instruccion_simple("OP_ES_DICC", offset, out);
+        case OP_DICC_RESTO:      return instruccion_byte("OP_DICC_RESTO", c, offset, out);
         case OP_ES_LISTA:        return instruccion_simple("OP_ES_LISTA", offset, out);
         case OP_BORRAR_INDICE:   return instruccion_simple("OP_BORRAR_INDICE", offset, out);
         case OP_BORRAR_ATRIBUTO: return instruccion_byte("OP_BORRAR_ATRIBUTO", c, offset, out);

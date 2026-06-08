@@ -3338,6 +3338,34 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
                 if (!emitir_binds(c, sub, slot_sujeto,
                                     nuevo_path, n_indices + 1)) return false;
             }
+            /* v1.181: si hay **resto, construir dict con claves no
+             * mencionadas y bindear. */
+            if (pat->como.dicc.resto_nombre != NULL) {
+                int n_k = pat->como.dicc.n;
+                if (n_k > 255) {
+                    error_compilacion(c, pl, 0,
+                        "patron dict con **resto soporta hasta 255 claves");
+                    return false;
+                }
+                /* Push dict, k1, ..., kN. */
+                emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
+                for (int i = 0; i < n_k; i++) {
+                    if (!compilador_compilar_expr(c, pat->como.dicc.claves[i]))
+                        return false;
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_DICC_RESTO,
+                                    (uint8_t)n_k, pl);
+                /* Bindear el dict resultado (descartar si nombre es "_"). */
+                bool descartar = (pat->como.dicc.resto_len == 1
+                                   && pat->como.dicc.resto_nombre[0] == '_');
+                if (descartar) {
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
+                } else {
+                    int slot = agregar_local(c, pat->como.dicc.resto_nombre,
+                                                  pat->como.dicc.resto_len, pl);
+                    if (slot < 0) return false;
+                }
+            }
             return true;
         }
 

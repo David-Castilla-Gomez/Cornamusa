@@ -485,6 +485,8 @@ typedef struct Patron {
             Expr **claves;         /* expresiones constantes (literales) */
             struct Patron **subs;  /* sub-patron por clave */
             int n;
+            const char *resto_nombre;  /* v1.181: `**resto`. NULL si no hay. "_" descarta. */
+            int resto_len;
         } dicc;                    /* PATRON_DICC (v1.179) */
     } como;
 } Patron;

@@ -3370,15 +3370,33 @@ static Patron *parsear_patron_simple(Parser *p) {
 
     /* v1.179: Dict `{k1: p1, k2: p2, ...}`. La clave debe ser literal
      * (entero, decimal, cadena, booleano, nulo). El sub-patron puede
-     * ser cualquier patron (BIND, WILDCARD, LITERAL, anidado). */
+     * ser cualquier patron (BIND, WILDCARD, LITERAL, anidado).
+     * v1.181: opcionalmente `**resto` al final captura las claves no
+     * mencionadas en un dict nuevo. `**_` descarta. */
     if (p->actual.tipo == TT_LLAVE_IZQ) {
         avanzar(p);
         Expr **claves = NULL;
         Patron **subs = NULL;
         int n = 0, cap = 0;
+        const char *resto_nombre = NULL;
+        int resto_len = 0;
         if (!check(p, TT_LLAVE_DER)) {
             do {
                 if (check(p, TT_LLAVE_DER)) break;
+                /* v1.181: `**ident` o `**_` al final. */
+                if (check(p, TT_DOBLE_ASTERISCO)) {
+                    avanzar(p);
+                    if (!check(p, TT_IDENT)) {
+                        error_en(p, &p->actual,
+                            "se esperaba un nombre tras '**' en patron dict");
+                        return NULL;
+                    }
+                    resto_nombre = p->actual.inicio;
+                    resto_len = p->actual.longitud;
+                    avanzar(p);
+                    /* No mas elementos tras **resto. */
+                    break;
+                }
                 Token tk = p->actual;
                 Expr *k = NULL;
                 bool kneg = false;
@@ -3447,7 +3465,12 @@ static Patron *parsear_patron_simple(Parser *p) {
         }
         if (!consumir(p, TT_LLAVE_DER,
                 "se esperaba '}' al final del patron dict")) return NULL;
-        return patron_dicc(p->arena, claves, subs, n, linea, col);
+        Patron *pd = patron_dicc(p->arena, claves, subs, n, linea, col);
+        if (pd && resto_nombre) {
+            pd->como.dicc.resto_nombre = resto_nombre;
+            pd->como.dicc.resto_len = resto_len;
+        }
+        return pd;
     }
 
     /* Lista `[p1, p2, ...]` (v1.16). */

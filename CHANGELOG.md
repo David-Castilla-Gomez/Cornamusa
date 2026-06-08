@@ -6,6 +6,72 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.181.0] — 2026-06-08 — `**resto` en dict patterns
+
+Cierra la limitacion documentada en v1.180. Paridad con Python:
+`case {"k": v, **resto}` captura las claves del sujeto NO
+mencionadas en el patron en un dict nuevo.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Capturar claves restantes
+coincidir {"a": 1, "b": 2, "c": 3, "d": 4}:
+    cuando {"a": ax, **resto}:
+        imprimir(ax)             # 1
+        imprimir(resto)          # {"b": 2, "c": 3, "d": 4}
+fin coincidir
+
+# `**resto` solo matchea cualquier dict
+cuando {**todo}:
+    imprimir(longitud(todo))
+
+# `**_` descarta el resto
+cuando {"a": ax, **_}:
+    imprimir(ax)
+
+# Con sub-patrones complejos
+cuando {"par": (a, b), **r}:
+    imprimir(a, b, longitud(r))
+
+# Con `como`
+cuando {"k": k, **r} como d:
+    imprimir(k, longitud(d), longitud(r))
+```
+
+### Implementación
+
+- **AST**: PATRON_DICC añade `resto_nombre`/`resto_len`. NULL si
+  no hay resto.
+- **Parser**: en el bucle de pares, ver `**IDENT` (con
+  TT_DOBLE_ASTERISCO). Forzar que sea el ultimo elemento del
+  patron — no se permiten mas pares despues.
+- **Nuevo opcode `OP_DICC_RESTO`** con argumento `u8 n_claves`:
+  - Stack pre: `[..., dict, k1, k2, ..., kN]`
+  - Stack post: `[..., dict_resto]`
+  - Pop N claves + dict; itera el dict y agrega al resto cada
+    par cuya clave NO esta en `{k1..kN}`. Comparacion con
+    `valor_iguales`.
+- **Compilador** `emitir_binds` PATRON_DICC con resto:
+  1. Tras los binds normales, emit `OP_OBTENER_LOCAL slot_sujeto +
+     navegar`, push las N claves del patron.
+  2. `OP_DICC_RESTO N`.
+  3. Si nombre es `"_"`: `OP_DESCARTAR`. Si no: `agregar_local`.
+
+### Coste
+
+`OP_DICC_RESTO` es O(N × M) donde N = claves del sujeto, M =
+claves del patron. Para patrones con pocas claves (típico) y
+dicts pequeños, es trivial. Para dicts grandes con muchas claves
+en el patron, considera reestructurar el matching.
+
+### Limitaciones
+
+- `**resto` solo permitido en **dict patterns**, no en
+  `Foo(**resto)` (que requeriria `__match_kwargs__` o similar).
+- `**` solo puede aparecer **al final** del patron — no se
+  permite `{**resto, "k": v}` (mismo orden que Python).
+
 ## [1.180.0] — 2026-06-08 — Sub-patrones anidados arbitrarios
 
 Cierra las limitaciones documentadas en v1.178 (PATRON_TIPO args

@@ -4781,6 +4781,58 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 empujar(vm, valor_booleano(es));
                 break;
             }
+            case OP_DICC_RESTO: {
+                /* v1.181: stack = [..., dict, k1, ..., kN]. Pop N
+                 * claves + dict; construye dict nuevo con los pares
+                 * (k,v) de dict cuyo k no esta entre las N claves. */
+                uint8_t n_claves = *frame->ip++;
+                /* Claves quedan en tope. */
+                Valor *claves_inicio = vm->tope - n_claves;
+                Valor *dict_slot = claves_inicio - 1;
+                if (dict_slot->tipo != VAL_DICCIONARIO) {
+                    /* No deberia ocurrir si emitir_verify ya valido. */
+                    for (int i = 0; i < n_claves; i++) {
+                        valor_destruir(&claves_inicio[i]);
+                    }
+                    vm->tope = dict_slot;
+                    valor_destruir(dict_slot);
+                    VM_ERROR(
+                        "ErrorInterno: OP_DICC_RESTO requiere dict en stack");
+                    RAISE_OR_DIE();
+                    break;
+                }
+                Diccionario *src = dict_slot->como.dicc;
+                Diccionario *dst = dicc_nuevo();
+                if (!dst) {
+                    VM_ERROR("memoria insuficiente");
+                    return VM_ERROR_RUNTIME;
+                }
+                /* Por cada par del sujeto, agregar al resto si la clave
+                 * no esta entre las excluidas. */
+                for (int idx = 0; idx < src->cuenta; idx++) {
+                    int slot = src->orden_insercion[idx];
+                    const EntradaDicc *e = &src->entradas[slot];
+                    bool excluida = false;
+                    for (int j = 0; j < n_claves; j++) {
+                        if (valor_iguales(&e->clave, &claves_inicio[j])) {
+                            excluida = true;
+                            break;
+                        }
+                    }
+                    if (!excluida) {
+                        dicc_asignar(dst, valor_clonar(&e->clave),
+                                            valor_clonar(&e->valor));
+                    }
+                }
+                /* Pop claves + dict del stack. */
+                for (int i = 0; i < n_claves; i++) {
+                    valor_destruir(&claves_inicio[i]);
+                }
+                valor_destruir(dict_slot);
+                vm->tope = dict_slot;
+                empujar(vm, valor_diccionario(dst));
+                break;
+            }
 
             /* v1.56: `borrar obj[clave]`. */
             case OP_BORRAR_INDICE: {
