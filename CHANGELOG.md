@@ -6,6 +6,59 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.175.0] — 2026-06-08 — Spread con generadores
+
+Limitación documentada en v1.171 resuelta: `[*gen()]`,
+`(*gen(),)`, `{*gen()}` ahora desempacan generadores hasta
+agotarlos. Antes fallaba con `ErrorDeTipo: 'generador' no es
+iterable para spread (*)`.
+
+### Lo que ahora funciona
+
+```cornamusa
+funcion gen():
+    producir 10
+    producir 20
+    producir 30
+fin funcion
+
+[*gen()]              # [10, 20, 30]
+[1, *gen(), 99]        # [1, 10, 20, 30, 99]
+(*gen(), 99)           # (10, 20, 30, 99)
+{*gen()}               # {10, 20, 30}
+
+# Generator expression dentro
+[*(x * 10 para x en rango(3))]   # [0, 10, 20]
+
+# Generador vacio
+funcion vacio():
+    si falso:
+        producir 1
+    fin si
+fin funcion
+[*vacio()]             # []
+```
+
+### Implementación
+
+- **VM** (`src/vm.c`): `OP_LISTA_EXTENDER` y
+  `OP_CONJUNTO_EXTENDER` añaden caso `VAL_GENERADOR`. Reanudan
+  el generador con `vm_generador_paso(vm, g, &v)` en un bucle
+  hasta agotarlo. El handler ya existía (v1.31), solo hay que
+  llamarlo.
+- **Compilador**: ningún cambio. El bytecode generado por
+  v1.171/v1.172 ya es correcto — solo faltaba que el handler de
+  VM reconociera el tipo.
+
+### Limitaciones honestas
+
+- **Instancias con `__iterar__`/`__siguiente__`** todavía no se
+  desempacan en spread. Mismo patrón que con `x en obj` antes de
+  v1.168 — hace falta un protocolo explícito. Postergado.
+- **El generador se consume**: tras `[*g]`, el generador `g` está
+  agotado. Comportamiento esperado (paridad Python), pero
+  documentado por si despista.
+
 ## [1.174.0] — 2026-06-07 — Primer elemento spread
 
 Cierra la limitación documentada en v1.172: `(*xs,)` y `{*xs}`

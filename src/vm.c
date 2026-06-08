@@ -6027,6 +6027,20 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     }
                     mp_clear_multi(&idx, &paso, &fin, NULL);
                     valor_destruir(&it);
+                } else if (it.tipo == VAL_GENERADOR) {
+                    /* v1.175: spread de generador — reanudar hasta
+                       agotar y agregar cada valor producido. */
+                    Generador *g = it.como.generador;
+                    Valor v;
+                    while (vm_generador_paso(vm, g, &v)) {
+                        lista_agregar(l, v);
+                    }
+                    if (vm->error.tuvo_error) {
+                        valor_destruir(&it);
+                        RAISE_OR_DIE();
+                        break;
+                    }
+                    valor_destruir(&it);
                 } else {
                     const char *tname = valor_nombre_tipo(&it);
                     VM_ERROR(
@@ -6124,6 +6138,19 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                         mp_add(&idx, &paso, &idx);
                     }
                     mp_clear_multi(&idx, &paso, &fin, NULL);
+                    valor_destruir(&it);
+                } else if (it.tipo == VAL_GENERADOR) {
+                    /* v1.175: spread de generador. */
+                    Generador *g = it.como.generador;
+                    Valor v;
+                    while (vm_generador_paso(vm, g, &v)) {
+                        AGREGAR_AL_CONJ(v);
+                    }
+                    if (vm->error.tuvo_error) {
+                        valor_destruir(&it);
+                        RAISE_OR_DIE();
+                        goto conj_ext_done;
+                    }
                     valor_destruir(&it);
                 } else {
                     const char *tname = valor_nombre_tipo(&it);
