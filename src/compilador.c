@@ -2972,27 +2972,60 @@ static bool compilar_si(Compilador *c, const Sent *s) {
 /* Indices_path: cadena de índices desde slot_sujeto. p.ej. para acceder
    a S[1][0], path = [1, 0]. Vacío para el sujeto mismo. */
 
-/* Emite código que navega de slot_sujeto a S[indices[0]][indices[1]]...
-   y deja el resultado en el TOS. */
+/* v1.180: segmento de path para navegar dentro de un patron.
+ * Soporta:
+ *   - PathNum: indice numerico (`S[i]`).
+ *   - PathAttr: nombre de atributo (`S.attr`).
+ *   - PathClave: clave de dict, expr literal (`S[k]`). */
+typedef enum {
+    PATH_NUM,
+    PATH_ATTR,
+    PATH_CLAVE,
+} TipoPathSegmento;
+
+typedef struct {
+    TipoPathSegmento tipo;
+    union {
+        int num;
+        struct { const char *texto; int len; } attr;
+        Expr *clave;
+    };
+} PathSegmento;
+
+/* Emite código que navega de slot_sujeto aplicando cada segmento del
+   path. Deja el resultado en el TOS. */
 static void emitir_navegar(Compilador *c, int slot_sujeto,
-                             const int *indices, int n_indices, int linea) {
+                             const PathSegmento *segs, int n_segs, int linea) {
     chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                         (uint8_t)slot_sujeto, linea);
-    for (int i = 0; i < n_indices; i++) {
-        chunk_emitir_constante(c->actual->chunk,
-                                 valor_entero_de_long((long)indices[i]), linea);
-        chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
+    for (int i = 0; i < n_segs; i++) {
+        const PathSegmento *s = &segs[i];
+        if (s->tipo == PATH_NUM) {
+            chunk_emitir_constante(c->actual->chunk,
+                                     valor_entero_de_long((long)s->num), linea);
+            chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
+        } else if (s->tipo == PATH_ATTR) {
+            int idx = chunk_agregar_constante(c->actual->chunk,
+                valor_cadena_duplicar(s->attr.texto, s->attr.len));
+            chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
+                                (uint8_t)idx, linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, linea);
+            chunk_emitir_byte2(c->actual->chunk, 0, 0, linea);
+        } else { /* PATH_CLAVE */
+            compilador_compilar_expr(c, s->clave);
+            chunk_emitir_byte(c->actual->chunk, OP_INDICE, linea);
+        }
     }
 }
 
 static bool emitir_verify(Compilador *c, const Patron *pat,
                             int slot_sujeto,
-                            int *indices, int n_indices,
+                            PathSegmento *indices, int n_indices,
                             int *saltos, int *n_saltos);
 
 static bool emitir_verify(Compilador *c, const Patron *pat,
                             int slot_sujeto,
-                            int *indices, int n_indices,
+                            PathSegmento *indices, int n_indices,
                             int *saltos, int *n_saltos) {
     int pl = pat->linea;
     switch (pat->tipo) {
@@ -3145,11 +3178,8 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
 
-            /* 3. Recursar por cada elemento (extender path).
-               - Antes del star (o todos si no hay star): índice positivo i.
-               - El star NO se chequea en verify.
-               - Después del star: índice negativo -(n - i). */
-            int nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+            /* 3. Recursar por cada elemento (extender path). */
+            PathSegmento nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
             for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
             for (int i = 0; i < n; i++) {
                 Patron *sub = pat->como.estructural.elementos[i];
@@ -3158,10 +3188,10 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
                 if (star_idx < 0 || i < star_idx) {
                     idx_runtime = i;
                 } else {
-                    /* i > star_idx; índice negativo desde el fin. */
                     idx_runtime = -(n - i);
                 }
-                nuevo_path[n_indices] = idx_runtime;
+                nuevo_path[n_indices].tipo = PATH_NUM;
+                nuevo_path[n_indices].num = idx_runtime;
                 if (!emitir_verify(c, sub, slot_sujeto,
                                     nuevo_path, n_indices + 1,
                                     saltos, n_saltos)) return false;
@@ -3177,9 +3207,8 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             return false;
 
         case PATRON_DICC: {
-            /* v1.179: matchea si sujeto es dict Y tiene cada clave del
-             * patron Y dict[k] matchea su sub-patron. El sujeto puede
-             * tener mas claves (super-set ok). */
+            /* v1.179/v1.180: matchea dict + claves presentes + sub
+             * patrones (cualquier complejidad via PATH_CLAVE). */
             emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
             chunk_emitir_byte(c->actual->chunk, OP_ES_DICC, pl);
             if (*n_saltos >= MATCH_MAX_SALTOS) {
@@ -3190,11 +3219,17 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
 
+            if (n_indices + pat->como.dicc.n > MATCH_MAX_PROFUNDIDAD) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' anidado demasiado profundo");
+                return false;
+            }
+            PathSegmento nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+            for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
             for (int i = 0; i < pat->como.dicc.n; i++) {
                 Expr *k = pat->como.dicc.claves[i];
                 Patron *sub = pat->como.dicc.subs[i];
-                /* 1. Verificar que k esta en el dict: push k, push dict,
-                 *    OP_EN. */
+                /* Validar k en dict. */
                 if (!compilador_compilar_expr(c, k)) return false;
                 emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
                 chunk_emitir_byte(c->actual->chunk, OP_EN, pl);
@@ -3205,27 +3240,12 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
                 }
                 saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
                 chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
-                /* 2. Si sub es LITERAL, verificar dict[k] == lit. */
-                if (sub->tipo == PATRON_LITERAL) {
-                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
-                    if (!compilador_compilar_expr(c, k)) return false;
-                    chunk_emitir_byte(c->actual->chunk, OP_INDICE, pl);
-                    if (!compilador_compilar_expr(c, sub->como.literal)) return false;
-                    chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
-                    if (*n_saltos >= MATCH_MAX_SALTOS) {
-                        error_compilacion(c, pl, 0,
-                            "patron 'cuando' demasiado complejo");
-                        return false;
-                    }
-                    saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
-                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
-                } else if (sub->tipo != PATRON_BIND
-                            && sub->tipo != PATRON_WILDCARD) {
-                    error_compilacion(c, pl, 0,
-                        "sub-patron en patron dict debe ser BIND, WILDCARD "
-                        "o LITERAL (v1.179)");
-                    return false;
-                }
+                /* Recurrir verify del sub con path extendido. */
+                nuevo_path[n_indices].tipo = PATH_CLAVE;
+                nuevo_path[n_indices].clave = k;
+                if (!emitir_verify(c, sub, slot_sujeto,
+                                    nuevo_path, n_indices + 1,
+                                    saltos, n_saltos)) return false;
             }
             return true;
         }
@@ -3261,33 +3281,27 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
             saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
 
-            /* v1.178: validar cada arg con LITERAL (otros sub-patrones
-             * se validan en emitir_binds o son trivialmente cierto). */
-            for (int i = 0; i < pat->como.tipo.n_args; i++) {
-                ArgPatron *arg = &pat->como.tipo.args[i];
-                Patron *sub = arg->sub;
-                if (sub->tipo != PATRON_LITERAL) continue;
-                int idx_attr = agregar_nombre_global(c, arg->nombre_attr,
-                                                        arg->len_attr);
-                if (idx_attr < 0 || idx_attr > 255) {
+            /* v1.180: extender path con PATH_ATTR para cada arg y
+             * recurrir. Esto habilita sub-patrones complejos: tupla,
+             * lista, tipo anidado, dict, OR. La navegacion runtime
+             * extiende `sujeto.attr` automaticamente. */
+            if (pat->como.tipo.n_args > 0) {
+                if (n_indices >= MATCH_MAX_PROFUNDIDAD) {
                     error_compilacion(c, pl, 0,
-                        "demasiadas constantes en patron de tipo (>255)");
+                        "patron 'cuando' anidado demasiado profundo");
                     return false;
                 }
-                emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
-                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
-                                    (uint8_t)idx_attr, pl);
-                chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
-                chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
-                if (!compilador_compilar_expr(c, sub->como.literal)) return false;
-                chunk_emitir_byte(c->actual->chunk, OP_IGUAL, pl);
-                if (*n_saltos >= MATCH_MAX_SALTOS) {
-                    error_compilacion(c, pl, 0,
-                        "patron 'cuando' demasiado complejo");
-                    return false;
+                PathSegmento nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+                for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
+                for (int i = 0; i < pat->como.tipo.n_args; i++) {
+                    ArgPatron *arg = &pat->como.tipo.args[i];
+                    nuevo_path[n_indices].tipo = PATH_ATTR;
+                    nuevo_path[n_indices].attr.texto = arg->nombre_attr;
+                    nuevo_path[n_indices].attr.len = arg->len_attr;
+                    if (!emitir_verify(c, arg->sub, slot_sujeto,
+                                        nuevo_path, n_indices + 1,
+                                        saltos, n_saltos)) return false;
                 }
-                saltos[(*n_saltos)++] = emitir_salto(c, OP_SALTAR_SI_FALSO, pl);
-                chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, pl);
             }
             return true;
         }
@@ -3297,7 +3311,7 @@ static bool emitir_verify(Compilador *c, const Patron *pat,
 
 static bool emitir_binds(Compilador *c, const Patron *pat,
                            int slot_sujeto,
-                           int *indices, int n_indices) {
+                           PathSegmento *indices, int n_indices) {
     int pl = pat->linea;
     switch (pat->tipo) {
         case PATRON_WILDCARD:
@@ -3308,53 +3322,42 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
             return true;
 
         case PATRON_DICC: {
-            /* v1.179: para cada par (k, sub) con sub=BIND, emitir
-             * extraccion dict[k] y agregar local. */
+            /* v1.180: recurrir binds con PATH_CLAVE. */
+            if (n_indices + pat->como.dicc.n > MATCH_MAX_PROFUNDIDAD) {
+                error_compilacion(c, pl, 0,
+                    "patron 'cuando' anidado demasiado profundo");
+                return false;
+            }
+            PathSegmento nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+            for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
             for (int i = 0; i < pat->como.dicc.n; i++) {
                 Expr *k = pat->como.dicc.claves[i];
                 Patron *sub = pat->como.dicc.subs[i];
-                if (sub->tipo == PATRON_BIND) {
-                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
-                    if (!compilador_compilar_expr(c, k)) return false;
-                    chunk_emitir_byte(c->actual->chunk, OP_INDICE, pl);
-                    int slot = agregar_local(c, sub->como.bind.nombre,
-                                                  sub->como.bind.longitud, pl);
-                    if (slot < 0) return false;
-                }
+                nuevo_path[n_indices].tipo = PATH_CLAVE;
+                nuevo_path[n_indices].clave = k;
+                if (!emitir_binds(c, sub, slot_sujeto,
+                                    nuevo_path, n_indices + 1)) return false;
             }
             return true;
         }
 
         case PATRON_TIPO: {
-            /* v1.178: si hay args con sub-patrones BIND, emitir
-             * binds que extraen sujeto.<attr> al local. */
-            for (int i = 0; i < pat->como.tipo.n_args; i++) {
-                ArgPatron *arg = &pat->como.tipo.args[i];
-                Patron *sub = arg->sub;
-                if (sub->tipo == PATRON_BIND) {
-                    int idx_attr = agregar_nombre_global(c, arg->nombre_attr,
-                                                            arg->len_attr);
-                    if (idx_attr < 0 || idx_attr > 255) {
-                        error_compilacion(c, pl, 0,
-                            "demasiadas constantes en patron (>255)");
-                        return false;
-                    }
-                    emitir_navegar(c, slot_sujeto, indices, n_indices, pl);
-                    chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_ATRIBUTO,
-                                        (uint8_t)idx_attr, pl);
-                    chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
-                    chunk_emitir_byte2(c->actual->chunk, 0, 0, pl);
-                    int slot = agregar_local(c, sub->como.bind.nombre,
-                                                  sub->como.bind.longitud, pl);
-                    if (slot < 0) return false;
-                } else if (sub->tipo == PATRON_WILDCARD
-                            || sub->tipo == PATRON_LITERAL) {
-                    /* skip */
-                } else {
+            /* v1.180: extender path con PATH_ATTR y recurrir en binds. */
+            if (pat->como.tipo.n_args > 0) {
+                if (n_indices >= MATCH_MAX_PROFUNDIDAD) {
                     error_compilacion(c, pl, 0,
-                        "sub-patron en 'Foo(...)' debe ser BIND, WILDCARD o LITERAL "
-                        "(v1.178)");
+                        "patron 'cuando' anidado demasiado profundo");
                     return false;
+                }
+                PathSegmento nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+                for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
+                for (int i = 0; i < pat->como.tipo.n_args; i++) {
+                    ArgPatron *arg = &pat->como.tipo.args[i];
+                    nuevo_path[n_indices].tipo = PATH_ATTR;
+                    nuevo_path[n_indices].attr.texto = arg->nombre_attr;
+                    nuevo_path[n_indices].attr.len = arg->len_attr;
+                    if (!emitir_binds(c, arg->sub, slot_sujeto,
+                                        nuevo_path, n_indices + 1)) return false;
                 }
             }
             return true;
@@ -3380,7 +3383,7 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
                 }
             }
 
-            int nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
+            PathSegmento nuevo_path[MATCH_MAX_PROFUNDIDAD + 1];
             for (int i = 0; i < n_indices; i++) nuevo_path[i] = indices[i];
             for (int i = 0; i < n; i++) {
                 Patron *sub = pat->como.estructural.elementos[i];
@@ -3416,7 +3419,8 @@ static bool emitir_binds(Compilador *c, const Patron *pat,
                 } else {
                     idx_runtime = -(n - i);
                 }
-                nuevo_path[n_indices] = idx_runtime;
+                nuevo_path[n_indices].tipo = PATH_NUM;
+                nuevo_path[n_indices].num = idx_runtime;
                 if (!emitir_binds(c, sub, slot_sujeto,
                                     nuevo_path, n_indices + 1)) {
                     return false;

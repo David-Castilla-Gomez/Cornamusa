@@ -6,6 +6,86 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.180.0] — 2026-06-08 — Sub-patrones anidados arbitrarios
+
+Cierra las limitaciones documentadas en v1.178 (PATRON_TIPO args
+con solo BIND/WILDCARD/LITERAL) y v1.179 (PATRON_DICC con misma
+restriccion). Ahora cualquier sub-patron es valido en cualquier
+profundidad — paridad total con Python 3.10 structural pattern
+matching.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Tupla anidada en arg de tipo
+coincidir Datos((1, 2), "rojo"):
+    cuando Datos(pos=(a, b), color=c):
+        imprimir(a, b, c)         # 1 2 rojo
+
+# Tipo anidado
+coincidir Caja(Num(42)):
+    cuando Caja(dato=Num(n)):
+        imprimir(n)                # 42
+
+# Tupla en valor de dict
+coincidir {"par": (1, 2)}:
+    cuando {"par": (a, b)}:
+        imprimir(a, b)             # 1 2
+
+# Dict anidado en dict
+coincidir {"k": {"sub": "valor"}}:
+    cuando {"k": {"sub": v}}:
+        imprimir(v)                # valor
+
+# Lista anidada en arg
+coincidir Caja([1, 2, 3]):
+    cuando Caja(contenidos=[primero, *resto]):
+        imprimir(primero, resto)   # 1 [2, 3]
+
+# Combinacion compleja: dict con tupla con tipo
+coincidir {"datos": (10, 20, Color("rojo"))}:
+    cuando {"datos": (ax, bx, Color(nombre))}:
+        imprimir(ax, bx, nombre)   # 10 20 rojo
+```
+
+### Implementación
+
+**Refactor**: `emitir_verify` / `emitir_binds` / `emitir_navegar`
+ahora reciben `PathSegmento *` en lugar de `int *indices`. Cada
+segmento tiene un tipo:
+
+- **`PATH_NUM`** (índice numérico) — usado por PATRON_TUPLA/LISTA.
+  Compila a `push N + OP_INDICE`.
+- **`PATH_ATTR`** (nombre de atributo) — usado por PATRON_TIPO
+  args. Compila a `OP_OBTENER_ATRIBUTO name_idx` (6 bytes).
+- **`PATH_CLAVE`** (expresión literal) — usado por PATRON_DICC.
+  Compila a `compilar_expr(k) + OP_INDICE`.
+
+`emitir_navegar` aplica cada segmento del path al sujeto, dejando
+el resultado en el TOS. Esto permite recursión natural en `emitir_verify`
+y `emitir_binds`: al encontrar un sub-patrón, extender el path con
+el segmento apropiado (`ATTR` para args de tipo, `CLAVE` para dict)
+y llamar recursivamente. No hace falta reservar slots temporales —
+el path se evalúa fresh cada vez en runtime, igual que ya hacían
+PATRON_TUPLA y PATRON_LISTA.
+
+### Coste
+
+Cada nivel de profundidad agrega una pequeña cascada de
+`OP_OBTENER_ATRIBUTO` / `push k + OP_INDICE` al runtime. Para
+patrones típicos (1-3 niveles) el coste es despreciable. Para
+patrones profundamente anidados, el bytecode crece linealmente
+con el número de hojas × profundidad — aceptable.
+
+### Limitaciones honestas
+
+- **Profundidad máxima `MATCH_MAX_PROFUNDIDAD`** (creo que 32).
+  Excederla da error de compilación claro.
+- **No hay `**resto`** todavía en dict patterns. Python lo soporta;
+  Cornamusa lo deja para futuro.
+- **OR-patrones complejos** siguen restringidos a LITERAL/WILDCARD
+  por el parser.
+
 ## [1.179.0] — 2026-06-08 — Dict patterns en `coincidir`
 
 Continuación del trabajo en patrones (v1.178 cerró class args).
