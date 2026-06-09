@@ -1988,7 +1988,8 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
     if (i < spec_len) {
         char t = spec[i];
         if (t == 'd' || t == 'f' || t == 'e' || t == 'x' || t == 'X'
-            || t == 'b' || t == 'o' || t == 'c' || t == 's' || t == '%') {
+            || t == 'b' || t == 'o' || t == 'c' || t == 's' || t == '%'
+            || t == 'g' || t == 'G') {
             out->type = t;
             i++;
         } else {
@@ -2275,7 +2276,8 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
         }
         memcpy(cuerpo, tmp, (size_t)n);
         cuerpo_len = (int)n;
-    } else if (type == 'f' || type == 'e' || type == '%') {
+    } else if (type == 'f' || type == 'e' || type == '%'
+                || type == 'g' || type == 'G') {
         double d;
         if (v->tipo == VAL_DECIMAL) d = v->como.decimal;
         else if (v->tipo == VAL_ENTERO_SMALL) d = (double)v->como.entero_small;
@@ -2313,6 +2315,12 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
             n = snprintf(tmp, sizeof(tmp), "%.*f%%", prec, d);
         } else if (type == 'f') {
             n = snprintf(tmp, sizeof(tmp), "%.*f", prec, d);
+        } else if (type == 'g') {
+            /* v1.187: general — printf %g. Precision por defecto 6
+             * (Python: significant digits). */
+            n = snprintf(tmp, sizeof(tmp), "%.*g", prec, d);
+        } else if (type == 'G') {
+            n = snprintf(tmp, sizeof(tmp), "%.*G", prec, d);
         } else {
             n = snprintf(tmp, sizeof(tmp), "%.*e", prec, d);
         }

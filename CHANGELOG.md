@@ -6,6 +6,45 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.187.0] — 2026-06-09 — F-string tipos `g`/`G` (general)
+
+Paridad con `printf %g` y Python. Antes `f"{pi:.4g}"` daba
+`ErrorDeValor: tipo de formato 'g' no soportado`.
+
+`g` (general) elige automáticamente entre notación decimal y
+científica según la magnitud del número. Precisión por defecto 6
+(dígitos significativos, no decimales). `G` es la variante con
+exponente en mayúsculas (`1E+10` vs `1e+10`).
+
+### Lo que ahora funciona
+
+```cornamusa
+f"{3.14159:g}"      # "3.14159"
+f"{3.14159:.4g}"     # "3.142"
+f"{3.14159:.2g}"     # "3.1"
+f"{1e10:g}"          # "1e+10"
+f"{1e10:G}"          # "1E+10"
+f"{0.0001:g}"        # "0.0001"
+f"{0.00001:g}"       # "1e-05"
+f"{1000000.0:g}"     # "1e+06"
+
+# Combinable con alineación / ancho
+f"|{3.14:>10g}|"     # "|      3.14|"
+```
+
+### Implementación
+
+Pequeño cambio en `src/valor.c`:
+- `parsear_format_spec` añade `'g'` y `'G'` a la lista de tipos
+  válidos.
+- El bloque que maneja `f`/`e`/`%` ahora también acepta `g`/`G` y
+  emite `snprintf("%.*g"/"%.*G", prec, d)`.
+
+### Resto del spec funciona como ya
+
+Alignment, fill, width, sign, zero-padding, grouping separator
+(`,`/`_`) — todos siguen funcionando combinados con `g`/`G`.
+
 ## [1.186.0] — 2026-06-09 — Conversores `!r`/`!s`/`!a` en f-strings
 
 Paridad con Python. Antes daba `ErrorDeSintaxis`. Útil cuando quieres
