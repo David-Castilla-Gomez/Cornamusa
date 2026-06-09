@@ -6,6 +6,56 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.188.0] — 2026-06-09 — F-string `#` alternate form
+
+Paridad Python. Antes `f"{255:#x}"` daba
+`ErrorDeValor: tipo de formato '#' no soportado`.
+
+El flag `#` (alternate form) añade el prefijo del literal numérico
+correspondiente al tipo: `0x` para `x`, `0X` para `X`, `0b` para
+`b`, `0o` para `o`. En valores negativos, el prefijo va tras el
+signo. Con zero-padding, el relleno va entre el prefijo y los
+dígitos (no antes del prefijo) — paridad Python.
+
+### Lo que ahora funciona
+
+```cornamusa
+f"{255:#x}"        # "0xff"
+f"{255:#X}"        # "0XFF"
+f"{8:#b}"          # "0b1000"
+f"{8:#o}"          # "0o10"
+
+# Negativo: signo antes del prefijo
+f"{-255:#x}"       # "-0xff"
+
+# Ancho con padding default (espacios) ANTES del prefijo
+f"|{255:#10x}|"    # "|      0xff|"
+
+# Zero-padding: ceros entre prefijo y dígitos
+f"{255:#010x}"     # "0x000000ff"
+f"{-15:#06x}"      # "-0x00f"
+
+# Alineación
+f"|{255:#>10x}|"   # "|      0xff|"
+f"|{255:#<10x}|"   # "|0xff      |"
+f"|{255:#^10x}|"   # "|   0xff   |"
+
+# Sin # no se añade prefijo
+f"{255:x}"         # "ff"
+```
+
+### Implementación
+
+- `FmtSpec`: nuevo campo `bool alt_form`.
+- `fmt_spec_parsear` reconoce `#` tras el signo y antes del
+  zero-padding (orden Python: `[sign][#][0]`).
+- Tras construir el cuerpo del número formateado, si
+  `alt_form && tipo in {x,X,b,o}`, insertar el prefijo correcto
+  tras el eventual signo.
+- `fmt_aplicar_padding` se extiende para reconocer el prefijo
+  `0x`/`0X`/`0b`/`0o` además del signo cuando hace zero-padding,
+  poniendo el relleno entre el prefijo y los dígitos.
+
 ## [1.187.0] — 2026-06-09 — F-string tipos `g`/`G` (general)
 
 Paridad con `printf %g` y Python. Antes `f"{pi:.4g}"` daba

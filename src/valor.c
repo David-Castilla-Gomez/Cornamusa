@@ -1926,8 +1926,9 @@ typedef struct {
     char grouping;    /* ',' o '_' (separador de miles), o 0 = sin */
     int  width;
     int  precision;   /* -1 = sin precisión explícita */
-    char type;        /* 'd','f','e','x','X','b','o','c','s','%', o 0 = implícito */
+    char type;        /* 'd','f','e','x','X','b','o','c','s','%','g','G', o 0 = implícito */
     bool cero_padding; /* '0' antes del ancho → relleno con 0 alineado a der */
+    bool alt_form;    /* v1.188: '#' añade prefijo 0x/0b/0o a hex/bin/oct */
 } FmtSpec;
 
 static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
@@ -1940,6 +1941,7 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
     out->precision = -1;
     out->type = 0;
     out->cero_padding = false;
+    out->alt_form = false;
     int i = 0;
     /* [fill][align] */
     if (spec_len >= 2
@@ -1955,6 +1957,11 @@ static bool fmt_spec_parsear(const char *spec, int spec_len, FmtSpec *out,
     /* v1.139: [sign] — '+' o ' ' (espacio para positivos). */
     if (i < spec_len && (spec[i] == '+' || spec[i] == ' ')) {
         out->sign = spec[i];
+        i++;
+    }
+    /* v1.188: '#' alternate form. */
+    if (i < spec_len && spec[i] == '#') {
+        out->alt_form = true;
         i++;
     }
     /* '0' indica zero-padding (Python: implica `>` y fill='0') */
@@ -2081,14 +2088,30 @@ static char *fmt_aplicar_padding(const char *cuerpo, int cuerpo_len,
     char align = spec->align ? spec->align : '<';
     /* v1.139: zero-padding con signo prefijo — preservar el signo
      * al frente y rellenar con ceros DESPUES del signo. Sin esto,
-     * `f"{-5:05d}"` daria `000-5` en vez de `-0005` (Python). */
-    if (spec->cero_padding && align == '>' && cuerpo_len > 0
-        && (cuerpo[0] == '-' || cuerpo[0] == '+' || cuerpo[0] == ' ')) {
-        r[0] = cuerpo[0];
-        memset(r + 1, '0', (size_t)padding);
-        memcpy(r + 1 + padding, cuerpo + 1, (size_t)(cuerpo_len - 1));
-        *out_len = total;
-        return r;
+     * `f"{-5:05d}"` daria `000-5` en vez de `-0005` (Python).
+     * v1.188: tambien preservar prefijo alt_form 0x/0X/0b/0o tras
+     * el eventual signo, y rellenar 0s entre prefijo y resto. */
+    if (spec->cero_padding && align == '>' && cuerpo_len > 0) {
+        int signo_len = 0;
+        if (cuerpo[0] == '-' || cuerpo[0] == '+' || cuerpo[0] == ' ') {
+            signo_len = 1;
+        }
+        int prefix_len = 0;
+        if (cuerpo_len >= signo_len + 2
+            && cuerpo[signo_len] == '0'
+            && (cuerpo[signo_len + 1] == 'x' || cuerpo[signo_len + 1] == 'X'
+                 || cuerpo[signo_len + 1] == 'b' || cuerpo[signo_len + 1] == 'o')) {
+            prefix_len = 2;
+        }
+        int header_len = signo_len + prefix_len;
+        if (header_len > 0) {
+            memcpy(r, cuerpo, (size_t)header_len);
+            memset(r + header_len, '0', (size_t)padding);
+            memcpy(r + header_len + padding, cuerpo + header_len,
+                    (size_t)(cuerpo_len - header_len));
+            *out_len = total;
+            return r;
+        }
     }
     if (align == '<') {
         memcpy(r, cuerpo, (size_t)cuerpo_len);
@@ -2363,6 +2386,36 @@ Valor valor_formatear_con_spec(const Valor *v, const char *spec,
             snprintf(err_buffer, (size_t)err_cap,
                 "memoria insuficiente al formatear");
         return valor_nulo();
+    }
+
+    /* v1.188: alt_form '#' anade prefijo 0x/0X/0b/0o tras el signo. */
+    if (fs.alt_form
+        && (type == 'x' || type == 'X' || type == 'b' || type == 'o')) {
+        const char *pfx;
+        int pfx_len = 2;
+        if (type == 'x') pfx = "0x";
+        else if (type == 'X') pfx = "0X";
+        else if (type == 'b') pfx = "0b";
+        else pfx = "0o";
+        int signo_len = 0;
+        if (cuerpo_len > 0 && (cuerpo[0] == '-' || cuerpo[0] == '+')) {
+            signo_len = 1;
+        }
+        int nuevo_len = cuerpo_len + pfx_len;
+        char *nuevo = (char *)malloc((size_t)nuevo_len);
+        if (!nuevo) {
+            free(cuerpo);
+            if (err_buffer) snprintf(err_buffer, (size_t)err_cap,
+                "memoria insuficiente");
+            return valor_nulo();
+        }
+        if (signo_len > 0) memcpy(nuevo, cuerpo, (size_t)signo_len);
+        memcpy(nuevo + signo_len, pfx, (size_t)pfx_len);
+        memcpy(nuevo + signo_len + pfx_len, cuerpo + signo_len,
+                (size_t)(cuerpo_len - signo_len));
+        free(cuerpo);
+        cuerpo = nuevo;
+        cuerpo_len = nuevo_len;
     }
 
     /* Default de alineación según el tipo (Python):
