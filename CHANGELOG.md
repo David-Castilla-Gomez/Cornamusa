@@ -6,6 +6,67 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.191.0] — 2026-06-09 — `finalmente` antes de `romper`/`continuar`
+
+Completa la limitación de v0.8.3 (parcialmente cerrada en v1.190).
+Ahora todos los caminos de salida del `intentar` (`retornar`,
+`romper`, `continuar`, salida normal, excepción atrapada)
+ejecutan el `finalmente`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Caso: romper dentro de intentar que está dentro del bucle
+para n en rango(4):
+    intentar:
+        si n == 2:
+            romper
+        fin si
+        imprimir("body", n)
+    finalmente:
+        imprimir("clean", n)
+    fin intentar
+fin para
+imprimir("post")
+# Antes: "body 0", "clean 0", "body 1", "clean 1", "post"
+#        (sin "clean 2")
+# Ahora: "body 0", "clean 0", "body 1", "clean 1", "clean 2", "post"
+```
+
+Igual para `continuar`. Y para anidamientos: si hay varios
+`finalmente` entre el `romper` y el bucle objetivo, se ejecutan
+todos en orden inner-most-first.
+
+### Bucles DENTRO de intentar siguen funcionando normalmente
+
+```cornamusa
+intentar:
+    para n en rango(3):
+        si n == 1:
+            romper        # sale del PARA, no del intentar
+        fin si
+    fin para
+    imprimir("post_para")  # se ejecuta
+finalmente:
+    imprimir("outer")      # se ejecuta al final del intentar
+fin intentar
+```
+
+### Implementación
+
+- **`BucleAbierto`** gana campo `n_finalmentes_al_abrir`: nivel de
+  la pila de `finalmentes_pendientes` cuando se abrió el bucle.
+- **`empujar_bucle`** captura este snapshot.
+- **`SENT_ROMPER` y `SENT_CONTINUAR`**: antes de emitir el salto,
+  calculan `n_emit = n_finalmentes_pendientes - n_finalmentes_al_abrir`
+  (cuántos finalmentes están entre el sitio del romper y el bucle).
+  Si `n_emit > 0`, emit cada cuerpo del más interno al más externo
+  (con la técnica de snapshot+clear de v1.190 para evitar
+  auto-recursión).
+
+Ahora `intentar`/`finalmente` cumple totalmente con el contrato
+"el `finalmente` se ejecuta en CUALQUIER salida del bloque".
+
 ## [1.190.0] — 2026-06-09 — `finalmente` antes de `retornar`
 
 Cierra la limitación documentada en v0.8.3:

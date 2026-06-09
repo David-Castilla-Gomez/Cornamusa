@@ -37,6 +37,10 @@ typedef struct {
     int *parches_romper;
     int n_parches;
     int cap_parches;
+    /* v1.191: nivel de la pila finalmentes_pendientes al abrir este
+       bucle. romper/continuar ejecutan SOLO los finalmentes con
+       indice >= nivel (los que estan ENTRE el salto y el bucle). */
+    int n_finalmentes_al_abrir;
 } BucleAbierto;
 
 #define COMPILADOR_BUCLES_MAX 16

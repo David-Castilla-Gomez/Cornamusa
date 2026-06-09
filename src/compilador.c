@@ -242,6 +242,7 @@ static bool empujar_bucle(Compilador *c, int inicio_continuar, int linea) {
     b->parches_romper = NULL;
     b->n_parches = 0;
     b->cap_parches = 0;
+    b->n_finalmentes_al_abrir = c->actual->n_finalmentes_pendientes;  /* v1.191 */
     return true;
 }
 
@@ -3873,10 +3874,28 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             return compilar_mientras(c, s);
 
         case SENT_ROMPER: {
-            if (!bucle_actual(c)) {
+            BucleAbierto *b = bucle_actual(c);
+            if (!b) {
                 error_compilacion(c, s->linea, s->columna,
                     "'romper' fuera de un bucle");
                 return false;
+            }
+            /* v1.191: emitir finalmentes intermedios (entre el bucle
+             * y este romper) antes del salto. Mas cercano primero. */
+            int n_emit = c->actual->n_finalmentes_pendientes
+                            - b->n_finalmentes_al_abrir;
+            if (n_emit > 0) {
+                Sent *cuerpos[16];
+                for (int j = 0; j < n_emit; j++) {
+                    cuerpos[j] = c->actual->finalmentes_pendientes[
+                        b->n_finalmentes_al_abrir + j];
+                }
+                int saved = c->actual->n_finalmentes_pendientes;
+                c->actual->n_finalmentes_pendientes = b->n_finalmentes_al_abrir;
+                for (int j = n_emit - 1; j >= 0; j--) {
+                    if (!compilador_compilar_sent(c, cuerpos[j])) return false;
+                }
+                c->actual->n_finalmentes_pendientes = saved;
             }
             int salto = emitir_salto(c, OP_SALTAR, s->linea);
             return registrar_parche_romper(c, salto, s->linea);
@@ -3887,6 +3906,22 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
                 error_compilacion(c, s->linea, s->columna,
                     "'continuar' fuera de un bucle");
                 return false;
+            }
+            /* v1.191: emit finalmentes intermedios igual que romper. */
+            int n_emit = c->actual->n_finalmentes_pendientes
+                            - b->n_finalmentes_al_abrir;
+            if (n_emit > 0) {
+                Sent *cuerpos[16];
+                for (int j = 0; j < n_emit; j++) {
+                    cuerpos[j] = c->actual->finalmentes_pendientes[
+                        b->n_finalmentes_al_abrir + j];
+                }
+                int saved = c->actual->n_finalmentes_pendientes;
+                c->actual->n_finalmentes_pendientes = b->n_finalmentes_al_abrir;
+                for (int j = n_emit - 1; j >= 0; j--) {
+                    if (!compilador_compilar_sent(c, cuerpos[j])) return false;
+                }
+                c->actual->n_finalmentes_pendientes = saved;
             }
             emitir_bucle(c, b->inicio_continuar, s->linea);
             return true;
