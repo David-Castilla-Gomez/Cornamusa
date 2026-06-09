@@ -1727,6 +1727,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             int idx_doble_lam = -1;
             int idx_estrella_lam = -1;
             for (int i = 0; i < n_params; i++) {
+                /* v1.184: tras *args, validacion kw-only mas abajo. */
+                bool post_estrella = tiene_estrella_lam;
                 if (params[i].es_doble_estrella) {
                     tiene_doble_estrella_lam = true;
                     idx_doble_lam = i;
@@ -1736,7 +1738,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 } else if (params[i].valor_defecto != NULL) {
                     vio_default = true;
                     n_defaults_lam++;
-                } else if (vio_default) {
+                } else if (vio_default && !post_estrella) {
                     error_compilacion(c, e->linea, e->columna,
                         "parametro sin valor por defecto despues de uno con default");
                     return false;
@@ -1747,11 +1749,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "'**kw' debe ser el ultimo parametro");
                 return false;
             }
-            /* v1.183: paridad con v1.182 (funcion). Permitir params
-             * kw-only entre *args y **kw, todos con default. */
+            /* v1.183: paridad con v1.182 (funcion). v1.184: kw-only
+             * obligatorios sin default, deben ir ANTES de los con default. */
             int n_kw_only_lam = 0;
+            int n_kw_only_obligatorios_lam = 0;
             if (tiene_estrella_lam) {
                 int fin_kw = tiene_doble_estrella_lam ? n_params - 1 : n_params;
+                bool vio_default_kw = false;
                 for (int i = idx_estrella_lam + 1; i < fin_kw; i++) {
                     if (params[i].es_estrella || params[i].es_doble_estrella) {
                         error_compilacion(c, e->linea, e->columna,
@@ -1759,9 +1763,14 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         return false;
                     }
                     if (params[i].valor_defecto == NULL) {
-                        error_compilacion(c, e->linea, e->columna,
-                            "parametros despues de '*args' deben tener valor por defecto");
-                        return false;
+                        if (vio_default_kw) {
+                            error_compilacion(c, e->linea, e->columna,
+                                "parametro keyword-only sin default despues de uno con default");
+                            return false;
+                        }
+                        n_kw_only_obligatorios_lam++;
+                    } else {
+                        vio_default_kw = true;
                     }
                     n_kw_only_lam++;
                 }
@@ -1801,6 +1810,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             fn->tiene_estrella = tiene_estrella_lam;
             fn->tiene_doble_estrella = tiene_doble_estrella_lam;
             fn->n_kw_only = n_kw_only_lam;
+            fn->n_kw_only_obligatorios = n_kw_only_obligatorios_lam;
             /* v1.23: duplicar nombres de params (lambda también soporta kwargs). */
             if (n_params > 0) {
                 fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
@@ -1832,9 +1842,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     "demasiadas constantes para v0.6 (operando byte)");
                 return false;
             }
-            /* v1.17: emitir expresiones de default antes de OP_CLOSURE. */
-            for (int i = n_params - n_defaults_lam; i < n_params; i++) {
-                if (!compilador_compilar_expr(c, params[i].valor_defecto)) return false;
+            /* v1.17: emitir expresiones de default antes de OP_CLOSURE.
+             * v1.184: con **kw los defaults pueden no estar al final. */
+            for (int i = 0; i < n_params; i++) {
+                if (params[i].valor_defecto != NULL) {
+                    if (!compilador_compilar_expr(c, params[i].valor_defecto)) return false;
+                }
             }
             chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
                                 (uint8_t)fn_idx, e->linea);
@@ -4589,6 +4602,9 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     int idx_doble = -1;
     int idx_estrella = -1;
     for (int i = 0; i < n_params; i++) {
+        /* v1.184: tras *args, los params son kw-only y siguen su
+         * propia validacion (mas abajo). */
+        bool post_estrella = tiene_estrella;
         if (params[i].es_doble_estrella) {
             if (tiene_doble_estrella) {
                 error_compilacion(c, s->linea, s->columna,
@@ -4608,10 +4624,13 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
         } else if (params[i].valor_defecto != NULL) {
             vio_default = true;
             n_defaults++;
-        } else if (vio_default) {
+        } else if (vio_default && !post_estrella) {
             error_compilacion(c, s->linea, s->columna,
                 "parametro sin valor por defecto despues de uno con default");
             return false;
+        } else if (post_estrella && params[i].valor_defecto == NULL) {
+            /* kw-only sin default: contado mas abajo. */
+            n_defaults += 0;  /* no-op, claridad */
         }
     }
     if (tiene_doble_estrella && idx_doble != n_params - 1) {
@@ -4619,11 +4638,14 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
             "'**kw' debe ser el ultimo parametro");
         return false;
     }
-    /* v1.182: contar params keyword-only entre *args y **kw. Cada
-     * uno debe tener default (no soportamos kw-only obligatorios). */
+    /* v1.182: contar params keyword-only entre *args y **kw.
+     * v1.184: aceptar kw-only obligatorios (sin default), pero deben ir
+     * ANTES de los con default. */
     int n_kw_only_fn = 0;
+    int n_kw_only_obligatorios_fn = 0;
     if (tiene_estrella) {
         int fin_kw = tiene_doble_estrella ? n_params - 1 : n_params;
+        bool vio_default_kw = false;
         for (int i = idx_estrella + 1; i < fin_kw; i++) {
             if (params[i].es_estrella || params[i].es_doble_estrella) {
                 error_compilacion(c, s->linea, s->columna,
@@ -4631,9 +4653,14 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
                 return false;
             }
             if (params[i].valor_defecto == NULL) {
-                error_compilacion(c, s->linea, s->columna,
-                    "parametros despues de '*args' deben tener valor por defecto");
-                return false;
+                if (vio_default_kw) {
+                    error_compilacion(c, s->linea, s->columna,
+                        "parametro keyword-only sin default despues de uno con default");
+                    return false;
+                }
+                n_kw_only_obligatorios_fn++;
+            } else {
+                vio_default_kw = true;
             }
             n_kw_only_fn++;
         }
@@ -4704,6 +4731,7 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     fn->tiene_doble_estrella = tiene_doble_estrella;
     /* v1.182: cantidad de params kw-only despues de *args. */
     fn->n_kw_only = n_kw_only_fn;
+    fn->n_kw_only_obligatorios = n_kw_only_obligatorios_fn;
     /* v1.23: duplicar nombres de parámetros para matching de kwargs. */
     if (n_params > 0) {
         fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
@@ -4736,11 +4764,15 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
         return false;
     }
     /* v1.17: antes de OP_CLOSURE, emitir las expresiones de default en
-       orden (primer default → primero en stack). Las evalúan en el
-       scope donde se DEFINE la función (Python-like: defaults se
-       capturan al `def`, no al call). */
-    for (int i = n_params - n_defaults; i < n_params; i++) {
-        if (!compilador_compilar_expr(c, params[i].valor_defecto)) return false;
+       orden de posicion (primer default → primero en stack). Las
+       evalúan en el scope donde se DEFINE la función.
+       v1.184: con **kw los defaults pueden NO estar al final
+       (estan donde son: kw-only-con-default pueden ir antes que **kw).
+       Iterar por posicion saltando params sin default. */
+    for (int i = 0; i < n_params; i++) {
+        if (params[i].valor_defecto != NULL) {
+            if (!compilador_compilar_expr(c, params[i].valor_defecto)) return false;
+        }
     }
     chunk_emitir_byte2(c->actual->chunk, OP_CLOSURE,
                         (uint8_t)fn_idx, s->linea);

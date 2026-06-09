@@ -589,11 +589,15 @@ struct FuncionBC {
        estrella, `*resto` está en `aridad-2` y `**kw` en `aridad-1`. */
     bool tiene_doble_estrella;
     /* v1.182: cantidad de parámetros keyword-only DESPUÉS de `*args`.
-       Cada uno tiene su default (en defaults[]). Layout:
+       Layout:
          [fijos..., *args, kw1, kw2, ..., **kw]
-       Llamada posicional: los extras van a *args; kw-only usan defaults.
-       Llamada con kwargs: los kw nombrados sobrescriben sus slots. */
+       Llamada posicional: los extras van a *args; kw-only usan defaults
+       (o error si son obligatorios).
+       Llamada con kwargs: los kw nombrados sobrescriben sus slots.
+       v1.184: los primeros `n_kw_only_obligatorios` slots de la región
+       kw-only NO tienen default (param obligatorio por keyword). */
     int n_kw_only;
+    int n_kw_only_obligatorios;  /* v1.184 */
     /* v1.31: si el cuerpo contiene `producir`, la función NO ejecuta
        al llamarse — crea un VAL_GENERADOR con frame congelado. */
     bool es_generador;

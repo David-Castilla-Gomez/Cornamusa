@@ -1088,14 +1088,36 @@ static ResultadoVM ejecutar_llamar_bc(VM *vm, CallFrame **frame_inout,
                 return VM_ERROR_RUNTIME;
             }
         }
-        /* v1.182: empujar defaults de los kw-only. Los defaults
-         * kw-only ocupan las ULTIMAS n_kw posiciones de cl->defaults. */
-        if (n_kw > 0 && cl->defaults) {
-            int n_def_fijos = fn->n_defaults - n_kw;
-            for (int i = 0; i < n_kw; i++) {
-                empujar(vm, valor_clonar(&cl->defaults[n_def_fijos + i]));
+        /* v1.182: empujar defaults de los kw-only.
+         * v1.184: si hay kw-only obligatorios y no se pasaron por
+         * keyword en este camino → error. */
+        if (n_kw > 0) {
+            if (fn->n_kw_only_obligatorios > 0) {
+                int slot_obl = fn->aridad
+                                - (fn->tiene_doble_estrella ? 1 : 0)
+                                - n_kw;
+                /* Limpiar stack: pop tupla *args y todo lo previo;
+                 * dejar solo callee. */
+                while (vm->tope > base_nuevo + 1) {
+                    Valor v = sacar(vm);
+                    valor_destruir(&v);
+                }
+                llamar_set_error(vm, frame,
+                    "ErrorDeTipo: %.*s() falta keyword obligatorio '%.*s'",
+                    fn->longitud_nombre, fn->nombre,
+                    fn->long_nombres_params[slot_obl],
+                    fn->nombres_params[slot_obl]);
+                return VM_ERROR_RUNTIME;
             }
-            n_args = (uint8_t)(n_args + n_kw);
+            if (cl->defaults) {
+                int n_def_fijos = fn->n_defaults
+                                   - (fn->n_kw_only - fn->n_kw_only_obligatorios);
+                int n_kw_con_def = fn->n_kw_only - fn->n_kw_only_obligatorios;
+                for (int i = 0; i < n_kw_con_def; i++) {
+                    empujar(vm, valor_clonar(&cl->defaults[n_def_fijos + i]));
+                }
+                n_args = (uint8_t)(n_args + n_kw_con_def);
+            }
         }
         /* Si tiene **kw, empujar dict vacío en su slot final. */
         if (fn->tiene_doble_estrella) {
@@ -1446,8 +1468,10 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         return VM_ERROR_RUNTIME;
     }
     /* Rellenar defaults para slots fijos no-asignados.
-     * v1.182: n_defaults incluye kw-only; los fijos usan los primeros. */
-    int n_def_fijos = fn->n_defaults - n_kw_only;
+     * v1.182/v1.184: n_defaults incluye kw-only-con-default; los fijos
+     * usan los primeros. n_def_kw_only = total kw-only menos obligatorios. */
+    int n_def_kw_only = fn->n_kw_only - fn->n_kw_only_obligatorios;
+    int n_def_fijos = fn->n_defaults - n_def_kw_only;
     int min_aridad_fija = aridad_fija - n_def_fijos;
     for (int i = 0; i < aridad_fija; i++) {
         if (params_asignados[i]) continue;
@@ -1463,11 +1487,22 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
         params_finales[i] = valor_clonar(&cl->defaults[def_idx]);
         params_asignados[i] = true;
     }
-    /* v1.182: rellenar defaults para kw-only no-asignados. */
+    /* v1.182: rellenar defaults para kw-only no-asignados.
+     * v1.184: los primeros n_kw_only_obligatorios slots NO tienen
+     * default — si no asignados, error. */
     if (!error_match && n_kw_only > 0) {
+        int n_obl = fn->n_kw_only_obligatorios;
         for (int i = 0; i < n_kw_only; i++) {
             int s = slot_kw_inicio + i;
             if (params_asignados[s]) continue;
+            if (i < n_obl) {
+                snprintf(err_buf, sizeof(err_buf),
+                    "ErrorDeTipo: %.*s() falta keyword obligatorio '%.*s'",
+                    err_long_nombre, err_nombre,
+                    fn->long_nombres_params[s], fn->nombres_params[s]);
+                error_match = true;
+                break;
+            }
             if (!cl->defaults) {
                 snprintf(err_buf, sizeof(err_buf),
                     "ErrorDeTipo: %.*s() falta keyword '%.*s'",
@@ -1476,7 +1511,8 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
                 error_match = true;
                 break;
             }
-            params_finales[s] = valor_clonar(&cl->defaults[n_def_fijos + i]);
+            int def_idx = n_def_fijos + (i - n_obl);
+            params_finales[s] = valor_clonar(&cl->defaults[def_idx]);
             params_asignados[s] = true;
         }
     }

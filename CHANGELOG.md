@@ -6,6 +6,85 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.184.0] — 2026-06-09 — Keyword-only obligatorios
+
+Cierra la limitación documentada en v1.182/v1.183. Paridad Python
+`def f(*args, kw)`: `kw` es obligatorio y debe pasarse por keyword.
+
+### Lo que ahora funciona
+
+```cornamusa
+# `destino` es obligatorio; `copia` opcional
+funcion enviar(*args, destino, copia=falso):
+    imprimir(destino, copia, args)
+fin funcion
+
+enviar("hola", destino="ana@ej.com")                 # ana@ej.com falso ("hola",)
+enviar("hola", destino="ana@ej.com", copia=verdadero) # ana@ej.com verdadero ("hola",)
+enviar("a", "b", destino="x@y.com")                  # x@y.com falso ("a", "b")
+
+# Sin destino: ErrorDeTipo atrapable
+intentar:
+    enviar("hola")
+atrapar ErrorDeTipo:
+    imprimir("falta destino")
+fin intentar
+
+# Multiples kw-only obligatorios
+funcion f(*xs, alfa, beta):
+    imprimir(alfa, beta)
+fin funcion
+f(1, 2, alfa=10, beta=20)
+
+# Mezcla obligatorios + con default
+funcion g(*xs, obl, opc=99):
+    imprimir(obl, opc)
+fin funcion
+g(1, obl=10)        # 10 99
+g(1, obl=10, opc=20) # 10 20
+
+# Lambda
+f = lambda *xs, factor: longitud(xs) * factor
+f(1, 2, 3, factor=10)   # 30
+
+# Combinado: fijos + *args + obl + con-def + **kw
+funcion completa(pref, *xs, obl, opc=99, **kw):
+    ...
+fin funcion
+completa("p", 1, 2, 3, obl=10, extra="x")
+```
+
+### Sintaxis y restricciones
+
+- Los kw-only obligatorios van **antes** de los kw-only con
+  default. Orden tras `*args`:
+  `*args, obl1, obl2, ..., con_def1=v, con_def2=v, ..., **kw`
+- Mezclar al revés (`*args, con_def=v, obl`) da error de
+  compilación claro: "parametro keyword-only sin default despues
+  de uno con default".
+
+### Implementación
+
+- **`FuncionBC`**: nuevo campo `n_kw_only_obligatorios` (primeros
+  N slots de la región kw-only sin default).
+- **Compilador** (`funcion` y `lambda`): permite kw-only sin
+  default, los cuenta, valida orden (obligatorios antes que
+  con-default).
+- **VM camino normal** (sin kwargs): si hay obligatorios → error
+  con nombre del primero. Si no, empuja solo los defaults de los
+  kw-only con default.
+- **VM camino kwargs**: al rellenar defaults, si un slot kw-only
+  obligatorio no fue asignado → error.
+
+### Limitaciones honestas
+
+- **Sólo orden "obligatorios primero"**. Python permite cualquier
+  orden (por ser por keyword). Cornamusa requiere el orden
+  natural (sin-default antes que con-default).
+- Para llamar a `f(*args, obl)` por valor posicional (en lugar de
+  keyword): no posible — obl es estrictamente keyword. Lo cual
+  es la semántica deseada.
+
 ## [1.183.0] — 2026-06-08 — Lambdas con keyword-only
 
 Cierra la limitación documentada en v1.182. Las lambdas ahora
