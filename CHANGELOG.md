@@ -6,6 +6,84 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.190.0] — 2026-06-09 — `finalmente` antes de `retornar`
+
+Cierra la limitación documentada en v0.8.3:
+> "Limitación: NO se ejecuta cuando hay un `retornar`, `romper` o
+> `continuar` que sale del intentar — llega en v0.8.4 si se
+> necesita."
+
+Ahora el `finalmente` se ejecuta **antes** del `retornar` que sale
+del `intentar`, en orden inner-most-first (paridad Python).
+
+### Lo que ahora funciona
+
+```cornamusa
+funcion f():
+    intentar:
+        retornar 42
+    finalmente:
+        imprimir("limpieza")
+    fin intentar
+fin funcion
+
+f()
+# Imprime:
+# limpieza
+# 42
+```
+
+Casos anidados ejecutan **del más cercano al más externo**:
+
+```cornamusa
+funcion f():
+    intentar:
+        intentar:
+            retornar 99
+        finalmente:
+            imprimir("inner")
+        fin intentar
+    finalmente:
+        imprimir("outer")
+    fin intentar
+fin funcion
+
+f()
+# inner
+# outer
+# 99
+```
+
+Compatible con todos los casos previos: salida normal,
+excepciones, atrapar, retornar nulo.
+
+### Implementación
+
+- **`ScopeCompilador`** (`src/compilador.h`): nuevo array
+  `finalmentes_pendientes[16]` con contador. Es una pila de los
+  cuerpos `finalmente` que están "abiertos" en el sitio de
+  compilación actual.
+- **`compilar_intentar`**: si la cláusula `finalmente` existe,
+  push del cuerpo en la pila ANTES de compilar el body del
+  intentar. Pop después.
+- **`SENT_RETORNAR`**: tras compilar la expr de retorno (valor en
+  TOS), si hay finalmentes pendientes:
+  1. Reservar slot local `$ret_fin`, guardando el valor de
+     retorno.
+  2. Snapshot + clear de la pila de finalmentes (evita auto-recursión
+     si un finalmente tiene su propio retornar/etc.).
+  3. Emit cada cuerpo finalmente del más interno al más externo.
+  4. Restaurar la pila para los outer scopes.
+  5. Cargar `$ret_fin` al TOS y emit `OP_RETORNAR`.
+
+### Limitaciones que aún no se cierran
+
+- **`romper` y `continuar`** dentro de `intentar` con `finalmente`
+  no ejecutan los finalmentes. Misma técnica aplicable, postergado.
+- **Excepción no atrapada** todavía no ejecuta el finalmente —
+  el código existente del handler ya lo cubre para casos básicos
+  pero hay edge cases.
+
 ## [1.189.0] — 2026-06-09 — F-string spec con interpolaciones
 
 Paridad Python: `f"{x:{ancho}}"` evalúa `ancho` y lo usa como

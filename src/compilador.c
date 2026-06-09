@@ -39,6 +39,7 @@ static void scope_iniciar(ScopeCompilador *s, Chunk *chunk, bool es_funcion,
     s->n_nolocales = 0;
     s->n_globales = 0;
     s->funcion = NULL;
+    s->n_finalmentes_pendientes = 0;  /* v1.190 */
     s->padre = padre;
     if (es_funcion) {
         s->locales[0].nombre = "";
@@ -3915,6 +3916,39 @@ bool compilador_compilar_sent(Compilador *c, const Sent *s) {
             } else {
                 chunk_emitir_byte(c->actual->chunk, OP_NULO, s->linea);
             }
+            /* v1.190: si hay finalmentes pendientes, ejecutarlos ANTES
+             * del retornar. El valor de retorno se guarda en un local
+             * temporal y se recupera tras ejecutar todos los
+             * finalmentes (en orden inverso — el mas cercano primero). */
+            int n_fin = c->actual->n_finalmentes_pendientes;
+            if (n_fin > 0) {
+                int slot_ret = agregar_local(c, "$ret_fin", 8, s->linea);
+                if (slot_ret < 0) return false;
+                /* Snapshot: el push del slot ya ocurrio (valor de retornar
+                 * en TOS). Compilamos cada finalmente con ese local YA
+                 * presente. Necesitamos despushear los finalmentes
+                 * mientras los emit para no invocarlos recursivamente. */
+                int guardados[16];
+                Sent *cuerpos[16];
+                int saved_count = n_fin;
+                for (int j = 0; j < n_fin; j++) {
+                    cuerpos[j] = c->actual->finalmentes_pendientes[j];
+                    guardados[j] = j;
+                }
+                c->actual->n_finalmentes_pendientes = 0;
+                /* Ejecutar del mas cercano (top de la pila) al mas externo. */
+                for (int j = saved_count - 1; j >= 0; j--) {
+                    if (!compilador_compilar_sent(c, cuerpos[j])) return false;
+                }
+                /* Restaurar la pila para los outer scopes. */
+                for (int j = 0; j < saved_count; j++) {
+                    c->actual->finalmentes_pendientes[j] = cuerpos[guardados[j]];
+                }
+                c->actual->n_finalmentes_pendientes = saved_count;
+                chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
+                                    (uint8_t)slot_ret, s->linea);
+                c->actual->n_locales--;  /* liberar slot_ret logicamente */
+            }
             chunk_emitir_byte(c->actual->chunk, OP_RETORNAR, s->linea);
             return true;
         }
@@ -5123,8 +5157,28 @@ static bool compilar_intentar(Compilador *c, const Sent *s) {
     /* Emitir OP_INTENTAR_INICIAR con offset placeholder. */
     int salto_handler = emitir_salto(c, OP_INTENTAR_INICIAR, s->linea);
 
+    /* v1.190: pushear finalmente para que las retornar dentro del
+     * cuerpo lo ejecuten antes de salir. */
+    bool empujo_finalmente = false;
+    if (clausula_finalmente != NULL) {
+        if (c->actual->n_finalmentes_pendientes >= 16) {
+            error_compilacion(c, s->linea, s->columna,
+                "demasiados 'finalmente' anidados (>16)");
+            return false;
+        }
+        c->actual->finalmentes_pendientes[c->actual->n_finalmentes_pendientes++] =
+            clausula_finalmente;
+        empujo_finalmente = true;
+    }
+
     /* Compilar el cuerpo del intentar. */
     if (!compilador_compilar_sent(c, s->como.intentar.cuerpo)) return false;
+
+    /* Pop antes de emitir el "exit path" del intentar — el path normal
+     * de salida ya emite el finalmente abajo, y el handler también. */
+    if (empujo_finalmente) {
+        c->actual->n_finalmentes_pendientes--;
+    }
 
     /* Salida limpia: pop handler y (opcional) ejecutar sino. */
     chunk_emitir_byte(c->actual->chunk, OP_INTENTAR_FIN, s->linea);

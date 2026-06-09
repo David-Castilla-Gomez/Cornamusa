@@ -124,6 +124,14 @@ typedef struct ScopeCompilador {
        el scope raíz. */
     FuncionBC *funcion;
 
+    /* v1.190: pila de cuerpos `finalmente` pendientes en el sitio de
+       compilación actual. Una `retornar` que esté dentro de un
+       `intentar` con `finalmente` ejecuta TODOS los finalmentes
+       pendientes (del más cercano al más externo) antes del
+       OP_RETORNAR. Capacity arbitraria razonable. */
+    Sent *finalmentes_pendientes[16];
+    int n_finalmentes_pendientes;
+
     struct ScopeCompilador *padre;
 } ScopeCompilador;
 
