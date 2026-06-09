@@ -1929,6 +1929,17 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         chunk_emitir_constante(c->actual->chunk, dbg, e->linea);
                     }
                     if (!compilador_compilar_expr(c, p->expr)) return false;
+                    /* v1.186: conversor `!r`/`!s`/`!a` antes del spec.
+                     * Tras esto el TOS es una cadena; el spec posterior se
+                     * aplica sobre esa cadena. */
+                    bool tiene_conv = (p->conversor != 0);
+                    if (p->conversor == 'r' || p->conversor == 'a') {
+                        chunk_emitir_byte(c->actual->chunk, OP_REPR, e->linea);
+                        chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                    } else if (p->conversor == 's') {
+                        chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
+                        chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                    }
                     if (p->spec && p->spec_longitud > 0) {
                         /* v1.45: con format spec. Almacenamos el spec
                            como constante cadena y emitimos
@@ -1951,12 +1962,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         }
                         chunk_emitir_byte2(c->actual->chunk,
                             OP_FORMATO_F_SPEC, (uint8_t)spec_idx, e->linea);
-                    } else {
+                    } else if (!tiene_conv) {
                         chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
                         /* v1.2: validar que el resultado de OP_FORMATO_F
                          * (posiblemente venido de `__cadena__`) sea cadena. */
                         chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
                     }
+                    /* Si tiene_conv pero no spec, el TOS ya es cadena. */
                     if (tiene_debug) {
                         /* Fusionar "expr=" + valor en un solo string
                          * en stack. Despues el OP_SUMAR exterior lo

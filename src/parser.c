@@ -383,6 +383,7 @@ static Expr *parsear_f_cadena(Parser *p) {
             pl.spec_longitud = 0;                                         \
             pl.debug_texto = NULL;                                        \
             pl.debug_longitud = 0;                                        \
+            pl.conversor = 0;                                             \
             EMPUJAR_PARTE(pl);                                            \
             buf_len = 0;                                                  \
         }                                                                 \
@@ -404,6 +405,7 @@ static Expr *parsear_f_cadena(Parser *p) {
             int prof_corch = 0;   /* v1.45: para no confundir `:` de slicing */
             int prof_paren = 0;   /* v1.45: para no confundir `:` de lambda */
             int spec_inicio = -1; /* v1.45: offset del `:` del fmt spec, -1 si no hay */
+            int conv_inicio = -1; /* v1.186: offset del `!` del conversor, -1 si no hay */
             /* Trackeo de cadenas internas para que `}` dentro de una
                cadena (ej. `f"{ \"}\" }"`) no se confunda con el cierre
                de la interpolación. v1.1.1. */
@@ -441,6 +443,15 @@ static Expr *parsear_f_cadena(Parser *p) {
                        interpolación — marca el inicio del fmt spec. */
                     spec_inicio = i;
                 }
+                else if (d == '!' && conv_inicio < 0 && spec_inicio < 0
+                         && profundidad == 1
+                         && prof_corch == 0
+                         && prof_paren == 0
+                         && i + 1 < cuerpo_len && cuerpo[i + 1] != '=') {
+                    /* v1.186: `!r` o `!s` (o `!a`) conversor. Solo si no
+                     * es parte de un operador `!=`. */
+                    conv_inicio = i;
+                }
                 i++;
             }
             if (profundidad != 0) {
@@ -449,16 +460,47 @@ static Expr *parsear_f_cadena(Parser *p) {
                 goto fallo;
             }
             /* v1.45: si encontramos un spec, la expresión va hasta el
-               `:`; el spec va de tras del `:` hasta el `}`. */
+               `:`; el spec va de tras del `:` hasta el `}`.
+               v1.186: si hay conversor `!`, la expr termina ahi. */
             int spec_off = -1;
             int spec_len = 0;
             int len_expr;
+            char conversor_char = 0;
+            int fin_expr = i;  /* por defecto: hasta `}` */
+            if (conv_inicio >= 0) fin_expr = conv_inicio;
+            else if (spec_inicio >= 0) fin_expr = spec_inicio;
+            len_expr = fin_expr - inicio_expr;
+            if (conv_inicio >= 0) {
+                /* siguiente char tras `!` es el conversor. */
+                int conv_pos = conv_inicio + 1;
+                if (conv_pos >= cuerpo_len) {
+                    error_en(p, &t,
+                        "f-cadena: '!' sin conversor");
+                    goto fallo;
+                }
+                conversor_char = cuerpo[conv_pos];
+                if (conversor_char != 'r' && conversor_char != 's'
+                    && conversor_char != 'a') {
+                    error_en(p, &t,
+                        "f-cadena: conversor debe ser '!r', '!s' o '!a'");
+                    goto fallo;
+                }
+                /* Tras el conversor puede venir `:spec` o `}`. */
+                if (spec_inicio >= 0) {
+                    if (spec_inicio != conv_pos + 1) {
+                        error_en(p, &t,
+                            "f-cadena: se esperaba ':' o '}' tras el conversor");
+                        goto fallo;
+                    }
+                } else if (conv_pos + 1 != i) {
+                    error_en(p, &t,
+                        "f-cadena: caracteres inesperados tras el conversor");
+                    goto fallo;
+                }
+            }
             if (spec_inicio >= 0) {
-                len_expr = spec_inicio - inicio_expr;
                 spec_off = spec_inicio + 1;
                 spec_len = i - spec_off;
-            } else {
-                len_expr = i - inicio_expr;
             }
             /* v1.112: detectar trailing `=` para debug format `f"{x=}"`.
              * Buscar el ultimo `=` no-operador (no precedido por
@@ -534,6 +576,7 @@ static Expr *parsear_f_cadena(Parser *p) {
             pe.spec_longitud = 0;
             pe.debug_texto = NULL;
             pe.debug_longitud = 0;
+            pe.conversor = conversor_char;  /* v1.186 */
             if (spec_off >= 0 && spec_len > 0) {
                 char *spec_copia = (char *)arena_alocar(p->arena,
                     (size_t)spec_len + 1);

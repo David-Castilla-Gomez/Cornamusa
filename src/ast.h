@@ -330,6 +330,8 @@ struct ParteFCadena {
      * al valor mostrado tras el `=` (ej. f"{x=:>5}"). */
     const char *debug_texto;
     int debug_longitud;
+    /* v1.186: conversor `!r` (repr) o `!s` (str). 'r', 's' o 0 si no. */
+    char conversor;
 };
 
 /* ──────────────────────────────────────────────────────────────────

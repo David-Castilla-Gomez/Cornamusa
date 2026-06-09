@@ -6,6 +6,59 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.186.0] — 2026-06-09 — Conversores `!r`/`!s`/`!a` en f-strings
+
+Paridad con Python. Antes daba `ErrorDeSintaxis`. Útil cuando quieres
+forzar la representación inspeccionable de un valor dentro de una
+f-string, especialmente combinado con format spec.
+
+### Lo que ahora funciona
+
+```cornamusa
+s = "hola"
+f"{s!r}"            # "hola" (con comillas)
+f"{s!s}"            # hola (igual que f"{s}")
+f"{s!a}"            # "hola" (alias de repr en Cornamusa)
+
+# Combinado con spec
+f"{s!r:>10}"        # "     \"hola\"" — repr alineado derecha ancho 10
+f"{s!s:<10}|"       # "hola      |"
+
+# Repr de tipos compuestos
+f"{[1, 2, 3]!r}"    # "[1, 2, 3]"
+f"{(1, \"x\")!r}"   # "(1, \"x\")"
+f"{{\"k\": 1}!r}"   # "{\"k\": 1}"
+
+# Multiples conversores en misma f-string
+f"a={\"x\"!r} b={42!s}"   # "a=\"x\" b=42"
+```
+
+### Implementación
+
+- **AST** (`src/ast.h`): `ParteFCadena` gana campo `char conversor`
+  (`'r'`, `'s'`, `'a'` o `0`).
+- **Parser** (`src/parser.c`): dentro del bucle que recorre la
+  interpolación `{...}`, detectar `!` top-level (no parte de `!=`).
+  Marca `conv_inicio`. Tras parseo: la expr termina en `!`, conv es
+  el siguiente char (`r`/`s`/`a` — errores claros para otros), spec
+  opcional sigue al `:` post-conv.
+- **Compilador** (`src/compilador.c`): tras compilar la expr y antes
+  del spec, si hay conversor:
+  - `!r`/`!a`: emit `OP_REPR + OP_ASEGURAR_CADENA`.
+  - `!s`: emit `OP_FORMATO_F + OP_ASEGURAR_CADENA` (idéntico al path
+    sin conversor).
+  Tras el conversor, TOS es cadena. El spec se aplica con
+  `OP_FORMATO_F_SPEC` sobre esa cadena (alineación, ancho,
+  relleno funcionan; tipos numéricos `b/o/x/d/f/e` no aplican
+  sobre cadenas — Python tampoco lo permite).
+
+### Limitaciones
+
+- **`!a`** en Cornamusa es **alias de `!r`**. En Python sería
+  ASCII-escape de caracteres no-ASCII, lo cual no aplica directo
+  a Cornamusa (cuyo `repr` ya es 7-bit-safe excepto para
+  caracteres dentro de cadenas).
+
 ## [1.185.0] — 2026-06-09 — Parámetros posicional-only con `/`
 
 Paridad con Python 3.8+. Los parámetros antes de `/` solo se
