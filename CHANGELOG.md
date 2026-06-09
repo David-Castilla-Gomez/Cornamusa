@@ -6,6 +6,66 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.189.0] — 2026-06-09 — F-string spec con interpolaciones
+
+Paridad Python: `f"{x:{ancho}}"` evalúa `ancho` y lo usa como
+ancho del campo. Antes daba `ErrorDeValor: tipo de formato '{' no
+soportado`.
+
+Permite parametrizar dinámicamente alineación, ancho, precisión,
+fill, etc. — útil para tablas con columnas de tamaño variable
+calculado en runtime.
+
+### Lo que ahora funciona
+
+```cornamusa
+ancho = 10
+f"{42:{ancho}}"          # "        42"
+f"{42:>{ancho}}"         # "        42"
+f"{3.14159:.{2}f}"        # "3.14"
+f"{3.14159:.{6}f}"        # "3.141590"
+
+# Multiples interpolaciones en el spec
+fill = "*"
+anc = 8
+f"{42:{fill}>{anc}}"     # "******42"
+
+# Combinable con # alt form
+f"{255:#{ancho}x}"       # "      0xff"
+
+# Calculo en la expresion del spec
+base = 5
+f"{42:{base + 5}}"       # "        42"
+
+# Conversores combinados
+f"{\"hola\"!r:>{anc}}"   # '    "hola"'
+```
+
+### Implementación
+
+- **Nuevo opcode `OP_FORMATO_F_SPEC_DIN`**: pop spec (cadena) y
+  valor del TOS; pop ambos; aplica `valor_formatear_con_spec` con
+  el spec construido en runtime; push el resultado.
+- **AST**: `ParteFCadena` gana campos `spec_partes` y
+  `n_spec_partes`. Si != NULL, el spec se construye en runtime
+  concatenando estas partes (literales + exprs).
+- **Parser**: tras extraer el spec, escanea por `{` no-escapeado.
+  Si lo encuentra, parsea el spec como mini-fcadena (sin
+  anidamiento adicional permitido — un solo nivel). Cada `{expr}`
+  es una sub-parte; el texto entre `{...}` es literal.
+- **Compilador**: si `spec_partes` no es NULL, tras compilar la
+  expr principal emite código para construir el spec en runtime
+  (compilar cada sub-parte, `OP_FORMATO_F + OP_ASEGURAR_CADENA`
+  para exprs, constantes para literales, `OP_SUMAR` para
+  concatenar). Luego emite `OP_FORMATO_F_SPEC_DIN`.
+
+### Limitaciones
+
+- **Un solo nivel de anidamiento**: dentro de `{...}` en el spec
+  NO puede haber otro `{...}`. Python tiene la misma restricción
+  (en Python 3.12 se relajó pero solo para anidamiento de un nivel).
+- **`{` literales en el spec** se escapan con `{{`.
+
 ## [1.188.0] — 2026-06-09 — F-string `#` alternate form
 
 Paridad Python. Antes `f"{255:#x}"` daba

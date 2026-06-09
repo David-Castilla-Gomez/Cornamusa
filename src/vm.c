@@ -4769,6 +4769,34 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 break;
             }
 
+            case OP_FORMATO_F_SPEC_DIN: {
+                /* v1.189: spec dinámico desde TOS. Stack: [val, spec]. */
+                Valor spec_v = sacar(vm);
+                if (spec_v.tipo != VAL_CADENA) {
+                    Valor tmp = sacar(vm);
+                    valor_destruir(&tmp);
+                    valor_destruir(&spec_v);
+                    VM_ERROR("ErrorDeTipo: spec dinamico debe ser cadena");
+                    RAISE_OR_DIE();
+                    break;
+                }
+                Valor v = sacar(vm);
+                char errmsg[256]; errmsg[0] = '\0';
+                Valor r = valor_formatear_con_spec(&v,
+                    spec_v.como.cadena.texto,
+                    spec_v.como.cadena.longitud,
+                    errmsg, sizeof(errmsg));
+                valor_destruir(&v);
+                valor_destruir(&spec_v);
+                if (r.tipo != VAL_CADENA) {
+                    VM_ERROR("%s", errmsg[0] ? errmsg : "ErrorInterno: formato fallo");
+                    valor_destruir(&r);
+                    RAISE_OR_DIE();
+                    break;
+                }
+                empujar(vm, r);
+                break;
+            }
             case OP_FORMATO_F_SPEC: {
                 /* v1.45: coerce TOS a cadena aplicando el format spec
                    guardado en constantes[u8]. La especificación

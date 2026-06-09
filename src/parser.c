@@ -577,14 +577,152 @@ static Expr *parsear_f_cadena(Parser *p) {
             pe.debug_texto = NULL;
             pe.debug_longitud = 0;
             pe.conversor = conversor_char;  /* v1.186 */
+            pe.spec_partes = NULL;        /* v1.189 */
+            pe.n_spec_partes = 0;
             if (spec_off >= 0 && spec_len > 0) {
-                char *spec_copia = (char *)arena_alocar(p->arena,
-                    (size_t)spec_len + 1);
-                if (!spec_copia) { goto fallo_oom; }
-                memcpy(spec_copia, cuerpo + spec_off, (size_t)spec_len);
-                spec_copia[spec_len] = '\0';
-                pe.spec = spec_copia;
-                pe.spec_longitud = spec_len;
+                /* v1.189: detectar `{` no-escapeado en el spec — indica
+                 * interpolaciones que requieren construccion runtime. */
+                bool spec_dinamico = false;
+                for (int j = 0; j < spec_len; j++) {
+                    if (cuerpo[spec_off + j] == '{'
+                        && (j + 1 >= spec_len
+                            || cuerpo[spec_off + j + 1] != '{')) {
+                        spec_dinamico = true;
+                        break;
+                    }
+                }
+                if (!spec_dinamico) {
+                    char *spec_copia = (char *)arena_alocar(p->arena,
+                        (size_t)spec_len + 1);
+                    if (!spec_copia) { goto fallo_oom; }
+                    memcpy(spec_copia, cuerpo + spec_off, (size_t)spec_len);
+                    spec_copia[spec_len] = '\0';
+                    pe.spec = spec_copia;
+                    pe.spec_longitud = spec_len;
+                } else {
+                    /* Parsear sub-spec como mini-fcadena (sin niveles
+                     * adicionales de anidamiento permitido). */
+                    int sp_cap = 4, sp_n = 0;
+                    ParteFCadena *sp_arr = (ParteFCadena *)arena_alocar(
+                        p->arena, sizeof(ParteFCadena) * (size_t)sp_cap);
+                    if (!sp_arr) { goto fallo_oom; }
+                    int buf2_cap = 64, buf2_len = 0;
+                    char *buf2 = (char *)malloc((size_t)buf2_cap);
+                    if (!buf2) { goto fallo_oom; }
+                    #define VOLCAR_SP_LIT() do { \
+                        if (buf2_len > 0) { \
+                            char *lit = (char *)arena_alocar(p->arena, (size_t)buf2_len); \
+                            if (!lit) { free(buf2); goto fallo_oom; } \
+                            memcpy(lit, buf2, (size_t)buf2_len); \
+                            if (sp_n >= sp_cap) { \
+                                int nc = sp_cap * 2; \
+                                ParteFCadena *npp = (ParteFCadena *)arena_alocar(p->arena, sizeof(ParteFCadena) * (size_t)nc); \
+                                if (!npp) { free(buf2); goto fallo_oom; } \
+                                memcpy(npp, sp_arr, sizeof(ParteFCadena) * (size_t)sp_n); \
+                                sp_arr = npp; sp_cap = nc; \
+                            } \
+                            ParteFCadena pl; \
+                            pl.literal = lit; pl.longitud = buf2_len; \
+                            pl.expr = NULL; pl.spec = NULL; pl.spec_longitud = 0; \
+                            pl.debug_texto = NULL; pl.debug_longitud = 0; \
+                            pl.conversor = 0; pl.spec_partes = NULL; pl.n_spec_partes = 0; \
+                            sp_arr[sp_n++] = pl; \
+                            buf2_len = 0; \
+                        } \
+                    } while (0)
+                    int sj = 0;
+                    while (sj < spec_len) {
+                        char sc = cuerpo[spec_off + sj];
+                        if (sc == '{') {
+                            if (sj + 1 < spec_len
+                                && cuerpo[spec_off + sj + 1] == '{') {
+                                if (buf2_len + 1 > buf2_cap) {
+                                    int nc = buf2_cap * 2;
+                                    char *nb = (char *)realloc(buf2, (size_t)nc);
+                                    if (!nb) { free(buf2); goto fallo_oom; }
+                                    buf2 = nb; buf2_cap = nc;
+                                }
+                                buf2[buf2_len++] = '{';
+                                sj += 2;
+                                continue;
+                            }
+                            VOLCAR_SP_LIT();
+                            sj++;
+                            int sub_inicio = sj;
+                            int sub_prof = 1;
+                            while (sj < spec_len && sub_prof > 0) {
+                                char sd = cuerpo[spec_off + sj];
+                                if (sd == '{') sub_prof++;
+                                else if (sd == '}') { sub_prof--; if (sub_prof == 0) break; }
+                                sj++;
+                            }
+                            if (sub_prof != 0) {
+                                free(buf2);
+                                error_en(p, &t, "f-cadena: '{' sin cerrar dentro del spec");
+                                goto fallo;
+                            }
+                            int sub_len = sj - sub_inicio;
+                            if (sub_len <= 0) {
+                                free(buf2);
+                                error_en(p, &t, "f-cadena: expresion vacia en spec");
+                                goto fallo;
+                            }
+                            char *src2 = (char *)arena_alocar(p->arena, (size_t)sub_len + 1);
+                            if (!src2) { free(buf2); goto fallo_oom; }
+                            memcpy(src2, cuerpo + spec_off + sub_inicio, (size_t)sub_len);
+                            src2[sub_len] = '\0';
+                            Lexer sub_l2; lexer_iniciar(&sub_l2, src2, p->archivo);
+                            Parser sub_p2; parser_iniciar(&sub_p2, &sub_l2, p->arena, src2, p->archivo);
+                            Expr *sub_e = parser_parsear_expr(&sub_p2);
+                            if (sub_e == NULL || sub_p2.tuvo_error) {
+                                free(buf2);
+                                error_en(p, &t, "f-cadena: expresion invalida en spec");
+                                goto fallo;
+                            }
+                            if (sp_n >= sp_cap) {
+                                int nc = sp_cap * 2;
+                                ParteFCadena *npp = (ParteFCadena *)arena_alocar(p->arena, sizeof(ParteFCadena) * (size_t)nc);
+                                if (!npp) { free(buf2); goto fallo_oom; }
+                                memcpy(npp, sp_arr, sizeof(ParteFCadena) * (size_t)sp_n);
+                                sp_arr = npp; sp_cap = nc;
+                            }
+                            ParteFCadena pee;
+                            pee.literal = NULL; pee.longitud = 0;
+                            pee.expr = sub_e;
+                            pee.spec = NULL; pee.spec_longitud = 0;
+                            pee.debug_texto = NULL; pee.debug_longitud = 0;
+                            pee.conversor = 0;
+                            pee.spec_partes = NULL; pee.n_spec_partes = 0;
+                            sp_arr[sp_n++] = pee;
+                            sj++;  /* skip '}' */
+                        } else if (sc == '}'
+                                    && sj + 1 < spec_len
+                                    && cuerpo[spec_off + sj + 1] == '}') {
+                            if (buf2_len + 1 > buf2_cap) {
+                                int nc = buf2_cap * 2;
+                                char *nb = (char *)realloc(buf2, (size_t)nc);
+                                if (!nb) { free(buf2); goto fallo_oom; }
+                                buf2 = nb; buf2_cap = nc;
+                            }
+                            buf2[buf2_len++] = '}';
+                            sj += 2;
+                        } else {
+                            if (buf2_len + 1 > buf2_cap) {
+                                int nc = buf2_cap * 2;
+                                char *nb = (char *)realloc(buf2, (size_t)nc);
+                                if (!nb) { free(buf2); goto fallo_oom; }
+                                buf2 = nb; buf2_cap = nc;
+                            }
+                            buf2[buf2_len++] = sc;
+                            sj++;
+                        }
+                    }
+                    VOLCAR_SP_LIT();
+                    #undef VOLCAR_SP_LIT
+                    free(buf2);
+                    pe.spec_partes = sp_arr;
+                    pe.n_spec_partes = sp_n;
+                }
             } else if (spec_off >= 0 && spec_len == 0) {
                 /* Spec vacío `f"{x:}"` — equivalente a sin spec. */
             }

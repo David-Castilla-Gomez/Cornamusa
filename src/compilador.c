@@ -1940,7 +1940,31 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
                         chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
                     }
-                    if (p->spec && p->spec_longitud > 0) {
+                    /* v1.189: spec con interpolaciones — construir runtime. */
+                    if (p->spec_partes && p->n_spec_partes > 0) {
+                        for (int j = 0; j < p->n_spec_partes; j++) {
+                            const ParteFCadena *sp = &p->spec_partes[j];
+                            if (sp->expr) {
+                                if (!compilador_compilar_expr(c, sp->expr))
+                                    return false;
+                                chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
+                                chunk_emitir_byte(c->actual->chunk, OP_ASEGURAR_CADENA, e->linea);
+                            } else {
+                                Valor v_lit = valor_cadena_desde_escapes(
+                                    sp->literal, sp->longitud);
+                                if (v_lit.tipo == VAL_NULO) {
+                                    error_compilacion(c, e->linea, e->columna,
+                                        "memoria insuficiente al compilar spec dinamico");
+                                    return false;
+                                }
+                                chunk_emitir_constante(c->actual->chunk, v_lit, e->linea);
+                            }
+                            if (j > 0) {
+                                chunk_emitir_byte(c->actual->chunk, OP_SUMAR, e->linea);
+                            }
+                        }
+                        chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F_SPEC_DIN, e->linea);
+                    } else if (p->spec && p->spec_longitud > 0) {
                         /* v1.45: con format spec. Almacenamos el spec
                            como constante cadena y emitimos
                            OP_FORMATO_F_SPEC [u8 spec_idx]. El runtime

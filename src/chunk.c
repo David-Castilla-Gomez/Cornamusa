@@ -110,6 +110,7 @@ const char *opcode_nombre(OpCode op) {
         case OP_LONGITUD:        return "OP_LONGITUD";
         case OP_ES_TUPLA:        return "OP_ES_TUPLA";
         case OP_ES_DICC:         return "OP_ES_DICC";
+        case OP_FORMATO_F_SPEC_DIN: return "OP_FORMATO_F_SPEC_DIN";
         case OP_DICC_RESTO:      return "OP_DICC_RESTO";
         case OP_ES_LISTA:        return "OP_ES_LISTA";
         case OP_BORRAR_INDICE:   return "OP_BORRAR_INDICE";

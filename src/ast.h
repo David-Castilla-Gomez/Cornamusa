@@ -332,6 +332,12 @@ struct ParteFCadena {
     int debug_longitud;
     /* v1.186: conversor `!r` (repr) o `!s` (str). 'r', 's' o 0 si no. */
     char conversor;
+    /* v1.189: spec con interpolaciones `{expr}`. NULL si el spec es
+     * una cadena estatica (uso el campo `spec` arriba). Si != NULL,
+     * el compilador construye el spec en runtime concatenando estas
+     * partes y emite OP_FORMATO_F_SPEC_DIN. */
+    ParteFCadena *spec_partes;
+    int n_spec_partes;
 };
 
 /* ──────────────────────────────────────────────────────────────────

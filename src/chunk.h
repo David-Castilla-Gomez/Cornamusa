@@ -380,6 +380,7 @@ typedef enum {
     OP_ES_TUPLA,
     OP_ES_LISTA,
     OP_ES_DICC,                /* v1.179: matchea VAL_DICCIONARIO en patron */
+    OP_FORMATO_F_SPEC_DIN,     /* v1.189: spec dinamico desde TOS (no constante). */
     OP_DICC_RESTO,             /* v1.181: arg u8 n_claves. Stack:
                                    [..., dict, k1, ..., kN]
                                    Pop kN..k1 + dict, push dict nuevo con
