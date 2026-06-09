@@ -1811,6 +1811,14 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
             fn->tiene_doble_estrella = tiene_doble_estrella_lam;
             fn->n_kw_only = n_kw_only_lam;
             fn->n_kw_only_obligatorios = n_kw_only_obligatorios_lam;
+            /* v1.185: pos-only en lambda. */
+            {
+                int n_pos_only = 0;
+                for (int i = 0; i < n_params; i++) {
+                    if (params[i].es_pos_only) n_pos_only++;
+                }
+                fn->n_posicional_only = n_pos_only;
+            }
             /* v1.23: duplicar nombres de params (lambda también soporta kwargs). */
             if (n_params > 0) {
                 fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);
@@ -4732,6 +4740,14 @@ static bool emitir_closure_de_funcion(Compilador *c, const Sent *s) {
     /* v1.182: cantidad de params kw-only despues de *args. */
     fn->n_kw_only = n_kw_only_fn;
     fn->n_kw_only_obligatorios = n_kw_only_obligatorios_fn;
+    /* v1.185: contar params posicional-only. */
+    {
+        int n_pos_only = 0;
+        for (int i = 0; i < n_params; i++) {
+            if (params[i].es_pos_only) n_pos_only++;
+        }
+        fn->n_posicional_only = n_pos_only;
+    }
     /* v1.23: duplicar nombres de parámetros para matching de kwargs. */
     if (n_params > 0) {
         fn->nombres_params = (char **)malloc(sizeof(char *) * (size_t)n_params);

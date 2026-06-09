@@ -525,6 +525,7 @@ struct Parametro {
     Expr *valor_defecto;        /* NULL si no hay */
     bool es_estrella;           /* v1.22: `*resto` recoge args sobrantes */
     bool es_doble_estrella;     /* v1.24: `**kw` recoge kwargs sobrantes */
+    bool es_pos_only;           /* v1.185: anterior a `/` — solo posicional */
     int linea, columna;
 };
 

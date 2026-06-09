@@ -2601,12 +2601,35 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
 
     bool ya_visto_estrella = false;
     bool ya_visto_doble_estrella = false;
+    bool ya_visto_slash = false;
     if (!check(p, TT_PARENT_DER)) {
         do {
             /* v1.22: `*ident` → parámetro variádico que recoge args sobrantes
                en una tupla. Solo se permite uno.
                v1.24: `**ident` → recoge keyword args sobrantes en dict.
-               Debe ser el último parámetro. */
+               Debe ser el último parámetro.
+               v1.185: `/` → marca los params anteriores como posicional-only. */
+            if (check(p, TT_BARRA)) {
+                if (ya_visto_slash) {
+                    error_en(p, &p->actual,
+                        "solo se permite un '/' en la lista de parametros");
+                    return false;
+                }
+                if (n == 0) {
+                    error_en(p, &p->actual,
+                        "'/' debe ir tras al menos un parametro");
+                    return false;
+                }
+                if (ya_visto_estrella || ya_visto_doble_estrella) {
+                    error_en(p, &p->actual,
+                        "'/' debe ir antes de '*args' y '**kw'");
+                    return false;
+                }
+                avanzar(p);
+                for (int i = 0; i < n; i++) params[i].es_pos_only = true;
+                ya_visto_slash = true;
+                continue;
+            }
             bool es_estrella = false;
             bool es_doble_estrella = false;
             if (ya_visto_doble_estrella) {
@@ -2669,6 +2692,7 @@ static bool parsear_lista_parametros(Parser *p, Parametro **out, int *n_out) {
             params[n].valor_defecto = valor_defecto;
             params[n].es_estrella = es_estrella;
             params[n].es_doble_estrella = es_doble_estrella;
+            params[n].es_pos_only = false;
             params[n].linea = t_nombre.linea;
             params[n].columna = t_nombre.columna;
             n++;
@@ -2813,8 +2837,31 @@ static Expr *parsear_lambda(Parser *p) {
        v1.22: `*resto` también permitido aquí. */
     bool ya_visto_estrella = false;
     bool ya_visto_doble_estrella = false;
+    bool ya_visto_slash = false;
     if (!check(p, TT_DOS_PUNTOS)) {
         do {
+            /* v1.185: `/` marca params anteriores como posicional-only. */
+            if (check(p, TT_BARRA)) {
+                if (ya_visto_slash) {
+                    error_en(p, &p->actual,
+                        "solo se permite un '/' en lambda");
+                    return NULL;
+                }
+                if (n == 0) {
+                    error_en(p, &p->actual,
+                        "'/' debe ir tras al menos un parametro en lambda");
+                    return NULL;
+                }
+                if (ya_visto_estrella || ya_visto_doble_estrella) {
+                    error_en(p, &p->actual,
+                        "'/' debe ir antes de '*args' y '**kw'");
+                    return NULL;
+                }
+                avanzar(p);
+                for (int i = 0; i < n; i++) params[i].es_pos_only = true;
+                ya_visto_slash = true;
+                continue;
+            }
             bool es_estrella = false;
             bool es_doble_estrella = false;
             if (ya_visto_doble_estrella) {
@@ -2871,6 +2918,7 @@ static Expr *parsear_lambda(Parser *p) {
             params[n].valor_defecto = valor_defecto;
             params[n].es_estrella = es_estrella;
             params[n].es_doble_estrella = es_doble_estrella;
+            params[n].es_pos_only = false;
             params[n].linea = t_nombre.linea;
             params[n].columna = t_nombre.columna;
             n++;

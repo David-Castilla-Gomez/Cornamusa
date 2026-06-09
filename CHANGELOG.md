@@ -6,6 +6,68 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.185.0] — 2026-06-09 — Parámetros posicional-only con `/`
+
+Paridad con Python 3.8+. Los parámetros antes de `/` solo se
+pueden pasar posicionalmente; llamarlos por keyword da error.
+
+Útil para nombres que coinciden con palabras reservadas o cuando
+no quieres exponer el nombre del parámetro como parte de la API
+estable.
+
+### Lo que ahora funciona
+
+```cornamusa
+funcion saludar(nombre, /, prefijo="hola"):
+    imprimir(prefijo, nombre)
+fin funcion
+
+saludar("Ana")                    # "hola Ana"
+saludar("Ana", "buenos dias")      # "buenos dias Ana"
+saludar("Ana", prefijo="hi")       # "hi Ana"     ← OK, prefijo no es pos-only
+saludar(nombre="Ana")              # ErrorDeTipo: 'nombre' es posicional-only
+
+# Todos pos-only
+funcion suma(a, b, /):
+    retornar a + b
+fin funcion
+suma(3, 4)                         # 7
+suma(a=3, b=4)                     # ErrorDeTipo
+
+# Lambda
+mul = lambda a, b, /: a * b
+mul(5, 6)                          # 30
+
+# Combinado
+funcion completa(a, b, /, c, d=4, *xs, kw="k", **kwargs):
+    ...
+fin funcion
+completa(1, 2, 3)                                       # a, b, c, d=4
+completa(1, 2, 3, 99, 100, 200, kw="hi", extra="x")     # full
+```
+
+### Restricciones
+
+- `/` debe ir **tras al menos un parámetro**. `funcion f(/, a):` da error.
+- `/` debe ir **antes de `*args` y `**kw`**. `funcion f(*args, /, x):` da error.
+- Solo un `/` por firma.
+
+### Implementación
+
+- **AST** (`src/ast.h`): Parametro tiene nuevo campo `es_pos_only`.
+- **FuncionBC**: nuevo campo `n_posicional_only`.
+- **Parser**: en ambos parsers (`funcion` y `lambda`), si veo
+  `TT_BARRA` (`/`) al inicio de una iteración del bucle de params,
+  marco todos los params previos como `es_pos_only = true` y
+  continúo. Validaciones de orden: `/` tras al menos un param, antes
+  de `*args`/`**kw`, solo uno.
+- **Compilador**: cuenta los `es_pos_only` y setea
+  `fn->n_posicional_only`.
+- **VM** (`ejecutar_llamar_kw`): la búsqueda por nombre de keyword
+  empieza en `fn->n_posicional_only`. Si la key coincide con un
+  slot pos-only, error claro
+  `ErrorDeTipo: 'nombre' es posicional-only`.
+
 ## [1.184.0] — 2026-06-09 — Keyword-only obligatorios
 
 Cierra la limitación documentada en v1.182/v1.183. Paridad Python

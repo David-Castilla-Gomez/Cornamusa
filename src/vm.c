@@ -1405,8 +1405,9 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
             break;
         }
         int slot = -1;
-        /* Buscar en params posicionales fijos (pre-*args). */
-        for (int j = 0; j < aridad_fija; j++) {
+        /* Buscar en params posicionales fijos (pre-*args).
+         * v1.185: saltar slots posicional-only — no aceptan keyword. */
+        for (int j = fn->n_posicional_only; j < aridad_fija; j++) {
             if (fn->long_nombres_params[j] == key.como.cadena.longitud
                 && memcmp(fn->nombres_params[j],
                            key.como.cadena.texto,
@@ -1414,6 +1415,23 @@ static ResultadoVM ejecutar_llamar_kw(VM *vm, CallFrame **frame_inout,
                 slot = j;
                 break;
             }
+        }
+        /* Si la key coincide con un slot pos-only, error claro. */
+        if (slot < 0 && fn->n_posicional_only > 0) {
+            for (int j = 0; j < fn->n_posicional_only; j++) {
+                if (fn->long_nombres_params[j] == key.como.cadena.longitud
+                    && memcmp(fn->nombres_params[j],
+                               key.como.cadena.texto,
+                               (size_t)key.como.cadena.longitud) == 0) {
+                    snprintf(err_buf, sizeof(err_buf),
+                        "ErrorDeTipo: %.*s() '%.*s' es posicional-only",
+                        err_long_nombre, err_nombre,
+                        key.como.cadena.longitud, key.como.cadena.texto);
+                    error_match = true;
+                    break;
+                }
+            }
+            if (error_match) break;
         }
         /* v1.182: tambien buscar en params kw-only (post-*args). */
         if (slot < 0 && n_kw_only > 0) {

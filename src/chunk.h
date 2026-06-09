@@ -598,6 +598,9 @@ struct FuncionBC {
        kw-only NO tienen default (param obligatorio por keyword). */
     int n_kw_only;
     int n_kw_only_obligatorios;  /* v1.184 */
+    /* v1.185: primeros N parámetros son posicional-only (anteriores a `/`).
+       Las llamadas por keyword con su nombre dan ErrorDeTipo. */
+    int n_posicional_only;
     /* v1.31: si el cuerpo contiene `producir`, la función NO ejecuta
        al llamarse — crea un VAL_GENERADOR con frame congelado. */
     bool es_generador;

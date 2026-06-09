@@ -245,6 +245,7 @@ FuncionBC *funcion_bc_nueva(const char *nombre, int len_nombre, int aridad) {
     f->tiene_doble_estrella = false;  /* v1.24: setea si hay **kw */
     f->n_kw_only = 0;                  /* v1.182: setea si hay kw-only */
     f->n_kw_only_obligatorios = 0;     /* v1.184: setea si hay kw-only sin default */
+    f->n_posicional_only = 0;          /* v1.185: setea si hay '/' */
     f->es_generador = false;  /* v1.31: setea si contiene `producir` */
     f->nombres_params = NULL;       /* v1.23: setea el compilador */
     f->long_nombres_params = NULL;
