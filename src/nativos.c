@@ -1247,6 +1247,132 @@ static Valor nativa_invertir(EvalError *err, int n_args, Valor *args,
  * Para `lst.invertir()` (que muta) o `xs[::-1]` (slice) hay
  * alternativas; esta es la version idiomatica cuando quieres una
  * NUEVA lista y no te importa el tipo original. */
+/* v1.192: enumerar(iterable, inicio=0) — builtin global. Devuelve
+ * lista de tuplas (indice, elemento). Antes solo existia en
+ * stdlib/funcionales (requeria importar). Es el idiom mas comun en
+ * bucles `para i, x en enumerar(xs)`, asi que se promueve a builtin
+ * como `rango`. Eager (lista materializada), igual que la version
+ * stdlib.
+ *
+ * Soporta lista, tupla, cadena (code points), conjunto, dicc
+ * (claves) y rango. */
+static Valor nativa_enumerar(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args < 1 || n_args > 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: enumerar() requiere 1 o 2 argumentos, recibio %d",
+            n_args);
+    }
+    int64_t inicio = 0;
+    if (n_args == 2) {
+        if (!valor_entero_a_i64(&args[1], &inicio)) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: el inicio de enumerar() debe ser entero");
+        }
+    }
+    const Valor *it = &args[0];
+    Lista *r = lista_nueva(0);
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+
+    #define EMPUJAR_PAR(elem_v) do { \
+        Tupla *t = tupla_nueva(2); \
+        if (!t) { \
+            valor_destruir(&(elem_v)); \
+            lista_liberar(r); \
+            return error_nativa(err, linea, columna, "memoria insuficiente"); \
+        } \
+        t->elementos[0] = valor_entero_de_i64(inicio++); \
+        t->elementos[1] = (elem_v); \
+        if (!lista_agregar(r, valor_tupla(t))) { \
+            tupla_liberar(t); \
+            lista_liberar(r); \
+            return error_nativa(err, linea, columna, "memoria insuficiente"); \
+        } \
+    } while (0)
+
+    if (it->tipo == VAL_LISTA) {
+        Lista *src = it->como.lista;
+        for (int i = 0; i < src->cuenta; i++) {
+            Valor e = valor_clonar(&src->elementos[i]);
+            EMPUJAR_PAR(e);
+        }
+    } else if (it->tipo == VAL_TUPLA) {
+        Tupla *src = it->como.tupla;
+        for (int i = 0; i < src->cuenta; i++) {
+            Valor e = valor_clonar(&src->elementos[i]);
+            EMPUJAR_PAR(e);
+        }
+    } else if (it->tipo == VAL_CADENA) {
+        const char *s = it->como.cadena.texto;
+        int sl = it->como.cadena.longitud;
+        int p = 0;
+        while (p < sl) {
+            utf8proc_int32_t cp;
+            utf8proc_ssize_t cons = utf8proc_iterate(
+                (const utf8proc_uint8_t *)(s + p), sl - p, &cp);
+            if (cons <= 0) { p++; continue; }
+            Valor e = valor_cadena_duplicar(s + p, (int)cons);
+            EMPUJAR_PAR(e);
+            p += (int)cons;
+        }
+    } else if (it->tipo == VAL_CONJUNTO) {
+        Conjunto *c = it->como.conjunto;
+        for (int i = 0; i < c->capacidad; i++) {
+            if (!c->entradas[i].ocupada) continue;
+            Valor e = valor_clonar(&c->entradas[i].elemento);
+            EMPUJAR_PAR(e);
+        }
+    } else if (it->tipo == VAL_DICCIONARIO) {
+        Diccionario *d = it->como.dicc;
+        for (int idx = 0; idx < d->cuenta; idx++) {
+            int slot = d->orden_insercion[idx];
+            Valor e = valor_clonar(&d->entradas[slot].clave);
+            EMPUJAR_PAR(e);
+        }
+    } else if (it->tipo == VAL_RANGO) {
+        mp_int idx_mp, paso, fin;
+        mp_init_multi(&idx_mp, &paso, &fin, NULL);
+        mp_copy(it->como.rango.inicio, &idx_mp);
+        mp_copy(it->como.rango.paso, &paso);
+        mp_copy(it->como.rango.fin, &fin);
+        int signo_paso = mp_isneg(&paso) == MP_YES ? -1 : 1;
+        while (true) {
+            int cmp = mp_cmp(&idx_mp, &fin);
+            if (signo_paso > 0 ? cmp != MP_LT : cmp != MP_GT) break;
+            mp_int *copia = (mp_int *)malloc(sizeof(mp_int));
+            if (!copia) break;
+            mp_init(copia);
+            mp_copy(&idx_mp, copia);
+            Valor e = valor_entero_de_mp_normalizado(copia);
+            /* EMPUJAR_PAR con limpieza extra de los mp temporales. */
+            Tupla *t = tupla_nueva(2);
+            if (!t) {
+                valor_destruir(&e);
+                mp_clear_multi(&idx_mp, &paso, &fin, NULL);
+                lista_liberar(r);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            t->elementos[0] = valor_entero_de_i64(inicio++);
+            t->elementos[1] = e;
+            if (!lista_agregar(r, valor_tupla(t))) {
+                tupla_liberar(t);
+                mp_clear_multi(&idx_mp, &paso, &fin, NULL);
+                lista_liberar(r);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            mp_add(&idx_mp, &paso, &idx_mp);
+        }
+        mp_clear_multi(&idx_mp, &paso, &fin, NULL);
+    } else {
+        lista_liberar(r);
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: enumerar() no soporta '%s'",
+            valor_nombre_tipo(it));
+    }
+    #undef EMPUJAR_PAR
+    return valor_lista(r);
+}
+
 static Valor nativa_inverso(EvalError *err, int n_args, Valor *args,
                                  int linea, int columna) {
     if (n_args != 1) {
@@ -7647,6 +7773,7 @@ static const EntradaNativa NATIVAS[] = {
     {"longitud", 8, nativa_longitud},
     {"tipo",     4, nativa_tipo},
     {"rango",    5, nativa_rango},
+    {"enumerar", 8, nativa_enumerar},                       /* v1.192 */
     /* Conversores (v1.1). */
     {"cadena",      6,  nativa_cadena},
     {"entero",      6,  nativa_entero},

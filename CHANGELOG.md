@@ -6,6 +6,47 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.192.0] — 2026-06-09 — `enumerar` como builtin global
+
+El idiom `para i, x en enumerar(xs):` es de los más comunes en
+cualquier programa, pero hasta ahora requería `importar funcionales`.
+Se promueve a builtin global, como `rango`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Sin importar nada
+para i, x en enumerar(["a", "b", "c"]):
+    imprimir(i, x)        # 0 a / 1 b / 2 c
+fin para
+
+# Inicio custom
+para i, x en enumerar(xs, 1):
+    ...
+
+# Cualquier iterable nativo
+enumerar("ñu")            # [(0, "ñ"), (1, "u")] — code points UTF-8
+enumerar(rango(10, 13))   # [(0, 10), (1, 11), (2, 12)]
+enumerar({"a": 1})        # [(0, "a")] — claves del dicc
+enumerar((7, 8))          # [(0, 7), (1, 8)]
+```
+
+### Compatibilidad
+
+`funcionales.enumerar` **sigue funcionando** — el módulo define su
+propia versión en su scope, que tiene prioridad dentro del módulo.
+Código existente con `importar funcionales` no se ve afectado.
+
+### Implementación
+
+`nativa_enumerar` en `src/nativos.c`: itera el argumento (lista,
+tupla, cadena por code points, conjunto, dicc por claves, rango) y
+construye una lista de tuplas `(indice, elemento)`. El índice
+arranca en `inicio` (0 por defecto) y es entero (i64 → bignum si
+hiciera falta, aunque en la práctica los índices caben en small).
+
+Eager — devuelve lista materializada, igual que la versión stdlib.
+
 ## [1.191.0] — 2026-06-09 — `finalmente` antes de `romper`/`continuar`
 
 Completa la limitación de v0.8.3 (parcialmente cerrada en v1.190).
