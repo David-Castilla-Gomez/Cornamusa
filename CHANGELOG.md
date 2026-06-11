@@ -6,6 +6,59 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.194.0] — 2026-06-09 — `suma`/`minimo`/`maximo`/`cualquiera`/`todos` builtins
+
+Completa la familia de builtins de iterables iniciada con
+`enumerar` (v1.192) y `juntar` (v1.193). Paridad con
+`sum`/`min`/`max`/`any`/`all` de Python — sin imports.
+
+### Lo que ahora funciona
+
+```cornamusa
+suma([1, 2, 3, 4])           # 10
+suma(rango(101))              # 5050
+suma([10**20, 10**20])        # bignum correcto
+suma(["a", "b"], "")          # "ab" — concatena con inicial
+
+# min/max: forma iterable (1 arg) y escalar (2+ args)
+minimo([3, 1, 4])             # 1
+maximo(2, 7, 4)               # 7
+minimo("pera", "manzana")     # "manzana" — lexicográfico
+
+# any/all con corto-circuito y semántica de vacíos Python
+cualquiera([falso, verdadero])  # verdadero
+cualquiera([])                   # falso
+todos([])                        # verdadero
+todos([1, 2, ""])                # falso — truthiness
+```
+
+### Compatibilidad
+
+- `funcionales.suma/minimo/maximo/cualquiera/todos` siguen igual —
+  los bindings del módulo tienen prioridad en su scope. Las
+  versiones con `clave=` (que necesitan invocar callables, cosa
+  que las nativas C no pueden hacer todavía) siguen ahí.
+- `matematicas.minimo/maximo(a, b)` (2 escalares) sigue igual.
+
+### Implementación
+
+- **`suma`**: itera con el `Iterador` genérico y acumula con
+  `evaluador_aplicar_binario(TT_MAS, ...)` — el MISMO dispatch
+  de `+` que usa la VM, así que bignum, decimales, cadenas y
+  listas funcionan idéntico a la versión stdlib.
+- **`minimo`/`maximo`**: helper común `extremo_comun` que compara
+  con `TT_MENOR` despachado. 1 arg → iterable; 2+ args →
+  escalares (semántica Python). Vacío → `ErrorDeValor`.
+- **`cualquiera`/`todos`**: `valor_es_verdadero` + corto-circuito.
+
+### Limitaciones honestas
+
+- **`clave=`** no soportado en los builtins (requiere invocar
+  callables desde C). Usar `funcionales.minimo(xs, clave=f)`.
+- **Instancias con `__menor__`/`__booleano__`** no despachan el
+  dunder desde estas nativas. Para instancias, usar las versiones
+  de `funcionales` (que corren en la VM y sí despachan).
+
 ## [1.193.0] — 2026-06-09 — `juntar` (zip) como builtin global
 
 Compañero natural de `enumerar` (v1.192). El idiom

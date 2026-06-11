@@ -8,6 +8,7 @@
 #include <time.h>
 
 #include "evaluador.h"
+#include "lexer.h"   /* v1.194: TT_MAS / TT_MENOR para suma/minimo/maximo */
 #include "memoria.h"
 #include "tommath.h"
 #include "utf8proc.h"
@@ -768,6 +769,181 @@ static Valor nativa_lista(EvalError *err, int n_args, Valor *args,
     }
     iter_destruir(iter);
     return valor_lista(l);
+}
+
+/* v1.194: suma(iterable, inicial=0) — builtin global. Acumula con el
+ * operador `+` despachado por evaluador_aplicar_binario, asi que
+ * soporta enteros (incluido bignum), decimales, cadenas (con
+ * inicial="") y listas (con inicial=[]). Semantica identica a
+ * funcionales.suma. */
+static Valor nativa_suma(EvalError *err, int n_args, Valor *args,
+                          int linea, int columna) {
+    if (n_args < 1 || n_args > 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: suma() requiere 1 o 2 argumentos, recibio %d",
+            n_args);
+    }
+    if (!valor_es_iterable(&args[0])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: suma() no acepta '%s' como iterable",
+            valor_nombre_tipo(&args[0]));
+    }
+    Valor total = (n_args == 2) ? valor_clonar(&args[1])
+                                  : valor_entero_de_i64(0);
+    Iterador *iter = iter_nuevo(&args[0]);
+    if (!iter) {
+        valor_destruir(&total);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        /* aplicar_binario consume ambos operandos. */
+        total = evaluador_aplicar_binario(err, TT_MAS, total, elem,
+                                            linea, columna);
+        if (err->tuvo_error) {
+            iter_destruir(iter);
+            valor_destruir(&total);
+            return valor_nulo();
+        }
+    }
+    iter_destruir(iter);
+    return total;
+}
+
+/* v1.194: helper compartido para minimo/maximo. Semantica Python:
+ *   minimo(iterable)        — 1 arg iterable
+ *   minimo(a, b, c, ...)    — 2+ args escalares
+ * Compara con `<` (TT_MENOR) despachado, asi que funciona con
+ * cualquier tipo comparable (numeros, cadenas, instancias con
+ * __menor__... aunque el dunder no se despacha desde la nativa;
+ * para instancias usar funcionales.minimo). ErrorDeValor si el
+ * iterable esta vacio. */
+static Valor extremo_comun(EvalError *err, int n_args, Valor *args,
+                            int linea, int columna, bool quiere_min,
+                            const char *nombre_fn) {
+    Valor mejor;
+    bool tengo_mejor = false;
+    Iterador *iter = NULL;
+    int idx_escalar = 0;
+
+    if (n_args == 0) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: %s() requiere al menos 1 argumento", nombre_fn);
+    }
+    if (n_args == 1) {
+        if (!valor_es_iterable(&args[0])) {
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: %s() con 1 argumento requiere un iterable, no '%s'",
+                nombre_fn, valor_nombre_tipo(&args[0]));
+        }
+        iter = iter_nuevo(&args[0]);
+        if (!iter) {
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+
+    while (true) {
+        Valor candidato;
+        if (iter) {
+            if (!iter_siguiente(iter, &candidato)) break;
+        } else {
+            if (idx_escalar >= n_args) break;
+            candidato = valor_clonar(&args[idx_escalar++]);
+        }
+        if (!tengo_mejor) {
+            mejor = candidato;
+            tengo_mejor = true;
+            continue;
+        }
+        /* test = candidato < mejor (para min) o mejor < candidato (max).
+         * aplicar_binario consume los operandos -> clonar. */
+        Valor a = quiere_min ? valor_clonar(&candidato) : valor_clonar(&mejor);
+        Valor b = quiere_min ? valor_clonar(&mejor) : valor_clonar(&candidato);
+        Valor cmp = evaluador_aplicar_binario(err, TT_MENOR, a, b,
+                                                linea, columna);
+        if (err->tuvo_error) {
+            valor_destruir(&cmp);
+            valor_destruir(&candidato);
+            valor_destruir(&mejor);
+            if (iter) iter_destruir(iter);
+            return valor_nulo();
+        }
+        bool reemplazar = valor_es_verdadero(&cmp);
+        valor_destruir(&cmp);
+        if (reemplazar) {
+            valor_destruir(&mejor);
+            mejor = candidato;
+        } else {
+            valor_destruir(&candidato);
+        }
+    }
+    if (iter) iter_destruir(iter);
+    if (!tengo_mejor) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: %s() de un iterable vacio", nombre_fn);
+    }
+    return mejor;
+}
+
+static Valor nativa_minimo_global(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    return extremo_comun(err, n_args, args, linea, columna, true, "minimo");
+}
+
+static Valor nativa_maximo_global(EvalError *err, int n_args, Valor *args,
+                                    int linea, int columna) {
+    return extremo_comun(err, n_args, args, linea, columna, false, "maximo");
+}
+
+/* v1.194: cualquiera(iterable) / todos(iterable) — any/all de Python.
+ * Verdad evaluada con valor_es_verdadero (sin despachar __booleano__
+ * de instancias — para eso usar funcionales). Corto-circuito. */
+static Valor nativa_cualquiera(EvalError *err, int n_args, Valor *args,
+                                 int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cualquiera() requiere 1 argumento");
+    }
+    if (!valor_es_iterable(&args[0])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: cualquiera() no acepta '%s' como iterable",
+            valor_nombre_tipo(&args[0]));
+    }
+    Iterador *iter = iter_nuevo(&args[0]);
+    if (!iter) return error_nativa(err, linea, columna, "memoria insuficiente");
+    Valor elem;
+    bool resultado = false;
+    while (iter_siguiente(iter, &elem)) {
+        bool v = valor_es_verdadero(&elem);
+        valor_destruir(&elem);
+        if (v) { resultado = true; break; }
+    }
+    iter_destruir(iter);
+    return valor_booleano(resultado);
+}
+
+static Valor nativa_todos(EvalError *err, int n_args, Valor *args,
+                            int linea, int columna) {
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: todos() requiere 1 argumento");
+    }
+    if (!valor_es_iterable(&args[0])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: todos() no acepta '%s' como iterable",
+            valor_nombre_tipo(&args[0]));
+    }
+    Iterador *iter = iter_nuevo(&args[0]);
+    if (!iter) return error_nativa(err, linea, columna, "memoria insuficiente");
+    Valor elem;
+    bool resultado = true;
+    while (iter_siguiente(iter, &elem)) {
+        bool v = valor_es_verdadero(&elem);
+        valor_destruir(&elem);
+        if (!v) { resultado = false; break; }
+    }
+    iter_destruir(iter);
+    return valor_booleano(resultado);
 }
 
 /* v1.193: juntar(*iterables) — builtin global (zip de Python).
@@ -7859,6 +8035,11 @@ static const EntradaNativa NATIVAS[] = {
     {"rango",    5, nativa_rango},
     {"enumerar", 8, nativa_enumerar},                       /* v1.192 */
     {"juntar",   6, nativa_juntar},                         /* v1.193 */
+    {"suma",     4, nativa_suma},                           /* v1.194 */
+    {"minimo",   6, nativa_minimo_global},                  /* v1.194 */
+    {"maximo",   6, nativa_maximo_global},                  /* v1.194 */
+    {"cualquiera", 10, nativa_cualquiera},                  /* v1.194 */
+    {"todos",    5, nativa_todos},                          /* v1.194 */
     /* Conversores (v1.1). */
     {"cadena",      6,  nativa_cadena},
     {"entero",      6,  nativa_entero},
