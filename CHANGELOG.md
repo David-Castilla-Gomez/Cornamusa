@@ -6,6 +6,47 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.193.0] — 2026-06-09 — `juntar` (zip) como builtin global
+
+Compañero natural de `enumerar` (v1.192). El idiom
+`para a, b en juntar(xs, ys):` ya no requiere `importar iteradores`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Iteracion paralela sin import
+para a, b en juntar([1, 2, 3], ["x", "z", "w"]):
+    imprimir(a, b)
+
+# Se detiene en el iterable mas corto (paridad Python zip)
+juntar([1, 2, 3, 4], ["a", "b"])    # [(1, "a"), (2, "b")]
+
+# N iterables mixtos
+juntar([1, 2], "ab", (verdadero, falso))
+# [(1, "a", verdadero), (2, "b", falso)]
+
+# Casos borde
+juntar()           # []
+juntar([5, 6])     # [(5,), (6,)] — tuplas de 1
+
+# Composicion con enumerar
+para i, par en enumerar(juntar("xy", [10, 20])):
+    ...
+```
+
+### Compatibilidad
+
+`iteradores.juntar` sigue funcionando — el módulo define la suya
+con prioridad en su scope. También `iteradores.juntar_mas_largo`
+(la variante zip_longest) queda solo en el módulo, sin promover.
+
+### Implementación
+
+`nativa_juntar` en `src/nativos.c`: materializa cada argumento con
+el `Iterador` genérico (`iter_nuevo`/`iter_siguiente` — soporta
+todos los iterables nativos), calcula la longitud mínima y
+construye la lista de tuplas. Eager.
+
 ## [1.192.0] — 2026-06-09 — `enumerar` como builtin global
 
 El idiom `para i, x en enumerar(xs):` es de los más comunes en

@@ -770,6 +770,90 @@ static Valor nativa_lista(EvalError *err, int n_args, Valor *args,
     return valor_lista(l);
 }
 
+/* v1.193: juntar(*iterables) — builtin global (zip de Python).
+ * Devuelve lista de tuplas con los elementos emparejados; se detiene
+ * en el iterable mas corto. Sin argumentos devuelve [].
+ *
+ * Antes solo en stdlib/iteradores (requeria importar). Es el
+ * companero natural de enumerar (v1.192) en bucles paralelos:
+ *   para a, b en juntar(xs, ys): ...
+ *
+ * Eager. Usa el Iterador generico para materializar cada arg. */
+static Valor nativa_juntar(EvalError *err, int n_args, Valor *args,
+                            int linea, int columna) {
+    Lista *r = lista_nueva(0);
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+    if (n_args == 0) return valor_lista(r);
+
+    /* Materializar cada iterable a una Lista temporal. */
+    Lista **listas = (Lista **)malloc(sizeof(Lista *) * (size_t)n_args);
+    if (!listas) {
+        lista_liberar(r);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    for (int i = 0; i < n_args; i++) listas[i] = NULL;
+    #define JUNTAR_LIMPIAR() do { \
+        for (int k = 0; k < n_args; k++) { \
+            if (listas[k]) lista_liberar(listas[k]); \
+        } \
+        free(listas); \
+        lista_liberar(r); \
+    } while (0)
+    for (int i = 0; i < n_args; i++) {
+        if (!valor_es_iterable(&args[i])) {
+            const char *tn = valor_nombre_tipo(&args[i]);
+            JUNTAR_LIMPIAR();
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: juntar() no acepta '%s' como iterable", tn);
+        }
+        listas[i] = lista_nueva(0);
+        if (!listas[i]) {
+            JUNTAR_LIMPIAR();
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        Iterador *iter = iter_nuevo(&args[i]);
+        if (!iter) {
+            JUNTAR_LIMPIAR();
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        Valor elem;
+        while (iter_siguiente(iter, &elem)) {
+            if (!lista_agregar(listas[i], elem)) {
+                iter_destruir(iter);
+                JUNTAR_LIMPIAR();
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+        }
+        iter_destruir(iter);
+    }
+
+    /* n = longitud minima. */
+    int n = listas[0]->cuenta;
+    for (int i = 1; i < n_args; i++) {
+        if (listas[i]->cuenta < n) n = listas[i]->cuenta;
+    }
+
+    for (int j = 0; j < n; j++) {
+        Tupla *t = tupla_nueva(n_args);
+        if (!t) {
+            JUNTAR_LIMPIAR();
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        for (int i = 0; i < n_args; i++) {
+            t->elementos[i] = valor_clonar(&listas[i]->elementos[j]);
+        }
+        if (!lista_agregar(r, valor_tupla(t))) {
+            tupla_liberar(t);
+            JUNTAR_LIMPIAR();
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    for (int k = 0; k < n_args; k++) lista_liberar(listas[k]);
+    free(listas);
+    #undef JUNTAR_LIMPIAR
+    return valor_lista(r);
+}
+
 /*
  * tupla([iterable]) — construye una tupla inmutable a partir de un
  * iterable. Materializa primero en lista para conocer el tamaño y
@@ -7774,6 +7858,7 @@ static const EntradaNativa NATIVAS[] = {
     {"tipo",     4, nativa_tipo},
     {"rango",    5, nativa_rango},
     {"enumerar", 8, nativa_enumerar},                       /* v1.192 */
+    {"juntar",   6, nativa_juntar},                         /* v1.193 */
     /* Conversores (v1.1). */
     {"cadena",      6,  nativa_cadena},
     {"entero",      6,  nativa_entero},
