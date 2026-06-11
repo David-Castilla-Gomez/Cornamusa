@@ -771,6 +771,127 @@ static Valor nativa_lista(EvalError *err, int n_args, Valor *args,
     return valor_lista(l);
 }
 
+/* ──────────────────────────────────────────────────────────────────
+ * v1.195: invocador de callables. La VM lo registra en vm_iniciar.
+ * ────────────────────────────────────────────────────────────────── */
+static void *g_invocador_ctx = NULL;
+static InvocadorCallable g_invocador = NULL;
+
+void nativos_set_invocador(void *vm_ctx, InvocadorCallable fn) {
+    g_invocador_ctx = vm_ctx;
+    g_invocador = fn;
+}
+
+/* v1.195: mapear(f, iterable) — builtin global (map de Python).
+ * Aplica f a cada elemento y devuelve lista con los resultados.
+ * f puede ser funcion, lambda, closure o nativa. */
+static Valor nativa_mapear(EvalError *err, int n_args, Valor *args,
+                            int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: mapear() requiere 2 argumentos (funcion, iterable)");
+    }
+    if (!g_invocador) {
+        return error_nativa(err, linea, columna,
+            "ErrorInterno: mapear() sin VM registrada");
+    }
+    if (!valor_es_iterable(&args[1])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: mapear() no acepta '%s' como iterable",
+            valor_nombre_tipo(&args[1]));
+    }
+    Lista *r = lista_nueva(0);
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+    Iterador *iter = iter_nuevo(&args[1]);
+    if (!iter) {
+        lista_liberar(r);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        Valor resultado;
+        bool ok = g_invocador(g_invocador_ctx, &args[0], &elem, 1, &resultado);
+        valor_destruir(&elem);
+        if (!ok) {
+            iter_destruir(iter);
+            lista_liberar(r);
+            /* El error de la VM ya esta en vm->error; marcar el
+             * EvalError de la nativa para que el caller propague. */
+            if (!err->tuvo_error) {
+                err->tuvo_error = true;
+                err->linea = linea;
+                snprintf(err->mensaje, sizeof(err->mensaje),
+                    "error al invocar la funcion de mapear()");
+            }
+            return valor_nulo();
+        }
+        if (!lista_agregar(r, resultado)) {
+            iter_destruir(iter);
+            lista_liberar(r);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+    }
+    iter_destruir(iter);
+    return valor_lista(r);
+}
+
+/* v1.195: filtrar(p, iterable) — builtin global (filter de Python).
+ * Devuelve lista con los elementos para los que p(x) es verdadero. */
+static Valor nativa_filtrar(EvalError *err, int n_args, Valor *args,
+                             int linea, int columna) {
+    if (n_args != 2) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: filtrar() requiere 2 argumentos (predicado, iterable)");
+    }
+    if (!g_invocador) {
+        return error_nativa(err, linea, columna,
+            "ErrorInterno: filtrar() sin VM registrada");
+    }
+    if (!valor_es_iterable(&args[1])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: filtrar() no acepta '%s' como iterable",
+            valor_nombre_tipo(&args[1]));
+    }
+    Lista *r = lista_nueva(0);
+    if (!r) return error_nativa(err, linea, columna, "memoria insuficiente");
+    Iterador *iter = iter_nuevo(&args[1]);
+    if (!iter) {
+        lista_liberar(r);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        Valor veredicto;
+        bool ok = g_invocador(g_invocador_ctx, &args[0], &elem, 1, &veredicto);
+        if (!ok) {
+            valor_destruir(&elem);
+            iter_destruir(iter);
+            lista_liberar(r);
+            if (!err->tuvo_error) {
+                err->tuvo_error = true;
+                err->linea = linea;
+                snprintf(err->mensaje, sizeof(err->mensaje),
+                    "error al invocar el predicado de filtrar()");
+            }
+            return valor_nulo();
+        }
+        bool pasa = valor_es_verdadero(&veredicto);
+        valor_destruir(&veredicto);
+        if (pasa) {
+            if (!lista_agregar(r, elem)) {
+                iter_destruir(iter);
+                lista_liberar(r);
+                return error_nativa(err, linea, columna,
+                    "memoria insuficiente");
+            }
+        } else {
+            valor_destruir(&elem);
+        }
+    }
+    iter_destruir(iter);
+    return valor_lista(r);
+}
+
 /* v1.194: suma(iterable, inicial=0) — builtin global. Acumula con el
  * operador `+` despachado por evaluador_aplicar_binario, asi que
  * soporta enteros (incluido bignum), decimales, cadenas (con
@@ -8040,6 +8161,8 @@ static const EntradaNativa NATIVAS[] = {
     {"maximo",   6, nativa_maximo_global},                  /* v1.194 */
     {"cualquiera", 10, nativa_cualquiera},                  /* v1.194 */
     {"todos",    5, nativa_todos},                          /* v1.194 */
+    {"mapear",   6, nativa_mapear},                         /* v1.195 */
+    {"filtrar",  7, nativa_filtrar},                        /* v1.195 */
     /* Conversores (v1.1). */
     {"cadena",      6,  nativa_cadena},
     {"entero",      6,  nativa_entero},

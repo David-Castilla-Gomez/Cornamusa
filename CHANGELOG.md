@@ -6,6 +6,78 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.195.0] — 2026-06-09 — `mapear`/`filtrar` builtins + invocador de callables
+
+Release con **hito de infraestructura**: por primera vez las nativas
+C pueden invocar funciones Cornamusa. Esto desbloquea `mapear` y
+`filtrar` como builtins globales — y abre la puerta a futuras
+nativas con callbacks (`ordenado` con clave, etc.).
+
+### Lo que ahora funciona
+
+```cornamusa
+# Sin imports
+mapear(lambda x: x * 2, [1, 2, 3])      # [2, 4, 6]
+filtrar(lambda x: x % 2 == 0, rango(10)) # [0, 2, 4, 6, 8]
+
+# Cualquier callable: lambda, funcion, closure, NATIVA
+mapear(cadena, [1, 2, 3])               # ["1", "2", "3"]
+
+funcion cuadrado(n): retornar n * n fin funcion
+mapear(cuadrado, rango(5))              # [0, 1, 4, 9, 16]
+
+# Closures con captura
+factor = 10
+mapear(lambda x: x * factor, [1, 2])    # [10, 20]
+
+# Composicion completa con los builtins de v1.194
+suma(mapear(lambda x: x * x, filtrar(lambda x: x % 2 == 0, rango(10))))
+# 120
+
+# Callables con defaults
+funcion conk(x, k=100): retornar x + k fin funcion
+mapear(conk, [1, 2])                     # [101, 102]
+
+# Excepciones del callable propagan y son atrapables
+intentar:
+    mapear(explota, [1])
+atrapar ErrorDeValor:
+    ...
+```
+
+### Infraestructura: el invocador de callables
+
+La limitación histórica ("las nativas C no pueden invocar callables
+Cornamusa", documentada en stdlib/funcionales.cor desde el origen)
+queda resuelta:
+
+- **`nativos.h`**: nuevo tipo `InvocadorCallable` y
+  `nativos_set_invocador(vm_ctx, fn)` — hook global que la VM
+  registra al iniciarse (mismo patrón que los hooks de
+  `__hash__`/`__igual__` en valor.c).
+- **`vm.c`**: `vm_invocar_callable_sync` — variante generalizada
+  de `vm_ejecutar_dunder_sync` sin receptor:
+  - `VAL_NATIVA` → llamada C directa, sin sub-VM.
+  - `VAL_FUNCION_BC` → push callee+args, `ejecutar_llamar_bc`
+    (que completa defaults, tupla `*args`, etc.) y sub-dispatch
+    síncrono con `frame_techo`/`modo_sub_call` — el mismo
+    mecanismo probado de los dunders síncronos desde v1.42.
+  - En error, restaura pila y frames al estado pre-call.
+- **`nativas`**: `mapear`/`filtrar` usan `g_invocador` por elemento.
+
+### Compatibilidad
+
+`funcionales.mapear/filtrar` siguen igual (bindings de módulo con
+prioridad). La diferencia práctica: las versiones builtin corren el
+bucle en C (menos dispatch por iteración).
+
+### Limitaciones
+
+- El invocador pasa argumentos posicionales solamente (sin kwargs).
+- Generadores como iterable de mapear/filtrar: no soportados aún
+  (el `Iterador` genérico no los cubre); materializar con
+  `lista(gen)` primero o usar la versión de `funcionales`.
+
 ## [1.194.0] — 2026-06-09 — `suma`/`minimo`/`maximo`/`cualquiera`/`todos` builtins
 
 Completa la familia de builtins de iterables iniciada con

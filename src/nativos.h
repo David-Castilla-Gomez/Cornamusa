@@ -35,6 +35,22 @@ void nativos_registrar(Entorno *globales);
 void nativos_registrar_dicc(Diccionario *globales);
 
 /*
+ * v1.195: hook invocador de callables.
+ *
+ * Las nativas C no pueden ejecutar funciones Cornamusa directamente
+ * (necesitan el dispatcher de la VM). La VM registra este hook al
+ * iniciarse; las nativas que aceptan callables (mapear, filtrar) lo
+ * usan para invocar de forma sincrona.
+ *
+ * Devuelve true y deja el resultado en *out si OK. False si hubo
+ * error (mensaje en el error de la VM; la nativa debe propagar).
+ */
+typedef bool (*InvocadorCallable)(void *vm_ctx, const Valor *callable,
+                                    const Valor *args, int n_args,
+                                    Valor *out);
+void nativos_set_invocador(void *vm_ctx, InvocadorCallable fn);
+
+/*
  * v1.122: busca un metodo nativo sobre un tipo built-in (lista,
  * cadena, dict, ...). Devuelve la FnNativa subyacente y, opcional,
  * el puntero a la cadena estatica con el nombre. NULL si no hay match.

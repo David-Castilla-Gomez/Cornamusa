@@ -145,6 +145,10 @@ static ValorDunderHookResultado vm_hash_dunder_hook(
     void *vm_ctx, Instancia *inst, uint64_t *out_hash);
 static ValorDunderHookResultado vm_iguales_dunder_hook(
     void *vm_ctx, Instancia *inst, const Valor *otro, bool *out_iguales);
+/* v1.195: invocador de callables para nativas (mapear/filtrar). */
+static bool vm_invocar_callable_sync(void *vm_ctx, const Valor *callable,
+                                       const Valor *args, int n_args,
+                                       Valor *out);
 
 /* ──────────────────────────────────────────────────────────────────
  * Carga de módulos (Fase 9)
@@ -376,6 +380,9 @@ void vm_iniciar(VM *vm) {
        `valor_iguales` puedan despachar dunders en instancias sin
        acoplarse al header de vm. */
     valor_set_hooks(vm, vm_hash_dunder_hook, vm_iguales_dunder_hook);
+    /* v1.195: registrar el invocador de callables para nativas
+       (mapear/filtrar). */
+    nativos_set_invocador(vm, vm_invocar_callable_sync);
     /* v1.38: traceback. */
     vm->traceback[0] = '\0';
     /* v1.71: profiler determinista (inactivo por defecto). */
@@ -1869,6 +1876,132 @@ static ResultadoVM ejecutar_dunder_unario(VM *vm, CallFrame **frame_inout,
 static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                                                 Valor *resultado_out,
                                                 bool inicial);
+
+/* v1.195: invoca un callable generico (closure o nativa) de forma
+ * sincrona. Variante de vm_ejecutar_dunder_sync sin receptor.
+ * Registrada via nativos_set_invocador para que las nativas
+ * (mapear, filtrar) puedan ejecutar funciones Cornamusa.
+ *
+ * Soporta:
+ *   - VAL_FUNCION_BC: sub-dispatch sincrono (mismo mecanismo que
+ *     los dunders __hash__/__igual__).
+ *   - VAL_NATIVA: llamada C directa, sin sub-VM.
+ *
+ * No soporta kwargs ni defaults del lado del callable mas alla de
+ * lo que la convencion posicional permite. */
+static bool vm_invocar_callable_sync(void *vm_ctx, const Valor *callable,
+                                       const Valor *args, int n_args,
+                                       Valor *out) {
+    VM *vm = (VM *)vm_ctx;
+    if (callable->tipo == VAL_NATIVA) {
+        /* Camino directo: la nativa no necesita el dispatcher. */
+        Valor argv[8];
+        if (n_args > 8) {
+            vm->error.tuvo_error = true;
+            snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                "ErrorInterno: invocador soporta hasta 8 args");
+            return false;
+        }
+        for (int i = 0; i < n_args; i++) argv[i] = args[i];
+        Valor r = callable->como.nativa.fn(&vm->error, n_args, argv, 0, 0);
+        if (vm->error.tuvo_error) {
+            valor_destruir(&r);
+            return false;
+        }
+        *out = r;
+        return true;
+    }
+    if (callable->tipo != VAL_FUNCION_BC) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "ErrorDeTipo: se esperaba una funcion, no '%s'",
+            valor_nombre_tipo(callable));
+        return false;
+    }
+    Closure *cl = callable->como.closure;
+    FuncionBC *fn = cl->plantilla;
+    int n_esperado = fn->aridad
+                     - (fn->tiene_estrella ? 1 : 0)
+                     - (fn->tiene_doble_estrella ? 1 : 0)
+                     - fn->n_kw_only;
+    if (!fn->tiene_estrella && n_args != n_esperado) {
+        /* Permitir defaults: n_args en [n_esperado - n_defaults, n_esperado]. */
+        int n_def_fijos = fn->n_defaults
+                          - (fn->n_kw_only - fn->n_kw_only_obligatorios);
+        if (n_args < n_esperado - n_def_fijos || n_args > n_esperado) {
+            vm->error.tuvo_error = true;
+            snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                "ErrorDeTipo: %.*s() esperaba %d argumento(s), recibio %d",
+                fn->longitud_nombre, fn->nombre, n_esperado, n_args);
+            return false;
+        }
+    }
+    if (vm->n_frames >= VM_FRAMES_MAX
+        || (vm->tope - vm->pila) + n_args + 1 >= VM_PILA_MAX) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "desbordamiento de pila");
+        return false;
+    }
+
+    int n_frames_pre = vm->n_frames;
+    Valor *tope_pre = vm->tope;
+
+    /* Push callee + args. ejecutar_llamar_bc completara defaults,
+       tupla *args, etc. */
+    closure_retener(cl);
+    empujar(vm, valor_closure(cl));
+    for (int i = 0; i < n_args; i++) {
+        empujar(vm, valor_clonar(&args[i]));
+    }
+    Valor *base_nuevo = vm->tope - (n_args + 1);
+    CallFrame *frame_dummy = vm->n_frames > 0
+        ? &vm->frames[vm->n_frames - 1] : NULL;
+    CallFrame *frame_io = frame_dummy;
+    if (ejecutar_llamar_bc(vm, &frame_io, base_nuevo,
+                             (uint8_t)n_args) != VM_OK) {
+        /* Limpiar push parcial. */
+        while (vm->tope > tope_pre) {
+            Valor v = sacar(vm);
+            valor_destruir(&v);
+        }
+        return false;
+    }
+
+    /* Sub-dispatch sincrono (mismo mecanismo que dunder_sync). */
+    int prev_frame_techo = vm->frame_techo;
+    bool prev_modo_yield = vm->modo_yield;
+    bool prev_modo_sub_call = vm->modo_sub_call;
+    int prev_handler_techo = vm->handler_techo;
+    vm->frame_techo = vm->n_frames;
+    vm->modo_sub_call = true;
+    vm->modo_yield = false;
+    vm->handler_techo = vm->n_handlers;
+
+    ResultadoVM rc = vm_ejecutar_dispatch_impl(vm, NULL, NULL, false);
+
+    vm->frame_techo = prev_frame_techo;
+    vm->modo_yield = prev_modo_yield;
+    vm->modo_sub_call = prev_modo_sub_call;
+    vm->handler_techo = prev_handler_techo;
+
+    if (rc == VM_OK_SUB_RETURN) {
+        *out = sacar(vm);
+        return true;
+    }
+    /* Error: restaurar pila/frames al estado pre-call. */
+    while (vm->tope > tope_pre) {
+        Valor v = sacar(vm);
+        valor_destruir(&v);
+    }
+    vm->n_frames = n_frames_pre;
+    if (!vm->error.tuvo_error) {
+        vm->error.tuvo_error = true;
+        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+            "error al invocar funcion");
+    }
+    return false;
+}
 
 static bool vm_ejecutar_dunder_sync(VM *vm, Closure *m,
                                       Instancia *receptor,
