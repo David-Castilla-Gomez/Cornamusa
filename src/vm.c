@@ -710,7 +710,12 @@ void vm_destruir(VM *vm) {
 static ResultadoVM vm_lanzar_excepcion(VM *vm, CallFrame **frame_inout,
                                          Excepcion *e) {
     CallFrame *frame = *frame_inout;
-    if (vm->n_handlers == 0) {
+    /* v1.199: respetar handler_techo — un handler del CALLER no es
+       elegible dentro de un sub-dispatch (dunder_sync, generador).
+       Antes solo OP_LANZAR lo respetaba; los errores runtime de
+       opcodes (RAISE_OR_DIE) cruzaban al caller y el resto del
+       programa se ejecutaba dentro del sub-loop. */
+    if (vm->n_handlers <= vm->handler_techo) {
         /* Sin handler: error fatal con clase + mensaje. */
         vm->error.tuvo_error = true;
         vm->error.linea = linea_actual_frame(frame);
@@ -762,7 +767,9 @@ static ResultadoVM vm_lanzar_excepcion(VM *vm, CallFrame **frame_inout,
  * true. El frame del caller se actualiza vía `frame_inout`.
  */
 static bool intentar_atrapar_error_nativa(VM *vm, CallFrame **frame_inout) {
-    if (!vm->error.tuvo_error || vm->n_handlers == 0) return false;
+    /* v1.199: handlers por debajo de handler_techo pertenecen al
+       caller de un sub-dispatch — no son elegibles aquí. */
+    if (!vm->error.tuvo_error || vm->n_handlers <= vm->handler_techo) return false;
     /* Parsear "Clase: mensaje". Si no hay ":", clase = "Excepcion". */
     const char *msg = vm->error.mensaje;
     int total = (int)strlen(msg);
@@ -7335,6 +7342,19 @@ bool vm_generador_paso(VM *vm, Generador *gen, Valor *out_valor) {
     /* Save VM state. */
     int prev_frame_techo = vm->frame_techo;
     bool prev_modo_yield = vm->modo_yield;
+    /* v1.199: handler_techo evita que una excepcion lanzada DENTRO
+       del generador haga unwind hacia un handler del caller mientras
+       seguimos en el sub-dispatch. Sin esto, el resto del programa
+       se ejecutaba dentro del sub-loop del generador y el estado
+       (frame_techo/modo_yield restaurados a destiempo, stack del gen
+       huerfano) quedaba corrupto: "Pila vacia" o SegFault
+       intermitente segun layout. La excepcion ahora aborta el
+       sub-dispatch con VM_ERROR_RUNTIME; el caller (OP_ITER_SIGUIENTE)
+       hace RAISE_OR_DIE en SU contexto, donde el handler la atrapa
+       con el unwind correcto. */
+    int prev_handler_techo = vm->handler_techo;
+    int n_frames_pre = vm->n_frames;
+    int n_handlers_pre = vm->n_handlers;
 
     /* Restaurar stack del gen al vm->tope. */
     Valor *base_nuevo = vm->tope;
@@ -7378,6 +7398,7 @@ bool vm_generador_paso(VM *vm, Generador *gen, Valor *out_valor) {
     /* Activar modo generador y techo. */
     vm->frame_techo = vm->n_frames;  /* cuando frame desaparezca → sal. */
     vm->modo_yield = true;
+    vm->handler_techo = vm->n_handlers;  /* v1.199: exc no escapa al caller */
 
     /* Sub-dispatch. */
     ResultadoVM r = vm_ejecutar_dispatch_impl(vm, NULL, NULL, false);
@@ -7385,6 +7406,7 @@ bool vm_generador_paso(VM *vm, Generador *gen, Valor *out_valor) {
     /* Restaurar VM state. */
     vm->frame_techo = prev_frame_techo;
     vm->modo_yield = prev_modo_yield;
+    vm->handler_techo = prev_handler_techo;  /* v1.199 */
     gen->ejecutando = false;
 
     if (r == VM_OK_YIELD) {
@@ -7430,7 +7452,26 @@ bool vm_generador_paso(VM *vm, Generador *gen, Valor *out_valor) {
         return false;
     }
     /* VM_ERROR_RUNTIME u otro fallo. Marcar gen como agotado para
-       evitar reentrar a un estado roto. */
+       evitar reentrar a un estado roto.
+       v1.199: limpiar frames y slots que el error dejo sin recoger
+       (el lanzamiento abortado por handler_techo NO hace unwind del
+       stack del generador) — mismo patron que vm_ejecutar_dunder_sync.
+       Restaurar globales si el frame del gen (o anidados) swapeo.
+       Tambien recortar handlers que el generador registro y el error
+       dejo sin consumir (p.ej. abort en medio de un `intentar`). */
+    if (vm->n_handlers > n_handlers_pre) {
+        vm->n_handlers = n_handlers_pre;
+    }
+    while (vm->n_frames > n_frames_pre) {
+        CallFrame *fr = &vm->frames[--vm->n_frames];
+        if (fr->globales_pre_llamada != NULL) {
+            vm->globales = fr->globales_pre_llamada;
+        }
+    }
+    while (vm->tope > base_nuevo) {
+        Valor v = *(--vm->tope);
+        valor_destruir(&v);
+    }
     gen->agotado = true;
     *out_valor = valor_nulo();
     return false;

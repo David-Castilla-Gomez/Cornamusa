@@ -6,6 +6,84 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.199.0] — 2026-06-12 — Bugfix: excepciones desde generadores
+
+**Mata el flaky histórico** `test_bytecode_genex_multi_destr`
+(SegFault intermitente ~23% por run, presente desde v1.136). El
+caso reproducible:
+
+```cornamusa
+intentar:
+    g = (a + b para a, b en [(1, 2), (3,)])   # (3,) aridad mala
+    para v en g:
+        imprimir(v)
+    fin para
+atrapar ErrorDeValor:
+    imprimir("err")
+fin intentar
+```
+
+Imprimía `3` y `err` (el atrapado "funcionaba") pero terminaba con
+`Pila vacia (bug del compilador)` — o SegFault según el layout del
+heap. Cualquier excepción lanzada DENTRO de un generador y atrapada
+FUERA dejaba la VM corrupta.
+
+### Root cause (doble)
+
+1. `vm_generador_paso` ejecuta el cuerpo del generador en un
+   sub-dispatch, pero **no fijaba `handler_techo`** (a diferencia
+   de `vm_ejecutar_dunder_sync`, que lo hace desde v1.42).
+2. Aun fijándolo, **solo `OP_LANZAR` respetaba el techo**: los
+   otros dos caminos de lanzamiento — `vm_lanzar_excepcion` e
+   `intentar_atrapar_error_nativa` (el que convierte errores
+   runtime de opcodes/nativas en excepciones atrapables) —
+   comparaban `n_handlers == 0`, ignorando `handler_techo`.
+
+En ambos casos, una excepción no atrapada dentro del generador
+encontraba el handler del CALLER y hacía unwind hacia él **sin
+salir del sub-loop**: el resto del programa (el cuerpo del
+`atrapar` y todo lo que sigue) se ejecutaba dentro del
+sub-dispatch del generador. Al terminar, los flags
+`frame_techo`/`modo_yield` se "restauraban" a destiempo y el
+stack del generador quedaba huérfano — de ahí el pop de más al
+final ("Pila vacia"), el SegFault, o bytecode basura ejecutado
+tras el fin lógico del programa (con `1/0` dentro de un genex el
+programa imprimía todo bien y moría con un error fantasma en una
+línea sin sentido).
+
+El segundo root cause afectaba también, de forma latente, a
+`__hash__`/`__igual__`/`__siguiente__`: dunder_sync ya fijaba el
+techo, pero los errores runtime lo saltaban igual.
+
+### Fix
+
+- `vm_generador_paso` fija `handler_techo = n_handlers` durante el
+  sub-dispatch (con save/restore), igual que dunder_sync.
+- `vm_lanzar_excepcion` e `intentar_atrapar_error_nativa` ahora
+  comparan `n_handlers <= handler_techo`: un handler del caller no
+  es elegible dentro de un sub-dispatch. Fuera de sub-dispatches
+  `handler_techo` es 0 — comportamiento idéntico al de siempre.
+- En el camino de error de `vm_generador_paso`, limpieza explícita
+  (mismo patrón que dunder_sync): pop de los frames del generador
+  (restaurando `vm->globales` si algún frame swapeó), recorte de
+  handlers que el generador registró y el error dejó sin consumir,
+  liberación de los slots del stack del generador, y
+  `gen->agotado = true`.
+- El caller (`OP_ITER_SIGUIENTE`) hace `RAISE_OR_DIE()` en SU
+  contexto — el handler del caller atrapa con el unwind correcto.
+
+### Verificación
+
+- Caso aislado: 0/50 fallos (antes fallaba SIEMPRE con rc=70 y
+  ~5% SegFault).
+- Test flaky completo: 0/50 fallos (antes ~23%).
+- Suite completa 3× consecutiva: 395/395 verde.
+- 6 casos nuevos en `test_bytecode_gen_excepcion.c`: repro
+  original, `lanzar` explícito en generador, excepción atrapada
+  dentro del generador (no escapa), error aritmético en genex,
+  generador agotado por error no reanudable, y estado del
+  programa intacto tras atrapar.
+
 ## [1.198.0] — 2026-06-09 — Bugfix: comprehensions en cualquier posición
 
 **Bugfix estructural del compilador.** Una comprehension compilada
