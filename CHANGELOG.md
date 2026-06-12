@@ -6,6 +6,66 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.198.0] — 2026-06-09 — Bugfix: comprehensions en cualquier posición
+
+**Bugfix estructural del compilador.** Una comprehension compilada
+con valores temporales en el stack (el callee de una llamada, el
+operando izquierdo de un binario, el acumulador de una f-string...)
+calculaba sus slots `$comp_acc`/`$comp_iter` desfasados respecto al
+stack runtime, fallando con
+`estado interno corrupto: OP_ITER_SIGUIENTE sin iterador en slot N`.
+
+Documentado parcialmente en v1.171/v1.182 como "limitación", el
+alcance real era mucho mayor — TODOS estos fallaban:
+
+```cornamusa
+# arg de llamada (el caso mas comun!)
+suma([v * 2 para v en xs])
+
+# operando de binario
+1000 + suma([v para v en xs])
+
+# method call con *args (repro de v1.182)
+", ".unir([cadena(x) para x en args])
+
+# indices, kwargs, f-strings con partes previas...
+matriz[suma([v para v en idx])]
+f"antes {[x para x en rango(n)]} despues"
+```
+
+Los 393 tests no lo detectaban porque las comprehensions de los
+tests viven en asignaciones (`xs = [comp]`) o en `imprimir(...)`
+(caso especial sin callee en stack).
+
+### El fix
+
+- **`prof_expr`** en `ScopeCompilador`: cuántos valores temporales
+  (no registrados como locales) hay en el stack runtime en el punto
+  de compilación actual.
+- **Wrapper de `compilador_compilar_expr`**: tras compilar una
+  expr, fija `prof = entrada + 1` (toda expresión deja exactamente
+  1 valor neto). Durante la compilación de sub-exprs, el contador
+  refleja los temporales de la expresión contenedora.
+- **Wrapper de `compilador_compilar_sent`**: resetea `prof = 0`
+  (toda sentencia comienza con el stack alineado a los locales) y
+  restaura al salir.
+- **`EXPR_COMPREHENSION`**: registra `prof_expr` slots fantasma
+  antes de sus `$comp_*`, alineando los slots calculados con el
+  stack real. Los libera al final sin descartes (los temporales
+  pertenecen a la expresión contenedora). Generalización de la
+  técnica introducida ad-hoc en v1.177 para spread.
+- **Compensaciones puntuales** donde hay pushes directos no
+  trackeados o consumos antes de sub-compilar: ternaria, lógica
+  (`y`/`o`), f-strings (acumulador + debug + spec dinámico),
+  `super.metodo(...)`, los 4 paths spread de colecciones y los
+  4 paths de llamada (spread, kwargs, kw_dict, spread+kw).
+
+### Verificación
+
+13 casos nuevos en `test_bytecode_comp_en_expr.c`, incluyendo
+todos los reproducidos + regresiones de v1.177 y el caso común de
+asignación. Suite completa 394/394 verde sin regresiones.
+
 ## [1.197.0] — 2026-06-09 — `reducir` builtin
 
 Completa la tríada `mapear`/`filtrar`/`reducir` sobre el invocador

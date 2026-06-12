@@ -136,6 +136,18 @@ typedef struct ScopeCompilador {
     Sent *finalmentes_pendientes[16];
     int n_finalmentes_pendientes;
 
+    /* v1.198: profundidad del stack de EXPRESION en el punto de
+       compilación actual — cuántos valores temporales (no registrados
+       como locales) hay en el stack runtime por encima de los slots
+       de locales. El wrapper compilador_compilar_expr lo incrementa
+       tras compilar cada expr; las sentencias lo salvan/restauran.
+       EXPR_COMPREHENSION lo usa para reservar slots fantasma y que
+       sus $comp_acc/$comp_iter coincidan con el stack real. Sin esto,
+       una comprehension como argumento de llamada (callee huérfano en
+       stack) calculaba slots desfasados → "OP_ITER_SIGUIENTE sin
+       iterador en slot N". */
+    int prof_expr;
+
     struct ScopeCompilador *padre;
 } ScopeCompilador;
 

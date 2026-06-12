@@ -40,6 +40,7 @@ static void scope_iniciar(ScopeCompilador *s, Chunk *chunk, bool es_funcion,
     s->n_globales = 0;
     s->funcion = NULL;
     s->n_finalmentes_pendientes = 0;  /* v1.190 */
+    s->prof_expr = 0;                  /* v1.198 */
     s->padre = padre;
     if (es_funcion) {
         s->locales[0].nombre = "";
@@ -459,7 +460,23 @@ static bool emitir_destruct_patron_compr(Compilador *c, int slot_item,
                                             const Expr *patron, int *cursor,
                                             int linea);
 
+static bool compilar_expr_impl(Compilador *c, const Expr *e);
+
+/* v1.198: wrapper que mantiene `prof_expr`. Compilar una expresion
+ * deja exactamente 1 valor neto en el stack runtime, asi que la
+ * salida FIJA prof = entrada + 1 (las sub-exprs internas suben y el
+ * opcode consumidor del impl las colapsa — el neto es siempre 1).
+ * Durante la compilacion de una sub-expr, prof refleja los
+ * temporales (huérfanos) que la expresion contenedora ya empujo.
+ * EXPR_COMPREHENSION lo lee para alinear sus slots con el stack. */
 bool compilador_compilar_expr(Compilador *c, const Expr *e) {
+    int prof_entrada = c->actual->prof_expr;
+    if (!compilar_expr_impl(c, e)) return false;
+    c->actual->prof_expr = prof_entrada + 1;
+    return true;
+}
+
+static bool compilar_expr_impl(Compilador *c, const Expr *e) {
     if (c->error.tuvo_error) return false;
 
     switch (e->tipo) {
@@ -593,6 +610,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
         case EXPR_LLAMADA: {
             const Expr *callee = e->como.llamada.callee;
             int n_args = e->como.llamada.n_args;
+            int prof_llamada = c->actual->prof_expr;  /* v1.198 */
             if (n_args > 255) {
                 error_compilacion(c, e->linea, e->columna,
                     "una llamada no puede tener mas de 255 argumentos");
@@ -612,6 +630,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 /* OP_OBTENER_LOCAL 1 → empuja `yo` (primer parametro). */
                 chunk_emitir_byte2(c->actual->chunk, OP_OBTENER_LOCAL,
                                     1, callee->linea);
+                /* v1.198: el push de `yo` no pasa por el wrapper. */
+                c->actual->prof_expr = prof_llamada + 1;
                 for (int i = 0; i < n_args; i++) {
                     if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                 }
@@ -720,6 +740,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     bool es_sp = (e->como.llamada.args_spread
                                   && e->como.llamada.args_spread[i]);
                     if (es_kw || es_dsp) continue;
+                    /* v1.198: huerfanos reales = callee + lista. */
+                    c->actual->prof_expr = prof_llamada + 2;
                     if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                     if (es_sp) {
                         chunk_emitir_byte(c->actual->chunk, OP_LISTA_EXTENDER, e->linea);
@@ -747,9 +769,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         }
                         chunk_emitir_byte2(c->actual->chunk, OP_CONST,
                                             (uint8_t)idx_const, e->linea);
+                        /* v1.198: callee + lista + dict + clave. */
+                        c->actual->prof_expr = prof_llamada + 4;
                         if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                         chunk_emitir_byte(c->actual->chunk, OP_DICC_AGREGAR_PAR, e->linea);
                     } else {  /* **dspread */
+                        c->actual->prof_expr = prof_llamada + 3;  /* v1.198 */
                         if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                         chunk_emitir_byte(c->actual->chunk, OP_DICC_EXTENDER, e->linea);
                     }
@@ -762,6 +787,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 /* Lista vacía sobre la que iremos acumulando args. */
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA, 0, e->linea);
                 for (int i = 0; i < n_args; i++) {
+                    /* v1.198: callee + lista. */
+                    c->actual->prof_expr = prof_llamada + 2;
                     if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                     if (e->como.llamada.args_spread[i]) {
                         chunk_emitir_byte(c->actual->chunk, OP_LISTA_EXTENDER, e->linea);
@@ -817,9 +844,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         }
                         chunk_emitir_byte2(c->actual->chunk, OP_CONST,
                                             (uint8_t)idx_const, e->linea);
+                        /* v1.198: callee + n_pos + dict + clave. */
+                        c->actual->prof_expr = prof_llamada + 1 + n_pos + 2;
                         if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                         chunk_emitir_byte(c->actual->chunk, OP_DICC_AGREGAR_PAR, e->linea);
                     } else { /* es_dsp */
+                        /* v1.198: callee + n_pos + dict. */
+                        c->actual->prof_expr = prof_llamada + 1 + n_pos + 1;
                         if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                         chunk_emitir_byte(c->actual->chunk, OP_DICC_EXTENDER, e->linea);
                     }
@@ -849,6 +880,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
                 }
                 /* Pares (clave_cadena, valor) para cada kwarg. */
+                int kw_emitidos = 0;  /* v1.198 */
                 for (int i = 0; i < n_args; i++) {
                     const char *k = e->como.llamada.kwarg_keys[i];
                     if (k == NULL) continue;
@@ -862,7 +894,11 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     }
                     chunk_emitir_byte2(c->actual->chunk, OP_CONST,
                                         (uint8_t)idx_const, e->linea);
+                    /* v1.198: callee + n_pos + pares previos + clave. */
+                    c->actual->prof_expr =
+                        prof_llamada + 1 + n_pos + 2 * kw_emitidos + 1;
                     if (!compilador_compilar_expr(c, e->como.llamada.args[i])) return false;
+                    kw_emitidos++;
                 }
                 chunk_emitir_byte(c->actual->chunk, OP_LLAMAR_KW, e->linea);
                 chunk_emitir_byte(c->actual->chunk, (uint8_t)n_pos, e->linea);
@@ -942,15 +978,18 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                condicional. OP_SALTAR_SI_FALSO hace peek de cond, así
                que la rama tomada hace OP_DESCARTAR para soltar cond
                y empuja su propio valor. Stack neto: -1 (cond) + 1 (rama). */
+            int prof_base = c->actual->prof_expr;  /* v1.198 */
             if (!compilador_compilar_expr(c, e->como.ternaria.cond)) return false;
             int salto_falso = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
             /* Rama verdadera: descartar cond y evaluar si_si. */
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+            c->actual->prof_expr = prof_base;  /* v1.198: cond consumida */
             if (!compilador_compilar_expr(c, e->como.ternaria.si_si)) return false;
             int salto_fin = emitir_salto(c, OP_SALTAR, e->linea);
             /* Rama falsa. */
             parchear_salto(c, salto_falso, e->linea);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+            c->actual->prof_expr = prof_base;  /* v1.198 */
             if (!compilador_compilar_expr(c, e->como.ternaria.si_no)) return false;
             parchear_salto(c, salto_fin, e->linea);
             return true;
@@ -967,10 +1006,12 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
              * En ambos casos `OP_SALTAR_SI_FALSO` hace PEEK (no pop),
              * así que el valor ya queda en stack si decide la rama.
              */
+            int prof_base = c->actual->prof_expr;  /* v1.198 */
             if (!compilador_compilar_expr(c, e->como.logica.izq)) return false;
             if (e->como.logica.es_y) {
                 int salto_falso = emitir_salto(c, OP_SALTAR_SI_FALSO, e->linea);
                 chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                c->actual->prof_expr = prof_base;  /* v1.198: izq consumida */
                 if (!compilador_compilar_expr(c, e->como.logica.der)) return false;
                 parchear_salto(c, salto_falso, e->linea);
             } else {
@@ -979,6 +1020,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 int salto_fin   = emitir_salto(c, OP_SALTAR, e->linea);
                 parchear_salto(c, salto_falso, e->linea);
                 chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
+                c->actual->prof_expr = prof_base;  /* v1.198 */
                 if (!compilador_compilar_expr(c, e->como.logica.der)) return false;
                 parchear_salto(c, salto_fin, e->linea);
             }
@@ -1006,7 +1048,15 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                  * Por cada elemento reservamos tambien un slot $spread_tmp
                  * para el valor que OP_OBTENER_LOCAL empuja al TOS — asi
                  * la comprehension interior ve el contador n_locales
-                 * coherente con la altura real del stack. */
+                 * coherente con la altura real del stack.
+                 * v1.198: pad por huerfanos de la expr contenedora +
+                 * prof_expr=0 durante los elementos. */
+                int pad_sp = c->actual->prof_expr;
+                for (int i = 0; i < pad_sp; i++) {
+                    if (agregar_local(c, "", 0, e->linea) < 0) return false;
+                }
+                int prof_save_sp = c->actual->prof_expr;
+                c->actual->prof_expr = 0;
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA,
                                     0, e->linea);
                 int slot_lst = agregar_local(c, "$spread_lst", 11, e->linea);
@@ -1019,6 +1069,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                                         (uint8_t)slot_lst, e->linea);
                     int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
                     if (slot_tmp < 0) return false;
+                    c->actual->prof_expr = 0;  /* v1.198 */
                     if (sp) {
                         if (!compilador_compilar_expr(c, el->como.unario.operando))
                             return false;
@@ -1033,6 +1084,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     c->actual->n_locales -= 1;  /* liberar $spread_tmp */
                 }
                 c->actual->n_locales -= 1;  /* liberar $spread_lst */
+                c->actual->n_locales -= pad_sp;     /* v1.198 */
+                c->actual->prof_expr = prof_save_sp;
                 return true;
             }
             if (n > 255) {
@@ -1061,7 +1114,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
             }
             if (hay_spread) {
-                /* v1.177: ver comentario en EXPR_LISTA. */
+                /* v1.177: ver comentario en EXPR_LISTA. v1.198: pad. */
+                int pad_sp = c->actual->prof_expr;
+                for (int i = 0; i < pad_sp; i++) {
+                    if (agregar_local(c, "", 0, e->linea) < 0) return false;
+                }
+                int prof_save_sp = c->actual->prof_expr;
+                c->actual->prof_expr = 0;
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_LISTA,
                                     0, e->linea);
                 int slot_lst = agregar_local(c, "$spread_lst", 11, e->linea);
@@ -1074,6 +1133,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                                         (uint8_t)slot_lst, e->linea);
                     int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
                     if (slot_tmp < 0) return false;
+                    c->actual->prof_expr = 0;  /* v1.198 */
                     if (sp) {
                         if (!compilador_compilar_expr(c, el->como.unario.operando))
                             return false;
@@ -1089,6 +1149,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
                 chunk_emitir_byte(c->actual->chunk, OP_LISTA_A_TUPLA, e->linea);
                 c->actual->n_locales -= 1;
+                c->actual->n_locales -= pad_sp;     /* v1.198 */
+                c->actual->prof_expr = prof_save_sp;
                 return true;
             }
             if (n > 255) {
@@ -1118,7 +1180,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
             }
             if (hay_dspread) {
-                /* v1.177: ver comentario en EXPR_LISTA. */
+                /* v1.177: ver comentario en EXPR_LISTA. v1.198: pad. */
+                int pad_sp = c->actual->prof_expr;
+                for (int i = 0; i < pad_sp; i++) {
+                    if (agregar_local(c, "", 0, e->linea) < 0) return false;
+                }
+                int prof_save_sp = c->actual->prof_expr;
+                c->actual->prof_expr = 0;
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_DICC,
                                     0, e->linea);
                 int slot_dc = agregar_local(c, "$spread_dc", 10, e->linea);
@@ -1131,6 +1199,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                                         (uint8_t)slot_dc, e->linea);
                     int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
                     if (slot_tmp < 0) return false;
+                    c->actual->prof_expr = 0;  /* v1.198 */
                     if (sp) {
                         if (!compilador_compilar_expr(c, k->como.unario.operando))
                             return false;
@@ -1147,6 +1216,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     c->actual->n_locales -= 1;
                 }
                 c->actual->n_locales -= 1;
+                c->actual->n_locales -= pad_sp;     /* v1.198 */
+                c->actual->prof_expr = prof_save_sp;
                 return true;
             }
             if (n > 255) {
@@ -1175,7 +1246,13 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 }
             }
             if (hay_spread) {
-                /* v1.177: ver comentario en EXPR_LISTA. */
+                /* v1.177: ver comentario en EXPR_LISTA. v1.198: pad. */
+                int pad_sp = c->actual->prof_expr;
+                for (int i = 0; i < pad_sp; i++) {
+                    if (agregar_local(c, "", 0, e->linea) < 0) return false;
+                }
+                int prof_save_sp = c->actual->prof_expr;
+                c->actual->prof_expr = 0;
                 chunk_emitir_byte2(c->actual->chunk, OP_BUILD_CONJUNTO,
                                     0, e->linea);
                 int slot_cj = agregar_local(c, "$spread_cj", 10, e->linea);
@@ -1188,6 +1265,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                                         (uint8_t)slot_cj, e->linea);
                     int slot_tmp = agregar_local(c, "$spread_tmp", 11, e->linea);
                     if (slot_tmp < 0) return false;
+                    c->actual->prof_expr = 0;  /* v1.198 */
                     if (sp) {
                         if (!compilador_compilar_expr(c, el->como.unario.operando))
                             return false;
@@ -1202,6 +1280,8 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     c->actual->n_locales -= 1;
                 }
                 c->actual->n_locales -= 1;
+                c->actual->n_locales -= pad_sp;     /* v1.198 */
+                c->actual->prof_expr = prof_save_sp;
                 return true;
             }
             if (n > 255) {
@@ -1454,6 +1534,23 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 return true;
             }
 
+            /* v1.198: si la comprehension se compila en mitad de una
+             * expresion (hay `prof_expr` valores temporales en el
+             * stack por encima de los locales — p.ej. el callee de
+             * `suma([x para x en xs])` o el operando izquierdo de
+             * `1000 + [comp]`), registrar slots fantasma para que
+             * $comp_acc/$comp_iter/etc. apunten a las posiciones
+             * runtime correctas. Se liberan al final del case (sin
+             * descartes: los huerfanos pertenecen a la expresion
+             * contenedora). Interior compilado con prof_expr = 0
+             * (stack alineado tras el pad). */
+            int pad_huerfanos = c->actual->prof_expr;
+            for (int i = 0; i < pad_huerfanos; i++) {
+                if (agregar_local(c, "", 0, e->linea) < 0) return false;
+            }
+            int prof_save_comp = c->actual->prof_expr;
+            c->actual->prof_expr = 0;
+
             /* 1. Crear acumulador, dejarlo en TOS, reservar su slot. */
             switch (tipo_destino) {
                 case 0:
@@ -1680,6 +1777,11 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, e->linea);
             }
             c->actual->n_locales -= (1 + n_desc);
+            /* v1.198: liberar pad de huerfanos (sin descartes — esos
+             * valores pertenecen a la expresion contenedora) y
+             * restaurar el contador para el wrapper exterior. */
+            c->actual->n_locales -= pad_huerfanos;
+            c->actual->prof_expr = prof_save_comp;
             return true;
         }
         case EXPR_INDICE: {
@@ -1910,6 +2012,7 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                 chunk_emitir_constante(c->actual->chunk, v, e->linea);
                 return true;
             }
+            int prof_base_f = c->actual->prof_expr;  /* v1.198 */
             for (int i = 0; i < n; i++) {
                 const ParteFCadena *p = &partes[i];
                 if (p->expr) {
@@ -1930,6 +2033,11 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                         }
                         chunk_emitir_constante(c->actual->chunk, dbg, e->linea);
                     }
+                    /* v1.198: huerfanos reales en este punto = base
+                     * + acumulador (si i>0) + constante debug. Los
+                     * pushes directos no pasan por el wrapper. */
+                    c->actual->prof_expr = prof_base_f
+                        + (i > 0 ? 1 : 0) + (tiene_debug ? 1 : 0);
                     if (!compilador_compilar_expr(c, p->expr)) return false;
                     /* v1.186: conversor `!r`/`!s`/`!a` antes del spec.
                      * Tras esto el TOS es una cadena; el spec posterior se
@@ -1944,9 +2052,15 @@ bool compilador_compilar_expr(Compilador *c, const Expr *e) {
                     }
                     /* v1.189: spec con interpolaciones — construir runtime. */
                     if (p->spec_partes && p->n_spec_partes > 0) {
+                        /* v1.198: huerfanos durante una sub-parte del
+                         * spec = lo que habia tras compilar el valor
+                         * + el spec acumulado (si j>0). */
+                        int prof_valor_f = c->actual->prof_expr;
                         for (int j = 0; j < p->n_spec_partes; j++) {
                             const ParteFCadena *sp = &p->spec_partes[j];
                             if (sp->expr) {
+                                c->actual->prof_expr = prof_valor_f
+                                    + (j > 0 ? 1 : 0);
                                 if (!compilador_compilar_expr(c, sp->expr))
                                     return false;
                                 chunk_emitir_byte(c->actual->chunk, OP_FORMATO_F, e->linea);
@@ -3846,7 +3960,23 @@ static bool compilar_mientras(Compilador *c, const Sent *s) {
     return true;
 }
 
+static bool compilar_sent_impl(Compilador *c, const Sent *s);
+
+/* v1.198: wrapper que resetea prof_expr. Toda sentencia comienza con
+ * el stack runtime alineado a los locales registrados (invariante del
+ * diseño: las sentencias no se compilan en mitad de una expresion;
+ * los cuerpos de `finalmente` emitidos por retornar/romper registran
+ * su temporal $ret_fin como local antes de llegar aqui). El restore
+ * preserva el contador para la expresion contenedora si la hubiera. */
 bool compilador_compilar_sent(Compilador *c, const Sent *s) {
+    int prof_save = c->actual->prof_expr;
+    c->actual->prof_expr = 0;
+    bool ok = compilar_sent_impl(c, s);
+    c->actual->prof_expr = prof_save;
+    return ok;
+}
+
+static bool compilar_sent_impl(Compilador *c, const Sent *s) {
     if (c->error.tuvo_error) return false;
 
     switch (s->tipo) {
