@@ -1989,6 +1989,74 @@ static Valor nativa_ordenar(EvalError *err, int n_args, Valor *args,
     return valor_nulo();
 }
 
+/* v1.197: reducir(f, iterable, inicial?) — builtin global
+ * (functools.reduce de Python). Completa la triada map/filter/reduce.
+ *
+ * Sin inicial: el primer elemento es la semilla; iterable vacio da
+ * ErrorDeValor (paridad Python TypeError). Con inicial: la semilla
+ * es inicial y se pliega todo el iterable.
+ *
+ * f recibe (acumulado, elemento) — orden Python. */
+static Valor nativa_reducir(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    if (n_args < 2 || n_args > 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: reducir() requiere 2 o 3 argumentos "
+            "(funcion, iterable, inicial?)");
+    }
+    if (!g_invocador) {
+        return error_nativa(err, linea, columna,
+            "ErrorInterno: reducir() sin VM registrada");
+    }
+    if (!valor_es_iterable(&args[1])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: reducir() no acepta '%s' como iterable",
+            valor_nombre_tipo(&args[1]));
+    }
+    Iterador *iter = iter_nuevo(&args[1]);
+    if (!iter) return error_nativa(err, linea, columna, "memoria insuficiente");
+
+    Valor acc;
+    bool tengo_acc = false;
+    if (n_args == 3) {
+        acc = valor_clonar(&args[2]);
+        tengo_acc = true;
+    }
+
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        if (!tengo_acc) {
+            acc = elem;          /* primer elemento como semilla */
+            tengo_acc = true;
+            continue;
+        }
+        Valor pareja[2];
+        pareja[0] = acc;
+        pareja[1] = elem;
+        Valor resultado;
+        bool ok = g_invocador(g_invocador_ctx, &args[0], pareja, 2, &resultado);
+        valor_destruir(&acc);
+        valor_destruir(&elem);
+        if (!ok) {
+            iter_destruir(iter);
+            if (!err->tuvo_error) {
+                err->tuvo_error = true;
+                err->linea = linea;
+                snprintf(err->mensaje, sizeof(err->mensaje),
+                    "error al invocar la funcion de reducir()");
+            }
+            return valor_nulo();
+        }
+        acc = resultado;
+    }
+    iter_destruir(iter);
+    if (!tengo_acc) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeValor: reducir() de un iterable vacio sin valor inicial");
+    }
+    return acc;
+}
+
 /* v1.196: ordenado(iterable, clave=nulo, invertido=falso) — builtin
  * global (sorted de Python), args posicionales. Devuelve LISTA NUEVA
  * ordenada; no muta el original (a diferencia del metodo .ordenar()).
@@ -8323,6 +8391,7 @@ static const EntradaNativa NATIVAS[] = {
     {"mapear",   6, nativa_mapear},                         /* v1.195 */
     {"filtrar",  7, nativa_filtrar},                        /* v1.195 */
     {"ordenado", 8, nativa_ordenado},                       /* v1.196 */
+    {"reducir",  7, nativa_reducir},                        /* v1.197 */
     /* Conversores (v1.1). */
     {"cadena",      6,  nativa_cadena},
     {"entero",      6,  nativa_entero},

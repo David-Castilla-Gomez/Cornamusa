@@ -6,6 +6,46 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.197.0] — 2026-06-09 — `reducir` builtin
+
+Completa la tríada `mapear`/`filtrar`/`reducir` sobre el invocador
+de callables (v1.195). Semántica `functools.reduce` de Python,
+con la mejora de que `inicial` es opcional (la versión stdlib lo
+exige).
+
+### Lo que ahora funciona
+
+```cornamusa
+# Sin inicial: el primer elemento es la semilla
+reducir(lambda a, b: a + b, [1, 2, 3, 4])    # 10
+reducir(lambda a, b: a * b, [1, 2, 3, 4, 5]) # 120 (factorial)
+
+# Con inicial
+reducir(lambda a, b: a + b, [1, 2, 3], 100)  # 106
+reducir(lambda a, b: a + b, [], 42)          # 42 — vacio devuelve inicial
+
+# f recibe (acumulado, elemento) — orden Python
+reducir(lambda acc, x: acc + cadena(x), [1, 2, 3], "")  # "123"
+
+# Sobre cualquier iterable
+reducir(lambda a, b: a + b, rango(1, 11))    # 55
+reducir(lambda a, b: b + a, "abc")            # "cba" — reverse fold
+
+# Composicion con la triada completa
+reducir(lambda a, b: a + b, mapear(lambda x: x * x, rango(4)))  # 14
+```
+
+### Semántica de bordes (paridad Python)
+
+- **Vacío sin inicial** → `ErrorDeValor` atrapable.
+- **Un solo elemento sin inicial** → se devuelve sin invocar `f`.
+- **Excepciones de `f`** propagan y son atrapables.
+
+### Compatibilidad
+
+`funcionales.reducir(f, xs, inicial)` sigue igual (con su inicial
+obligatorio).
+
 ## [1.196.0] — 2026-06-09 — `ordenado` builtin con sort estable
 
 Segundo fruto del invocador de callables (v1.195). `ordenado` como
