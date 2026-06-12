@@ -1989,6 +1989,165 @@ static Valor nativa_ordenar(EvalError *err, int n_args, Valor *args,
     return valor_nulo();
 }
 
+/* v1.196: ordenado(iterable, clave=nulo, invertido=falso) — builtin
+ * global (sorted de Python), args posicionales. Devuelve LISTA NUEVA
+ * ordenada; no muta el original (a diferencia del metodo .ordenar()).
+ *
+ * - clave: callable opcional aplicado a cada elemento para obtener la
+ *   magnitud de comparacion (Schwartzian). nulo = comparar directo.
+ * - invertido: booleano, orden descendente.
+ *
+ * Sort ESTABLE (merge sort top-down) — paridad con Python sorted.
+ * Compara con comparador_ordenar (numericos, cadenas, tuplas/listas
+ * lexicografico). */
+typedef struct {
+    Valor clave;
+    Valor val;
+} ParOrdenado;
+
+static void merge_ordenado(ParOrdenado *arr, ParOrdenado *tmp,
+                             int lo, int mid, int hi) {
+    int i = lo, j = mid, k = lo;
+    while (i < mid && j < hi) {
+        /* <= para estabilidad: en empate gana el de la izquierda. */
+        int c = comparador_ordenar(&arr[i].clave, &arr[j].clave);
+        if (c <= 0) tmp[k++] = arr[i++];
+        else tmp[k++] = arr[j++];
+    }
+    while (i < mid) tmp[k++] = arr[i++];
+    while (j < hi) tmp[k++] = arr[j++];
+    for (int x = lo; x < hi; x++) arr[x] = tmp[x];
+}
+
+static void msort_ordenado(ParOrdenado *arr, ParOrdenado *tmp,
+                             int lo, int hi) {
+    if (hi - lo < 2 || g_ordenar_error) return;
+    int mid = lo + (hi - lo) / 2;
+    msort_ordenado(arr, tmp, lo, mid);
+    msort_ordenado(arr, tmp, mid, hi);
+    merge_ordenado(arr, tmp, lo, mid, hi);
+}
+
+static Valor nativa_ordenado(EvalError *err, int n_args, Valor *args,
+                               int linea, int columna) {
+    if (n_args < 1 || n_args > 3) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: ordenado() requiere 1-3 argumentos "
+            "(iterable, clave=nulo, invertido=falso)");
+    }
+    if (!valor_es_iterable(&args[0])) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: ordenado() no acepta '%s' como iterable",
+            valor_nombre_tipo(&args[0]));
+    }
+    const Valor *clave_fn = (n_args >= 2 && args[1].tipo != VAL_NULO)
+                              ? &args[1] : NULL;
+    bool invertido = (n_args == 3) && valor_es_verdadero(&args[2]);
+    if (clave_fn && !g_invocador) {
+        return error_nativa(err, linea, columna,
+            "ErrorInterno: ordenado() con clave sin VM registrada");
+    }
+
+    /* 1. Materializar. */
+    int cap = 8, n = 0;
+    ParOrdenado *arr = (ParOrdenado *)malloc(sizeof(ParOrdenado) * (size_t)cap);
+    if (!arr) return error_nativa(err, linea, columna, "memoria insuficiente");
+    Iterador *iter = iter_nuevo(&args[0]);
+    if (!iter) {
+        free(arr);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    #define ORDENADO_LIMPIAR() do { \
+        for (int x = 0; x < n; x++) { \
+            valor_destruir(&arr[x].val); \
+            if (clave_fn) valor_destruir(&arr[x].clave); \
+        } \
+        free(arr); \
+    } while (0)
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        if (n >= cap) {
+            cap *= 2;
+            ParOrdenado *nuevo = (ParOrdenado *)realloc(arr,
+                sizeof(ParOrdenado) * (size_t)cap);
+            if (!nuevo) {
+                valor_destruir(&elem);
+                iter_destruir(iter);
+                ORDENADO_LIMPIAR();
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            arr = nuevo;
+        }
+        arr[n].val = elem;
+        if (clave_fn) {
+            Valor k;
+            if (!g_invocador(g_invocador_ctx, clave_fn, &elem, 1, &k)) {
+                iter_destruir(iter);
+                /* val de este elem ya esta en arr[n] — incluirlo. */
+                valor_destruir(&arr[n].val);
+                ORDENADO_LIMPIAR();
+                if (!err->tuvo_error) {
+                    err->tuvo_error = true;
+                    err->linea = linea;
+                    snprintf(err->mensaje, sizeof(err->mensaje),
+                        "error al invocar la clave de ordenado()");
+                }
+                return valor_nulo();
+            }
+            arr[n].clave = k;
+        } else {
+            arr[n].clave = arr[n].val;  /* alias, no se destruye aparte */
+        }
+        n++;
+    }
+    iter_destruir(iter);
+
+    /* 2. Sort estable. */
+    g_ordenar_error = false;
+    if (n > 1) {
+        ParOrdenado *tmp = (ParOrdenado *)malloc(sizeof(ParOrdenado) * (size_t)n);
+        if (!tmp) {
+            ORDENADO_LIMPIAR();
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        msort_ordenado(arr, tmp, 0, n);
+        free(tmp);
+    }
+    if (g_ordenar_error) {
+        g_ordenar_error = false;
+        ORDENADO_LIMPIAR();
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: ordenado() no puede comparar tipos mixtos no numericos");
+    }
+
+    /* 3. Volcar a lista (invertido si procede). */
+    Lista *r = lista_nueva(n);
+    if (!r) {
+        ORDENADO_LIMPIAR();
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    for (int x = 0; x < n; x++) {
+        int idx = invertido ? (n - 1 - x) : x;
+        if (!lista_agregar(r, arr[idx].val)) {
+            /* arr[idx].val ya consumido o liberado por lista_agregar;
+             * liberar el resto. */
+            for (int y = x + 1; y < n; y++) {
+                int iy = invertido ? (n - 1 - y) : y;
+                valor_destruir(&arr[iy].val);
+                if (clave_fn) valor_destruir(&arr[iy].clave);
+            }
+            if (clave_fn) valor_destruir(&arr[idx].clave);
+            free(arr);
+            lista_liberar(r);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        if (clave_fn) valor_destruir(&arr[idx].clave);
+    }
+    free(arr);
+    #undef ORDENADO_LIMPIAR
+    return valor_lista(r);
+}
+
 /*
  * conjunto() / conjunto(iterable) — construye un conjunto vacío o lo
  * inicializa con los elementos de `iterable` (lista, tupla, cadena, rango).
@@ -8163,6 +8322,7 @@ static const EntradaNativa NATIVAS[] = {
     {"todos",    5, nativa_todos},                          /* v1.194 */
     {"mapear",   6, nativa_mapear},                         /* v1.195 */
     {"filtrar",  7, nativa_filtrar},                        /* v1.195 */
+    {"ordenado", 8, nativa_ordenado},                       /* v1.196 */
     /* Conversores (v1.1). */
     {"cadena",      6,  nativa_cadena},
     {"entero",      6,  nativa_entero},

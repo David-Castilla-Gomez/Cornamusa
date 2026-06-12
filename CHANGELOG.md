@@ -6,6 +6,56 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.196.0] — 2026-06-09 — `ordenado` builtin con sort estable
+
+Segundo fruto del invocador de callables (v1.195). `ordenado` como
+builtin global con firma posicional:
+`ordenado(iterable, clave=nulo, invertido=falso)`.
+
+### Lo que ahora funciona
+
+```cornamusa
+# Lista NUEVA — no muta (a diferencia del metodo .ordenar())
+xs = [3, 1, 4, 1, 5]
+ordenado(xs)                       # [1, 1, 3, 4, 5]; xs intacta
+
+# clave: cualquier callable (nativa, lambda, funcion)
+ordenado(["bbb", "a", "cc"], longitud)     # ["a", "cc", "bbb"]
+ordenado([3, -1, 2], lambda x: -x)          # [3, 2, -1]
+
+# invertido (3er arg posicional; clave nulo para saltarla)
+ordenado([3, 1, 2], nulo, verdadero)        # [3, 2, 1]
+ordenado(["bbb", "a"], longitud, verdadero) # ["bbb", "a"]
+
+# ESTABLE: claves iguales conservan orden de entrada (Python sorted)
+ordenado([(1, "x"), (2, "a"), (1, "y")], lambda p: p[0])
+# [(1, "x"), (1, "y"), (2, "a")]
+
+# Cualquier iterable
+ordenado(rango(5, 0, -1))    # [1, 2, 3, 4, 5]
+ordenado("dcba")              # ["a", "b", "c", "d"]
+ordenado((3, 1, 2))           # [1, 2, 3]
+```
+
+### Implementación
+
+- **Merge sort top-down estable** (`msort_ordenado`) sobre pares
+  `(clave, valor)` — el `<=` en el merge garantiza que en empate
+  gana el elemento de la izquierda. El método `.ordenar()` de
+  listas sigue usando `qsort` (in-place, no estable) — sin cambios.
+- **Schwartzian**: si hay `clave`, se invoca UNA vez por elemento
+  vía el invocador de v1.195 y se ordena por la clave computada.
+  Sin clave, la clave es alias del valor (cero costo extra).
+- Reusa `comparador_ordenar` (numéricos, cadenas, tuplas/listas
+  lexicográfico, detección de tipos mixtos no comparables).
+- Excepciones lanzadas por la clave propagan y son atrapables.
+
+### Compatibilidad
+
+`funcionales.ordenado` (con kwargs `clave=`/`invertido=`) sigue
+igual. La versión builtin usa args posicionales porque las nativas
+no reciben kwargs.
+
 ## [1.195.0] — 2026-06-09 — `mapear`/`filtrar` builtins + invocador de callables
 
 Release con **hito de infraestructura**: por primera vez las nativas
