@@ -166,6 +166,22 @@ void gc_marcar_valor(const Valor *v) {
         case VAL_MODULO:
             gc_marcar_objeto(&v->como.modulo->obj);
             break;
+        case VAL_PROPIEDAD:
+            /* v1.201: mismo hueco que VAL_GENERADOR (v1.200). Propiedad,
+               MetodoEstatico y MetodoDeClase son GC-alocados (sujetos al
+               sweep) y viven dentro del dict de metodos de la clase. Sin
+               estos cases, gc_marcar_valor los dejaba sin marcar y el
+               sweep los liberaba pese al refcount -> use-after-free al
+               re-acceder `obj.propiedad` / `Clase.metodo_estatico` tras
+               un GC. gc_marcar_objeto ya propaga getter/setter/closure. */
+            gc_marcar_objeto(&v->como.propiedad->obj);
+            break;
+        case VAL_METODO_ESTATICO:
+            gc_marcar_objeto(&v->como.metodo_estatico->obj);
+            break;
+        case VAL_METODO_DE_CLASE:
+            gc_marcar_objeto(&v->como.metodo_de_clase->obj);
+            break;
         default:
             /* Tipos planos: nada que marcar. */
             break;

@@ -6,6 +6,63 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.201.0] — 2026-06-13 — Bugfix: el GC marca propiedades y métodos estáticos/de clase
+
+**Use-after-free / corrupción de heap** al re-acceder un
+`@propiedad`, `@estaticometodo` o `@clasemetodo` después de una
+recolección de basura. Mismo patrón que el hueco de `VAL_GENERADOR`
+de v1.200 — de hecho, lo descubrí auditando el GC al cerrar aquel.
+
+```cornamusa
+clase M:
+    @estaticometodo
+    funcion dup(n):
+        retornar n * 2
+    fin funcion
+fin clase
+
+imprimir(M.dup(1))     # 2
+recolectar()           # barre el envoltorio del método (no marcado)
+# ... allocations que reusan su memoria ...
+imprimir(M.dup(2))     # SEGFAULT (antes) → 4 (ahora)
+```
+
+### Root cause
+
+Los envoltorios `Propiedad`, `MetodoEstatico` y `MetodoDeClase` son
+**híbridos**: GC-alocados (sujetos al mark-sweep, que ignora el
+refcount) y a la vez con refcount. Viven dentro del diccionario de
+métodos de la clase. `gc_marcar_valor` tenía cases para todos los
+demás tipos GC-rastreados pero **faltaban** `VAL_PROPIEDAD`,
+`VAL_METODO_ESTATICO` y `VAL_METODO_DE_CLASE`: al marcar el dict de
+la clase (`GC_TIPO_CLASE` → dict → cada valor), esos envoltorios
+caían al `default` y no se marcaban. El sweep los liberaba pese a
+estar vivos; el siguiente acceso leía el envoltorio liberado, y en
+cuanto la memoria se reusaba → segfault.
+
+`gc_marcar_objeto` **sí** propagaba esos tres tipos (getter/setter/
+closure), así que el hueco estaba solo en la cara `gc_marcar_valor`
+(marcar el objeto cuando aparece como `Valor` en una raíz o
+contenedor).
+
+### Fix
+
+Tres cases nuevos en `gc_marcar_valor` (`src/memoria.c`), idénticos
+al patrón del resto. Auditoría exhaustiva de `gc_alocar` vs
+`gc_marcar_valor`: estos eran los **únicos** tres huecos restantes
+(`VAL_METODO_NATIVO_LIGADO` se gestiona por refcount puro, no es
+GC-alocado, así que no aplica).
+
+### Verificación
+
+- Repros deterministas: `@estaticometodo` y `@propiedad`
+  segfaulteaban (RC 139) al re-acceder tras GC + reuso de memoria;
+  ahora RC 0 con el resultado correcto.
+- Build `GC_STRESS=ON` (GC en cada alocación): los tres decoradores
+  correctos tras múltiples recolecciones (antes crasheaban).
+- Suite completa con `test_bytecode_gc_marcado_metodos.c` nuevo
+  (3 bloques, uno por decorador).
+
 ## [1.200.0] — 2026-06-13 — Bugfix: los builtins consumen generadores
 
 **Corrección de un fallo SILENCIOSO con pérdida de datos.** Los
