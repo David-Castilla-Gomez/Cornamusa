@@ -5376,14 +5376,22 @@ static bool compilar_intentar(Compilador *c, const Sent *s) {
 
     /*
      * En el momento de entrar al handler, el runtime garantiza que la
-     * excepción está en el slot `n_locales_handler` (mismo número que
-     * n_locales tenía al entrar al intentar). Para que cada atrapador
-     * vea la excepción en el mismo slot, reseteamos n_locales a este
-     * valor al inicio de cada atrapador. Locals declaradas dentro de
-     * un cuerpo de atrapador son válidas solo dentro de ese cuerpo
-     * (mutuamente exclusivas con otros atrapadores).
+     * excepción está en el slot `n_locales_entrada` (= el tope_offset
+     * que OP_INTENTAR_INICIAR capturó ANTES del cuerpo; el unwind de
+     * OP_LANZAR descarta todos los locals del cuerpo hasta ese nivel y
+     * empuja la excepción ahí). Para que cada atrapador coloque su alias
+     * en ese slot exacto, reseteamos n_locales a `n_locales_entrada` al
+     * inicio de cada atrapador.
+     *
+     * v1.203: ANTES esto capturaba `c->actual->n_locales` (el valor TRAS
+     * compilar el cuerpo), que incluye los locals declarados dentro del
+     * `intentar`. Si el cuerpo declaraba N locals, el alias quedaba N
+     * slots por encima de la excepción real → `como e` leía basura /
+     * corrompía el stack (off-by-N). El cuerpo del intentar NO deja
+     * locals vivos en el handler (el unwind los descarta), así que el
+     * nivel correcto es siempre `n_locales_entrada`.
      */
-    int n_locales_handler = c->actual->n_locales;
+    int n_locales_handler = n_locales_entrada;
 
     /* Para cada atrapador, comprobar tipo (si tiene) y ejecutar cuerpo. */
     int salto_anterior_no_match = -1;

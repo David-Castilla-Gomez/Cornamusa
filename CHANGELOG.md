@@ -6,6 +6,63 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.203.0] — 2026-06-13 — Bugfix: alias de excepción con locals en el cuerpo del intentar
+
+El alias `como e` resolvía al **slot equivocado** cuando el cuerpo del
+`intentar` declaraba variables locales, dentro de una función:
+
+```cornamusa
+funcion leer_config():
+    intentar:
+        ruta = "config.txt"          # 1 local en el cuerpo
+        datos = abrir(ruta)
+    atrapar ErrorDeArchivo como e:
+        imprimir("falló:", cadena(e))   # `e` leía basura, no la excepción
+    fin intentar
+fin funcion
+```
+
+Imprimía valores corruptos (un argumento de la propia expresión, o un
+slot vacío) en vez de la excepción, y podía desequilibrar la pila.
+Detectado por la revisión adversarial de v1.202; afectaba a cualquier
+`atrapar ... como e` (un tipo o varios) cuyo `intentar` declarara
+≥1 local.
+
+### Root cause
+
+`compilar_intentar` (`src/compilador.c`) capturaba
+`n_locales_handler = c->actual->n_locales` **después** de compilar el
+cuerpo del `intentar`, valor que incluye los locals declarados dentro.
+Pero en runtime, `OP_LANZAR` hace unwind hasta el `tope_offset` que
+`OP_INTENTAR_INICIAR` capturó **antes** del cuerpo, descartando esos
+locals y dejando la excepción en el slot `n_locales_entrada`. El
+compilador colocaba el alias N slots por encima de la excepción real
+(off-by-N, donde N = locals del cuerpo del intentar). El propio
+comentario del código ya decía que el slot debía ser "el que n_locales
+tenía al entrar al intentar" — pero el código capturaba el valor
+posterior.
+
+Sólo se manifestaba dentro de una función (en top-level los "locals"
+son globales, en un slot distinto) y con ≥1 local en el cuerpo del
+`intentar`. Pasó desapercibido porque los tests de `atrapar` no
+combinaban locals en el cuerpo con un alias.
+
+### Fix
+
+Una línea: `n_locales_handler = n_locales_entrada`. El cuerpo del
+`intentar` no deja locals vivos en el handler (el unwind los descarta),
+así que el nivel correcto del alias es siempre el de entrada.
+
+### Verificación
+
+- Causa raíz aislada con traza de ejecución (`CORNAMUSA_DEBUG_TRACE`):
+  para N locals, la excepción quedaba en el slot `n_locales_entrada`
+  pero el alias se cargaba desde `n_locales_entrada + N`.
+- `test_bytecode_intentar_locals.c` nuevo: matriz de 0..6 locals,
+  más variantes con `finalmente`, multi-atrapador, `intentar`
+  consecutivos, interacción con `atrapar (A, B)` de v1.202, y alias
+  usado varias veces. Suite completa verde.
+
 ## [1.202.0] — 2026-06-13 — `atrapar` con varios tipos de excepción
 
 Un manejador puede atrapar **varios tipos de excepción** con una
