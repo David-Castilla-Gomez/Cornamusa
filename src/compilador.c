@@ -5404,27 +5404,92 @@ static bool compilar_intentar(Compilador *c, const Sent *s) {
         salto_anterior_no_match = -1;
 
         if (atr->tipo != NULL) {
-            /* Limitación v0.8.3: solo soportamos `atrapar Tipo` con
-               Tipo siendo un identificador simple. Se compara la
-               cadena del nombre del identificador con excepcion.clase. */
-            if (atr->tipo->tipo != EXPR_IDENT) {
+            /* v1.202: `atrapar Tipo` o `atrapar (T1, T2, ...) como e`.
+               El tipo es un EXPR_IDENT (un solo tipo) o un EXPR_TUPLA de
+               EXPR_IDENT (varios, con semántica OR: atrapa si la clase
+               de la excepción coincide con CUALQUIERA). Se compara la
+               cadena del nombre con excepcion.clase vía COMPROBAR_TIPO_EXC. */
+            /* Desenvolver EXPR_GRUPO transparente: `atrapar (X)` se trata
+               como `atrapar X`, igual que el resto del compilador trata
+               los paréntesis (un solo tipo entre paréntesis NO es una
+               tupla — esa requiere coma: `(X,)`). */
+            const Expr *tipo_atr = atr->tipo;
+            while (tipo_atr->tipo == EXPR_GRUPO)
+                tipo_atr = tipo_atr->como.grupo.interna;
+
+            const Expr *lista_tipos[COMPILADOR_ATRAPADORES_MAX];
+            int n_tipos;
+            if (tipo_atr->tipo == EXPR_TUPLA) {
+                n_tipos = tipo_atr->como.secuencia.n_elementos;
+                if (n_tipos < 1) {
+                    error_compilacion(c, atr->linea, atr->columna,
+                        "'atrapar ()' requiere al menos un tipo de excepcion");
+                    return false;
+                }
+                if (n_tipos > COMPILADOR_ATRAPADORES_MAX) {
+                    error_compilacion(c, atr->linea, atr->columna,
+                        "demasiados tipos en un 'atrapar' (max %d)",
+                        COMPILADOR_ATRAPADORES_MAX);
+                    return false;
+                }
+                for (int t = 0; t < n_tipos; t++) {
+                    const Expr *el = tipo_atr->como.secuencia.elementos[t];
+                    while (el->tipo == EXPR_GRUPO) el = el->como.grupo.interna;
+                    lista_tipos[t] = el;
+                }
+            } else if (tipo_atr->tipo == EXPR_IDENT) {
+                n_tipos = 1;
+                lista_tipos[0] = tipo_atr;
+            } else {
                 error_compilacion(c, atr->linea, atr->columna,
-                    "'atrapar Tipo' solo admite un identificador simple en v0.8.3");
+                    "'atrapar Tipo' admite un identificador o una tupla de identificadores");
                 return false;
             }
-            int idx_nombre = chunk_agregar_constante(c->actual->chunk,
-                valor_cadena_duplicar(atr->tipo->como.ident.nombre,
-                                        atr->tipo->como.ident.longitud));
-            if (idx_nombre < 0 || idx_nombre > 255) {
-                error_compilacion(c, atr->linea, atr->columna,
-                    "demasiadas constantes para v0.8 (operando byte)");
-                return false;
+
+            /* Cadena OR. Por cada tipo: COMPROBAR_TIPO_EXC empuja un bool
+               (sin descartar la excepción). Si es el último y NO coincide,
+               salta al siguiente atrapador (salto_anterior_no_match). Si
+               NO es el último: si coincide salta a L_match (bool en stack),
+               si no descarta el bool y prueba el siguiente. En L_match se
+               descarta el bool=true. Para n_tipos==1 esto emite exactamente
+               el mismo bytecode que antes (COMPROBAR + SALTAR_SI_FALSO +
+               DESCARTAR), preservando la semántica del caso de un tipo. */
+            int saltos_a_match[COMPILADOR_ATRAPADORES_MAX];
+            int n_saltos_a_match = 0;
+            for (int t = 0; t < n_tipos; t++) {
+                const Expr *tipo_e = lista_tipos[t];
+                if (tipo_e->tipo != EXPR_IDENT) {
+                    error_compilacion(c, atr->linea, atr->columna,
+                        "cada tipo de 'atrapar' debe ser un identificador simple");
+                    return false;
+                }
+                int idx_nombre = chunk_agregar_constante(c->actual->chunk,
+                    valor_cadena_duplicar(tipo_e->como.ident.nombre,
+                                            tipo_e->como.ident.longitud));
+                if (idx_nombre < 0 || idx_nombre > 255) {
+                    error_compilacion(c, atr->linea, atr->columna,
+                        "demasiadas constantes para v0.8 (operando byte)");
+                    return false;
+                }
+                chunk_emitir_byte2(c->actual->chunk, OP_COMPROBAR_TIPO_EXC,
+                                    (uint8_t)idx_nombre, atr->linea);
+                if (t < n_tipos - 1) {
+                    int salto_probar_siguiente =
+                        emitir_salto(c, OP_SALTAR_SI_FALSO, atr->linea);
+                    saltos_a_match[n_saltos_a_match++] =
+                        emitir_salto(c, OP_SALTAR, atr->linea);
+                    parchear_salto(c, salto_probar_siguiente, atr->linea);
+                    chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, atr->linea);
+                } else {
+                    /* Último tipo: si no coincide, al siguiente atrapador. */
+                    salto_anterior_no_match =
+                        emitir_salto(c, OP_SALTAR_SI_FALSO, atr->linea);
+                }
             }
-            chunk_emitir_byte2(c->actual->chunk, OP_COMPROBAR_TIPO_EXC,
-                                (uint8_t)idx_nombre, atr->linea);
-            /* Si bool=falso, salta al siguiente atrapador. */
-            salto_anterior_no_match = emitir_salto(c, OP_SALTAR_SI_FALSO,
-                                                     atr->linea);
+            /* L_match: destino de los saltos de coincidencia y del
+               fall-through del último. El bool=true sigue en stack. */
+            for (int k = 0; k < n_saltos_a_match; k++)
+                parchear_salto(c, saltos_a_match[k], atr->linea);
             chunk_emitir_byte(c->actual->chunk, OP_DESCARTAR, atr->linea);
         }
 

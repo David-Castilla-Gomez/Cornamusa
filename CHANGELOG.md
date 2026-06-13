@@ -6,6 +6,46 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.202.0] — 2026-06-13 — `atrapar` con varios tipos de excepción
+
+Un manejador puede atrapar **varios tipos de excepción** con una
+tupla, semántica OR (paridad con `except (A, B)` de Python):
+
+```cornamusa
+intentar:
+    arriesgado()
+atrapar (ErrorDeValor, ErrorDeTipo, ErrorDeIndice) como e:
+    imprimir("falló:", cadena(e))
+fin intentar
+```
+
+Antes obligaba a duplicar el cuerpo en manejadores separados, o daba
+`'atrapar Tipo' solo admite un identificador simple`. El alias `como
+e`, `sino`, `finalmente`, el re-lanzar (`lanzar` sin valor) y los
+manejadores mixtos (uno multi-tipo, otro de un tipo, otro genérico)
+funcionan igual que antes.
+
+### Implementación
+
+Compiler-only, **sin opcode nuevo** (`src/compilador.c`,
+`compilar_intentar`). El tipo de un atrapador puede ser un
+`EXPR_IDENT` (un tipo) o un `EXPR_TUPLA` de identificadores. Se emite
+una cadena OR de `OP_COMPROBAR_TIPO_EXC`: cada tipo que no coincide
+prueba el siguiente; el que coincide salta al cuerpo; si ninguno
+coincide, al siguiente atrapador. Como `OP_SALTAR_SI_FALSO` es peek
+(no descarta el bool), se combina con `OP_SALTAR` para el salto de
+coincidencia. Para un solo tipo emite **exactamente el mismo
+bytecode** que antes, así que el camino de un tipo no cambia.
+
+### Limitaciones honestas
+
+- Cada elemento de la tupla debe ser un identificador simple (el
+  nombre de la clase de excepción); `atrapar (A, b.c)` da error de
+  compilación claro. Es coherente con el `atrapar Tipo` de un tipo,
+  que tampoco admite expresiones.
+- El matching sigue siendo por nombre de clase (cadena), no por
+  jerarquía de herencia — igual que antes de v1.202.
+
 ## [1.201.0] — 2026-06-13 — Bugfix: el GC marca propiedades y métodos estáticos/de clase
 
 **Use-after-free / corrupción de heap** al re-acceder un
