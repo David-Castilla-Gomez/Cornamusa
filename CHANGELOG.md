@@ -6,6 +6,41 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.204.0] — 2026-06-13 — `conjunto()` e `inverso()` aceptan cualquier iterable
+
+`conjunto()` e `inverso()` solo aceptaban listas y tuplas;
+`conjunto("hola")`, `conjunto(rango(5))` o `inverso(rango(5))` daban
+`ErrorDeTipo` (inverso incluso sugería un workaround `inverso(lista(...))`).
+Ahora ambos usan el **iterador genérico**, así que aceptan cadena,
+diccionario (sus claves, como en Python), conjunto, rango y generador:
+
+```cornamusa
+conjunto("hola")        # {"h", "o", "l", "a"}
+conjunto(rango(5))      # {0, 1, 2, 3, 4}
+conjunto({"a": 1})      # {"a"}   (las claves)
+inverso(rango(5))       # [4, 3, 2, 1, 0]
+inverso(mi_generador()) # lista invertida de lo producido
+```
+
+### Implementación
+
+`nativa_conjunto` y `nativa_inverso` (`src/nativos.c`) pasan de un
+dispatch manual por tipo a `iter_nuevo`/`iter_siguiente`. Heredan
+gratis el soporte de generadores del iterador (v1.200), incluida la
+**propagación de error** si el generador lanza a mitad (no se traga ni
+se enmascara). `conjunto()` mantiene el chequeo de hashabilidad por
+elemento; `inverso()` materializa con el iterador y vuelca la lista al
+revés. El comentario obsoleto de `inverso()` que decía "no tenemos
+acceso fácil a la API de iteración" queda eliminado: el iterador
+genérico es justamente esa API.
+
+### Limitaciones honestas
+
+- Las instancias de clase con `__iterar__` siguen sin aceptarse en
+  `conjunto()`/`inverso()` (el iterador genérico nativo cubre los
+  tipos nativos; las instancias se iteran a nivel VM). Dan un
+  `ErrorDeTipo` honesto, no un fallo silencioso.
+
 ## [1.203.0] — 2026-06-13 — Bugfix: alias de excepción con locals en el cuerpo del intentar
 
 El alias `como e` resolvía al **slot equivocado** cuando el cuerpo del

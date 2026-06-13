@@ -3,7 +3,7 @@
 > Un lenguaje de programación dinámico, interpretado y **en castellano**.
 
 [![Licencia: MIT](https://img.shields.io/badge/licencia-MIT-blue.svg)](LICENSE)
-[![Versión](https://img.shields.io/badge/versión-1.203.0-blue.svg)](CHANGELOG.md)
+[![Versión](https://img.shields.io/badge/versión-1.204.0-blue.svg)](CHANGELOG.md)
 [![Estado](https://img.shields.io/badge/estado-funcional-green.svg)](CHANGELOG.md)
 
 Cornamusa es un lenguaje de programación tipo Python con **palabras clave, built-ins y mensajes de error íntegramente en castellano**. Está diseñado para que aprender a programar no requiera dominar el inglés primero.
@@ -308,6 +308,7 @@ Hoja de ruta resumida:
 | **v1.201** | **Bugfix: el GC marca `@propiedad`/`@estaticometodo`/`@clasemetodo` (use-after-free al re-acceder tras una recolección)** | ✅ |
 | **v1.202** | **`atrapar (TipoA, TipoB)` — varios tipos de excepción en un solo manejador (semántica OR)** | ✅ |
 | **v1.203** | **Bugfix: el alias `como e` se corrompía si el cuerpo del `intentar` declaraba locals (off-by-N en el slot)** | ✅ |
+| **v1.204** | **`conjunto()` e `inverso()` aceptan cualquier iterable (cadena, dict, rango, generador), no solo lista/tupla** | ✅ |
 | v2.0 (lejano) | concurrencia, async/await, NaN-boxing | ⏳ |
 
 > Nota: el orden real de las fases divergió del plan original (v0.7 fueron clases, v0.8 fue GC) por dependencias técnicas — clases generan ciclos refcount que motivaron el GC.

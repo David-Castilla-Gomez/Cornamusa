@@ -1889,23 +1889,39 @@ static Valor nativa_inverso(EvalError *err, int n_args, Valor *args,
         free(temp);
         return valor_lista(r);
     }
-    /* Rango: requiere materializar. Mas simple via OP_ITER del lado
-     * VM, pero como nativa C, recreamos: rango tiene inicio/fin/paso
-     * estandar — pero hay que delegar a la API. */
-    if (it->tipo == VAL_RANGO) {
-        /* Materializar el rango usando los métodos publicos. La API
-         * de Rango no es trivial — los enteros pueden ser bignum.
-         * Lo más simple: iterar y agregar al reves. Pero no tenemos
-         * acceso facil a la API de iteracion desde aqui. Por ahora,
-         * rechazar con sugerencia clara. */
-        lista_liberar(r);
-        return error_nativa(err, linea, columna,
-            "ErrorDeTipo: inverso() no soporta rango directamente. "
-            "Usa inverso(lista(rango(...))).");
+    /* v1.204: rango, diccionario (sus claves), generador y cualquier
+       otro iterable nativo — materializar con el iterador genérico y
+       volcar al revés. Antes el rango se rechazaba con una sugerencia
+       de workaround; ya no hace falta. */
+    if (valor_es_iterable(it)) {
+        Iterador *iter = iter_nuevo(it);
+        if (!iter) {
+            lista_liberar(r);
+            return error_nativa(err, linea, columna, "memoria insuficiente");
+        }
+        Valor elem;
+        while (iter_siguiente(iter, &elem)) {
+            if (!lista_agregar(r, elem)) {
+                iter_destruir(iter);
+                lista_liberar(r);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+        }
+        iter_destruir(iter);
+        if (err->tuvo_error) { lista_liberar(r); return valor_nulo(); }
+        /* Invertir in-place la lista ya materializada. */
+        int n = r->cuenta;
+        for (int i = 0; i < n / 2; i++) {
+            Valor tmp = r->elementos[i];
+            r->elementos[i] = r->elementos[n - 1 - i];
+            r->elementos[n - 1 - i] = tmp;
+        }
+        return valor_lista(r);
     }
     lista_liberar(r);
     return error_nativa(err, linea, columna,
-        "ErrorDeTipo: inverso() no acepta '%s'", valor_nombre_tipo(it));
+        "ErrorDeTipo: inverso() no acepta '%s' como iterable",
+        valor_nombre_tipo(it));
 }
 
 /*
@@ -2285,34 +2301,36 @@ static Valor nativa_conjunto(EvalError *err, int n_args, Valor *args,
     if (n_args == 0) return valor_conjunto(c);
 
     const Valor *it = &args[0];
-    if (it->tipo == VAL_LISTA) {
-        Lista *l = it->como.lista;
-        for (int i = 0; i < l->cuenta; i++) {
-            if (!valor_es_hashable(&l->elementos[i])) {
-                conj_liberar(c);
-                return error_nativa(err, linea, columna,
-                    "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
-                    valor_nombre_tipo(&l->elementos[i]));
-            }
-            conj_agregar(c, valor_clonar(&l->elementos[i]));
-        }
-    } else if (it->tipo == VAL_TUPLA) {
-        Tupla *t = it->como.tupla;
-        for (int i = 0; i < t->cuenta; i++) {
-            if (!valor_es_hashable(&t->elementos[i])) {
-                conj_liberar(c);
-                return error_nativa(err, linea, columna,
-                    "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto",
-                    valor_nombre_tipo(&t->elementos[i]));
-            }
-            conj_agregar(c, valor_clonar(&t->elementos[i]));
-        }
-    } else {
+    if (!valor_es_iterable(it)) {
         conj_liberar(c);
         return error_nativa(err, linea, columna,
             "ErrorDeTipo: conjunto() no acepta '%s' como iterable",
             valor_nombre_tipo(it));
     }
+    /* v1.204: iterador genérico — acepta cadena, diccionario (sus
+       claves, como en Python), conjunto, rango y generador, además de
+       lista/tupla. */
+    Iterador *iter = iter_nuevo(it);
+    if (!iter) {
+        conj_liberar(c);
+        return error_nativa(err, linea, columna, "memoria insuficiente");
+    }
+    Valor elem;
+    while (iter_siguiente(iter, &elem)) {
+        if (!valor_es_hashable(&elem)) {
+            const char *tn = valor_nombre_tipo(&elem);
+            valor_destruir(&elem);
+            iter_destruir(iter);
+            conj_liberar(c);
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: '%s' no se puede usar como elemento de conjunto", tn);
+        }
+        conj_agregar(c, elem);  /* toma ownership del elemento clonado */
+    }
+    iter_destruir(iter);
+    /* v1.204: si el iterable era un generador que lanzó a mitad,
+       propagar el error sin enmascararlo (mismo patrón que v1.200). */
+    if (err->tuvo_error) { conj_liberar(c); return valor_nulo(); }
     return valor_conjunto(c);
 }
 

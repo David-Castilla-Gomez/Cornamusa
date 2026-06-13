@@ -201,20 +201,15 @@ int main(void) {
         AFIRMAR(strstr(out, "ok") != NULL, "no_iter");
     }
 
-    /* Error: rango (con sugerencia de workaround) */
+    /* v1.204: rango ahora se invierte directamente (antes se rechazaba
+       con una sugerencia de workaround). */
     {
         char out[256];
         ejecutar_capturando(
-            "intentar:\n"
-            "    inverso(rango(0, 5))\n"
-            "atrapar ErrorDeTipo:\n"
-            "    imprimir(\"ok\")\n"
-            "fin intentar\n"
-            /* Workaround: convertir a lista primero */
+            "imprimir(inverso(rango(0, 5)))\n"
             "imprimir(inverso(lista(rango(0, 5))))\n",
             out, sizeof(out));
-        AFIRMAR(strstr(out, "ok") != NULL, "rango_rechaza");
-        AFIRMAR(strstr(out, "[4, 3, 2, 1, 0]") != NULL, "rango_workaround");
+        AFIRMAR(strstr(out, "[4, 3, 2, 1, 0]") != NULL, "rango_directo");
     }
 
     if (fallos == 0) {
