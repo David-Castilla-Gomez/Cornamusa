@@ -768,6 +768,7 @@ static Valor nativa_lista(EvalError *err, int n_args, Valor *args,
         }
     }
     iter_destruir(iter);
+    if (err->tuvo_error) { lista_liberar(l); return valor_nulo(); }  /* v1.200 */
     return valor_lista(l);
 }
 
@@ -832,6 +833,7 @@ static Valor nativa_mapear(EvalError *err, int n_args, Valor *args,
         }
     }
     iter_destruir(iter);
+    if (err->tuvo_error) { lista_liberar(r); return valor_nulo(); }  /* v1.200 */
     return valor_lista(r);
 }
 
@@ -889,6 +891,7 @@ static Valor nativa_filtrar(EvalError *err, int n_args, Valor *args,
         }
     }
     iter_destruir(iter);
+    if (err->tuvo_error) { lista_liberar(r); return valor_nulo(); }  /* v1.200 */
     return valor_lista(r);
 }
 
@@ -928,6 +931,9 @@ static Valor nativa_suma(EvalError *err, int n_args, Valor *args,
         }
     }
     iter_destruir(iter);
+    /* v1.200: error del generador (rompió el while sin pasar por el
+       chequeo de arriba). */
+    if (err->tuvo_error) { valor_destruir(&total); return valor_nulo(); }
     return total;
 }
 
@@ -999,6 +1005,13 @@ static Valor extremo_comun(EvalError *err, int n_args, Valor *args,
         }
     }
     if (iter) iter_destruir(iter);
+    /* v1.200: si el generador lanzó durante la iteración, `err` ya
+       tiene el mensaje. Propagarlo SIN sobrescribir con "iterable
+       vacio" (el chequeo de abajo lo haría si tengo_mejor==false). */
+    if (err->tuvo_error) {
+        if (tengo_mejor) valor_destruir(&mejor);
+        return valor_nulo();
+    }
     if (!tengo_mejor) {
         return error_nativa(err, linea, columna,
             "ErrorDeValor: %s() de un iterable vacio", nombre_fn);
@@ -1040,6 +1053,7 @@ static Valor nativa_cualquiera(EvalError *err, int n_args, Valor *args,
         if (v) { resultado = true; break; }
     }
     iter_destruir(iter);
+    if (err->tuvo_error) return valor_nulo();  /* v1.200 */
     return valor_booleano(resultado);
 }
 
@@ -1064,6 +1078,7 @@ static Valor nativa_todos(EvalError *err, int n_args, Valor *args,
         if (!v) { resultado = false; break; }
     }
     iter_destruir(iter);
+    if (err->tuvo_error) return valor_nulo();  /* v1.200 */
     return valor_booleano(resultado);
 }
 
@@ -1122,6 +1137,8 @@ static Valor nativa_juntar(EvalError *err, int n_args, Valor *args,
             }
         }
         iter_destruir(iter);
+        /* v1.200: propagar error de un generador en este argumento. */
+        if (err->tuvo_error) { JUNTAR_LIMPIAR(); return valor_nulo(); }
     }
 
     /* n = longitud minima. */
@@ -1192,6 +1209,7 @@ static Valor nativa_tupla(EvalError *err, int n_args, Valor *args,
         }
     }
     iter_destruir(iter);
+    if (err->tuvo_error) { lista_liberar(tmp); return valor_nulo(); }  /* v1.200 */
 
     Tupla *t = tupla_nueva(tmp->cuenta);
     if (!t) {
@@ -1320,6 +1338,7 @@ static Valor nativa_diccionario(EvalError *err, int n_args, Valor *args,
         idx++;
     }
     iter_destruir(iter);
+    if (err->tuvo_error) { dicc_liberar(d); return valor_nulo(); }  /* v1.200 */
     return valor_diccionario(d);
 }
 
@@ -1744,6 +1763,28 @@ static Valor nativa_enumerar(EvalError *err, int n_args, Valor *args,
             mp_add(&idx_mp, &paso, &idx_mp);
         }
         mp_clear_multi(&idx_mp, &paso, &fin, NULL);
+    } else if (it->tipo == VAL_GENERADOR) {
+        /* v1.200: enumerar() sobre generador, vía el iterador genérico.
+           EMPUJAR_PAR no libera el iterador en sus paths de error, así
+           que el cuerpo va a mano. */
+        Iterador *iter = iter_nuevo(it);
+        if (!iter) { lista_liberar(r); return error_nativa(err, linea, columna, "memoria insuficiente"); }
+        Valor e;
+        while (iter_siguiente(iter, &e)) {
+            Tupla *t = tupla_nueva(2);
+            if (!t) {
+                valor_destruir(&e); iter_destruir(iter); lista_liberar(r);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+            t->elementos[0] = valor_entero_de_i64(inicio++);
+            t->elementos[1] = e;
+            if (!lista_agregar(r, valor_tupla(t))) {
+                tupla_liberar(t); iter_destruir(iter); lista_liberar(r);
+                return error_nativa(err, linea, columna, "memoria insuficiente");
+            }
+        }
+        iter_destruir(iter);
+        if (err->tuvo_error) { lista_liberar(r); return valor_nulo(); }
     } else {
         lista_liberar(r);
         return error_nativa(err, linea, columna,
@@ -2050,6 +2091,12 @@ static Valor nativa_reducir(EvalError *err, int n_args, Valor *args,
         acc = resultado;
     }
     iter_destruir(iter);
+    /* v1.200: propagar el error del generador sin sobrescribirlo con
+       "iterable vacio". */
+    if (err->tuvo_error) {
+        if (tengo_acc) valor_destruir(&acc);
+        return valor_nulo();
+    }
     if (!tengo_acc) {
         return error_nativa(err, linea, columna,
             "ErrorDeValor: reducir() de un iterable vacio sin valor inicial");
@@ -2169,6 +2216,12 @@ static Valor nativa_ordenado(EvalError *err, int n_args, Valor *args,
         n++;
     }
     iter_destruir(iter);
+    /* v1.200: si el generador lanzó, propagar sin ordenar datos
+       parciales (la clave podría invocarse sobre estado incompleto). */
+    if (err->tuvo_error) {
+        ORDENADO_LIMPIAR();
+        return valor_nulo();
+    }
 
     /* 2. Sort estable. */
     g_ordenar_error = false;
@@ -2421,6 +2474,17 @@ static Valor nativa_recolectar(EvalError *err, int n_args, Valor *args,
     /* Protección: si una recolección ya está en marcha (recursión a
        través de un callback), devolvemos 0 sin reentrar. */
     if (m->recolectando) {
+        return valor_entero_de_long(0);
+    }
+    /* v1.200: durante un sub-dispatch síncrono (gc_habilitado==false)
+       —p.ej. un builtin nativo consumiendo un generador, o un callback
+       de mapear/filtrar— hay objetos vivos (el Iterador y el acumulador
+       de la nativa) que NO son raíces del GC. Recolectar aquí los
+       barrería bajo los pies del intérprete (use-after-free). Diferir:
+       marcar trigger para que la recolección ocurra en el próximo punto
+       seguro, al volver al dispatch top-level. */
+    if (!m->gc_habilitado) {
+        m->trigger_pendiente = true;
         return valor_entero_de_long(0);
     }
     m->recolectando = true;

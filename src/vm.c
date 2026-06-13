@@ -149,6 +149,9 @@ static ValorDunderHookResultado vm_iguales_dunder_hook(
 static bool vm_invocar_callable_sync(void *vm_ctx, const Valor *callable,
                                        const Valor *args, int n_args,
                                        Valor *out);
+/* v1.200: hook para que `iter_siguiente` consuma generadores. */
+static ValorGenPasoResultado vm_gen_paso_hook(void *vm_ctx, Generador *gen,
+                                                Valor *out);
 
 /* ──────────────────────────────────────────────────────────────────
  * Carga de módulos (Fase 9)
@@ -383,6 +386,10 @@ void vm_iniciar(VM *vm) {
     /* v1.195: registrar el invocador de callables para nativas
        (mapear/filtrar). */
     nativos_set_invocador(vm, vm_invocar_callable_sync);
+    /* v1.200: registrar el hook que permite a `iter_siguiente`
+       reanudar generadores — los builtins que iteran (lista, suma,
+       mapear, ...) heredan soporte de generadores gratis. */
+    valor_set_gen_paso_hook(vm, vm_gen_paso_hook);
     /* v1.38: traceback. */
     vm->traceback[0] = '\0';
     /* v1.71: profiler determinista (inactivo por defecto). */
@@ -1984,9 +1991,17 @@ static bool vm_invocar_callable_sync(void *vm_ctx, const Valor *callable,
     vm->modo_sub_call = true;
     vm->modo_yield = false;
     vm->handler_techo = vm->n_handlers;
+    /* v1.200: igual que en vm_generador_paso — mapear/filtrar/reducir/
+       ordenado sostienen su Iterador y acumulador en C-locals mientras
+       invocan el callable del usuario aqui. Sin esto, un callback que
+       alocara/forzara GC barreria esos objetos no enraizados (UAF).
+       Pre-existente desde v1.195; v1.200 amplia la superficie. */
+    bool prev_gc_habilitado = vm->memoria.gc_habilitado;
+    vm->memoria.gc_habilitado = false;
 
     ResultadoVM rc = vm_ejecutar_dispatch_impl(vm, NULL, NULL, false);
 
+    vm->memoria.gc_habilitado = prev_gc_habilitado;
     vm->frame_techo = prev_frame_techo;
     vm->modo_yield = prev_modo_yield;
     vm->modo_sub_call = prev_modo_sub_call;
@@ -2008,6 +2023,19 @@ static bool vm_invocar_callable_sync(void *vm_ctx, const Valor *callable,
             "error al invocar funcion");
     }
     return false;
+}
+
+/* v1.200: hook registrado en valor.c. `iter_siguiente`, al toparse con
+   un VAL_GENERADOR, llama aquí para reanudarlo un paso. Traduce el
+   doble retorno de vm_generador_paso (bool + vm->error) al tri-estado
+   que el Iterador entiende. El fix v1.199 garantiza que un error dentro
+   del generador deja `vm->error` seteado (no escapa al caller). */
+static ValorGenPasoResultado vm_gen_paso_hook(void *vm_ctx, Generador *gen,
+                                                Valor *out) {
+    VM *vm = (VM *)vm_ctx;
+    if (vm_generador_paso(vm, gen, out)) return GEN_PASO_VALOR;
+    if (vm->error.tuvo_error) return GEN_PASO_ERROR;
+    return GEN_PASO_FIN;
 }
 
 static bool vm_ejecutar_dunder_sync(VM *vm, Closure *m,
@@ -2083,11 +2111,19 @@ static bool vm_ejecutar_dunder_sync(VM *vm, Closure *m,
     vm->modo_sub_call = true;
     vm->modo_yield = false;            /* sub-call no es generador */
     vm->handler_techo = vm->n_handlers;  /* exc del dunder no escapa */
+    /* v1.200: mismo blindaje del GC que generador_paso/invocar_callable.
+       __hash__/__igual__ pueden invocarse desde una nativa que itera
+       (diccionario/conjunto con claves-instancia hashables) sosteniendo
+       un Iterador C-local no enraizado. Sin esto, un dunder que alocara
+       o forzara GC lo barreria (UAF). */
+    bool prev_gc_habilitado = vm->memoria.gc_habilitado;
+    vm->memoria.gc_habilitado = false;
 
     /* Sub-dispatch. */
     ResultadoVM rc = vm_ejecutar_dispatch_impl(vm, NULL, NULL, false);
 
     /* Restaurar. */
+    vm->memoria.gc_habilitado = prev_gc_habilitado;
     vm->frame_techo = prev_frame_techo;
     vm->modo_yield = prev_modo_yield;
     vm->modo_sub_call = prev_modo_sub_call;
@@ -7400,10 +7436,24 @@ bool vm_generador_paso(VM *vm, Generador *gen, Valor *out_valor) {
     vm->modo_yield = true;
     vm->handler_techo = vm->n_handlers;  /* v1.199: exc no escapa al caller */
 
+    /* v1.200: deshabilitar el barrido del GC durante el sub-dispatch.
+       Cuando un builtin nativo (lista/suma/mapear/...) consume un
+       generador, su Iterador y su acumulador (Lista, Diccionario, etc.)
+       viven SOLO en C-locals de la nativa — NO son raices del GC. Si el
+       cuerpo del generador aloca y dispara gc_recolectar en la frontera
+       de opcode de este sub-dispatch, el sweep barreria esos objetos
+       vivos -> use-after-free / corrupcion de heap. Diferir el barrido
+       hasta volver al dispatch principal (donde el resultado de la
+       nativa ya esta en la pila) lo evita. El generador en si lo protege
+       gc_marcar_valor (case VAL_GENERADOR). */
+    bool prev_gc_habilitado = vm->memoria.gc_habilitado;
+    vm->memoria.gc_habilitado = false;
+
     /* Sub-dispatch. */
     ResultadoVM r = vm_ejecutar_dispatch_impl(vm, NULL, NULL, false);
 
     /* Restaurar VM state. */
+    vm->memoria.gc_habilitado = prev_gc_habilitado;
     vm->frame_techo = prev_frame_techo;
     vm->modo_yield = prev_modo_yield;
     vm->handler_techo = prev_handler_techo;  /* v1.199 */

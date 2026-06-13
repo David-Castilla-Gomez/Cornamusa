@@ -324,6 +324,39 @@ void valor_set_hooks(void *vm_ctx,
                      ValorHashDunderHook hash_hook,
                      ValorIgualesDunderHook iguales_hook);
 
+/* ──────────────────────────────────────────────────────────────────
+ * v1.200: hook para reanudar un generador desde `iter_siguiente`.
+ *
+ * El Iterador genérico no podía consumir VAL_GENERADOR (caía al
+ * `default` devolviendo false al primer paso), así que TODOS los
+ * builtins que iteran vía iter_nuevo/iter_siguiente (lista, suma,
+ * mapear, filtrar, reducir, ordenado, juntar, cualquiera, todos,
+ * minimo, maximo, tupla, diccionario) trataban un generador como
+ * vacío SILENCIOSAMENTE: `lista(gen())` → [], `suma(gen())` → 0, sin
+ * error y con exit 0 — violando la doc ("cualquier iterable").
+ *
+ * Reanudar un generador requiere ejecutar bytecode, que vive en la
+ * VM. Como valor.c no puede ver `vm.h`, la VM registra este hook en
+ * `vm_iniciar`. Retorno tri-estado:
+ *   GEN_PASO_VALOR — produjo `*out` (con ownership).
+ *   GEN_PASO_FIN   — agotado, sin error.
+ *   GEN_PASO_ERROR — el generador lanzó; `vm->error` ya tiene el
+ *                    mensaje. CLAVE de corrección: el caller (la
+ *                    nativa) debe propagar ese error, NO tragarlo
+ *                    como fin de iteración ni sobrescribirlo (p.ej.
+ *                    con "iterable vacío").
+ * ────────────────────────────────────────────────────────────────── */
+typedef enum {
+    GEN_PASO_VALOR,
+    GEN_PASO_FIN,
+    GEN_PASO_ERROR,
+} ValorGenPasoResultado;
+
+typedef ValorGenPasoResultado (*ValorGenPasoHook)(
+    void *vm_ctx, Generador *gen, Valor *out);
+
+void valor_set_gen_paso_hook(void *vm_ctx, ValorGenPasoHook hook);
+
 /* True si el último hook reportó DUNDER_HOOK_ERROR — el caller
    (típicamente un OP de la VM) lo consulta tras llamar a `dicc_*` /
    `conj_*` para detectar errores que viajaron a través de `hash_valor`

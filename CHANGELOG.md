@@ -6,6 +6,112 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.200.0] — 2026-06-13 — Bugfix: los builtins consumen generadores
+
+**Corrección de un fallo SILENCIOSO con pérdida de datos.** Los
+builtins que iteran (`lista`, `tupla`, `diccionario`, `suma`,
+`minimo`, `maximo`, `ordenado`, `cualquiera`, `todos`, `juntar`,
+`mapear`, `filtrar`, `reducir`, `enumerar`) **no consumían
+generadores**: los trataban como vacíos sin error y con exit 0.
+
+```cornamusa
+funcion gen():
+    producir 3
+    producir 1
+    producir 2
+fin funcion
+
+lista(gen())   # daba []   → ahora [3, 1, 2]
+suma(gen())    # daba 0     → ahora 6
+maximo(gen())  # "iterable vacio" → ahora 3
+```
+
+Esto violaba el contrato documentado del propio proyecto ("cualquier
+iterable", promovido en v1.192–v1.197) y creaba una asimetría
+absurda: `funcionales.suma(gen())` daba 6 (módulo, correcto) pero el
+builtin global `suma(gen())` daba 0, con idéntico nombre y firma.
+
+### Root cause
+
+`valor_es_iterable` aceptaba `VAL_GENERADOR`, así que el generador
+pasaba el guard de entrada de cada builtin. Pero `iter_siguiente`
+(el iterador genérico en `valor.c`) **no tenía `case VAL_GENERADOR`**
+y caía al `default`, devolviendo `false` al primer paso → cero
+iteraciones. El comentario de `valor.h` decía desde v1.31 que
+`iter_siguiente` sobre un generador "resume hasta el próximo
+`producir`", pero el código nunca lo implementó en el iterador
+genérico (solo en el `OP_ITER_SIGUIENTE` directo de la VM, que usa
+el bucle `para`).
+
+### Fix
+
+- **Hook `ValorGenPasoHook`** (`valor.h`/`valor.c`), registrado por la
+  VM en `vm_iniciar` (`valor_set_gen_paso_hook`). `iter_siguiente`
+  delega `VAL_GENERADOR` en `vm_generador_paso` vía el hook
+  (tri-estado: produjo / agotado / lanzó). Reanudar un generador
+  requiere ejecutar bytecode, que vive en la VM; el hook desacopla
+  `valor.c` de `vm.h`, mismo patrón que el invocador de v1.195.
+- **Propagación de error correcta**: si el generador lanza a mitad de
+  iteración, cada builtin propaga el error tal cual; no lo traga como
+  fin ni lo enmascara. `maximo`/`reducir` reportan el error real, no
+  "iterable vacío". Guard `if (err->tuvo_error)` tras cada bucle.
+- `enumerar` (que tenía dispatch manual por tipo) gana soporte de
+  generador, alineándose con su compañero `juntar`.
+
+### Bug crítico destapado en revisión: use-after-free del GC
+
+La revisión adversarial del fix descubrió un **use-after-free /
+corrupción de heap** (RC 127 determinista) que el propio fix hacía
+mucho más alcanzable. Era en parte **pre-existente desde v1.31**.
+
+Causa: el GC es mark-sweep e **ignora el refcount** al barrer. Dos
+huecos:
+
+1. `gc_marcar_valor` **no marcaba `VAL_GENERADOR`** (caía al
+   `default`): un generador vivo en la pila/slot (`para x en gen()`,
+   o `gen()` como argumento de un builtin) se barría bajo los pies
+   del intérprete.
+2. El `Iterador` y el acumulador (`Lista`, `Diccionario`, ...) de las
+   nativas son **C-locals, no raíces del GC**. Al reanudar el
+   generador se ejecuta bytecode que puede disparar el GC, barriendo
+   esos objetos vivos.
+
+Fix (tres frentes):
+- `case VAL_GENERADOR` en `gc_marcar_valor` (cierra el hueco 1,
+  pre-existente).
+- **Blindaje del GC durante los sub-dispatches síncronos**
+  (`vm_generador_paso`, `vm_invocar_callable_sync`,
+  `vm_ejecutar_dunder_sync`): se difiere el barrido hasta volver al
+  dispatch top-level, donde el resultado de la nativa ya está en la
+  pila. Protege todos los C-locals sin tener que enraizarlos uno a
+  uno.
+- `recolectar()` explícito **difiere** (en vez de barrer) si se llama
+  dentro de un sub-dispatch — antes bypassaba el blindaje.
+
+### Verificación
+
+- Repros deterministas del UAF (con `recolectar()` dentro del
+  generador): RC 127 → 0.
+- Build `GC_STRESS=ON` (GC en cada alocación): todos los builtins
+  sobre generadores + `para...en` correctos (antes crasheaba en la
+  primera llamada).
+- Suite completa 396/396 (incluye `test_bytecode_builtins_generador.c`
+  con 9 bloques: camino feliz de los 14 builtins, genex inline,
+  generador vacío, generador reusado/agotado, propagación de error
+  sin enmascarar, y 2 casos de regresión del UAF de GC).
+
+### Limitaciones honestas
+
+- `conjunto(gen())` e `inverso(gen())` siguen **sin** aceptar
+  generadores (dan `ErrorDeTipo` honesto, no fallo silencioso): tienen
+  dispatch manual propio y son una limitación más amplia y separada
+  (`conjunto` ni siquiera acepta cadena/dicc/rango). Quedan para una
+  release futura que unifique los constructores al iterador genérico.
+- `recolectar()` llamado dentro de un generador suspendido o un
+  callback de `mapear`/`filtrar` difiere la recolección al siguiente
+  punto seguro (no recolecta en el acto). Documentado; el caso es
+  muy raro y la alternativa era el crash.
+
 ## [1.199.0] — 2026-06-12 — Bugfix: excepciones desde generadores
 
 **Mata el flaky histórico** `test_bytecode_genex_multi_destr`

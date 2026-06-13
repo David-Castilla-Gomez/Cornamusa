@@ -142,6 +142,15 @@ void gc_marcar_valor(const Valor *v) {
         case VAL_ITERADOR:
             gc_marcar_objeto(&v->como.iterador->obj);
             break;
+        case VAL_GENERADOR:
+            /* v1.200: hueco pre-existente (desde v1.31). Sin este case
+               un generador vivo en la pila/slot (p.ej. `para x en gen()`,
+               o `gen()` como argumento de un builtin) caia al `default`,
+               NO se marcaba, y gc_barrer lo liberaba bajo los pies del
+               interprete (mark-sweep ignora refcount) -> use-after-free.
+               GC_TIPO_GENERADOR ya propaga closure + stack_buf. */
+            gc_marcar_objeto(&v->como.generador->obj);
+            break;
         case VAL_EXCEPCION:
             gc_marcar_objeto(&v->como.excepcion->obj);
             break;

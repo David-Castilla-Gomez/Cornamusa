@@ -491,6 +491,14 @@ void valor_set_hooks(void *vm_ctx,
     g_iguales_hook = iguales_hook;
 }
 
+/* v1.200: hook para reanudar generadores desde `iter_siguiente`. */
+static ValorGenPasoHook g_gen_paso_hook = NULL;
+
+void valor_set_gen_paso_hook(void *vm_ctx, ValorGenPasoHook hook) {
+    g_vm_ctx = vm_ctx;  /* mismo VM que los demás hooks */
+    g_gen_paso_hook = hook;
+}
+
 bool valor_dunder_hubo_error_y_limpiar(void) {
     bool e = g_dunder_hubo_error;
     g_dunder_hubo_error = false;
@@ -1281,6 +1289,30 @@ bool iter_siguiente(Iterador *it, Valor *out) {
             *out = valor_entero_de_mp_normalizado(resultado);
             it->cursor++;
             return true;
+        }
+        case VAL_GENERADOR: {
+            /* v1.200: reanudar el generador hasta el próximo `producir`
+               vía el hook de la VM (ejecuta bytecode, que valor.c no
+               puede tocar directamente). El estado vive en el propio
+               Generador (stack_buf/ip_offset, compartido por refcount
+               con el clon de iter_nuevo) — `it->cursor` no se usa.
+
+               Si el generador lanza, el hook devuelve GEN_PASO_ERROR
+               con `vm->error` ya seteado; devolvemos false dejando el
+               error intacto para que la nativa que itera lo propague
+               (NO lo trate como fin ni lo sobrescriba). */
+            if (g_gen_paso_hook == NULL) {
+                /* Sin VM registrada (no ocurre en runtime normal). */
+                *out = valor_nulo();
+                return false;
+            }
+            ValorGenPasoResultado r =
+                g_gen_paso_hook(g_vm_ctx, iter->como.generador, out);
+            if (r == GEN_PASO_VALOR) return true;
+            /* GEN_PASO_FIN o GEN_PASO_ERROR: en ambos terminamos; el
+               error (si lo hubo) viaja por vm->error. */
+            *out = valor_nulo();
+            return false;
         }
         default:
             *out = valor_nulo();
