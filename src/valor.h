@@ -357,6 +357,26 @@ typedef ValorGenPasoResultado (*ValorGenPasoHook)(
 
 void valor_set_gen_paso_hook(void *vm_ctx, ValorGenPasoHook hook);
 
+/* ──────────────────────────────────────────────────────────────────
+ * v1.205: hook para materializar una instancia ITERABLE (con
+ * `__iterar__` y/o `__siguiente__`) desde el iterador genérico.
+ *
+ * `para x en obj` ya itera instancias (vía OP_ITER en la VM), pero los
+ * builtins que usan iter_nuevo/iter_siguiente (lista, conjunto, suma,
+ * mapear, ordenado, inverso...) no las aceptaban — daban ErrorDeTipo.
+ * Reanudar `__iterar__`/`__siguiente__` requiere ejecutar bytecode, que
+ * vive en la VM; la VM registra este hook en `vm_iniciar`.
+ *
+ * El hook materializa la instancia EAGER: agrega cada valor producido
+ * a `out` (una Lista ya creada por el caller). Devuelve true si OK;
+ * false si hubo error (vm->error queda seteado — el caller debe
+ * propagarlo). `ErrorDeIteracion` se interpreta como fin normal, no
+ * error.
+ * ────────────────────────────────────────────────────────────────── */
+typedef bool (*ValorIterInstHook)(void *vm_ctx, Instancia *inst, Lista *out);
+
+void valor_set_iter_inst_hook(void *vm_ctx, ValorIterInstHook hook);
+
 /* True si el último hook reportó DUNDER_HOOK_ERROR — el caller
    (típicamente un OP de la VM) lo consulta tras llamar a `dicc_*` /
    `conj_*` para detectar errores que viajaron a través de `hash_valor`

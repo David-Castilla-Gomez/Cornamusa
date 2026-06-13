@@ -499,6 +499,14 @@ void valor_set_gen_paso_hook(void *vm_ctx, ValorGenPasoHook hook) {
     g_gen_paso_hook = hook;
 }
 
+/* v1.205: hook para materializar instancias iterables desde iter_nuevo. */
+static ValorIterInstHook g_iter_inst_hook = NULL;
+
+void valor_set_iter_inst_hook(void *vm_ctx, ValorIterInstHook hook) {
+    g_vm_ctx = vm_ctx;  /* mismo VM que los demás hooks */
+    g_iter_inst_hook = hook;
+}
+
 bool valor_dunder_hubo_error_y_limpiar(void) {
     bool e = g_dunder_hubo_error;
     g_dunder_hubo_error = false;
@@ -1072,6 +1080,15 @@ bool valor_es_iterable(const Valor *v) {
         case VAL_RANGO:
         case VAL_GENERADOR:  /* v1.31 */
             return true;
+        case VAL_INSTANCIA: {
+            /* v1.205: una instancia es iterable si su clase define
+               `__iterar__` o `__siguiente__` (mismo criterio que el
+               OP_ITER de `para`). El iterador genérico la materializa
+               vía el hook de la VM. */
+            const Clase *cls = v->como.instancia->clase;
+            return clase_obtener_metodo(cls, "__iterar__", 10) != NULL
+                || clase_obtener_metodo(cls, "__siguiente__", 13) != NULL;
+        }
         default:
             return false;
     }
@@ -1080,6 +1097,28 @@ bool valor_es_iterable(const Valor *v) {
 Iterador *iter_nuevo(const Valor *iterable) {
     Iterador *it = (Iterador *)gc_alocar(sizeof(Iterador), GC_TIPO_ITERADOR);
     if (!it) return NULL;
+    if (iterable->tipo == VAL_INSTANCIA && g_iter_inst_hook != NULL) {
+        /* v1.205: materializar la instancia iterable a una lista EAGER
+           (ejecuta __iterar__/__siguiente__ vía la VM). iter_siguiente
+           luego itera esa lista como cualquier otra. Si el hook falla
+           (error en un dunder), vm->error queda seteado; dejamos un
+           iterable nulo para que iter_siguiente devuelva false y el
+           caller (la nativa) propague el error tras su bucle. */
+        Lista *l = lista_nueva(0);
+        if (!l) {
+            gc_desenlazar(&it->obj);
+            free(it);
+            return NULL;
+        }
+        if (g_iter_inst_hook(g_vm_ctx, iterable->como.instancia, l)) {
+            it->iterable = valor_lista(l);
+        } else {
+            lista_liberar(l);
+            it->iterable = valor_nulo();
+        }
+        it->cursor = 0;
+        return it;
+    }
     it->iterable = valor_clonar(iterable);  /* refcount o copia según tipo */
     it->cursor = 0;
     return it;

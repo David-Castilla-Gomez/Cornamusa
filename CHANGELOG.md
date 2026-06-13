@@ -6,6 +6,63 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.205.0] — 2026-06-13 — Los builtins aceptan instancias iterables
+
+Completa la saga del iterador genérico: los builtins que iteran
+(`lista`, `tupla`, `conjunto`, `inverso`, `suma`, `minimo`, `maximo`,
+`ordenado`, `mapear`, `filtrar`, `reducir`, `diccionario`, `juntar`,
+`enumerar`, `cualquiera`, `todos`) ahora aceptan **instancias de clase
+iterables** —con `__iterar__` y/o `__siguiente__`— igual que
+`para x en obj`. Antes daban `ErrorDeTipo`.
+
+```cornamusa
+clase Contador:
+    funcion __iniciar__(yo, n):
+        yo.i = 0
+        yo.n = n
+    fin funcion
+    funcion __siguiente__(yo):
+        si yo.i >= yo.n:
+            lanzar ErrorDeIteracion()
+        fin si
+        x = yo.i
+        yo.i = yo.i + 1
+        retornar x
+    fin funcion
+fin clase
+
+lista(Contador(3))     # [0, 1, 2]
+suma(Contador(4))      # 6
+ordenado(Contador(3))  # [0, 1, 2]
+```
+
+### Implementación
+
+- `valor_es_iterable` reconoce `VAL_INSTANCIA` si la clase define
+  `__iterar__` o `__siguiente__` (mismo criterio que el `OP_ITER` de
+  `para`).
+- `iter_nuevo`, ante una instancia, la **materializa** a una lista vía
+  un hook de la VM (`vm_materializar_instancia_iterable`); el resto del
+  iterador genérico la trata como cualquier lista. El helper extrae el
+  modelo de iteración de `para`/spread (`__siguiente__` directo;
+  `__iterar__` → instancia con `__siguiente__`; `__iterar__` → iterable
+  nativo o generador) y llama `__siguiente__` hasta `ErrorDeIteracion`.
+- Hereda el blindaje de GC de v1.200 (el GC no barre durante
+  `vm_ejecutar_dunder_sync`), así que un `__siguiente__` que aloque o
+  dispare el GC no corrompe el iterador. Verificado bajo `GC_STRESS=ON`.
+- Los errores de `__iterar__`/`__siguiente__` (salvo `ErrorDeIteracion`,
+  que es el fin normal) se propagan a través del builtin, no se
+  enmascaran ni se tragan.
+
+### Limitación honesta
+
+La materialización es **eager**: el builtin consume la instancia
+completa antes de operar. Para iteradores de instancia **infinitos**,
+los builtins con corto-circuito (`cualquiera`/`todos`) o `mapear`/
+`filtrar` no terminarían — al contrario que `para`, que es lazy. Es el
+trade-off por reutilizar el iterador genérico; para esos casos, usar
+`para` con un `romper`.
+
 ## [1.204.0] — 2026-06-13 — `conjunto()` e `inverso()` aceptan cualquier iterable
 
 `conjunto()` e `inverso()` solo aceptaban listas y tuplas;

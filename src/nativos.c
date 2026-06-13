@@ -1763,10 +1763,17 @@ static Valor nativa_enumerar(EvalError *err, int n_args, Valor *args,
             mp_add(&idx_mp, &paso, &idx_mp);
         }
         mp_clear_multi(&idx_mp, &paso, &fin, NULL);
-    } else if (it->tipo == VAL_GENERADOR) {
+    } else if (it->tipo == VAL_GENERADOR || it->tipo == VAL_INSTANCIA) {
         /* v1.200: enumerar() sobre generador, vía el iterador genérico.
-           EMPUJAR_PAR no libera el iterador en sus paths de error, así
-           que el cuerpo va a mano. */
+           v1.205: idem sobre instancia iterable — iter_nuevo la
+           materializa vía el hook. EMPUJAR_PAR no libera el iterador en
+           sus paths de error, así que el cuerpo va a mano. */
+        if (it->tipo == VAL_INSTANCIA && !valor_es_iterable(it)) {
+            lista_liberar(r);
+            return error_nativa(err, linea, columna,
+                "ErrorDeTipo: enumerar() no soporta '%s'",
+                valor_nombre_tipo(it));
+        }
         Iterador *iter = iter_nuevo(it);
         if (!iter) { lista_liberar(r); return error_nativa(err, linea, columna, "memoria insuficiente"); }
         Valor e;

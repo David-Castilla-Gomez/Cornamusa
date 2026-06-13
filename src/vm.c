@@ -152,6 +152,9 @@ static bool vm_invocar_callable_sync(void *vm_ctx, const Valor *callable,
 /* v1.200: hook para que `iter_siguiente` consuma generadores. */
 static ValorGenPasoResultado vm_gen_paso_hook(void *vm_ctx, Generador *gen,
                                                 Valor *out);
+/* v1.205: hook para que el iterador genérico materialice instancias
+   iterables (__iterar__/__siguiente__). */
+static bool vm_iter_inst_hook(void *vm_ctx, Instancia *inst, Lista *out);
 
 /* ──────────────────────────────────────────────────────────────────
  * Carga de módulos (Fase 9)
@@ -390,6 +393,10 @@ void vm_iniciar(VM *vm) {
        reanudar generadores — los builtins que iteran (lista, suma,
        mapear, ...) heredan soporte de generadores gratis. */
     valor_set_gen_paso_hook(vm, vm_gen_paso_hook);
+    /* v1.205: hook para que el iterador genérico materialice instancias
+       iterables (__iterar__/__siguiente__) — los builtins las aceptan
+       igual que `para`. */
+    valor_set_iter_inst_hook(vm, vm_iter_inst_hook);
     /* v1.38: traceback. */
     vm->traceback[0] = '\0';
     /* v1.71: profiler determinista (inactivo por defecto). */
@@ -2144,6 +2151,107 @@ static bool vm_ejecutar_dunder_sync(VM *vm, Closure *m,
         valor_destruir(&v);
     }
     return false;
+}
+
+/* v1.205: materializa una instancia ITERABLE en `out`, agregando cada
+   valor producido. Mismo modelo de iteración que `para x en obj` y el
+   spread `[*obj]`:
+     - instancia con `__siguiente__` directo → es su propio iterador;
+     - `__iterar__` que devuelve una instancia con `__siguiente__`;
+     - `__iterar__` que devuelve un iterable nativo o generador.
+   `__siguiente__` se llama hasta que lanza `ErrorDeIteracion` (fin).
+   Devuelve true si OK; false si un dunder erró (vm->error seteado).
+   Lo invoca el iterador genérico (iter_nuevo) vía vm_iter_inst_hook, de
+   modo que TODOS los builtins basados en iter_nuevo/iter_siguiente
+   (lista, conjunto, suma, mapear, ordenado, inverso...) aceptan
+   instancias iterables, no solo `para`. */
+static bool vm_materializar_instancia_iterable(VM *vm, Instancia *inst,
+                                                  Lista *out) {
+    Clase *cls = inst->clase;
+    Closure *m_sig = clase_obtener_metodo(cls, "__siguiente__", 13);
+    Valor iter_obj;          /* el iterador real (con ownership) */
+
+    if (m_sig != NULL) {
+        /* La instancia es su propio iterador (patrón Python
+           __iter__(self): return self). */
+        instancia_retener(inst);
+        iter_obj = valor_instancia(inst);
+    } else {
+        Closure *m_iter = clase_obtener_metodo(cls, "__iterar__", 10);
+        if (m_iter == NULL) {
+            vm->error.tuvo_error = true;
+            snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                "ErrorDeTipo: la clase '%.*s' no define '__iterar__' ni '__siguiente__'",
+                cls->longitud_nombre, cls->nombre);
+            return false;
+        }
+        Valor iter_real;
+        if (!vm_ejecutar_dunder_sync(vm, m_iter, inst, NULL, 0, &iter_real)) {
+            return false;  /* vm->error ya seteado */
+        }
+        if (iter_real.tipo == VAL_INSTANCIA) {
+            m_sig = clase_obtener_metodo(iter_real.como.instancia->clase,
+                                          "__siguiente__", 13);
+            if (m_sig == NULL) {
+                valor_destruir(&iter_real);
+                vm->error.tuvo_error = true;
+                snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                    "ErrorDeTipo: el resultado de __iterar__ no define '__siguiente__'");
+                return false;
+            }
+            iter_obj = iter_real;  /* loop de __siguiente__ abajo */
+        } else if (valor_es_iterable(&iter_real)) {
+            /* __iterar__ devolvió un iterable nativo o generador
+               (consistente con `para`). Materializarlo con el iterador
+               genérico y terminar. */
+            Iterador *sub = iter_nuevo(&iter_real);
+            valor_destruir(&iter_real);
+            if (sub == NULL) {
+                vm->error.tuvo_error = true;
+                snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                    "memoria insuficiente al iterar instancia");
+                return false;
+            }
+            Valor v;
+            while (iter_siguiente(sub, &v)) {
+                lista_agregar(out, v);
+            }
+            iter_destruir(sub);
+            return !vm->error.tuvo_error;
+        } else {
+            const char *tn = valor_nombre_tipo(&iter_real);
+            valor_destruir(&iter_real);
+            vm->error.tuvo_error = true;
+            snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                "ErrorDeTipo: __iterar__ devolvió '%s', que no es iterable", tn);
+            return false;
+        }
+    }
+
+    /* Loop: llamar __siguiente__ hasta ErrorDeIteracion. */
+    bool hubo_error = false;
+    while (true) {
+        Valor v;
+        if (vm_ejecutar_dunder_sync(vm, m_sig, iter_obj.como.instancia,
+                                      NULL, 0, &v)) {
+            lista_agregar(out, v);
+            continue;
+        }
+        if (vm->error.tuvo_error
+            && strncmp(vm->error.mensaje, "ErrorDeIteracion", 16) == 0) {
+            vm->error.tuvo_error = false;
+            vm->error.mensaje[0] = '\0';
+            break;
+        }
+        hubo_error = true;
+        break;
+    }
+    valor_destruir(&iter_obj);
+    return !hubo_error;
+}
+
+static bool vm_iter_inst_hook(void *vm_ctx, Instancia *inst, Lista *out) {
+    return vm_materializar_instancia_iterable((VM *)vm_ctx, inst, out);
 }
 
 /*
