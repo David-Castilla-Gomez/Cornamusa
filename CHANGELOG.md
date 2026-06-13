@@ -6,6 +6,81 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.206.0] — 2026-06-13 — Excepciones definidas por el usuario
+
+Ahora se puede `lanzar` una **instancia de clase** cualquiera y
+atraparla por el nombre de su clase o de una **superclase**
+(herencia). El manejador recibe la instancia con todos sus atributos
+y métodos — antes solo se podían lanzar las excepciones nativas
+(`ErrorDeValor`, etc.) o cadenas.
+
+```cornamusa
+clase ErrorDePago:
+    funcion __iniciar__(yo, mensaje, codigo):
+        yo.mensaje = mensaje
+        yo.codigo = codigo
+    fin funcion
+fin clase
+
+intentar:
+    lanzar ErrorDePago("tarjeta rechazada", 402)
+atrapar ErrorDePago como e:
+    imprimir(e.mensaje, "(", e.codigo, ")")
+fin intentar
+```
+
+Con **herencia**, atrapar la superclase captura las subclases:
+
+```cornamusa
+clase ErrorRed:
+    funcion __iniciar__(yo, m): yo.mensaje = m fin funcion
+fin clase
+clase ErrorTimeout extiende ErrorRed: ... fin clase
+
+intentar:
+    lanzar ErrorTimeout("agotado")
+atrapar ErrorRed como e:        # atrapa la subclase
+    imprimir("error de red:", e.mensaje)
+fin intentar
+```
+
+### Detalles
+
+- `OP_LANZAR` acepta `VAL_INSTANCIA` además de excepciones nativas y
+  cadenas. El `unwind` y el paso de la excepción al manejador son
+  idénticos a los de una excepción nativa.
+- `OP_COMPROBAR_TIPO_EXC` (que implementa el matching de `atrapar Tipo`)
+  reconoce instancias: coincide si el tipo esperado es el nombre de su
+  clase o de cualquier superclase (recorre la cadena `superclase`).
+- `atrapar Excepcion` sigue siendo el **catch-all** genérico: atrapa
+  cualquier cosa lanzada, instancia o excepción nativa.
+- Funciona con `atrapar (A, B)` multi-tipo (v1.202), con re-lanzar
+  (`lanzar` sin valor dentro de un `atrapar`), y se mezcla libremente
+  con las excepciones nativas.
+- Si una instancia escapa sin atraparse, el programa termina
+  reportando el nombre de su clase y, si tiene un atributo `mensaje`
+  (cadena), el mensaje: `ErrorDePago: tarjeta rechazada`.
+
+La excepción-instancia conserva su identidad incluso al cruzar la
+frontera de un generador, un dunder (`__siguiente__`, `__hash__`...) o
+un builtin que itera: se transporta el valor intacto en vez de
+aplanarlo a una cadena.
+
+### Limitaciones honestas
+
+- No es obligatorio heredar de una clase base de excepción: cualquier
+  instancia puede lanzarse. El matching es puramente por nombre de
+  clase/superclase.
+- El mensaje del reporte de no-atrapada usa la convención del atributo
+  `mensaje`; otros atributos no se muestran en ese reporte (sí están
+  accesibles al atraparla con `como e`).
+- Si el manejador (`atrapar`) que debería capturar la excepción vive
+  DENTRO de otro generador que a su vez consume el generador que lanza
+  (sub-dispatch anidado), ese manejador no la captura y la excepción se
+  propaga al siguiente nivel. Es una limitación pre-existente del unwind
+  a través de generadores anidados (afecta igual a las excepciones
+  nativas); lo relevante es que ya no provoca corrupción de memoria.
+
 ## [1.205.0] — 2026-06-13 — Los builtins aceptan instancias iterables
 
 Completa la saga del iterador genérico: los builtins que iteran

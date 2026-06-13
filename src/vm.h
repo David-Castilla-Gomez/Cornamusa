@@ -211,6 +211,17 @@ typedef struct {
     bool modo_sub_call;
     int handler_techo;
 
+    /* v1.206: transporte de una excepción-INSTANCIA a través de la
+       frontera de un sub-dispatch (generador/dunder/invocador). Cuando
+       OP_LANZAR no encuentra un handler elegible (n_handlers <=
+       handler_techo) y el valor lanzado es una instancia de usuario, en
+       vez de aplanarla a la cadena `vm->error` (que perdería sus
+       atributos y la cadena de superclases), se conserva aquí con su
+       refcount. El caller del sub-dispatch (intentar_atrapar_error_nativa)
+       la re-lanza intacta. `valor_nulo()` cuando no hay ninguna. */
+    Valor excepcion_valor_pendiente;
+    bool tiene_excepcion_valor_pendiente;
+
     /* v1.38: traceback de la cadena de llamadas, capturado cuando un
        error de runtime fatal sale del dispatch. Vacío ("") si no hay
        error o el error es solo de top-level. */

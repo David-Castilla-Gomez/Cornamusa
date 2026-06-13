@@ -382,6 +382,9 @@ void vm_iniciar(VM *vm) {
     /* v1.42: sub-call síncrono (despacho de __hash__/__igual__). */
     vm->modo_sub_call = false;
     vm->handler_techo = 0;
+    /* v1.206: excepción-instancia en tránsito por un sub-dispatch. */
+    vm->excepcion_valor_pendiente = valor_nulo();
+    vm->tiene_excepcion_valor_pendiente = false;
     /* v1.42: registrar hooks en valor.c para que `hash_valor` y
        `valor_iguales` puedan despachar dunders en instancias sin
        acoplarse al header de vm. */
@@ -481,6 +484,10 @@ void gc_marcar_raices(VM *vm) {
     for (Upvalue *u = vm->open_upvalues; u != NULL; u = u->siguiente) {
         gc_marcar_objeto(&u->obj);
     }
+    /* v1.206: excepción-instancia en tránsito por un sub-dispatch. */
+    if (vm->tiene_excepcion_valor_pendiente) {
+        gc_marcar_valor(&vm->excepcion_valor_pendiente);
+    }
     /* HandlerFrame: solo guardan ip + offsets — sin Valores propios. */
 }
 
@@ -489,6 +496,12 @@ void vm_destruir(VM *vm) {
     while (vm->tope > vm->pila) {
         Valor v = *(--vm->tope);
         valor_destruir(&v);
+    }
+    /* v1.206: excepción-instancia que escapó sin atraparse al top-level. */
+    if (vm->tiene_excepcion_valor_pendiente) {
+        valor_destruir(&vm->excepcion_valor_pendiente);
+        vm->excepcion_valor_pendiente = valor_nulo();
+        vm->tiene_excepcion_valor_pendiente = false;
     }
     if (vm->globales) {
         dicc_liberar(vm->globales);
@@ -772,6 +785,51 @@ static ResultadoVM vm_lanzar_excepcion(VM *vm, CallFrame **frame_inout,
 }
 
 /*
+ * v1.206: como vm_lanzar_excepcion pero para un Valor genérico (una
+ * excepción-INSTANCIA transportada a través de un sub-dispatch). Toma
+ * ownership de `v`. El caller debe haber verificado que hay un handler
+ * elegible (n_handlers > handler_techo); aquí solo se hace el unwind y
+ * el push del valor intacto, preservando su identidad (atributos,
+ * cadena de superclases) en vez de aplanarlo a cadena.
+ *
+ * Devuelve VM_OK si saltó al handler; VM_ERROR_RUNTIME (tras liberar `v`)
+ * si el handler ya no es alcanzable — ver la validación abajo.
+ */
+static ResultadoVM vm_lanzar_valor(VM *vm, CallFrame **frame_inout, Valor v) {
+    HandlerFrame h = vm->handlers[vm->n_handlers - 1];  /* peek, aún no pop */
+    /* v1.206: un handler instalado DENTRO de un sub-dispatch (p.ej. un
+       `intentar` de un generador que a su vez consume otro generador)
+       guarda frame_idx/tope_offset que apuntan a frames/slots que la
+       limpieza de error del sub-dispatch ya derribó. Saltar a él
+       corromperia el stack (SIGSEGV). Si los offsets quedan por encima
+       del estado actual, el handler no es alcanzable: no atrapar aquí —
+       liberar la instancia y propagar el error (el string ya está en
+       vm->error) al siguiente nivel, igual que el camino nativo. */
+    if (h.frame_idx > vm->n_frames
+        || h.tope_offset > (int)(vm->tope - vm->pila)) {
+        valor_destruir(&v);
+        return VM_ERROR_RUNTIME;
+    }
+    vm->n_handlers--;  /* handler válido: consumirlo */
+    cerrar_upvalues_hasta(vm, vm->pila + h.tope_offset);
+    while (vm->tope > vm->pila + h.tope_offset) {
+        Valor x = *(--vm->tope);
+        valor_destruir(&x);
+    }
+    while (vm->n_frames > h.frame_idx) {
+        vm->n_frames--;
+        CallFrame *fr_descartado = &vm->frames[vm->n_frames];
+        if (fr_descartado->globales_pre_llamada != NULL) {
+            vm->globales = fr_descartado->globales_pre_llamada;
+        }
+    }
+    empujar(vm, v);  /* toma ownership */
+    *frame_inout = &vm->frames[vm->n_frames - 1];
+    (*frame_inout)->ip = h.ip_handler;
+    return VM_OK;
+}
+
+/*
  * v1.10: convierte un error de nativa (`vm->error`) en una excepción
  * Cornamusa atrapable. Parsea el prefijo "ClaseDeError: detalle" del
  * mensaje. Si no hay handler activo o falla la conversión, retorna
@@ -784,6 +842,23 @@ static bool intentar_atrapar_error_nativa(VM *vm, CallFrame **frame_inout) {
     /* v1.199: handlers por debajo de handler_techo pertenecen al
        caller de un sub-dispatch — no son elegibles aquí. */
     if (!vm->error.tuvo_error || vm->n_handlers <= vm->handler_techo) return false;
+    /* v1.206: si hay una excepción-instancia transportada a través de un
+       sub-dispatch (generador/dunder), re-lanzar el Valor ORIGINAL para
+       preservar sus atributos y la cadena de superclases, en vez de
+       reconstruir una Excepción plana parseando la cadena de error. */
+    if (vm->tiene_excepcion_valor_pendiente) {
+        Valor v = vm->excepcion_valor_pendiente;
+        vm->excepcion_valor_pendiente = valor_nulo();
+        vm->tiene_excepcion_valor_pendiente = false;
+        if (vm_lanzar_valor(vm, frame_inout, v) == VM_OK) {
+            vm->error.tuvo_error = false;
+            vm->error.mensaje[0] = '\0';
+            return true;
+        }
+        /* Handler no alcanzable: `v` ya fue liberada; el error (string en
+           vm->error) sigue activo y se propaga al siguiente nivel. */
+        return false;
+    }
     /* Parsear "Clase: mensaje". Si no hay ":", clase = "Excepcion". */
     const char *msg = vm->error.mensaje;
     int total = (int)strlen(msg);
@@ -5511,8 +5586,12 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     if (!e) { VM_ERROR("memoria insuficiente"); return VM_ERROR_RUNTIME; }
                     exc_v = valor_excepcion(e);
                 }
-                if (exc_v.tipo != VAL_EXCEPCION) {
-                    VM_ERROR("ErrorDeTipo: solo se pueden lanzar excepciones, no '%s'",
+                /* v1.206: además de VAL_EXCEPCION, se puede lanzar una
+                   instancia de clase cualquiera (excepciones definidas
+                   por el usuario). Se atrapa por el nombre de su clase
+                   (o superclase) en OP_COMPROBAR_TIPO_EXC. */
+                if (exc_v.tipo != VAL_EXCEPCION && exc_v.tipo != VAL_INSTANCIA) {
+                    VM_ERROR("ErrorDeTipo: solo se pueden lanzar excepciones o instancias de clase, no '%s'",
                              valor_nombre_tipo(&exc_v));
                     valor_destruir(&exc_v);
                     return VM_ERROR_RUNTIME;
@@ -5522,16 +5601,46 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                    __igual__ no se desenrosca más allá del sub-call —
                    se reporta como error de runtime al hook que llamó. */
                 if (vm->n_handlers <= vm->handler_techo) {
-                    /* Excepción sin atrapar: produce error en el VM
-                       con clase + mensaje. */
-                    const Excepcion *ex = exc_v.como.excepcion;
+                    /* Sin handler elegible: produce error en el VM con
+                       clase + mensaje (para el reporte si escapa al
+                       top-level). */
                     vm->error.tuvo_error = true;
                     vm->error.linea = linea_actual_frame(frame);
-                    snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
-                        "%.*s: %.*s",
-                        ex->longitud_clase, ex->clase,
-                        ex->longitud_mensaje, ex->mensaje);
-                    valor_destruir(&exc_v);
+                    if (exc_v.tipo == VAL_EXCEPCION) {
+                        const Excepcion *ex = exc_v.como.excepcion;
+                        snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                            "%.*s: %.*s",
+                            ex->longitud_clase, ex->clase,
+                            ex->longitud_mensaje, ex->mensaje);
+                        valor_destruir(&exc_v);
+                    } else {
+                        /* v1.206: instancia de usuario. Reportar el nombre
+                           de su clase y, si tiene un atributo `mensaje`
+                           cadena (convención), añadirlo. */
+                        Instancia *inst = exc_v.como.instancia;
+                        const Clase *cls = inst->clase;
+                        Valor clave_msg = valor_cadena_referencia("mensaje", 7);
+                        Valor msg_v;
+                        bool tiene_msg = dicc_obtener(inst->atributos,
+                                                       &clave_msg, &msg_v);
+                        if (tiene_msg && msg_v.tipo == VAL_CADENA) {
+                            snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                                "%.*s: %.*s",
+                                cls->longitud_nombre, cls->nombre,
+                                msg_v.como.cadena.longitud, msg_v.como.cadena.texto);
+                        } else {
+                            snprintf(vm->error.mensaje, sizeof(vm->error.mensaje),
+                                "%.*s", cls->longitud_nombre, cls->nombre);
+                        }
+                        if (tiene_msg) valor_destruir(&msg_v);  /* clon de dicc_obtener */
+                        /* v1.206: NO destruir la instancia — transportarla
+                           intacta para que el caller del sub-dispatch la
+                           re-lance preservando atributos y superclases.
+                           Si escapa al top-level, vm_destruir la libera. */
+                        valor_destruir(&vm->excepcion_valor_pendiente);
+                        vm->excepcion_valor_pendiente = exc_v;
+                        vm->tiene_excepcion_valor_pendiente = true;
+                    }
                     return VM_ERROR_RUNTIME;
                 }
                 /* Pop el handler top y unwind. */
@@ -5574,7 +5683,9 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                  */
                 uint8_t idx = LEER_BYTE();
                 const Valor *esperado = &frame->chunk->constantes[idx];
-                if (vm->tope == vm->pila || vm->tope[-1].tipo != VAL_EXCEPCION) {
+                if (vm->tope == vm->pila
+                    || (vm->tope[-1].tipo != VAL_EXCEPCION
+                        && vm->tope[-1].tipo != VAL_INSTANCIA)) {
                     VM_ERROR("estado interno corrupto: OP_COMPROBAR_TIPO_EXC sin excepcion en stack");
                     return VM_ERROR_RUNTIME;
                 }
@@ -5582,16 +5693,32 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                     VM_ERROR("estado interno corrupto: tipo de excepcion no es cadena");
                     return VM_ERROR_RUNTIME;
                 }
-                const Excepcion *e = vm->tope[-1].como.excepcion;
-                bool igual =
-                    e->longitud_clase == esperado->como.cadena.longitud
-                    && memcmp(e->clase, esperado->como.cadena.texto,
-                              (size_t)e->longitud_clase) == 0;
+                int len_esp = esperado->como.cadena.longitud;
+                const char *txt_esp = esperado->como.cadena.texto;
+                bool igual = false;
+                if (vm->tope[-1].tipo == VAL_EXCEPCION) {
+                    const Excepcion *e = vm->tope[-1].como.excepcion;
+                    igual = e->longitud_clase == len_esp
+                        && memcmp(e->clase, txt_esp, (size_t)e->longitud_clase) == 0;
+                } else {
+                    /* v1.206: instancia de usuario — coincide si el tipo
+                       esperado es el nombre de su clase o de cualquier
+                       superclase (herencia). */
+                    for (const Clase *c = vm->tope[-1].como.instancia->clase;
+                         c != NULL; c = c->superclase) {
+                        if (c->longitud_nombre == len_esp
+                            && memcmp(c->nombre, txt_esp, (size_t)len_esp) == 0) {
+                            igual = true;
+                            break;
+                        }
+                    }
+                }
                 /* Caso especial: el atrapador puede usar "Excepcion"
-                   como tipo genérico (Excepcion atrapa cualquier
-                   excepción, igual que `except Exception` en Python). */
-                if (!igual && esperado->como.cadena.longitud == 9
-                    && memcmp(esperado->como.cadena.texto, "Excepcion", 9) == 0) {
+                   como tipo genérico (atrapa cualquier excepción o
+                   instancia lanzada, igual que `except Exception` en
+                   Python). */
+                if (!igual && len_esp == 9
+                    && memcmp(txt_esp, "Excepcion", 9) == 0) {
                     igual = true;
                 }
                 empujar(vm, valor_booleano(igual));
@@ -7445,6 +7572,13 @@ static void vm_capturar_traceback(VM *vm) {
 ResultadoVM vm_ejecutar(VM *vm, const Chunk *chunk, Valor *resultado_out) {
     vm->memoria.gc_habilitado = true;
     vm->traceback[0] = '\0';
+    /* v1.206: descartar una excepción-instancia stale de una ejecución
+       anterior (reutilización del VM en REPL/embedding). */
+    if (vm->tiene_excepcion_valor_pendiente) {
+        valor_destruir(&vm->excepcion_valor_pendiente);
+        vm->excepcion_valor_pendiente = valor_nulo();
+        vm->tiene_excepcion_valor_pendiente = false;
+    }
     ResultadoVM r = vm_ejecutar_dispatch(vm, chunk, resultado_out);
     if (r == VM_ERROR_RUNTIME) {
         vm_capturar_traceback(vm);

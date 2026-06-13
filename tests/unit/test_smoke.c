@@ -22,7 +22,7 @@ static int fallos = 0;
 int main(void) {
     AFIRMAR(strlen(CORNAMUSA_VERSION) > 0);
     AFIRMAR(CORNAMUSA_VERSION_MAJOR == 1);
-    AFIRMAR(CORNAMUSA_VERSION_MINOR == 205);
+    AFIRMAR(CORNAMUSA_VERSION_MINOR == 206);
     AFIRMAR(CORNAMUSA_VERSION_PATCH == 0);
 
     if (fallos == 0) {
