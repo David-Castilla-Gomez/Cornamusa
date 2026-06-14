@@ -724,22 +724,22 @@ static InvocadorCallable g_invocador = NULL;
  * es una instancia que define `__booleano__`, lo despacha (igual que
  * `si obj:` / `no obj`) en vez de tratarla siempre como verdadera.
  */
-static Valor nativa_booleano(EvalError *err, int n_args, Valor *args,
-                              int linea, int columna) {
-    if (n_args != 1) {
-        return error_nativa(err, linea, columna,
-            "ErrorDeTipo: booleano() requiere 1 argumento, recibio %d", n_args);
-    }
-    if (args[0].tipo == VAL_INSTANCIA && g_invocador != NULL
-        && clase_obtener_metodo(args[0].como.instancia->clase,
+/* v1.208: evalúa la verdad (truthiness) de un valor despachando
+ * `__booleano__` si es una instancia que lo define — igual que los
+ * contextos de verdad (`si`/`no`) y `booleano()`. Si `__booleano__`
+ * devuelve a su vez otra instancia con `__booleano__`, re-despacha en
+ * cadena hasta un valor no-instancia (tope ~VM_FRAMES_MAX). Para
+ * no-instancias o instancias sin `__booleano__`, usa valor_es_verdadero.
+ * Devuelve true en éxito con `*out` el resultado; false si un
+ * `__booleano__` erró (deja `err` seteado para que el caller propague).
+ * Lo usan booleano(), cualquiera() y todos() para tratar la verdad de
+ * instancias de forma consistente. */
+static bool evaluar_verdad(EvalError *err, const Valor *v, int linea,
+                            bool *out) {
+    if (v->tipo == VAL_INSTANCIA && g_invocador != NULL
+        && clase_obtener_metodo(v->como.instancia->clase,
                                  "__booleano__", 12) != NULL) {
-        /* v1.207: despachar __booleano__. Si éste devuelve OTRA instancia
-           que también define __booleano__, re-despachar en bucle hasta un
-           valor no-instancia (o una instancia sin __booleano__), igual
-           que `si obj:` / `no obj` en la VM, que re-ejecutan el opcode.
-           El límite evita colgar ante recursión infinita (los contextos
-           de verdad la cortan por desbordamiento de frames). */
-        Valor actual = valor_clonar(&args[0]);  /* propio; se itera/destruye */
+        Valor actual = valor_clonar(v);  /* propio; se itera/destruye */
         for (int i = 0; i < 256; i++) {  /* tope ~ VM_FRAMES_MAX */
             if (actual.tipo != VAL_INSTANCIA) break;
             Closure *m = clase_obtener_metodo(actual.como.instancia->clase,
@@ -756,16 +756,29 @@ static Valor nativa_booleano(EvalError *err, int n_args, Valor *args,
                     snprintf(err->mensaje, sizeof(err->mensaje),
                         "error al invocar __booleano__");
                 }
-                return valor_nulo();
+                return false;
             }
             valor_destruir(&actual);
             actual = resultado;
         }
-        bool b = valor_es_verdadero(&actual);
+        *out = valor_es_verdadero(&actual);
         valor_destruir(&actual);
-        return valor_booleano(b);
+        return true;
     }
-    return valor_booleano(valor_es_verdadero(&args[0]));
+    *out = valor_es_verdadero(v);
+    return true;
+}
+
+static Valor nativa_booleano(EvalError *err, int n_args, Valor *args,
+                              int linea, int columna) {
+    (void)columna;
+    if (n_args != 1) {
+        return error_nativa(err, linea, columna,
+            "ErrorDeTipo: booleano() requiere 1 argumento, recibio %d", n_args);
+    }
+    bool b;
+    if (!evaluar_verdad(err, &args[0], linea, &b)) return valor_nulo();
+    return valor_booleano(b);
 }
 
 /*
@@ -1073,8 +1086,11 @@ static Valor nativa_maximo_global(EvalError *err, int n_args, Valor *args,
 }
 
 /* v1.194: cualquiera(iterable) / todos(iterable) — any/all de Python.
- * Verdad evaluada con valor_es_verdadero (sin despachar __booleano__
- * de instancias — para eso usar funcionales). Corto-circuito. */
+ * v1.208: la verdad de cada elemento se evalúa con `evaluar_verdad`, que
+ * despacha `__booleano__` de las instancias igual que `si`/`no`/
+ * `booleano()` (antes usaban valor_es_verdadero crudo, así que una
+ * instancia con __booleano__ siempre contaba como verdadera). Corto-
+ * circuito. */
 static Valor nativa_cualquiera(EvalError *err, int n_args, Valor *args,
                                  int linea, int columna) {
     if (n_args != 1) {
@@ -1091,8 +1107,10 @@ static Valor nativa_cualquiera(EvalError *err, int n_args, Valor *args,
     Valor elem;
     bool resultado = false;
     while (iter_siguiente(iter, &elem)) {
-        bool v = valor_es_verdadero(&elem);
+        bool v;
+        bool ok = evaluar_verdad(err, &elem, linea, &v);
         valor_destruir(&elem);
+        if (!ok) { iter_destruir(iter); return valor_nulo(); }
         if (v) { resultado = true; break; }
     }
     iter_destruir(iter);
@@ -1116,8 +1134,10 @@ static Valor nativa_todos(EvalError *err, int n_args, Valor *args,
     Valor elem;
     bool resultado = true;
     while (iter_siguiente(iter, &elem)) {
-        bool v = valor_es_verdadero(&elem);
+        bool v;
+        bool ok = evaluar_verdad(err, &elem, linea, &v);  /* v1.208: __booleano__ */
         valor_destruir(&elem);
+        if (!ok) { iter_destruir(iter); return valor_nulo(); }
         if (!v) { resultado = false; break; }
     }
     iter_destruir(iter);

@@ -6,6 +6,41 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.208.0] — 2026-06-14 — `cualquiera()` y `todos()` despachan `__booleano__`
+
+Continuación directa de v1.207. Los builtins `cualquiera()` y
+`todos()` (any/all) ahora evalúan la verdad de cada elemento
+despachando `__booleano__` de las instancias, igual que `booleano()`,
+`si obj:` y `no obj`. Antes usaban la verdad cruda, así que una
+instancia con `__booleano__` siempre contaba como verdadera —
+devolviendo resultados **silenciosamente incorrectos**:
+
+```cornamusa
+clase Caja:
+    funcion __booleano__(yo): retornar yo.n > 0 fin funcion
+fin clase
+
+todos([Caja(1), Caja(0)])       # antes: verdadero  →  ahora: falso
+cualquiera([Caja(0), Caja(0)])  # antes: verdadero  →  ahora: falso
+```
+
+Era una incoherencia visible en un mismo programa: `booleano(Caja(0))`
+daba `falso` (v1.207) pero `todos([Caja(0)])` daba `verdadero`.
+
+### Detalles
+
+- El bucle de re-despacho de `__booleano__` (incluida la recursión
+  cuando devuelve otra instancia) se extrajo de `nativa_booleano` a un
+  helper `evaluar_verdad`, que ahora comparten `booleano()`,
+  `cualquiera()` y `todos()` — una sola fuente de verdad.
+- Un error lanzado dentro de `__booleano__` corta el bucle y se
+  propaga (atrapable). El corto-circuito de `cualquiera`/`todos` se
+  preserva.
+- Sin cambios para valores no-instancia ni para instancias sin
+  `__booleano__`. `mapear`/`filtrar` no se tocan: su verdad se aplica
+  al valor de retorno del predicado del usuario, no a las instancias
+  iteradas (otra semántica).
+
 ## [1.207.0] — 2026-06-14 — `booleano(obj)` despacha `__booleano__`
 
 El builtin `booleano(obj)` ahora despacha el dunder `__booleano__` de
