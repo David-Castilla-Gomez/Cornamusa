@@ -7,6 +7,7 @@
 #include <string.h>
 #include <time.h>
 
+#include "chunk.h"   /* v1.207: valor_closure para despachar __booleano__ */
 #include "evaluador.h"
 #include "lexer.h"   /* v1.194: TT_MAS / TT_MENOR para suma/minimo/maximo */
 #include "memoria.h"
@@ -711,15 +712,58 @@ static Valor nativa_decimal(EvalError *err, int n_args, Valor *args,
         "ErrorDeTipo: decimal() no acepta '%s'", valor_nombre_tipo(v));
 }
 
+/* v1.195: invocador de callables — la VM lo registra en vm_iniciar
+ * (nativos_set_invocador, definido más abajo). Declarado aquí arriba
+ * para que `booleano()` (v1.207) pueda despachar `__booleano__`. */
+static void *g_invocador_ctx = NULL;
+static InvocadorCallable g_invocador = NULL;
+
 /*
- * booleano(x) — siempre éxito. Aplica las reglas de truthiness de
- * ESPEC §6.2: nulo, falso, 0, 0.0, "", [], {}, () → falso; resto verdadero.
+ * booleano(x) — Aplica las reglas de truthiness de ESPEC §6.2: nulo,
+ * falso, 0, 0.0, "", [], {}, () → falso; resto verdadero. v1.207: si x
+ * es una instancia que define `__booleano__`, lo despacha (igual que
+ * `si obj:` / `no obj`) en vez de tratarla siempre como verdadera.
  */
 static Valor nativa_booleano(EvalError *err, int n_args, Valor *args,
                               int linea, int columna) {
     if (n_args != 1) {
         return error_nativa(err, linea, columna,
             "ErrorDeTipo: booleano() requiere 1 argumento, recibio %d", n_args);
+    }
+    if (args[0].tipo == VAL_INSTANCIA && g_invocador != NULL
+        && clase_obtener_metodo(args[0].como.instancia->clase,
+                                 "__booleano__", 12) != NULL) {
+        /* v1.207: despachar __booleano__. Si éste devuelve OTRA instancia
+           que también define __booleano__, re-despachar en bucle hasta un
+           valor no-instancia (o una instancia sin __booleano__), igual
+           que `si obj:` / `no obj` en la VM, que re-ejecutan el opcode.
+           El límite evita colgar ante recursión infinita (los contextos
+           de verdad la cortan por desbordamiento de frames). */
+        Valor actual = valor_clonar(&args[0]);  /* propio; se itera/destruye */
+        for (int i = 0; i < 256; i++) {  /* tope ~ VM_FRAMES_MAX */
+            if (actual.tipo != VAL_INSTANCIA) break;
+            Closure *m = clase_obtener_metodo(actual.como.instancia->clase,
+                                               "__booleano__", 12);
+            if (m == NULL) break;  /* instancia sin __booleano__: verdadera */
+            Valor callable = valor_closure(m);  /* referencia prestada */
+            Valor resultado;
+            if (!g_invocador(g_invocador_ctx, &callable, &actual, 1,
+                             &resultado)) {
+                valor_destruir(&actual);
+                if (!err->tuvo_error) {
+                    err->tuvo_error = true;
+                    err->linea = linea;
+                    snprintf(err->mensaje, sizeof(err->mensaje),
+                        "error al invocar __booleano__");
+                }
+                return valor_nulo();
+            }
+            valor_destruir(&actual);
+            actual = resultado;
+        }
+        bool b = valor_es_verdadero(&actual);
+        valor_destruir(&actual);
+        return valor_booleano(b);
     }
     return valor_booleano(valor_es_verdadero(&args[0]));
 }
@@ -774,10 +818,9 @@ static Valor nativa_lista(EvalError *err, int n_args, Valor *args,
 
 /* ──────────────────────────────────────────────────────────────────
  * v1.195: invocador de callables. La VM lo registra en vm_iniciar.
+ * (g_invocador / g_invocador_ctx están declarados más arriba, junto a
+ * booleano(), que también los usa desde v1.207.)
  * ────────────────────────────────────────────────────────────────── */
-static void *g_invocador_ctx = NULL;
-static InvocadorCallable g_invocador = NULL;
-
 void nativos_set_invocador(void *vm_ctx, InvocadorCallable fn) {
     g_invocador_ctx = vm_ctx;
     g_invocador = fn;

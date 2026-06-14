@@ -6,6 +6,40 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.207.0] — 2026-06-14 — `booleano(obj)` despacha `__booleano__`
+
+El builtin `booleano(obj)` ahora despacha el dunder `__booleano__` de
+las instancias, igual que ya hacían los contextos de verdad (`si obj:`,
+`mientras obj:`, `no obj`, `y`/`o`) desde v1.41. Antes una instancia
+con `__booleano__` daba el resultado correcto en `si obj:` pero
+`booleano(obj)` la trataba siempre como verdadera — una inconsistencia.
+
+```cornamusa
+clase Caja:
+    funcion __iniciar__(yo, n): yo.n = n fin funcion
+    funcion __booleano__(yo): retornar yo.n > 0 fin funcion
+fin clase
+
+booleano(Caja(0))   # antes: verdadero  →  ahora: falso
+booleano(Caja(5))   # verdadero
+```
+
+### Detalles
+
+- `nativa_booleano` (`src/nativos.c`): si el argumento es una instancia
+  cuya clase define `__booleano__`, lo invoca con el invocador de
+  callables (v1.195) pasando la instancia como receptor, y coacciona el
+  resultado a booleano con las reglas estándar (igual que un contexto
+  de verdad — `__booleano__` puede devolver cualquier valor).
+- Un error lanzado dentro de `__booleano__` se propaga (atrapable), no
+  se traga.
+- Las instancias sin `__booleano__` siguen siendo verdaderas, y los
+  tipos no-instancia no cambian.
+- Si `__booleano__` devuelve a su vez otra instancia con `__booleano__`,
+  se re-despacha en cadena hasta un valor no-instancia, igual que los
+  contextos de verdad — así `booleano(obj)` coincide exactamente con
+  `si obj:` y `no obj` en todos los casos.
+
 ## [1.206.0] — 2026-06-13 — Excepciones definidas por el usuario
 
 Ahora se puede `lanzar` una **instancia de clase** cualquiera y
