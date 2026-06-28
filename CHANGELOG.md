@@ -6,6 +6,34 @@ El formato sigue [Keep a Changelog](https://keepachangelog.com/es-ES/1.1.0/) y e
 
 ## [No publicado]
 
+## [1.209.0] — 2026-06-14 — Los errores de importación son atrapables
+
+`importar modulo_inexistente` lanzaba `ErrorDeImportacion` pero
+**mataba el programa** — no se podía atrapar con `intentar`/`atrapar`.
+Ahora sí, lo que habilita el patrón idiomático de import opcional con
+fallback:
+
+```cornamusa
+intentar:
+    importar acelerador_opcional
+    rapido = verdadero
+atrapar ErrorDeImportacion:
+    rapido = falso          # seguir sin el módulo opcional
+fin intentar
+```
+
+### Detalles
+
+- `OP_IMPORTAR` y `OP_IMPORTAR_PARA_DESDE` (`desde X importar Y`) ahora
+  usan `RAISE_OR_DIE()` en la rama "módulo no encontrado o inválido"
+  en vez de matar la VM directamente. Si hay un `atrapar`
+  `ErrorDeImportacion` (o `Excepcion`) activo, lo captura; si no, el
+  programa termina con el mismo mensaje de antes.
+- El error se lanza ANTES de crear el frame del módulo o intercambiar
+  las globales, así que el `unwind` es limpio (sin fugas).
+- Sin cambios para los imports válidos ni para los errores que ocurren
+  DENTRO del código de un módulo (esos ya se propagaban por su frame).
+
 ## [1.208.0] — 2026-06-14 — `cualquiera()` y `todos()` despachan `__booleano__`
 
 Continuación directa de v1.207. Los builtins `cualquiera()` y

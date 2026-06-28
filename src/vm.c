@@ -3763,9 +3763,14 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 Chunk *ch_mod = cargar_modulo_desde_archivo(
                     nombre->como.cadena.texto, nombre->como.cadena.longitud);
                 if (!ch_mod) {
+                    /* v1.209: error atrapable con `atrapar ErrorDeImportacion`.
+                       En este punto no se ha empujado nada al stack ni
+                       creado frames, así que RAISE_OR_DIE hace un unwind
+                       limpio (o mata el programa si no hay handler). */
                     VM_ERROR("ErrorDeImportacion: no se pudo cargar el modulo '%.*s' (archivo no encontrado o invalido)",
                              nombre->como.cadena.longitud, nombre->como.cadena.texto);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
                 /* 3. Crear el Modulo + nuevo dicc de globales para él. */
                 Modulo *mod = modulo_nuevo(nombre->como.cadena.texto,
@@ -3843,9 +3848,12 @@ static ResultadoVM vm_ejecutar_dispatch_impl(VM *vm, const Chunk *chunk,
                 Chunk *ch_mod = cargar_modulo_desde_archivo(
                     nombre->como.cadena.texto, nombre->como.cadena.longitud);
                 if (!ch_mod) {
+                    /* v1.209: atrapable (igual que OP_IMPORTAR). El stack
+                       no tiene nada empujado aún en este punto. */
                     VM_ERROR("ErrorDeImportacion: no se pudo cargar el modulo '%.*s' (archivo no encontrado o invalido)",
                              nombre->como.cadena.longitud, nombre->como.cadena.texto);
-                    return VM_ERROR_RUNTIME;
+                    RAISE_OR_DIE();
+                    break;
                 }
                 Modulo *mod = modulo_nuevo(nombre->como.cadena.texto,
                                              nombre->como.cadena.longitud);
